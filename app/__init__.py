@@ -48,7 +48,7 @@ def create_app(config_class=Config):
                 # Sleep for 300-500ms to prevent two workers trying to grab the same
                 # file simultaneously
 
-                # time.sleep(random.randint(2, 3) * 0.1)
+                time.sleep(random.randint(2, 3) * 0.1)
 
                 app.logger.info(
                     f"'{os.path.basename(event.dest_path)}' Found in import directory"
@@ -70,7 +70,7 @@ def create_app(config_class=Config):
                 # Sleep for 300-500ms to prevent two workers trying to grab the same
                 # file simultaneously
 
-                # time.sleep(random.randint(2, 3) * 0.1)
+                time.sleep(random.randint(2, 3) * 0.1)
 
                 app.logger.info(
                     f"'{os.path.basename(event.src_path)}' Found in import directory"
