@@ -7,7 +7,7 @@ A media library manager
 python3 -m venv venv &&
 source venv/bin/activate &&
 pip install -r requirements.txt &&
-pip install pymysql &&
+pip install gunicorn pymysql &&
 flask db upgrade
 ```
 
@@ -33,6 +33,8 @@ rq worker fitzflix-tasks
 source venv/bin/activate &&
 rq worker fitzflix-transcode
 ```
+
+Run a max of 1 SQL worker.
 
 ```
 source venv/bin/activate &&
