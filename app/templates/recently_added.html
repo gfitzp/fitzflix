@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12">{{ title }}</h2>
+</div>
+<hr>
+{% for file in recently_added %}
+<div class="media mb-2">
+	{% if file.movie %}
+		{% set movie = file.movie %}
+		<a href="{{ url_for('main.file', file_id=file.id) }}">
+			{% include "_movie_poster_small.html" %}
+		</a>
+		<div class="media-body">
+			<h5 class="mt-0 mb-0">
+				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
+			</h5>
+			{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ moment(movie.tmdb_release_date).format("YYYY") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})<br/>
+			{% if file.version %}{{ file.version }}<br/>{% endif %}
+			{% if file.feature_type_id %}{{ file.plex_title }}<br/>{% endif %}
+			{{ file.quality.quality_title }}
+		</div>
+	{% elif file.tv_series %}
+		{% set tv = file.tv_series %}
+		<a href="{{ url_for('main.file', file_id=file.id) }}">
+			{% include "_tv_poster_small.html" %}
+		</a>
+		<div class="media-body">
+			<h5 class="mt-0 mb-0">
+				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
+			</h5>
+			{{ file.tv_series.tmdb_title if file.tv_series.tmdb_title else file.tv_series.title }}<br/>
+			Season {{ file.season }}, {% if file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}<br/>
+			{{ file.quality.quality_title }}
+		</div>
+	{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

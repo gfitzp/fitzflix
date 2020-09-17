@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+{% if file.movie_id %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=file.movie_id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_files', movie_id=file.movie_id) }}">Files</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ file.basename }}</li>
+	</ol>
+</nav>
+{% elif file.series_id %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}">TV Shows</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">{% if file.season|int == 0 %}Specials{% else %}Season {{ file.season }}{% endif %}</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ file.basename }}</li>
+	</ol>
+</nav>
+{% endif %}
+<h2 class="mt-n2">{{ file.basename }}</h2>
+<p>
+	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em><br>
+	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
+</p>
+{% if file.media_library == "Movies" %}
+	<p>{% if file.feature_type_id %}Special feature{% else %}File{% endif %} for movie <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></p>
+{% elif file.media_library == "TV Shows" %}
+	<p>{% if file.season == 0 %}<a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">Special</a> for{% else %}Episode from{% endif %} TV Series <a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>{% if file.season != 0 %}, <a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">season {{ file.season }}</a>{% endif %}</p>
+{% endif %}
+<p>
+	Fullscreen: {% if file.fullscreen == True %}<span class="badge badge-danger">{{ file.fullscreen }}</span>{% else %}<span class="badge badge-secondary">{{ file.fullscreen }}</span>{% endif %}<br>
+	Container: {{ file.container }}<br>
+	Codec: {{ file.codec }}
+</p>
+{% if audio_tracks or subtitle_tracks %}
+<hr>
+<h3 class="mt-2 mb-2">Tracks</h3>
+<table class="table">
+	{% if audio_tracks %}
+	<thead class="thead-light">
+		<tr>
+			<th scope="col">Audio Track</th>
+			<th scope="col">Language</th>
+			<th scope="col">Format</th>
+			<th scope="col"></th>
+			<th scope="col">Notes</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for audio in audio_tracks %}
+		<tr>
+			<th scope="row">{{ audio.track }}</th>
+			<td>{{ audio.language }}</td>
+			<td>{{ audio.format }}</td>
+			<td>{{ audio.channels }} channel{% if audio.channels|int > 1 %}s{% endif %}</td>
+			<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+	{% endif %}
+	{% if subtitle_tracks %}
+	<thead class="thead-light">
+		<tr>
+			<th scope="col">Subtitle Track</th>
+			<th scope="col">Language</th>
+			<th scope="col">Format</th>
+			<th scope="col"></th>
+			<th scope="col">Notes</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for subtitle in subtitle_tracks %}
+		<tr>
+			<th scope="row">{{ subtitle.track }}</th>
+			<td>{{ subtitle.language }}</td>
+			<td>{{ subtitle.format }}</td>
+			<td>{{ subtitle.elements }} elements</td>
+			<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+	{% endif %}
+</table>
+{% endif %}
+{% if file.container == "Matroska" %}
+<div class="row">
+	<div class="col-md-4">
+		<form action="" method="post">
+			{{ mkvpropedit_form.hidden_tag() }}
+			<div class="form-group">
+				Default audio track:
+				{% for subfield in mkvpropedit_form.default_audio %}
+				<div class="form-check">
+					{{ subfield(class_="form-check-input") }}
+					{{ subfield.label(class_="form-check-label") }}
+				</div>
+				{% endfor %}
+			</div>
+			<div class="form-group">
+				Default subtitle track:
+				{% for subfield in mkvpropedit_form.default_subtitle %}
+				<div class="form-check">
+					{{ subfield(class_="form-check-input") }}
+					{{ subfield.label(class_="form-check-label") }}
+				</div>
+				{% endfor %}
+			</div>
+			<div class="form-group">
+				Forced subtitle tracks:
+				{% for subfield in mkvpropedit_form.forced_subtitles %}
+				<div class="form-check">
+					{{ subfield(class_="form-check-input") }}
+					{{ subfield.label(class_="form-check-label") }}
+				</div>
+				{% endfor %}
+			</div>
+			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
+		</form>
+	</div>
+</div>
+{% endif %}
+<hr>
+<div class="row">
+	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ transcode_form.hidden_tag() }}
+			{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
+		</form>
+		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
+	</div>
+	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ upload_form.hidden_tag() }}
+			{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
+		</form>
+		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
+	</div>
+	<div class="col-sm-4">
+	</div>
+</div>
+{% endblock %}

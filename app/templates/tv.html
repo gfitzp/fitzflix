@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}">TV Shows</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</li>
+	</ol>
+</nav>
+<div class="row mb-n2">
+	<div class="col-md-auto">
+		{% include "_tv_poster_large.html" %}
+	</div>
+	<div class="col-md">
+		<div>
+			<h3>{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h3>
+			{% if tv.tmdb_data_as_of %}
+			<p>{{ tv.tmdb_overview }}</p>
+			{% endif %}
+			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>
+		</div>
+	</div>
+</div>
+<hr>
+<div class="row">
+	{% if seasons %}
+	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+		<div class="dropdown show">
+			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Seasons</a>
+			{% include "_tv_season_dropdown.html" %}
+		</div>
+	</div>
+	{% endif %}
+	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+		<div class="dropdown show">
+			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Find</a>
+			{% include "_shopping_search_dropdown.html" %}
+		</div>
+	</div>
+	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+		<form action="" method="post">
+			{{ transcode_form.hidden_tag() }}
+			{{ transcode_form.transcode_all(class_="btn btn-sm btn-success container") }}
+		</form>
+	</div>
+</div>
+<hr>
+<div class="row">
+	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ tmdb_lookup_form.hidden_tag() }}
+			<div class="form-group">
+				{{ tmdb_lookup_form.tmdb_id.label }}
+				{{ tmdb_lookup_form.tmdb_id(size=10, class_="form-control form-control-sm col-md-4", value=(tv.tmdb_id if tv.tmdb_id)) }}
+			</div>
+			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		{% if tv.tmdb_id %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}
+		<hr class="d-block d-sm-none">
+	</div>
+	<div class="col-sm-4">
+	</div>
+	<div class="col-sm-4">
+	</div>
+</div>
+{% endblock %}

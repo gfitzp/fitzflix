@@ -1,0 +1,23 @@
+# See config.py for all possible configuration variables;
+# the minimum variables that need to be set are listed below.
+
+# Secret key for CSRF tokens
+SECRET_KEY=
+
+# Database connection string; if empty will create a SQLite database
+SQLALCHEMY_DATABASE_URI=
+
+# If set to any value, then original files will first be backed up to AWS
+# before any processing is done
+ARCHIVE_ORIGINAL_MEDIA=
+
+# AWS S3 connection information
+AWS_BUCKET=
+AWS_ACCESS_KEY=
+AWS_SECRET_KEY=
+
+# Mail server connection information
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_SERVER=
+MAIL_PORT=

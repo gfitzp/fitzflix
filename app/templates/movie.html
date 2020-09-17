@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ title }}</li>
+	</ol>
+</nav>
+<div class="row mb-n2">
+	<div class="col-md-auto">
+		{% include "_movie_poster_large.html" %}
+	</div>
+	<div class="col-md">
+		<div>
+			<h3>{{ title }}</h3>
+			{% if movie.tmdb_data_as_of %}
+				<p>
+					{{ movie.tmdb_overview }} —&nbsp;{{ movie.tmdb_runtime }}&nbsp;minutes{% if genres %};&nbsp;{{ genres|join(",\u00A0") }}{% endif %}{% for c in movie.certifications %}{% if c.country == "US" %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ c.certification }}</span>{% endif %}{% endfor %}
+					{% if review %}&nbsp;
+						{% for n in range(review.whole_stars) %}
+							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-star-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+								<path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.283.95l-3.523 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/>
+							</svg>
+						{% endfor %}
+						{% if review.half_stars == 1 %}
+							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-star-half" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+								<path fill-rule="evenodd" d="M5.354 5.119L7.538.792A.516.516 0 0 1 8 .5c.183 0 .366.097.465.292l2.184 4.327 4.898.696A.537.537 0 0 1 16 6.32a.55.55 0 0 1-.17.445l-3.523 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256a.519.519 0 0 1-.146.05c-.341.06-.668-.254-.6-.642l.83-4.73L.173 6.765a.55.55 0 0 1-.171-.403.59.59 0 0 1 .084-.302.513.513 0 0 1 .37-.245l4.898-.696zM8 12.027c.08 0 .16.018.232.056l3.686 1.894-.694-3.957a.564.564 0 0 1 .163-.505l2.906-2.77-4.052-.576a.525.525 0 0 1-.393-.288L8.002 2.223 8 2.226v9.8z"/>
+							</svg>
+						{% endif %}
+					{% endif %}
+				</p>
+			{% endif %}
+			{% if movie.criterion_spine_number and movie.criterion_set_title %}
+				<p>Criterion Collection spine #{{ movie.criterion_spine_number }}, part of the {{ movie.criterion_set_title }} collector's set.</p>
+			{% elif movie.criterion_spine_number %}
+				<p>Criterion Collection spine #{{ movie.criterion_spine_number }}</p>
+			{% elif movie.criterion_set_title %}
+				<p>Part of the Criterion Collection's {{ movie.criterion_set_title }} collector's set.</p>
+			{% endif %}
+			{% if starring_roles %}
+				<div class="row ml-1">
+					{% for role in starring_roles %}
+						<figure class="figure text-center">
+							<a href="{{ url_for('main.movie_library', credit=role.starring.id) }}">
+								{% if role.starring.tmdb_profile_path %}
+									<img src="/static/tmdb/person/{{ role.starring.id }}/w185/{{ role.starring.tmdb_profile_path }}" alt="{{ role.starring.name }}" class="rounded mx-3" style="width: 92px;">
+								{% else %}
+									<div class="border rounded d-flex justify-content-center align-items-center text-secondary mx-3" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
+								{% endif %}
+							</a>
+							<figcaption class="figure-caption mx-1"><a href="{{ url_for('main.movie_library', credit=role.starring.id) }}" class="text-muted text-nowrap">{{ role.starring.name }}</a></figcaption>
+						</figure>
+					{% endfor %}
+				</div>
+			{% endif %}
+		</div>
+	</div>
+</div>
+<hr>
+<div class="row">
+	<div class="col-md-8">
+		<form action="" method="post">
+			{{ movie_review_form.hidden_tag() }}
+			<div class="row">
+				<div class="form-group col-sm-5">
+					{{ movie_review_form.rating.label }}
+					{{ movie_review_form.rating(size=10, class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.rating.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+				<div class="form-group col-sm-5">
+					{{ movie_review_form.date_watched.label }}
+					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.date_watched.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+			</div>
+			<div class="form-group">
+				{{ movie_review_form.review.label }}
+				{{ movie_review_form.review(class_="form-control form-control-sm") }}
+				{% for error in movie_review_form.review.errors %}
+				<div class="text-danger small">{{ error }}</div>
+				{% endfor %}
+			</div>
+			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+		</form>
+	</div>
+</div>
+<hr>
+<div class="row">
+	<div class="col-sm-3 col-md-2 my-1">
+		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
+	</div>
+	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+		<div class="dropdown show">
+			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+				Find
+			</a>
+			{% include "_shopping_search_dropdown.html" %}
+		</div>
+	</div>
+	<div class="col-md mt-1 mb-1 ml-n3">
+		<hr class="d-block d-md-none">
+		{% if movie.imdb_id %}
+		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" class="px-3"><img src="/static/imdb_logo.png" alt="IMDb" style="height: 30px;"></a>
+		{% endif %}
+		{% if movie.tmdb_id %}
+		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" class="px-3"><img src="/static/tmdb_logo.svg" alt="TMDb" style="height: 30px;"></a>
+		{% endif %}
+		<a href="https://letterboxd.com/search/{{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }} {{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}" class="px-3"><img src="/static/letterboxd_logo_button.svg" alt="Letterboxd" style="height: 30px;"></a>
+	</div>
+</div>
+<hr>
+<h5>Movie Data</h5>
+<p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>
+<div class="row">
+	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ tmdb_lookup_form.hidden_tag() }}
+			<div class="form-group">
+				{{ tmdb_lookup_form.tmdb_id.label }}
+				{{ tmdb_lookup_form.tmdb_id(size=10, class_="form-control form-control-sm col-md-4", value=(movie.tmdb_id if movie.tmdb_id)) }}
+			</div>
+			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		{% if movie.tmdb_id %}<em class="small">TMDB data as of {{ moment(movie.tmdb_data_as_of).fromNow() }}</em>{% endif %}
+		<hr class="d-block d-sm-none">
+	</div>
+	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ criterion_form.hidden_tag() }}
+			<div class="form-group">
+				{{ criterion_form.spine_number.label }}
+				{{ criterion_form.spine_number(class_="form-control form-control-sm col-md-4", value=(movie.criterion_spine_number if movie.criterion_spine_number)) }}
+				{% for error in criterion_form.spine_number.errors %}
+				<div class="text-danger small">{{ error }}</div>
+				{% endfor %}
+			</div>
+			<div class="form-group">
+				{{ criterion_form.set_title.label }}
+				{{ criterion_form.set_title(class_="form-control form-control-sm", value=(movie.criterion_set_title if movie.criterion_set_title)) }}
+				{% for error in criterion_form.set_title.errors %}
+				<div class="text-danger small">{{ error }}</div>
+				{% endfor %}
+			</div>
+			<div class="form-check">
+				{{ criterion_form.in_print(class_="form-check-input", checked=(movie.criterion_in_print|default(false, true))) }}
+				{{ criterion_form.in_print.label }}
+			</div>
+			<div class="form-check">
+				{{ criterion_form.owned(class_="form-check-input", checked=(movie.criterion_disc_owned|default(false, true))) }}
+				{{ criterion_form.owned.label }}
+			</div>
+			{{ criterion_form.criterion_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+	</div>
+	<div class="col-sm-4">
+	</div>
+</div>
+{% endblock %}

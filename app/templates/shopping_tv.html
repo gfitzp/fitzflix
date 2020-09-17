@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<div class="mt-n2">
+	<h2>{{ title }}</h2>
+</div>
+<div class="row align-items-end mt-n2">
+	<div class="col-md-6 mb-n4 mr-auto">
+		<form action="" method="post">
+			{{ filter_form.hidden_tag() }}
+			<div class="form-row">
+				<div class="col-12 col-sm-11">
+					<div class="form-group form-inline">
+						{{ filter_form.quality.label(class_="mr-2") }}
+						{{ filter_form.quality(class_="form-control form-control-sm col-5 mr-2") }}
+						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col") }}
+					</div>
+				</div>
+			</div>
+		</form>
+	</div>
+	<div class="col-md-6 col-lg-4 mt-4 mb-n2">
+		<form class="form-inline" action="" method="post">
+			{{ library_search_form.hidden_tag() }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm mr-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ml-2 col") }}
+		</form>
+	</div>
+</div>
+<hr>
+{% if series %}
+{% for tv in series %}
+<div class="media">
+	<a href="{{ url_for('main.tv', series_id=tv.id) }}">
+		{% include "_tv_poster_small.html" %}
+	</a>
+	<div class="media-body">
+		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a></h5>
+		{% if tv.seasons %}
+			<ul class="list-group col-12 col-md-8 col-lg-4">
+			{% for season in tv.seasons %}
+				<li class="list-group-item">
+					<h6><a href="{{ url_for('main.season', series_id=tv.id, season=season.season) }}"><span class="text-body">{% if season.season == 0 %}Specials{% else %}Season {{ season.season }}{% endif %}</span></a></h6>
+					<p class="mt-n2"><span class="text-muted">{{ season.instruction }}</span></p>
+					{% if season.instruction != "Already owned" %}
+						<div class="dropdown show mt-n2">
+							<a class="btn btn-primary btn-sm dropdown-toggle" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+								Find
+							</a>
+							{% include "_shopping_search_dropdown.html" %}
+						</div>
+					{% endif %}
+				</li>
+			{% endfor %}
+			</ul>
+		{% endif %}
+	</div>
+</div>
+<hr>
+{% endfor %}
+{% endif %}
+{% endblock %}

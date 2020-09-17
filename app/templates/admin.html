@@ -1,0 +1,45 @@
+{% extends "base.html" %}=
+
+{% block app_content %}
+<h2 class="mt-2 mb-n2">Admin</h2>
+<hr>
+<div class="row my-2">
+    <div class="col-md-4">
+    	<p>Email address: {{ current_user.email }}</p>
+    	<form action="" method="post">
+    		{{ email_form.hidden_tag() }}
+    		<div class="form-group">
+				{{ email_form.email.label }}
+				{{ email_form.email(size=32, class_="form-control") }}
+			</div>
+			<div class="form-group">
+				{{ email_form.email2.label }}
+				{{ email_form.email2(size=32, class_="form-control") }}
+			</div>
+			{{ email_form.submit(class_="btn btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-4">
+    	<p>API key:<br>{{ current_user.api_key }}</p>
+    	<form action="" method="post">
+    		{{ api_refresh_form.hidden_tag() }}
+    		{{ api_refresh_form.regenerate_key_submit(class_="btn btn-warning") }}
+    	</form>
+    </div>
+</div>
+<hr>
+<div class="row my-2">
+    <div class="col-md-4">
+    	<form action="" method="post">
+    		{{ criterion_refresh_form.hidden_tag() }}
+    		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-4">
+    	<form action="" method="post">
+    		{{ tmdb_refresh_form.hidden_tag() }}
+    		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-warning") }}
+    	</form>
+    </div>
+</div>
+{% endblock %}

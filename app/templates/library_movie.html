@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		<form class="form-inline float-sm-right mb-2" action="" method="post">
+			{{ library_search_form.hidden_tag() }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm mr-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ml-2 col") }}
+		</form>
+	</div>
+</div>
+<hr>
+{% if movies %}
+<div class="row">
+	{% for file, movie, quality in movies %}
+	<div class="col-12 col-sm-6 col-md-6 col-lg-4 col-xl-3 d-none d-sm-block">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
+			{% include "_movie_poster_large.html" %}
+		</a>
+		<p class="text-center">
+			<strong><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></strong><br>
+			<span class="text-muted">{% if file.version %}{{ file.version }}&nbsp;–&nbsp;{% endif %}{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
+		</p>
+	</div>
+	{% endfor %}
+</div>
+
+<!-- Display differently on mobile device -->
+
+<div class="d-block d-sm-none mt-n2">
+	<div class="list-group d-flex">
+	{% for file, movie, quality in movies %}
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
+			<div>
+				{% include "_movie_poster_small.html" %}
+				<h6><span class="text-body">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
+				<p class="mt-n2">
+					<span class="text-muted">{% if file.version %}<span class="text-body">{{ file.version }}</span>&nbsp;–&nbsp;{% endif %}{{ quality.quality_title }}</span>
+				</p>
+			</div>
+		</a>
+	{% endfor %}
+	</div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-2 mb-2">Sign In</h2>
+<hr>
+<div class="row">
+	<div class="col-md-4">
+		<form action="" method="post">
+			{{ form.hidden_tag() }}
+			<div class="form-group">
+				{{ form.email.label }}
+				{{ form.email(size=32, class_="form-control") }}
+			</div>
+			<div class="form-group">
+				{{ form.password.label }}
+				{{ form.password(size=32, class_="form-control") }}
+			</div>
+			<div class="form-check">
+				{{ form.remember_me(class_="form-check-input") }}
+				{{ form.remember_me.label }}
+			</div>
+			{{ form.submit(class_="btn btn-primary") }}
+		</form>
+	</div>
+</div>
+<p/>
+{% if not prevent_creation %}<p>New user? <a href="{{ url_for('auth.register') }}">Click to register!</a></p>{% endif %}
+<p>Forget your password? <a href="{{ url_for('auth.reset_password_request') }}">Click here to reset it</a></p>
+{% endblock %}

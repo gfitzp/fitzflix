@@ -1,0 +1,9 @@
+{% if movie.tmdb_poster_path %}
+	<img src="/static/tmdb/movie/{{ movie.tmdb_id }}/poster/w500{{ movie.tmdb_poster_path }}" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
+{% else %}
+	<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
+		<svg width="3em" height="3em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+			<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
+		</svg>
+	</div>
+{% endif %}

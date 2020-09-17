@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		<form action="" method="post">
+			{{ filter_form.hidden_tag() }}
+			{% for subfield in filter_form.filter_status %}
+			<div class="form-check form-check-inline">
+				{{ subfield(class_="form-check-input") }}
+				{{ subfield.label(class_="form-check-label") }}
+			</div>
+			{% endfor %}
+			{{ filter_form.filter_submit(class_="btn btn-sm btn-primary mb-2") }}
+		</form>
+	</div>
+</div>
+<hr>
+{% if movies %}
+<div class="d-none d-sm-block">
+	{% for file, movie, quality in movies %}
+	<div class="media mb-2">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
+			{% include "_movie_poster_small.html" %}
+		</a>
+		<div class="media-body">
+			<h5>#{{ movie.criterion_spine_number }} - <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></h5>
+			<p class="mt-n2 text-muted">
+				{% if file.version %}{{ file.version }}<br>{% endif %}
+				{% if file.fullscreen %}Full Screen<br>{% endif %}
+				{{ quality.quality_title }}
+			</p>
+		</div>
+	</div>
+	{% endfor %}
+</div>
+
+<!-- Display differently on mobile device -->
+
+<div class="d-block d-sm-none mt-n2">
+	<div class="list-group d-flex">
+	{% for file, movie, quality in movies %}
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
+			<div>
+				{% include "_movie_poster_small.html" %}
+				<h6><span class="text-body">#{{ movie.criterion_spine_number }} - {{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
+				<p class="mt-n2">
+					<span class="text-muted">{% if file.version %}<span class="text-body">{{ file.version }}</span>&nbsp;–&nbsp;{% endif %}{{ quality.quality_title }}</span>
+				</p>
+			</div>
+		</a>
+	{% endfor %}
+	</div>
+</div>
+
+{% else %}
+	<h5>There are no Criterion Collection films in the library.</h5>
+{% endif %}
+{% endblock %}

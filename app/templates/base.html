@@ -1,0 +1,174 @@
+{% extends "bootstrap.html" %}
+
+{% block title %}
+	{% if title %}{{ title }} - Fitzflix{% else %}Fitzflix{% endif %}
+{% endblock %}
+
+{% block navbar %}
+<nav class="navbar navbar-expand-lg navbar-light bg-light">
+	<a class="navbar-brand" href="#">Fitzflix</a>
+	<button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+		<span class="navbar-toggler-icon"></span>
+	</button>
+	<div class="collapse navbar-collapse" id="navbarNav">
+		<ul class="navbar-nav">
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.index') }}">Home</a>
+			</li>
+			{% if not current_user.is_anonymous %}
+			<li class="nav-item dropdown">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					Library
+				</a>
+				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+					<a class="dropdown-item" href="{{ url_for('main.movie_library') }}">Movies</a>
+					<a class="dropdown-item" href="{{ url_for('main.tv_library') }}">TV Shows</a>
+					<div class="dropdown-divider"></div>
+					<a class="dropdown-item" href="{{ url_for('main.criterion_collection') }}">Criterion Collection</a>
+				</div>
+			</li>
+			<li class="nav-item dropdown">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					Shopping Lists
+				</a>
+				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+					<a class="dropdown-item" href="{{ url_for('main.movie_shopping') }}">Movies</a>
+					<a class="dropdown-item" href="{{ url_for('main.tv_shopping') }}">TV Shows</a>
+					<div class="dropdown-divider"></div>
+					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', max_quality='15', title='Below WEBDL-1080p') }}">Below WEBDL-1080p</a>
+					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', library='criterion', title='Criterion Collection movies to upgrade') }}">Criterion Collection</a>
+					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', min_quality='3', max_quality='21', title='HDTV-quality movies') }}">HDTV Quality</a>
+				</div>
+			</li>
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.reviews') }}">My Reviews</a>
+			</li>
+			{% endif %}
+		</ul>
+		<ul class="navbar-nav ml-auto">
+			{% if current_user.is_anonymous %}
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
+			</li>
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
+			</li>
+			{% else %}
+			<li class="nav-item">
+				{% set queue_count = current_user.get_queue_count() %}
+				<a class="nav-link" href="#" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
+			</li>
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.admin') }}">Admin</a>
+			</li>
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
+			</li>
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('auth.logout') }}">Logout</a>
+			</li>
+			{% endif %}
+		</ul>
+	</div>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-2 mb-2">
+	{% if current_user.is_authenticated %}
+	<div id="running-tasks">
+		{% with tasks = current_user.get_tasks_in_progress() %}
+		{% if tasks %}
+			{% for task in tasks %}
+			<div class="alert alert-info mt-3" role="alert" id="{{ task.job }}">{{ task.description }}...</div>
+			{% endfor %}
+		{% endif %}
+		{% endwith %}
+	</div>
+	{% endif %}
+
+
+	<div id="flash-notifications">
+		{% with messages = get_flashed_messages(with_categories=true) %}
+		{% if messages %}
+			{% for category, message in messages %}
+			{% if category == "message" %}
+			<div class="alert alert-info mt-3" role="alert">{{ message }}</div>
+			{% else %}
+			<div class="alert alert-{{ category }} mt-3" role="alert">{{ message }}</div>
+			{% endif %}
+			{% endfor %}
+		{% endif %}
+		{% endwith %}
+	</div>
+
+	{# application content goes in the app_content block #}
+	{% block app_content %}
+	{% endblock %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+	{{ super() }}
+    {{ moment.include_moment(version="2.27.0") }}
+	<script>
+		function set_queue_count(n) {
+            $("#queue_count").text(n);
+        }
+
+        {%if current_user.is_authenticated %}
+        $(function() {
+            setInterval(function() {
+                $.ajax('{{ url_for('api.queue_details') }}').done(
+                    function(queue_details) {
+                        console.log(queue_details);
+                        // TODO: make an increase in the queue count noticible
+                        // get the current contents of the #queue-count id
+                        // if queue_details.count > #queue-count value, flash the queue badge
+                        set_queue_count(queue_details.count);
+                        console.log(queue_details.running);
+                        running = queue_details.running;
+                        oldTasks = document.getElementById("running-tasks")
+                        while (oldTasks.firstChild) {
+                            oldTasks.firstChild.remove();
+                        }
+                        for (var i = 0; i < running.length; i++) {
+                            var newAlert = document.createElement("div");
+                            newAlert.className = "alert alert-info mt-3";
+                            newAlert.setAttribute("role", "alert");
+                            newAlert.id = running[i].job;
+                            var newProgress = document.createElement("div");
+							newProgress.className = "progress mt-1";
+							var newProgressBar = document.createElement("div");
+							newProgressBar.setAttribute("role", "progressbar");
+							newProgressBar.setAttribute("aria-valuemin", "0");
+							newProgressBar.setAttribute("aria-valuemax", "100");
+                            if (running[i].progress >= 0) {
+	                            $(newAlert).text(running[i].description + "... " + running[i].progress + "%");
+	                            newProgressBar.className = "progress-bar bg-info";
+	                            newProgressBar.setAttribute("style", "width: " + running[i].progress + "%");
+	                            newProgressBar.setAttribute("aria-valuenow", running[i].progress);
+	                            console.log(running[i].job, running[i].description, running[i].progress);
+	                        } else {
+								$(newAlert).text(running[i].description + "...");
+	                            newProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
+	                            newProgressBar.setAttribute("style", "width: 100%");
+	                            newProgressBar.setAttribute("aria-valuenow", "100");
+	                        	console.log(running[i].job, running[i].description);
+	                        }
+	                        newProgress.appendChild(newProgressBar);
+                            document.getElementById("running-tasks").appendChild(newAlert);
+                            document.getElementById(newAlert.id).appendChild(newProgress);
+//                             set_task_progress(running[i].job, running[i].progress);
+                        }
+                    }
+                );
+            }, 5000);
+        });
+
+        function set_task_progress(task_id, progress) {
+            $("#" + task_id + "-progress").text(progress + "%");
+        }
+        {% endif %}
+    </script>
+{% endblock %}
