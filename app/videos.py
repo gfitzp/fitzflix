@@ -165,17 +165,9 @@ def localization_task(file_path):
             current_app.logger.info(f"Removed lock {lock}")
             return False
 
-        # Save the untouched filename in case we need to recreate the file.
-        # It's the same as the aws_untouched_key, minus the untouched prefix
+        # Save the untouched filename in case we need to recreate the file
 
-        # fmt: off
-        aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
-        aws_good_chars = [" and ",  "", " at ", "-", "-", "-", "-",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
-        # fmt: on
-
-        file_details["untouched_basename"] = sanitize_string(
-            os.path.basename(file_path), aws_bad_chars, aws_good_chars
-        )
+        file_details["untouched_basename"] = os.path.basename(file_path)
 
         # Upload the untouched file to AWS S3 storage for safekeeping
 
