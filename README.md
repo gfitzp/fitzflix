@@ -11,7 +11,17 @@ pip install gunicorn pymysql &&
 flask db upgrade
 ```
 
-## Running
+## Running via supervisor
+
+Update `command`, `directory`, and `user` fields in `fitzflix_supervisor.ini` file with installation and user information.
+
+```
+brew install supervisor &&
+cp fitzflix_supervisor.ini /usr/local/etc/supervisor.d/ &&
+brew services start supervisor
+```
+
+## Running Manually
 
 ### Redis
 
