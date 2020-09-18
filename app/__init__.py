@@ -9,6 +9,7 @@ import rq
 
 from redis import Redis
 from redlock import Redlock
+from rq.registry import StartedJobRegistry
 from rq_scheduler import Scheduler
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -45,20 +46,32 @@ def create_app(config_class=Config):
                 "."
             ) and not os.path.basename(event.dest_path).startswith("."):
 
-                # Sleep for 300-500ms to prevent two workers trying to grab the same
+                # Sleep for 1-60 seconds to prevent two workers trying to grab the same
                 # file simultaneously
 
-                time.sleep(random.randint(2, 3) * 0.1)
+                time.sleep(random.randint(1, 60))
 
-                app.logger.info(
-                    f"'{os.path.basename(event.dest_path)}' Found in import directory"
-                )
-                app.task_queue.enqueue(
-                    "app.videos.localization_task",
-                    args=(event.dest_path,),
-                    job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    description=f"'{os.path.basename(event.dest_path)}'",
-                )
+                job_queue = []
+                tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                job_queue.extend(tasks_running.get_job_ids())
+                job_queue.extend(app.task_queue.job_ids)
+
+                app.logger.debug(job_queue)
+
+                # Use the file basename as the job id, so we can see if this file is
+                # already in the job_queue, and only add it if it doesn't already exist
+
+                if (os.path.basename(event.dest_path) not in job_queue):
+                    app.logger.info(
+                        f"'{os.path.basename(event.dest_path)}' Found in import directory"
+                    )
+                    job = app.task_queue.enqueue(
+                        "app.videos.localization_task",
+                        args=(event.dest_path,),
+                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{os.path.basename(event.dest_path)}'",
+                        job_id=os.path.basename(event.dest_path),
+                    )
 
         def on_created(self, event):
             """Process a file when it appears in the watched directory."""
@@ -67,20 +80,32 @@ def create_app(config_class=Config):
 
             if not os.path.basename(event.src_path).startswith("."):
 
-                # Sleep for 300-500ms to prevent two workers trying to grab the same
+                # Sleep for 1-60 seconds to prevent two workers trying to grab the same
                 # file simultaneously
 
-                time.sleep(random.randint(2, 3) * 0.1)
+                time.sleep(random.randint(1, 60))
 
-                app.logger.info(
-                    f"'{os.path.basename(event.src_path)}' Found in import directory"
-                )
-                app.task_queue.enqueue(
-                    "app.videos.localization_task",
-                    args=(event.src_path,),
-                    job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    description=f"'{os.path.basename(event.src_path)}'",
-                )
+                job_queue = []
+                tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                job_queue.extend(tasks_running.get_job_ids())
+                job_queue.extend(app.task_queue.job_ids)
+
+                app.logger.debug(job_queue)
+
+                # Use the file basename as the job id, so we can see if this file is
+                # already in the job_queue, and only add it if it doesn't already exist
+
+                if (os.path.basename(event.src_path) not in job_queue):
+                    app.logger.info(
+                        f"'{os.path.basename(event.src_path)}' Found in import directory"
+                    )
+                    job = app.task_queue.enqueue(
+                        "app.videos.localization_task",
+                        args=(event.src_path,),
+                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{os.path.basename(event.src_path)}'",
+                        job_id=os.path.basename(event.src_path),
+                    )
 
         def on_any_event(self, event):
             """Process on any filesystem event."""
