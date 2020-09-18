@@ -46,32 +46,33 @@ def create_app(config_class=Config):
                 "."
             ) and not os.path.basename(event.dest_path).startswith("."):
 
-                # Sleep for 1-60 seconds to prevent two workers trying to grab the same
-                # file simultaneously
+                # Create redis lock using the filename, to prevent multiple workers
+                # from grabbing the same file at once
 
-                time.sleep(random.randint(1, 60))
+                lock = app.lock_manager.lock(os.path.basename(event.dest_path), 1000)
+                if lock:
+                    job_queue = []
+                    tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                    job_queue.extend(tasks_running.get_job_ids())
+                    job_queue.extend(app.task_queue.job_ids)
+                    app.logger.debug(job_queue)
 
-                job_queue = []
-                tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
-                job_queue.extend(tasks_running.get_job_ids())
-                job_queue.extend(app.task_queue.job_ids)
+                    # Use the file basename as the job id, so we can see if this file is
+                    # already in the job_queue, and only add it if it doesn't already exist
 
-                app.logger.debug(job_queue)
+                    if (os.path.basename(event.dest_path) not in job_queue):
+                        app.logger.info(
+                            f"'{os.path.basename(event.dest_path)}' Found in import directory"
+                        )
+                        job = app.task_queue.enqueue(
+                            "app.videos.localization_task",
+                            args=(event.dest_path,),
+                            job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                            description=f"'{os.path.basename(event.dest_path)}'",
+                            job_id=os.path.basename(event.dest_path),
+                        )
 
-                # Use the file basename as the job id, so we can see if this file is
-                # already in the job_queue, and only add it if it doesn't already exist
-
-                if (os.path.basename(event.dest_path) not in job_queue):
-                    app.logger.info(
-                        f"'{os.path.basename(event.dest_path)}' Found in import directory"
-                    )
-                    job = app.task_queue.enqueue(
-                        "app.videos.localization_task",
-                        args=(event.dest_path,),
-                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        description=f"'{os.path.basename(event.dest_path)}'",
-                        job_id=os.path.basename(event.dest_path),
-                    )
+                    app.lock_manager.unlock(lock)
 
         def on_created(self, event):
             """Process a file when it appears in the watched directory."""
@@ -80,32 +81,33 @@ def create_app(config_class=Config):
 
             if not os.path.basename(event.src_path).startswith("."):
 
-                # Sleep for 1-60 seconds to prevent two workers trying to grab the same
-                # file simultaneously
+                # Create redis lock using the filename, to prevent multiple workers
+                # from grabbing the same file at once
 
-                time.sleep(random.randint(1, 60))
+                lock = app.lock_manager.lock(os.path.basename(event.src_path), 1000)
+                if lock:
+                    job_queue = []
+                    tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                    job_queue.extend(tasks_running.get_job_ids())
+                    job_queue.extend(app.task_queue.job_ids)
+                    app.logger.debug(job_queue)
 
-                job_queue = []
-                tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
-                job_queue.extend(tasks_running.get_job_ids())
-                job_queue.extend(app.task_queue.job_ids)
+                    # Use the file basename as the job id, so we can see if this file is
+                    # already in the job_queue, and only add it if it doesn't already exist
 
-                app.logger.debug(job_queue)
+                    if (os.path.basename(event.src_path) not in job_queue):
+                        app.logger.info(
+                            f"'{os.path.basename(event.src_path)}' Found in import directory"
+                        )
+                        job = app.task_queue.enqueue(
+                            "app.videos.localization_task",
+                            args=(event.src_path,),
+                            job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                            description=f"'{os.path.basename(event.src_path)}'",
+                            job_id=os.path.basename(event.src_path),
+                        )
 
-                # Use the file basename as the job id, so we can see if this file is
-                # already in the job_queue, and only add it if it doesn't already exist
-
-                if (os.path.basename(event.src_path) not in job_queue):
-                    app.logger.info(
-                        f"'{os.path.basename(event.src_path)}' Found in import directory"
-                    )
-                    job = app.task_queue.enqueue(
-                        "app.videos.localization_task",
-                        args=(event.src_path,),
-                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        description=f"'{os.path.basename(event.src_path)}'",
-                        job_id=os.path.basename(event.src_path),
-                    )
+                    app.lock_manager.unlock(lock)
 
         def on_any_event(self, event):
             """Process on any filesystem event."""
