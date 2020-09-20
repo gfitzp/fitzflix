@@ -1303,7 +1303,7 @@ def aws_upload(file_path, key_prefix="", key_name=None):
 
     key = os.path.join(key_prefix, key)
 
-    config = Config(connect_timeout=20, retries={"max_attempts": 0})
+    config = Config(connect_timeout=20, retries={"max_attempts": 3})
     s3_client = boto3.client(
         "s3",
         config=config,
