@@ -108,6 +108,7 @@
 				</div>
 				{% endfor %}
 			</div>
+			{% if mkvpropedit_form.forced_subtitles %}
 			<div class="form-group">
 				Forced subtitle tracks:
 				{% for subfield in mkvpropedit_form.forced_subtitles %}
@@ -117,6 +118,7 @@
 				</div>
 				{% endfor %}
 			</div>
+			{% endif %}
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
 		</form>
 	</div>
