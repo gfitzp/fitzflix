@@ -90,34 +90,36 @@
 	<div class="col-md-4">
 		<form action="" method="post">
 			{{ mkvpropedit_form.hidden_tag() }}
-			<div class="form-group">
-				Default audio track:
-				{% for subfield in mkvpropedit_form.default_audio %}
-				<div class="form-check">
-					{{ subfield(class_="form-check-input") }}
-					{{ subfield.label(class_="form-check-label") }}
+			{% if audio_tracks %}
+				<div class="form-group">
+					Default audio track:
+					{% for subfield in mkvpropedit_form.default_audio %}
+					<div class="form-check">
+						{{ subfield(class_="form-check-input") }}
+						{{ subfield.label(class_="form-check-label") }}
+					</div>
+					{% endfor %}
 				</div>
-				{% endfor %}
-			</div>
-			<div class="form-group">
-				Default subtitle track:
-				{% for subfield in mkvpropedit_form.default_subtitle %}
-				<div class="form-check">
-					{{ subfield(class_="form-check-input") }}
-					{{ subfield.label(class_="form-check-label") }}
-				</div>
-				{% endfor %}
-			</div>
+			{% endif %}
 			{% if subtitle_tracks %}
-			<div class="form-group">
-				Forced subtitle tracks:
-				{% for subfield in mkvpropedit_form.forced_subtitles %}
-				<div class="form-check">
-					{{ subfield(class_="form-check-input") }}
-					{{ subfield.label(class_="form-check-label") }}
+				<div class="form-group">
+					Default subtitle track:
+					{% for subfield in mkvpropedit_form.default_subtitle %}
+					<div class="form-check">
+						{{ subfield(class_="form-check-input") }}
+						{{ subfield.label(class_="form-check-label") }}
+					</div>
+					{% endfor %}
 				</div>
-				{% endfor %}
-			</div>
+				<div class="form-group">
+					Forced subtitle tracks:
+					{% for subfield in mkvpropedit_form.forced_subtitles %}
+					<div class="form-check">
+						{{ subfield(class_="form-check-input") }}
+						{{ subfield.label(class_="form-check-label") }}
+					</div>
+					{% endfor %}
+				</div>
 			{% endif %}
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
 		</form>
