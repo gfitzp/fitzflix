@@ -1253,11 +1253,19 @@ def aws_rename(old_key, new_key):
 
     job = get_current_job()
 
-    #     s3_client = boto3.client(
-    #         "s3",
-    #         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-    #         aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    #     )
+    # Sanitize the key name to remove problematic characters
+    # see https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
+
+    # fmt: off
+    aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
+    aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
+    # fmt: on
+
+    new_key = sanitize_string(new_key, aws_bad_chars, aws_good_chars)
+
+    # If the keys are the same after sanitizing, just pretend we renamed one to the other
+    if old_key == new_key:
+        return new_key, datetime.utcnow()
 
     session = boto3.Session(
         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
