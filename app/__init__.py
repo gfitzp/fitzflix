@@ -52,7 +52,9 @@ def create_app(config_class=Config):
                 lock = app.lock_manager.lock(os.path.basename(event.dest_path), 1000)
                 if lock:
                     job_queue = []
-                    tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                    tasks_running = StartedJobRegistry(
+                        "fitzflix-tasks", connection=app.redis
+                    )
                     job_queue.extend(tasks_running.get_job_ids())
                     job_queue.extend(app.task_queue.job_ids)
                     app.logger.debug(job_queue)
@@ -60,7 +62,7 @@ def create_app(config_class=Config):
                     # Use the file basename as the job id, so we can see if this file is
                     # already in the job_queue, and only add it if it doesn't already exist
 
-                    if (os.path.basename(event.dest_path) not in job_queue):
+                    if os.path.basename(event.dest_path) not in job_queue:
                         app.logger.info(
                             f"'{os.path.basename(event.dest_path)}' Found in import directory"
                         )
@@ -87,7 +89,9 @@ def create_app(config_class=Config):
                 lock = app.lock_manager.lock(os.path.basename(event.src_path), 1000)
                 if lock:
                     job_queue = []
-                    tasks_running = StartedJobRegistry("fitzflix-tasks", connection=app.redis)
+                    tasks_running = StartedJobRegistry(
+                        "fitzflix-tasks", connection=app.redis
+                    )
                     job_queue.extend(tasks_running.get_job_ids())
                     job_queue.extend(app.task_queue.job_ids)
                     app.logger.debug(job_queue)
@@ -95,7 +99,7 @@ def create_app(config_class=Config):
                     # Use the file basename as the job id, so we can see if this file is
                     # already in the job_queue, and only add it if it doesn't already exist
 
-                    if (os.path.basename(event.src_path) not in job_queue):
+                    if os.path.basename(event.src_path) not in job_queue:
                         app.logger.info(
                             f"'{os.path.basename(event.src_path)}' Found in import directory"
                         )
