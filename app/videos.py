@@ -628,6 +628,11 @@ def finalize_localization(file_path, file_details, lock):
                 file.codec = track.codec_id
                 break
 
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.bit_rate:
+                file.video_bitrate_kbps = track.bit_rate / 1000
+                break
+
         # Put the final touches on the output file and move it into place
 
         if file_details.get("container") == "Matroska":
