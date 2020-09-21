@@ -1124,6 +1124,7 @@ class File(db.Model, LibraryMixin):
     container = db.Column(db.String(64))
     format = db.Column(db.String(64))
     codec = db.Column(db.String(64))
+    video_bitrate_kbps = db.Column(db.Integer)
     date_added = db.Column(
         db.DateTime, nullable=False, index=True, default=datetime.utcnow
     )
