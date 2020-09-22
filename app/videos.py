@@ -1253,15 +1253,7 @@ def aws_rename(old_key, new_key):
 
     job = get_current_job()
 
-    # Sanitize the key name to remove problematic characters
-    # see https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
-
-    # fmt: off
-    aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
-    aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
-    # fmt: on
-
-    new_key = sanitize_string(new_key, aws_bad_chars, aws_good_chars)
+    new_key = sanitize_s3_key(new_key)
 
     # If the keys are the same after sanitizing, just pretend we renamed one to the other
     if old_key == new_key:
@@ -1298,21 +1290,11 @@ def aws_upload(file_path, key_prefix="", key_name=None):
         )
         return None
 
-    # Sanitize the key name to remove problematic characters
-    # see https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
-
-    # fmt: off
-    aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
-    aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
-    # fmt: on
-
     if key_name:
-        key = sanitize_string(key_name, aws_bad_chars, aws_good_chars)
+        key = sanitize_s3_key(key_name)
 
     else:
-        key = sanitize_string(
-            os.path.basename(file_path), aws_bad_chars, aws_good_chars
-        )
+        key = sanitize_s3_key(os.path.basename(file_path))
 
     key = os.path.join(key_prefix, key)
 
@@ -1421,6 +1403,21 @@ def calculate_etag(file_path):
         return (
             hashlib.md5(b"".join(md5_digests)).hexdigest() + "-" + str(len(md5_digests))
         )
+
+
+def sanitize_s3_key(key):
+    """Sanitize the key name to remove problematic characters.
+
+    See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
+    """
+
+    # fmt: off
+    aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
+    aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
+    # fmt: on
+
+    key = sanitize_string(key, aws_bad_chars, aws_good_chars)
+    return key
 
 
 def evaluate_filename(file_path):
