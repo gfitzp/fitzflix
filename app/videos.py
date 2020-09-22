@@ -2055,6 +2055,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     current_app.logger.info(
                         f"Reconstructed filename: {reconstructed_filename}"
                     )
+                    old_record.untouched_basename = reconstructed_filename
 
                     # Get the file details for the reconstructed filename
 
