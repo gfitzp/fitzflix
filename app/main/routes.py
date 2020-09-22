@@ -20,6 +20,7 @@ from app.main.forms import (
     MKVPropEditForm,
     MovieReviewForm,
     MovieShoppingFilterForm,
+    PruneAWSStorageForm,
     ReviewExportForm,
     S3UploadForm,
     TMDBLookupForm,
@@ -1095,6 +1096,17 @@ def admin():
         flash(f"Refreshing TMDb information for entire library", "info")
         return redirect(url_for("main.admin"))
 
+    prune_form = PruneAWSStorageForm()
+    if prune_form.prune_submit.data and prune_form.validate_on_submit():
+        current_app.task_queue.enqueue(
+            "app.videos.prune_aws_s3_storage_task",
+            args=None,
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"Pruning extra files from AWS S3 storage",
+        )
+        flash(f"Pruning extra files from AWS S3 storage", "info")
+        return redirect(url_for("main.admin"))
+
     return render_template(
         "admin.html",
         title="Admin",
@@ -1102,6 +1114,7 @@ def admin():
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
+        prune_form=prune_form
     )
 
 

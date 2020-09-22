@@ -150,3 +150,7 @@ class MKVPropEditForm(FlaskForm):
         "Forced subtitle tracks", validators=[Optional()]
     )
     mkvpropedit_submit = SubmitField("Update MKV Properties")
+
+
+class PruneAWSStorageForm(FlaskForm):
+    prune_submit = SubmitField("Prune AWS S3 Storage")

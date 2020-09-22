@@ -886,8 +886,12 @@ def finalize_localization(file_path, file_details, lock):
                 "Fitzflix - Added a movie without a TMDb ID",
                 sender=current_app.config["SERVER_EMAIL"],
                 recipients=[admin_user.email],
-                text_body=render_template("email/no_tmdb_id.txt", user=admin_user.email, movie=movie),
-                html_body=render_template("email/no_tmdb_id.html", user=admin_user.email, movie=movie),
+                text_body=render_template(
+                    "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
+                ),
+                html_body=render_template(
+                    "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                ),
             )
 
     finally:
@@ -1064,6 +1068,37 @@ def mkvpropedit_task(
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
+
+    else:
+        return True
+
+
+def prune_aws_s3_storage_task():
+    """Remove AWS files that aren't in the library."""
+
+    app.app_context().push()
+
+    try:
+        job = get_current_job()
+
+        for key in get_matching_s3_keys(
+            current_app.config["AWS_BUCKET"],
+            prefix=f"{current_app.config['AWS_UNTOUCHED_PREFIX']}/",
+        ):
+            if job:
+                job.meta["description"] = "Pruning extra files from AWS S3 storage"
+                job.meta["progress"] = -1
+
+            file = File.query.filter(File.aws_untouched_key == key).first()
+            if not file:
+                if job:
+                    job.meta["description"] = f"Deleting extra file '{key}' from AWS"
+                    job.meta["progress"] = -1
+
+                aws_delete(key)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
 
     else:
         return True
@@ -1806,6 +1841,87 @@ def get_criterion_collection_from_wikipedia():
     return criterion_collection
 
 
+def get_matching_s3_objects(bucket, prefix="", suffix=""):
+    """Iterate through objects in S3 storage.
+
+    https://alexwlchan.net/2019/07/listing-s3-keys/
+
+    Copyright (c) 2012-2019 Alex Chan
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+    OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+    ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+    OTHER DEALINGS IN THE SOFTWARE.
+    """
+
+    s3 = boto3.client(
+        "s3",
+        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+    )
+    paginator = s3.get_paginator("list_objects_v2")
+    kwargs = {"Bucket": bucket}
+    if isinstance(prefix, str):
+        prefixes = (prefix,)
+    else:
+        prefixes = prefix
+
+    for key_prefix in prefixes:
+        kwargs["Prefix"] = key_prefix
+        for page in paginator.paginate(**kwargs):
+            try:
+                contents = page["Contents"]
+            except KeyError:
+                break
+            for obj in contents:
+                key = obj["Key"]
+                if key.endswith(suffix):
+                    yield obj
+
+
+def get_matching_s3_keys(bucket, prefix="", suffix=""):
+    """Return objects in S3 storage.
+
+    https://alexwlchan.net/2019/07/listing-s3-keys/
+
+    Copyright (c) 2012-2019 Alex Chan
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the Software
+    is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+    OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+    ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+    OTHER DEALINGS IN THE SOFTWARE.
+    """
+
+    for obj in get_matching_s3_objects(bucket, prefix, suffix):
+        yield obj["Key"]
+
+
 def get_subtitle_tracks_from_file(file_path):
     """Parse a file with MediaInfo and return its subtitle tracks."""
 
@@ -2323,7 +2439,12 @@ def sanitize_s3_key(key):
 
     key = os.path.normpath(key)
     key_components = key.split(os.sep)
-    key = os.path.join(*[sanitize_string(component, aws_bad_chars, aws_good_chars) for component in key_components])
+    key = os.path.join(
+        *[
+            sanitize_string(component, aws_bad_chars, aws_good_chars)
+            for component in key_components
+        ]
+    )
     return key
 
 
