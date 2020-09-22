@@ -10,7 +10,6 @@ def send_async_email(app, msg):
     """Function to send email asynchronously using an application thread."""
 
     with app.app_context():
-        app.logger.info(msg)
         mail.send(msg)
 
 
