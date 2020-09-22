@@ -1070,7 +1070,6 @@ def rename_task(file_id, new_key):
 
         file = File.query.filter_by(id=file_id).first()
         old_key = file.aws_untouched_key
-        current_app.logger.info(f"Renaming AWS key '{old_key}' to '{new_key}'")
         if job:
             job.meta["description"] = f"Renaming AWS key '{old_key}' to '{new_key}'"
             job.meta["progress"] = -1
@@ -1254,6 +1253,7 @@ def aws_rename(old_key, new_key):
     job = get_current_job()
 
     new_key = sanitize_s3_key(new_key)
+    current_app.logger.info(f"Renaming AWS key '{old_key}' to '{new_key}'")
 
     # If the keys are the same after sanitizing, just pretend we renamed one to the other
     if old_key == new_key:
@@ -1416,7 +1416,9 @@ def sanitize_s3_key(key):
     aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
     # fmt: on
 
-    key = sanitize_string(key, aws_bad_chars, aws_good_chars)
+    key = os.path.normpath(key)
+    key_components = key.split(os.sep)
+    key = os.path.join(*[sanitize_string(component, aws_bad_chars, aws_good_chars) for component in key_components])
     return key
 
 
