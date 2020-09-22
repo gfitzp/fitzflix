@@ -884,7 +884,7 @@ def finalize_localization(file_path, file_details, lock):
             admin_user = User.query.filter(User.admin == True).first()
             send_email(
                 "Fitzflix - Added a movie without a TMDb ID",
-                sender="no-reply@fitzflix.com",
+                sender=current_app.config["SERVER_EMAIL"],
                 recipients=[admin_user.email],
                 text_body=render_template("email/no_tmdb_id.txt", user=admin_user.email, movie=movie),
                 html_body=render_template("email/no_tmdb_id.html", user=admin_user.email, movie=movie),
