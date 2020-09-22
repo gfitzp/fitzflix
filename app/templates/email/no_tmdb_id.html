@@ -1,0 +1,9 @@
+<p>Hello {{ user.email }},</p>
+<p/>
+<p>The movie '{{ movie.title }} ({{ movie.year }})' was added, but it couldn't be matched to a TMDb record.</p>
+<p/>
+<p>Go <a href="{{ url_for("main.movie", movie_id=movie.id, _external=True) }}">here</a> to fix it:</p>
+<p/>
+<p>{{ url_for("main.movie", movie_id=movie.id, _external=True) }}</p>
+<p/>
+<p>- Fitzflix</p>

@@ -998,7 +998,7 @@ def reviews():
 
         send_email(
             "Fitzflix - Your movie reviews",
-            sender="no-reply@glennfitzpatrick.com",
+            sender="no-reply@fitzflix.com",
             recipients=[current_user.email],
             text_body=render_template("email/reviews.txt", user=current_user),
             html_body=render_template("email/reviews.html", user=current_user),

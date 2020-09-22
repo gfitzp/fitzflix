@@ -26,6 +26,7 @@ from unidecode import unidecode
 from flask import current_app, flash, render_template
 
 from app import create_app, db
+from app.email import task_send_email as send_email
 from app.models import (
     File,
     FileAudioTrack,
@@ -878,6 +879,16 @@ def finalize_localization(file_path, file_details, lock):
 
             except Exception:
                 pass
+
+        if file.media_library == "Movies" and movie.tmdb_id == None:
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Added a movie without a TMDb ID",
+                sender="no-reply@fitzflix.com",
+                recipients=[admin_user.email],
+                text_body=render_template("email/no_tmdb_id.txt", user=admin_user.email, movie=movie),
+                html_body=render_template("email/no_tmdb_id.html", user=admin_user.email, movie=movie),
+            )
 
     finally:
         current_app.lock_manager.unlock(lock)
