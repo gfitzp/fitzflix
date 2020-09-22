@@ -13,6 +13,7 @@ from rq.registry import StartedJobRegistry
 from rq_scheduler import Scheduler
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
 from flask import Flask
@@ -146,6 +147,10 @@ def create_app(config_class=Config):
     mail.init_app(app)
     bootstrap.init_app(app)
     moment.init_app(app)
+
+    # Needed to be able to set X- headers by web server to configure https protocol, etc.
+
+    ProxyFix(app, x_proto=1, x_host=1, x_prefix=1)
 
     # Build blueprints
 
