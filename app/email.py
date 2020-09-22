@@ -27,7 +27,9 @@ def send_email(subject, sender, recipients, text_body, html_body, attachments=No
     ).start()
 
 
-def task_send_email(subject, sender, recipients, text_body, html_body, attachments=None):
+def task_send_email(
+    subject, sender, recipients, text_body, html_body, attachments=None
+):
     """Email sending framework."""
 
     msg = Message(subject, sender=sender, recipients=recipients)

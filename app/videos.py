@@ -886,8 +886,12 @@ def finalize_localization(file_path, file_details, lock):
                 "Fitzflix - Added a movie without a TMDb ID",
                 sender=current_app.config["SERVER_EMAIL"],
                 recipients=[admin_user.email],
-                text_body=render_template("email/no_tmdb_id.txt", user=admin_user.email, movie=movie),
-                html_body=render_template("email/no_tmdb_id.html", user=admin_user.email, movie=movie),
+                text_body=render_template(
+                    "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
+                ),
+                html_body=render_template(
+                    "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                ),
             )
 
     finally:
@@ -1429,7 +1433,12 @@ def sanitize_s3_key(key):
 
     key = os.path.normpath(key)
     key_components = key.split(os.sep)
-    key = os.path.join(*[sanitize_string(component, aws_bad_chars, aws_good_chars) for component in key_components])
+    key = os.path.join(
+        *[
+            sanitize_string(component, aws_bad_chars, aws_good_chars)
+            for component in key_components
+        ]
+    )
     return key
 
 
