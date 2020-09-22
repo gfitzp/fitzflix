@@ -41,5 +41,11 @@
     		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-warning") }}
     	</form>
     </div>
+    <div class="col-md-4">
+    	<form action="" method="post">
+    		{{ prune_form.hidden_tag() }}
+    		{{ prune_form.prune_submit(class_="btn btn-danger") }}
+    	</form>
+    </div>
 </div>
 {% endblock %}
