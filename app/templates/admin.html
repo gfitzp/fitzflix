@@ -16,14 +16,14 @@
 				{{ email_form.email2.label }}
 				{{ email_form.email2(size=32, class_="form-control") }}
 			</div>
-			{{ email_form.submit(class_="btn btn-warning") }}
+			{{ email_form.submit(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
     <div class="col-md-4">
     	<p>API key:<br>{{ current_user.api_key }}</p>
     	<form action="" method="post">
     		{{ api_refresh_form.hidden_tag() }}
-    		{{ api_refresh_form.regenerate_key_submit(class_="btn btn-warning") }}
+    		{{ api_refresh_form.regenerate_key_submit(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
 </div>
@@ -32,19 +32,21 @@
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ criterion_refresh_form.hidden_tag() }}
-    		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-warning") }}
+    		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ tmdb_refresh_form.hidden_tag() }}
-    		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-warning") }}
+    		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ prune_form.hidden_tag() }}
-    		{{ prune_form.prune_submit(class_="btn btn-danger") }}
+    		{{ prune_form.password.label }}
+    		{{ prune_form.password(class_="form-control form-control-sm mb-2") }}
+    		{{ prune_form.prune_submit(class_="btn btn-sm btn-danger") }}
     	</form>
     </div>
 </div>
