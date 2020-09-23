@@ -1098,13 +1098,22 @@ def admin():
 
     prune_form = PruneAWSStorageForm()
     if prune_form.prune_submit.data and prune_form.validate_on_submit():
-        current_app.task_queue.enqueue(
-            "app.videos.prune_aws_s3_storage_task",
-            args=None,
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=f"Pruning extra files from AWS S3 storage",
-        )
-        flash(f"Pruning extra files from AWS S3 storage", "info")
+        if not current_user.admin:
+            flash(f"Need to be an admin user for this task!", "danger")
+
+        elif current_user.check_password(prune_form.password.data):
+            current_app.sql_queue.enqueue(
+                "app.videos.prune_aws_s3_storage_task",
+                args=None,
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Pruning extra files from AWS S3 storage",
+                at_front=True,
+            )
+            flash(f"Pruning extra files from AWS S3 storage", "info")
+
+        else:
+            flash(f"Incorrect password provided", "danger")
+
         return redirect(url_for("main.admin"))
 
     return render_template(
