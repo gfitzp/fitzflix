@@ -2266,7 +2266,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                 worse.quality.physical_media
                                 == each_best_file.quality.physical_media
                                 or each_best_file.quality.physical_media == True
-                            ):
+                            ) and worse.id != each_best_file.id:
                                 if worse.aws_untouched_date_uploaded:
                                     worse.aws_untouched_date_deleted = aws_delete(
                                         worse.aws_untouched_key
@@ -2292,15 +2292,21 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     current_app.logger.info(
                         f"Renaming {os.path.join(current_app.config['LOCALIZED_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LOCALIZED_DIR'], file_details.get('file_path'))}'"
                     )
-                    os.rename(
-                        os.path.join(
-                            current_app.config["LOCALIZED_DIR"], old_record.file_path
-                        ),
-                        os.path.join(
-                            current_app.config["LOCALIZED_DIR"],
-                            file_details.get("file_path"),
-                        ),
-                    )
+
+                    try:
+                        os.rename(
+                            os.path.join(
+                                current_app.config["LOCALIZED_DIR"],
+                                old_record.file_path,
+                            ),
+                            os.path.join(
+                                current_app.config["LOCALIZED_DIR"],
+                                file_details.get("file_path"),
+                            ),
+                        )
+
+                    except FileNotFoundError:
+                        pass
 
                     # Delete the old directory tree if it's empty
                     # TODO: figure out a way to not accidentally delete any hidden files
@@ -2319,87 +2325,111 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         pass
 
                     # Now that we don't need the old file's file_path anymore,
-                    # set the file_path column to the new location
+                    # set the file_path column to the new location, unless the renamed
+                    # file already exists, in which case just delete the old file record
 
-                    old_record.file_path = file_details.get("file_path")
+                    same_file_exists = (
+                        File.query.filter(File.file_path == old_record.file_path)
+                        .filter(File.id != old_record.id)
+                        .first()
+                    )
+                    if same_file_exists:
+                        current_app.logger.info(f"Deleting {old_record} from database")
+                        db.session.delete(old_record)
 
-                    if (
-                        old_record.aws_untouched_key
-                        and old_record.aws_untouched_date_uploaded
-                    ):
+                    else:
+                        old_record.file_path = file_details.get("file_path")
 
-                        config = Config(connect_timeout=20, retries={"max_attempts": 3})
-                        s3_client = boto3.client(
-                            "s3",
-                            config=config,
-                            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-                        )
-                        response = s3_client.list_objects(
-                            Bucket=current_app.config["AWS_BUCKET"],
-                            Prefix=old_record.aws_untouched_key,
-                            MaxKeys=1,
-                        )
+                        if (
+                            old_record.aws_untouched_key
+                            and old_record.aws_untouched_date_uploaded
+                        ):
 
-                        # Get the storage class of the existing uploaded file
-
-                        storage_class = None
-                        if response.get("Contents"):
-                            for object in response.get("Contents"):
-                                if object.get("Key") == old_record.aws_untouched_key:
-                                    storage_class = object.get("StorageClass")
-
-                        if storage_class == "STANDARD":
-
-                            current_app.task_queue.enqueue(
-                                "app.videos.rename_task",
-                                args=(
-                                    old_record.id,
-                                    os.path.join(
-                                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                        reconstructed_filename,
-                                    ),
-                                ),
-                                job_timeout=current_app.config[
-                                    "LOCALIZATION_TASK_TIMEOUT"
-                                ],
-                                description=f"'{file_details.get('basename')}'",
+                            config = Config(
+                                connect_timeout=20, retries={"max_attempts": 3}
                             )
-
-                        else:
-
-                            # Request the old object to be restored at AWS
-
                             s3_client = boto3.client(
                                 "s3",
+                                config=config,
                                 aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
                                 aws_secret_access_key=current_app.config[
                                     "AWS_SECRET_KEY"
                                 ],
                             )
-                            response = s3_client.restore_object(
+                            response = s3_client.list_objects(
                                 Bucket=current_app.config["AWS_BUCKET"],
-                                Key=old_record.aws_untouched_key,
-                                RestoreRequest={
-                                    "Days": 1,
-                                    "GlacierJobParameters": {"Tier": "Standard",},
-                                },
+                                Prefix=old_record.aws_untouched_key,
+                                MaxKeys=1,
                             )
 
-                            # Standard restoration takes up to 12 hours,
-                            # so schedule the restoration to take place in 13 hours
+                            # Get the storage class of the existing uploaded file
 
-                            current_app.task_scheduler.enqueue_in(
-                                timedelta(hours=13),
-                                "app.videos.rename_task",
-                                file_id=old_record.id,
-                                new_key=os.path.join(
-                                    current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                    reconstructed_filename,
-                                ),
-                                timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                                job_description=f"'{file_details.get('basename')}'",
-                            )
+                            storage_class = None
+                            if response.get("Contents"):
+                                for object in response.get("Contents"):
+                                    if (
+                                        object.get("Key")
+                                        == old_record.aws_untouched_key
+                                    ):
+                                        storage_class = object.get("StorageClass")
+
+                            if storage_class == "STANDARD":
+
+                                current_app.task_queue.enqueue(
+                                    "app.videos.rename_task",
+                                    args=(
+                                        old_record.id,
+                                        os.path.join(
+                                            current_app.config["AWS_UNTOUCHED_PREFIX"],
+                                            reconstructed_filename,
+                                        ),
+                                    ),
+                                    job_timeout=current_app.config[
+                                        "LOCALIZATION_TASK_TIMEOUT"
+                                    ],
+                                    description=f"'{file_details.get('basename')}'",
+                                )
+
+                            else:
+
+                                # Request the old object to be restored at AWS
+
+                                s3_client = boto3.client(
+                                    "s3",
+                                    aws_access_key_id=current_app.config[
+                                        "AWS_ACCESS_KEY"
+                                    ],
+                                    aws_secret_access_key=current_app.config[
+                                        "AWS_SECRET_KEY"
+                                    ],
+                                )
+                                response = s3_client.restore_object(
+                                    Bucket=current_app.config["AWS_BUCKET"],
+                                    Key=old_record.aws_untouched_key,
+                                    RestoreRequest={
+                                        "Days": 1,
+                                        "GlacierJobParameters": {"Tier": "Standard",},
+                                    },
+                                )
+
+                                # Standard restoration takes up to 12 hours,
+                                # so schedule the restoration to take place in 13 hours
+
+                                current_app.task_scheduler.enqueue_in(
+                                    timedelta(hours=13),
+                                    "app.videos.rename_task",
+                                    file_id=old_record.id,
+                                    new_key=os.path.join(
+                                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                                        reconstructed_filename,
+                                    ),
+                                    timeout=current_app.config[
+                                        "LOCALIZATION_TASK_TIMEOUT"
+                                    ],
+                                    job_description=f"'{file_details.get('basename')}'",
+                                )
+
+                db.session.commit()
 
                 if updated_movie_id != original_movie_id:
 

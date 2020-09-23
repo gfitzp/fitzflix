@@ -1,5 +1,5 @@
 {% if movie.tmdb_poster_path %}
-	<img src="/static/tmdb/movie/{{ movie.tmdb_id }}/poster/w500{{ movie.tmdb_poster_path }}" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
+	<img src="{{ url_for('static', filename='tmdb/movie/' + movie.tmdb_id|string + '/poster/w500' + movie.tmdb_poster_path )}}" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
 {% else %}
 	<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
 		<svg width="3em" height="3em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
