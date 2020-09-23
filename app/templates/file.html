@@ -34,6 +34,9 @@
 	Fullscreen: {% if file.fullscreen == True %}<span class="badge badge-danger">{{ file.fullscreen }}</span>{% else %}<span class="badge badge-secondary">{{ file.fullscreen }}</span>{% endif %}<br>
 	Container: {{ file.container }}<br>
 	Codec: {{ file.codec }}
+	{% if file.video_bitrate_kbps %}
+		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
+	{% endif %}
 </p>
 {% if audio_tracks or subtitle_tracks %}
 <hr>
