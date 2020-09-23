@@ -24,7 +24,9 @@ class Config(object):
 
     # Environmental variables
 
+    PREFERRED_URL_SCHEME                = os.environ.get("PREFERRED_URL_SCHEME") or "http"
     SERVER_NAME                         = os.environ.get("SERVER_NAME") or None
+    APPLICATION_ROOT                    = os.environ.get("APPLICATION_ROOT") or "/"
 
     # Fitzflix core configuration
 
