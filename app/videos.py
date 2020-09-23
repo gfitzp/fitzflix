@@ -2266,7 +2266,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                 worse.quality.physical_media
                                 == each_best_file.quality.physical_media
                                 or each_best_file.quality.physical_media == True
-                            ):
+                            ) and worse.id != each_best_file.id:
                                 if worse.aws_untouched_date_uploaded:
                                     worse.aws_untouched_date_deleted = aws_delete(
                                         worse.aws_untouched_key
@@ -2292,15 +2292,20 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     current_app.logger.info(
                         f"Renaming {os.path.join(current_app.config['LOCALIZED_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LOCALIZED_DIR'], file_details.get('file_path'))}'"
                     )
-                    os.rename(
-                        os.path.join(
-                            current_app.config["LOCALIZED_DIR"], old_record.file_path
-                        ),
-                        os.path.join(
-                            current_app.config["LOCALIZED_DIR"],
-                            file_details.get("file_path"),
-                        ),
-                    )
+
+                    try:
+                        os.rename(
+                            os.path.join(
+                                current_app.config["LOCALIZED_DIR"], old_record.file_path
+                            ),
+                            os.path.join(
+                                current_app.config["LOCALIZED_DIR"],
+                                file_details.get("file_path"),
+                            ),
+                        )
+
+                    except FileNotFoundError:
+                        pass
 
                     # Delete the old directory tree if it's empty
                     # TODO: figure out a way to not accidentally delete any hidden files
