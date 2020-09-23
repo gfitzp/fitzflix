@@ -2296,7 +2296,8 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     try:
                         os.rename(
                             os.path.join(
-                                current_app.config["LOCALIZED_DIR"], old_record.file_path
+                                current_app.config["LOCALIZED_DIR"],
+                                old_record.file_path,
                             ),
                             os.path.join(
                                 current_app.config["LOCALIZED_DIR"],
@@ -2327,8 +2328,13 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     # set the file_path column to the new location, unless the renamed
                     # file already exists, in which case just delete the old file record
 
-                    same_file_exists = File.query.filter(File.file_path == old_record.file_path).first()
+                    same_file_exists = (
+                        File.query.filter(File.file_path == old_record.file_path)
+                        .filter(File.id != old_record.id)
+                        .first()
+                    )
                     if same_file_exists:
+                        current_app.logger.info(f"Deleting {old_record} from database")
                         db.session.delete(old_record)
 
                     else:
@@ -2339,12 +2345,16 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                             and old_record.aws_untouched_date_uploaded
                         ):
 
-                            config = Config(connect_timeout=20, retries={"max_attempts": 3})
+                            config = Config(
+                                connect_timeout=20, retries={"max_attempts": 3}
+                            )
                             s3_client = boto3.client(
                                 "s3",
                                 config=config,
                                 aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                                aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+                                aws_secret_access_key=current_app.config[
+                                    "AWS_SECRET_KEY"
+                                ],
                             )
                             response = s3_client.list_objects(
                                 Bucket=current_app.config["AWS_BUCKET"],
@@ -2357,7 +2367,10 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                             storage_class = None
                             if response.get("Contents"):
                                 for object in response.get("Contents"):
-                                    if object.get("Key") == old_record.aws_untouched_key:
+                                    if (
+                                        object.get("Key")
+                                        == old_record.aws_untouched_key
+                                    ):
                                         storage_class = object.get("StorageClass")
 
                             if storage_class == "STANDARD":
@@ -2383,7 +2396,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
                                 s3_client = boto3.client(
                                     "s3",
-                                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                                    aws_access_key_id=current_app.config[
+                                        "AWS_ACCESS_KEY"
+                                    ],
                                     aws_secret_access_key=current_app.config[
                                         "AWS_SECRET_KEY"
                                     ],
@@ -2408,9 +2423,13 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                         current_app.config["AWS_UNTOUCHED_PREFIX"],
                                         reconstructed_filename,
                                     ),
-                                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                                    timeout=current_app.config[
+                                        "LOCALIZATION_TASK_TIMEOUT"
+                                    ],
                                     job_description=f"'{file_details.get('basename')}'",
                                 )
+
+                db.session.commit()
 
                 if updated_movie_id != original_movie_id:
 
