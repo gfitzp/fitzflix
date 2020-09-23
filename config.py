@@ -24,6 +24,8 @@ class Config(object):
 
     # Environmental variables
 
+    SERVER_NAME                         = os.environ.get("SERVER_NAME") or None
+
     # Fitzflix core configuration
 
     NATIVE_LANGUAGE                     = os.environ.get("ISO_639_2_NATIVE_LANGUAGE") or "eng"
