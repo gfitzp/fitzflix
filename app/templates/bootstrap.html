@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.2.1/css/bootstrap.min.css" integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
 	{%- endblock styles %}
 
-	<link rel="icon" href="/static/favicon.png">
+	<link rel="icon" href="{{ url_for('static', filename='favicon.png') }}">
 
     <title>{% block title %}{{title|default}}{% endblock title %}</title>
     {%- endblock head %}

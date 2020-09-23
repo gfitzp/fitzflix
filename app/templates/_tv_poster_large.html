@@ -1,5 +1,5 @@
 {% if tv.tmdb_poster_path %}
-	<img src="/static/tmdb/tv/{{ tv.tmdb_id }}/poster/w500{{ tv.tmdb_poster_path }}" class="mx-auto d-block border" alt="{{ title }}" style="width: 250px;">
+	<img src="{{ url_for('static', filename='tmdb/tv/' + tv.tmdb_id|string + '/poster/w500' + tv.tmdb_poster_path) }}" class="mx-auto d-block border" alt="{{ title }}" style="width: 250px;">
 {% else %}
 	<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
 		<svg width="3em" height="3em" viewBox="0 0 16 16" class="bi bi-tv" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
