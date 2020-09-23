@@ -2324,87 +2324,93 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         pass
 
                     # Now that we don't need the old file's file_path anymore,
-                    # set the file_path column to the new location
+                    # set the file_path column to the new location, unless the renamed
+                    # file already exists, in which case just delete the old file record
 
-                    old_record.file_path = file_details.get("file_path")
+                    same_file_exists = File.query.filter(File.file_path == old_record.file_path).first()
+                    if same_file_exists:
+                        db.session.delete(old_record)
 
-                    if (
-                        old_record.aws_untouched_key
-                        and old_record.aws_untouched_date_uploaded
-                    ):
+                    else:
+                        old_record.file_path = file_details.get("file_path")
 
-                        config = Config(connect_timeout=20, retries={"max_attempts": 3})
-                        s3_client = boto3.client(
-                            "s3",
-                            config=config,
-                            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-                        )
-                        response = s3_client.list_objects(
-                            Bucket=current_app.config["AWS_BUCKET"],
-                            Prefix=old_record.aws_untouched_key,
-                            MaxKeys=1,
-                        )
+                        if (
+                            old_record.aws_untouched_key
+                            and old_record.aws_untouched_date_uploaded
+                        ):
 
-                        # Get the storage class of the existing uploaded file
+                            config = Config(connect_timeout=20, retries={"max_attempts": 3})
+                            s3_client = boto3.client(
+                                "s3",
+                                config=config,
+                                aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                                aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+                            )
+                            response = s3_client.list_objects(
+                                Bucket=current_app.config["AWS_BUCKET"],
+                                Prefix=old_record.aws_untouched_key,
+                                MaxKeys=1,
+                            )
 
-                        storage_class = None
-                        if response.get("Contents"):
-                            for object in response.get("Contents"):
-                                if object.get("Key") == old_record.aws_untouched_key:
-                                    storage_class = object.get("StorageClass")
+                            # Get the storage class of the existing uploaded file
 
-                        if storage_class == "STANDARD":
+                            storage_class = None
+                            if response.get("Contents"):
+                                for object in response.get("Contents"):
+                                    if object.get("Key") == old_record.aws_untouched_key:
+                                        storage_class = object.get("StorageClass")
 
-                            current_app.task_queue.enqueue(
-                                "app.videos.rename_task",
-                                args=(
-                                    old_record.id,
-                                    os.path.join(
+                            if storage_class == "STANDARD":
+
+                                current_app.task_queue.enqueue(
+                                    "app.videos.rename_task",
+                                    args=(
+                                        old_record.id,
+                                        os.path.join(
+                                            current_app.config["AWS_UNTOUCHED_PREFIX"],
+                                            reconstructed_filename,
+                                        ),
+                                    ),
+                                    job_timeout=current_app.config[
+                                        "LOCALIZATION_TASK_TIMEOUT"
+                                    ],
+                                    description=f"'{file_details.get('basename')}'",
+                                )
+
+                            else:
+
+                                # Request the old object to be restored at AWS
+
+                                s3_client = boto3.client(
+                                    "s3",
+                                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                                    aws_secret_access_key=current_app.config[
+                                        "AWS_SECRET_KEY"
+                                    ],
+                                )
+                                response = s3_client.restore_object(
+                                    Bucket=current_app.config["AWS_BUCKET"],
+                                    Key=old_record.aws_untouched_key,
+                                    RestoreRequest={
+                                        "Days": 1,
+                                        "GlacierJobParameters": {"Tier": "Standard",},
+                                    },
+                                )
+
+                                # Standard restoration takes up to 12 hours,
+                                # so schedule the restoration to take place in 13 hours
+
+                                current_app.task_scheduler.enqueue_in(
+                                    timedelta(hours=13),
+                                    "app.videos.rename_task",
+                                    file_id=old_record.id,
+                                    new_key=os.path.join(
                                         current_app.config["AWS_UNTOUCHED_PREFIX"],
                                         reconstructed_filename,
                                     ),
-                                ),
-                                job_timeout=current_app.config[
-                                    "LOCALIZATION_TASK_TIMEOUT"
-                                ],
-                                description=f"'{file_details.get('basename')}'",
-                            )
-
-                        else:
-
-                            # Request the old object to be restored at AWS
-
-                            s3_client = boto3.client(
-                                "s3",
-                                aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                                aws_secret_access_key=current_app.config[
-                                    "AWS_SECRET_KEY"
-                                ],
-                            )
-                            response = s3_client.restore_object(
-                                Bucket=current_app.config["AWS_BUCKET"],
-                                Key=old_record.aws_untouched_key,
-                                RestoreRequest={
-                                    "Days": 1,
-                                    "GlacierJobParameters": {"Tier": "Standard",},
-                                },
-                            )
-
-                            # Standard restoration takes up to 12 hours,
-                            # so schedule the restoration to take place in 13 hours
-
-                            current_app.task_scheduler.enqueue_in(
-                                timedelta(hours=13),
-                                "app.videos.rename_task",
-                                file_id=old_record.id,
-                                new_key=os.path.join(
-                                    current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                    reconstructed_filename,
-                                ),
-                                timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                                job_description=f"'{file_details.get('basename')}'",
-                            )
+                                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                                    job_description=f"'{file_details.get('basename')}'",
+                                )
 
                 if updated_movie_id != original_movie_id:
 
