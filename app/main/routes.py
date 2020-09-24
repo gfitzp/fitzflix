@@ -767,20 +767,19 @@ def file(file_id):
     #     current_app.logger.info(f"Forced subtitle tracks from the form: {forced_subtitle_tracks}")
 
     file = File.query.filter_by(id=int(file_id)).first_or_404()
+    title = file.basename
 
     # Since the video file can be for either a movie or a tv show, determine which
     # it belongs to based off whether it has a movie_id or a series_id, get the
-    # associated movie or tv series information, and set the title accordingly
+    # associated movie or tv series information
 
     if file.movie_id:
         movie = Movie.query.filter_by(id=int(file.movie_id)).first_or_404()
         tv = None
-        title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
 
     elif file.series_id:
         movie = None
         tv = TVSeries.query.filter_by(id=int(file.series_id)).first_or_404()
-        title = f"{tv.tmdb_name if tv.tmdb_name else tv.title}"
 
     # Get the details of each of the audio and subtitle tracks for this file
 
