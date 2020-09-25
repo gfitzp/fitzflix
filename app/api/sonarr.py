@@ -87,24 +87,19 @@ def add():
             )
             current_app.logger.debug(r.json())
 
-        # Copy downloaded file to the import directory to be localized and added
+        # Pass the file to Fitzflix for processing; tried copying the file to the import
+        # directory for processing but if another file came in while it was copying
+        # then the first copy was abandoned, and tried doing a hard link to the import
+        # directory but that wasn't supported on my NAS, so just sending the downloaded
+        # file directly to Sonarr to be imported in place
 
-        current_app.logger.info(f"'{sonarr_file_path}' Copying to import directory")
-        shutil.copy(
-            sonarr_file_path,
-            os.path.join(
-                current_app.config["IMPORT_DIR"],
-                f".{os.path.basename(sonarr_file_path)}",
-            ),
-        )
-        shutil.move(
-            os.path.join(
-                current_app.config["IMPORT_DIR"],
-                f".{os.path.basename(sonarr_file_path)}",
-            ),
-            os.path.join(
-                current_app.config["IMPORT_DIR"], os.path.basename(sonarr_file_path)
-            ),
+        current_app.logger.info(f"'{sonarr_file_path}' Sending to Fitzflix")
+        job = current_app.task_queue.enqueue(
+            "app.videos.localization_task",
+            args=(sonarr_file_path,),
+            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+            description=f"'{os.path.basename(sonarr_file_path)}'",
+            job_id=os.path.basename(sonarr_file_path),
         )
 
     else:
