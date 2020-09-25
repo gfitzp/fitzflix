@@ -1,4 +1,4 @@
-Hello {{ user.email }},
+Hello,
 
 The movie '{{ movie.title }} ({{ movie.year }})' was added, but it couldn't be matched to a TMDb record.
 
