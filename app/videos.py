@@ -1451,28 +1451,6 @@ def calculate_etag(file_path):
         )
 
 
-def sanitize_s3_key(key):
-    """Sanitize the key name to remove problematic characters.
-
-    See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
-    """
-
-    # fmt: off
-    aws_bad_chars  = [   "&",  "$",   "@",  "=", ";", ":", "+", ",", "?", "\\", "{", "^", "}", "%", "`", '"', ">", "~", "<", "#", "|"]
-    aws_good_chars = [" and ",  "", " at ", "-", "-", "-", " ",  "",  "",  " ", "(",  "", ")",  "", "'",  "",  "", "-",  "",  "",  ""]
-    # fmt: on
-
-    key = os.path.normpath(key)
-    key_components = key.split(os.sep)
-    key = os.path.join(
-        *[
-            sanitize_string(component, aws_bad_chars, aws_good_chars)
-            for component in key_components
-        ]
-    )
-    return key
-
-
 def evaluate_filename(file_path):
     """Review a file name string and return info about what movie or TV show it is."""
 
