@@ -761,6 +761,7 @@ def finalize_localization(file_path, file_details, lock):
 
         # Set file subtitle track info
 
+        possibly_forced_subtitle = False
         if len(output_subtitle_tracks) > 1:
             main_subtitle_track = output_subtitle_tracks[0].get("elements")
             for i, track in enumerate(output_subtitle_tracks[1:]):
@@ -777,6 +778,7 @@ def finalize_localization(file_path, file_details, lock):
                         f"and may be a forced subtitle track!"
                     )
                     output_subtitle_tracks[i + 1]["forced"] = None
+                    possibly_forced_subtitle = True
 
         for i, track in enumerate(output_subtitle_tracks):
             track["file_id"] = file.id
@@ -891,6 +893,20 @@ def finalize_localization(file_path, file_details, lock):
                 ),
                 html_body=render_template(
                     "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                ),
+            )
+
+        if possibly_forced_subtitle == True:
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Possibly forced subtitle track",
+                sender=current_app.config["SERVER_EMAIL"],
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/possibly_forced_subtitle.txt", user=admin_user.email, file=file
+                ),
+                html_body=render_template(
+                    "email/possibly_forced_subtitle.html", user=admin_user.email, file=file
                 ),
             )
 
