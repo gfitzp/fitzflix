@@ -911,6 +911,7 @@ def file(file_id):
             args=(file.id, current_app.config["AWS_UNTOUCHED_PREFIX"],),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
+            at_front=True,
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
