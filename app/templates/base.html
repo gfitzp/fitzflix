@@ -57,7 +57,7 @@
 			{% else %}
 			<li class="nav-item">
 				{% set queue_count = current_user.get_queue_count() %}
-				<a class="nav-link" href="#" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
+				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
 			</li>
 			<li class="nav-item">
 				<a class="nav-link" href="{{ url_for('main.admin') }}">Admin</a>
