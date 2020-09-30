@@ -1190,7 +1190,8 @@ def movie_shopping():
         .order_by(RefQuality.preference.asc())
         .all()
     )
-    filter_form.quality.choices = [(str(id), title) for (id, title) in qualities]
+    filter_form.min_quality.choices = [(str(id), title) for (id, title) in qualities]
+    filter_form.max_quality.choices = [(str(id), title) for (id, title) in qualities]
 
     # If the min_quality ID doesn't exist in our RefQuality table, default to "Unknown"
 
@@ -1219,7 +1220,8 @@ def movie_shopping():
     max_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
     )
-    filter_form.quality.default = max_quality
+    filter_form.min_quality.default = min_quality
+    filter_form.max_quality.default = max_quality
 
     # Form to filter the shopping list by a particular substring
 
@@ -1229,7 +1231,8 @@ def movie_shopping():
             url_for(
                 "main.movie_shopping",
                 library=filter_form.filter_status.data,
-                max_quality=filter_form.quality.data,
+                min_quality=filter_form.min_quality.data,
+                max_quality=filter_form.max_quality.data,
                 q=q,
             )
         )
@@ -1248,6 +1251,7 @@ def movie_shopping():
             url_for(
                 "main.movie_shopping",
                 library=library,
+                min_quality=min_quality,
                 max_quality=max_quality,
                 q=library_search_form.search_query.data,
             )
