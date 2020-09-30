@@ -913,7 +913,10 @@ def file(file_id):
 
         current_app.task_queue.enqueue(
             "app.videos.upload_task",
-            args=(file.id, current_app.config["AWS_UNTOUCHED_PREFIX"],),
+            args=(
+                file.id,
+                current_app.config["AWS_UNTOUCHED_PREFIX"],
+            ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             at_front=True,
@@ -1128,7 +1131,7 @@ def admin():
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
-        prune_form=prune_form
+        prune_form=prune_form,
     )
 
 
@@ -1649,24 +1652,60 @@ def queue():
     for job_id in tasks.get_job_ids():
         job = Job.fetch(job_id, connection=current_app.redis)
         current_app.logger.info(job.get_status())
-        task_queue.append({"id": job.id, "status": job.get_status(), "enqueued_at": job.enqueued_at, "started_at": job.started_at, "ended_at": job.ended_at})
+        task_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
 
     for job_id in current_app.task_queue.job_ids:
         job = Job.fetch(job_id, connection=current_app.redis)
         current_app.logger.info(job.get_status())
-        task_queue.append({"id": job.id, "status": job.get_status(), "enqueued_at": job.enqueued_at, "started_at": job.started_at, "ended_at": job.ended_at})
-
+        task_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
 
     transcode_queue = []
 
     for job_id in transcodes.get_job_ids():
         job = Job.fetch(job_id, connection=current_app.redis)
         current_app.logger.info(job.get_status())
-        transcode_queue.append({"id": job.id, "status": job.get_status(), "enqueued_at": job.enqueued_at, "started_at": job.started_at, "ended_at": job.ended_at})
+        transcode_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
 
     for job_id in current_app.transcode_queue.job_ids:
         job = Job.fetch(job_id, connection=current_app.redis)
         current_app.logger.info(job.get_status())
-        transcode_queue.append({"id": job.id, "status": job.get_status(), "enqueued_at": job.enqueued_at, "started_at": job.started_at, "ended_at": job.ended_at})
+        transcode_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
 
-    return render_template("queue.html", title="Queue", task_queue=task_queue, transcode_queue=transcode_queue)
+    return render_template(
+        "queue.html",
+        title="Queue",
+        task_queue=task_queue,
+        transcode_queue=transcode_queue,
+    )
