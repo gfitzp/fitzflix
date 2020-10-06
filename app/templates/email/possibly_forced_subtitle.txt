@@ -1,0 +1,9 @@
+Hello,
+
+The file '{{ file.basename }}' was added and it may have a forced subtitle track.
+
+Go here to set it:
+
+{{ url_for("main.file", file_id=file.id, _external=True) }}
+
+- Fitzflix

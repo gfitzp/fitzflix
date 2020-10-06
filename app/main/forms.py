@@ -121,7 +121,8 @@ class MovieShoppingFilterForm(FlaskForm):
             ("criterion", "Films with a Criterion release"),
         ],
     )
-    quality = SelectField("Less than")
+    min_quality = SelectField("At least")
+    max_quality = SelectField("Less than")
     filter_submit = SubmitField("Filter")
 
 

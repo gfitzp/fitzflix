@@ -5,6 +5,9 @@ import secrets
 
 from datetime import datetime
 
+from rq.job import Job
+from rq.registry import StartedJobRegistry, ScheduledJobRegistry
+
 from flask import render_template, flash, jsonify, redirect, url_for, request, Markup
 from flask_login import current_user, login_user, logout_user, login_required
 from werkzeug.urls import url_parse
@@ -611,6 +614,7 @@ def tv(series_id):
                 args=(file.id,),
                 job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                 description=f"'{file.plex_title}'",
+                job_id=file.plex_title,
             )
 
         flash(f"Added all files for '{title}' to transcoding queue", "success")
@@ -895,6 +899,7 @@ def file(file_id):
             args=(file.id,),
             job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
             description=f"'{file.plex_title}'",
+            job_id=file.plex_title,
         )
         flash(f"Added '{file.plex_title}' to transcoding queue", "success")
         return redirect(url_for("main.file", file_id=file.id))
@@ -908,9 +913,13 @@ def file(file_id):
 
         current_app.task_queue.enqueue(
             "app.videos.upload_task",
-            args=(file.id, current_app.config["AWS_UNTOUCHED_PREFIX"],),
+            args=(
+                file.id,
+                current_app.config["AWS_UNTOUCHED_PREFIX"],
+            ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
+            at_front=True,
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
@@ -1122,7 +1131,7 @@ def admin():
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
-        prune_form=prune_form
+        prune_form=prune_form,
     )
 
 
@@ -1181,7 +1190,8 @@ def movie_shopping():
         .order_by(RefQuality.preference.asc())
         .all()
     )
-    filter_form.quality.choices = [(str(id), title) for (id, title) in qualities]
+    filter_form.min_quality.choices = [(str(id), title) for (id, title) in qualities]
+    filter_form.max_quality.choices = [(str(id), title) for (id, title) in qualities]
 
     # If the min_quality ID doesn't exist in our RefQuality table, default to "Unknown"
 
@@ -1210,7 +1220,8 @@ def movie_shopping():
     max_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
     )
-    filter_form.quality.default = max_quality
+    filter_form.min_quality.default = min_quality
+    filter_form.max_quality.default = max_quality
 
     # Form to filter the shopping list by a particular substring
 
@@ -1220,7 +1231,8 @@ def movie_shopping():
             url_for(
                 "main.movie_shopping",
                 library=filter_form.filter_status.data,
-                max_quality=filter_form.quality.data,
+                min_quality=filter_form.min_quality.data,
+                max_quality=filter_form.max_quality.data,
                 q=q,
             )
         )
@@ -1239,6 +1251,7 @@ def movie_shopping():
             url_for(
                 "main.movie_shopping",
                 library=library,
+                min_quality=min_quality,
                 max_quality=max_quality,
                 q=library_search_form.search_query.data,
             )
@@ -1627,4 +1640,76 @@ def tv_shopping():
         filter_form=filter_form,
         library_search_form=library_search_form,
         series=tv,
+    )
+
+
+@bp.route("/queue")
+@login_required
+def queue():
+    """Show a list of all task and transcode tasks in queue."""
+
+    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
+    transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+
+    task_queue = []
+
+    for job_id in tasks.get_job_ids():
+        job = Job.fetch(job_id, connection=current_app.redis)
+        current_app.logger.info(job.get_status())
+        task_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
+
+    for job_id in current_app.task_queue.job_ids:
+        job = Job.fetch(job_id, connection=current_app.redis)
+        current_app.logger.info(job.get_status())
+        task_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
+
+    transcode_queue = []
+
+    for job_id in transcodes.get_job_ids():
+        job = Job.fetch(job_id, connection=current_app.redis)
+        current_app.logger.info(job.get_status())
+        transcode_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
+
+    for job_id in current_app.transcode_queue.job_ids:
+        job = Job.fetch(job_id, connection=current_app.redis)
+        current_app.logger.info(job.get_status())
+        transcode_queue.append(
+            {
+                "id": job.id,
+                "status": job.get_status(),
+                "enqueued_at": job.enqueued_at,
+                "started_at": job.started_at,
+                "ended_at": job.ended_at,
+            }
+        )
+
+    return render_template(
+        "queue.html",
+        title="Queue",
+        task_queue=task_queue,
+        transcode_queue=transcode_queue,
     )

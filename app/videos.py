@@ -761,6 +761,7 @@ def finalize_localization(file_path, file_details, lock):
 
         # Set file subtitle track info
 
+        possibly_forced_subtitle = False
         if len(output_subtitle_tracks) > 1:
             main_subtitle_track = output_subtitle_tracks[0].get("elements")
             for i, track in enumerate(output_subtitle_tracks[1:]):
@@ -777,6 +778,7 @@ def finalize_localization(file_path, file_details, lock):
                         f"and may be a forced subtitle track!"
                     )
                     output_subtitle_tracks[i + 1]["forced"] = None
+                    possibly_forced_subtitle = True
 
         for i, track in enumerate(output_subtitle_tracks):
             track["file_id"] = file.id
@@ -891,6 +893,24 @@ def finalize_localization(file_path, file_details, lock):
                 ),
                 html_body=render_template(
                     "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                ),
+            )
+
+        if possibly_forced_subtitle == True:
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Possibly forced subtitle track",
+                sender=current_app.config["SERVER_EMAIL"],
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/possibly_forced_subtitle.txt",
+                    user=admin_user.email,
+                    file=file,
+                ),
+                html_body=render_template(
+                    "email/possibly_forced_subtitle.html",
+                    user=admin_user.email,
+                    file=file,
                 ),
             )
 
@@ -1010,7 +1030,10 @@ def mkvpropedit_task(
         current_app.logger.info(localization_arguments)
 
         mkvpropedit_task = subprocess.Popen(
-            [current_app.config["MKVPROPEDIT_BIN"], file_path,]
+            [
+                current_app.config["MKVPROPEDIT_BIN"],
+                file_path,
+            ]
             + localization_arguments,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1319,7 +1342,10 @@ def aws_rename(old_key, new_key):
     # with the new name and then delete the old object
 
     s3.meta.client.copy(
-        {"Bucket": current_app.config["AWS_BUCKET"], "Key": old_key,},
+        {
+            "Bucket": current_app.config["AWS_BUCKET"],
+            "Key": old_key,
+        },
         current_app.config["AWS_BUCKET"],
         new_key,
     )
@@ -1503,7 +1529,9 @@ def evaluate_filename(file_path):
 
         else:
             dirname = os.path.join(
-                media_library, title, f"Season {tv.group('season').zfill(2)}",
+                media_library,
+                title,
+                f"Season {tv.group('season').zfill(2)}",
             )
 
         fullscreen = False
@@ -2386,7 +2414,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                     Key=old_record.aws_untouched_key,
                                     RestoreRequest={
                                         "Days": 1,
-                                        "GlacierJobParameters": {"Tier": "Standard",},
+                                        "GlacierJobParameters": {
+                                            "Tier": "Standard",
+                                        },
                                     },
                                 )
 

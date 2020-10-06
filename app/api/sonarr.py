@@ -40,7 +40,8 @@ def add():
         response = jsonify(request.get_json())
         current_app.logger.debug(f"Request: {request.get_json() or {}}")
         downloaded_file_path = os.path.join(
-            payload["series"].get("path"), payload["episodeFile"].get("relativePath"),
+            payload["series"].get("path"),
+            payload["episodeFile"].get("relativePath"),
         )
 
         # Downgrade quality title and rename the downloaded file.
