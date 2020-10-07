@@ -142,7 +142,7 @@ def localization_task(file_path):
                 f"'{basename}' Lock exists, "
                 f"returning to queue after {sleep_duration} minutes"
             )
-            current_app.task_scheduler.enqueue_in(
+            current_app.localize_scheduler.enqueue_in(
                 timedelta(minutes=sleep_duration),
                 "app.videos.localization_task",
                 file_path=file_path,

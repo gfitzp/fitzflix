@@ -1643,20 +1643,20 @@ def tv_shopping():
 @bp.route("/queue")
 @login_required
 def queue():
-    """Show a list of all task and transcode tasks in queue."""
+    """Show a list of all localization and transcode tasks in queue."""
 
-    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-    tasks_running = tasks.get_job_ids()
+    localizations = StartedJobRegistry("fitzflix-localize", connection=current_app.redis)
+    localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
-    transcodes_running = transcodes.get_job_ids()
+    transcode_tasks_running = transcodes.get_job_ids()
 
-    task_queue = []
+    localization_queue = []
 
-    for job_id in tasks_running:
-        job = current_app.task_queue.fetch_job(job_id)
+    for job_id in localization_tasks_running:
+        job = current_app.localize_queue.fetch_job(job_id)
         if job:
             current_app.logger.info(job.get_status())
-            task_queue.append(
+            localization_queue.append(
                 {
                     "id": job.id,
                     "status": job.get_status(),
@@ -1666,11 +1666,11 @@ def queue():
                 }
             )
 
-    for job_id in current_app.task_queue.job_ids:
-        job = current_app.task_queue.fetch_job(job_id)
+    for job_id in current_app.localize_queue.job_ids:
+        job = current_app.localize_queue.fetch_job(job_id)
         if job:
             current_app.logger.info(job.get_status())
-            task_queue.append(
+            localization_queue.append(
                 {
                     "id": job.id,
                     "status": job.get_status(),
@@ -1682,7 +1682,7 @@ def queue():
 
     transcode_queue = []
 
-    for job_id in transcodes_running:
+    for job_id in transcode_tasks_running:
         job = current_app.transcode_queue.fetch_job(job_id)
         if job:
             current_app.logger.info(job.get_status())
@@ -1713,6 +1713,6 @@ def queue():
     return render_template(
         "queue.html",
         title="Queue",
-        task_queue=task_queue,
+        localization_queue=localization_queue,
         transcode_queue=transcode_queue,
     )

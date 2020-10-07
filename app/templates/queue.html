@@ -3,8 +3,8 @@
 {% block app_content %}
 <h2 class="mt-2 mb-n2">{{ title }}</h2>
 <hr>
-{% if task_queue %}
-	<h3 class="mt-2 mb-2">Task Queue</h3>
+{% if localization_queue %}
+	<h3 class="mt-2 mb-2">Localization Queue</h3>
 	<table class="table table-striped">
 		<thead class="thead-light">
 			<tr>
@@ -15,12 +15,12 @@
 			</tr>
 		</thead>
 		<tbody>
-			{% for task in task_queue %}
+			{% for localization in localization_queue %}
 			<tr>
-				<th scope="row">{{ task.id }}</th>
-				<td>{{ task.status }}</td>
-				<td>{{ moment(task.enqueued_at).fromNow() }}</td>
-				<td>{{ moment(task.started_at).fromNow() if task.started_at }}</td>
+				<th scope="row">{{ localization.id }}</th>
+				<td>{{ localization.status }}</td>
+				<td>{{ moment(localization.enqueued_at).fromNow() }}</td>
+				<td>{{ moment(localization.started_at).fromNow() if localization.started_at }}</td>
 			</tr>
 			{% endfor %}
 		</tbody>
