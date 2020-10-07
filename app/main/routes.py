@@ -486,10 +486,11 @@ def movie_files(movie_id):
     )
 
     files = (
-        db.session.query(File, Movie, RefQuality, ranked_files.c.rank)
+        db.session.query(File, Movie, RefQuality, RefFeatureType, ranked_files.c.rank)
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .join(ranked_files, (ranked_files.c.id == File.id))
+        .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
         .filter(Movie.id == int(movie_id))
         .order_by(
             File.feature_type_id.asc(),
@@ -687,7 +688,16 @@ def season(series_id, season):
     """Show all files for a TV show's season, regardless of ranking."""
 
     tv = TVSeries.query.filter_by(id=int(series_id)).first_or_404()
-    title = f"{tv.tmdb_name if tv.tmdb_name else tv.title}"
+
+    if season == 0:
+        title = (
+            f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}" special episodes'
+        )
+
+    else:
+        title = (
+            f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}", season {season}'
+        )
 
     # Subquery to get the ranking for each of this season's files
 
@@ -750,7 +760,7 @@ def season(series_id, season):
         episodes.append(this_episode)
 
     return render_template(
-        "season.html", title=title, tv=tv, season=season, episodes=episodes
+        "season.html", title=title, tv=tv, season=season, files=files
     )
 
 
@@ -1645,7 +1655,9 @@ def tv_shopping():
 def queue():
     """Show a list of all localization and transcode tasks in queue."""
 
-    localizations = StartedJobRegistry("fitzflix-localize", connection=current_app.redis)
+    localizations = StartedJobRegistry(
+        "fitzflix-localize", connection=current_app.redis
+    )
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcode_tasks_running = transcodes.get_job_ids()
@@ -1723,4 +1735,50 @@ def queue():
         title="Queue",
         localization_queue=localization_queue,
         transcode_queue=transcode_queue,
+    )
+
+
+@bp.route("/library/files")
+@login_required
+def files():
+    """Show a list of all the files in the library."""
+
+    page = request.args.get("page", 1, type=int)
+    files = (
+        db.session.query(File, RefQuality, RefFeatureType, Movie, TVSeries,)
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+        .outerjoin(Movie, (Movie.id == File.movie_id))
+        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .order_by(
+            File.media_library,
+            db.case(
+                [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+            ).asc(),
+            db.case(
+                [(Movie.tmdb_title != None, Movie.tmdb_release_date)], else_=Movie.year,
+            ).asc(),
+            File.version.asc(),
+            RefFeatureType.feature_type.asc(),
+            db.case(
+                [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)], else_=TVSeries.title
+            ).asc(),
+            File.season.asc(),
+            File.episode.asc(),
+            File.last_episode.asc(),
+            RefQuality.preference.asc(),
+            File.basename.asc(),
+        )
+        .paginate(page, 1000, False)
+    )
+    next_url = url_for("main.files", page=files.next_num) if files.has_next else None
+    prev_url = url_for("main.files", page=files.prev_num) if files.has_prev else None
+
+    return render_template(
+        "files.html",
+        title="All Files",
+        files=files.items,
+        next_url=next_url,
+        prev_url=prev_url,
+        pages=files,
     )
