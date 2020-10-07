@@ -1649,63 +1649,69 @@ def queue():
     """Show a list of all task and transcode tasks in queue."""
 
     tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
+    tasks_running = tasks.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+    transcodes_running = transcodes.get_job_ids()
 
     task_queue = []
 
-    for job_id in tasks.get_job_ids():
-        job = Job.fetch(job_id, connection=current_app.redis)
-        current_app.logger.info(job.get_status())
-        task_queue.append(
-            {
-                "id": job.id,
-                "status": job.get_status(),
-                "enqueued_at": job.enqueued_at,
-                "started_at": job.started_at,
-                "ended_at": job.ended_at,
-            }
-        )
+    for job_id in tasks_running:
+        job = current_app.task_queue.fetch_job(job_id)
+        if job:
+            current_app.logger.info(job.get_status())
+            task_queue.append(
+                {
+                    "id": job.id,
+                    "status": job.get_status(),
+                    "enqueued_at": job.enqueued_at,
+                    "started_at": job.started_at,
+                    "ended_at": job.ended_at,
+                }
+            )
 
     for job_id in current_app.task_queue.job_ids:
-        job = Job.fetch(job_id, connection=current_app.redis)
-        current_app.logger.info(job.get_status())
-        task_queue.append(
-            {
-                "id": job.id,
-                "status": job.get_status(),
-                "enqueued_at": job.enqueued_at,
-                "started_at": job.started_at,
-                "ended_at": job.ended_at,
-            }
-        )
+        job = current_app.task_queue.fetch_job(job_id)
+        if job:
+            current_app.logger.info(job.get_status())
+            task_queue.append(
+                {
+                    "id": job.id,
+                    "status": job.get_status(),
+                    "enqueued_at": job.enqueued_at,
+                    "started_at": job.started_at,
+                    "ended_at": job.ended_at,
+                }
+            )
 
     transcode_queue = []
 
-    for job_id in transcodes.get_job_ids():
-        job = Job.fetch(job_id, connection=current_app.redis)
-        current_app.logger.info(job.get_status())
-        transcode_queue.append(
-            {
-                "id": job.id,
-                "status": job.get_status(),
-                "enqueued_at": job.enqueued_at,
-                "started_at": job.started_at,
-                "ended_at": job.ended_at,
-            }
-        )
+    for job_id in transcodes_running:
+        job = current_app.transcode_queue.fetch_job(job_id)
+        if job:
+            current_app.logger.info(job.get_status())
+            transcode_queue.append(
+                {
+                    "id": job.id,
+                    "status": job.get_status(),
+                    "enqueued_at": job.enqueued_at,
+                    "started_at": job.started_at,
+                    "ended_at": job.ended_at,
+                }
+            )
 
     for job_id in current_app.transcode_queue.job_ids:
-        job = Job.fetch(job_id, connection=current_app.redis)
-        current_app.logger.info(job.get_status())
-        transcode_queue.append(
-            {
-                "id": job.id,
-                "status": job.get_status(),
-                "enqueued_at": job.enqueued_at,
-                "started_at": job.started_at,
-                "ended_at": job.ended_at,
-            }
-        )
+        job = current_app.transcode_queue.fetch_job(job_id)
+        if job:
+            current_app.logger.info(job.get_status())
+            transcode_queue.append(
+                {
+                    "id": job.id,
+                    "status": job.get_status(),
+                    "enqueued_at": job.enqueued_at,
+                    "started_at": job.started_at,
+                    "ended_at": job.ended_at,
+                }
+            )
 
     return render_template(
         "queue.html",
