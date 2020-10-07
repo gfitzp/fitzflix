@@ -90,6 +90,7 @@ def movie_library():
     - q     : filter the movie list for only the films that contain this substring
     """
 
+    page = request.args.get("page", 1, type=int)
     credit = request.args.get("credit", None, type=int)
     q = request.args.get("q", None, type=str)
 
@@ -132,7 +133,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .all()
+            .paginate(page, 120, False)
         )
 
     elif q:
@@ -157,7 +158,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .all()
+            .paginate(page, 120, False)
         )
 
     else:
@@ -179,8 +180,11 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .all()
+            .paginate(page, 120, False)
         )
+
+    next_url = url_for("main.movie_library", page=movies.next_num) if movies.has_next else None
+    prev_url = url_for("main.movie_library", page=movies.prev_num) if movies.has_prev else None
 
     # Form to search the movie library titles for a specific substring
 
@@ -193,7 +197,10 @@ def movie_library():
     return render_template(
         "library_movie.html",
         title=title,
-        movies=movies,
+        movies=movies.items,
+        next_url=next_url,
+        prev_url=prev_url,
+        pages=movies,
         library_search_form=library_search_form,
     )
 
