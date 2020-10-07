@@ -172,6 +172,8 @@ def create_app(config_class=Config):
 
     from app import models, videos
 
+    from app.models import RefQuality
+
     if not app.debug:
 
         # Configure how to handle logs when running in production mode
@@ -218,6 +220,42 @@ def create_app(config_class=Config):
     # Create the import directory
 
     os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
+
+    # Get a list of the files in the import directory and add to queue if they aren't
+    # already enqueued. Add them in order of quality preference.
+
+    available_files = []
+    with app.app_context():
+        qualities = (
+            db.session.query(RefQuality.quality_title)
+            .order_by(RefQuality.preference.asc())
+            .all()
+        )
+    qualities = [quality_title for (quality_title,) in qualities]
+    for quality_title in qualities:
+        for file in os.listdir(app.config["IMPORT_DIR"]):
+            if (
+                (not os.path.basename(file).startswith("."))
+                and f"[{quality_title}]" in os.path.basename(file)
+                and os.path.isfile(os.path.join(app.config["IMPORT_DIR"], file))
+            ):
+                job_queue = []
+                tasks_running = StartedJobRegistry(
+                    "fitzflix-tasks", connection=app.redis
+                )
+                job_queue.extend(tasks_running.get_job_ids())
+                job_queue.extend(app.task_queue.job_ids)
+                if os.path.basename(file) not in job_queue:
+                    app.logger.info(
+                        f"'{os.path.basename(file)}' Found in import directory"
+                    )
+                    job = app.task_queue.enqueue(
+                        "app.videos.localization_task",
+                        args=(os.path.basename(file),),
+                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{os.path.basename(file)}'",
+                        job_id=os.path.basename(file),
+                    )
 
     # Watch the import directory for file changes
 
