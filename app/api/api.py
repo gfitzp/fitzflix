@@ -16,8 +16,8 @@ def queue_details():
     of tasks in queue, and the details of the tasks that are currently running.
     """
 
-    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-    tasks_running = tasks.get_job_ids()
+    localizations = StartedJobRegistry("fitzflix-localize", connection=current_app.redis)
+    localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()
     details = {}
@@ -27,8 +27,8 @@ def queue_details():
         # We're only interested in the task and transcode queues.
 
         details["count"] = (
-            len(current_app.task_queue.job_ids)
-            + len(tasks_running)
+            len(current_app.localize_queue.job_ids)
+            + len(localization_tasks_running)
             + len(current_app.transcode_queue.job_ids)
             + len(transcodes_running)
         )
@@ -37,8 +37,8 @@ def queue_details():
 
         # Get the details for the running jobs in the tasks queue
 
-        for job_id in tasks_running:
-            job = current_app.task_queue.fetch_job(job_id)
+        for job_id in localization_tasks_running:
+            job = current_app.localize_queue.fetch_job(job_id)
             if job:
                 details["running"].append(
                     {

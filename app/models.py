@@ -885,15 +885,15 @@ class User(UserMixin, db.Model):
         return details
 
     def get_queue_count(self):
-        tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-        tasks_running = tasks.get_job_ids()
+        localization_tasks = StartedJobRegistry("fitzflix-localize", connection=current_app.redis)
+        localization_tasks_running = localization_tasks.get_job_ids()
         transcodes = StartedJobRegistry(
             "fitzflix-transcode", connection=current_app.redis
         )
         transcodes_running = transcodes.get_job_ids()
         jobs_in_queue = (
-            len(current_app.task_queue.job_ids)
-            + len(tasks_running)
+            len(current_app.localize_queue.job_ids)
+            + len(localization_tasks_running)
             + len(current_app.transcode_queue.job_ids)
             + len(transcodes_running)
         )
