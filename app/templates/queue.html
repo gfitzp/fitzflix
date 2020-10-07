@@ -8,6 +8,7 @@
 	<table class="table table-striped">
 		<thead class="thead-light">
 			<tr>
+				<th scope="col">#</th>
 				<th scope="col" style="width: 49%;">ID</th>
 				<th scope="col" style="width: 17%;">Status</th>
 				<th scope="col" style="width: 17%;">Enqueued</th>
@@ -17,7 +18,8 @@
 		<tbody>
 			{% for localization in localization_queue %}
 			<tr>
-				<th scope="row">{{ localization.id }}</th>
+				<th scope="row">{{ localization.position if localization.position }}</th>
+				<td>{{ localization.id }}</td>
 				<td>{{ localization.status }}</td>
 				<td>{{ moment(localization.enqueued_at).fromNow() }}</td>
 				<td>{{ moment(localization.started_at).fromNow() if localization.started_at }}</td>
@@ -31,6 +33,7 @@
 	<table class="table table-striped">
 		<thead class="thead-light">
 			<tr>
+				<th scope="col">#</th>
 				<th scope="col" style="width: 49%;">ID</th>
 				<th scope="col" style="width: 17%;">Status</th>
 				<th scope="col" style="width: 17%;">Enqueued</th>
@@ -40,7 +43,8 @@
 		<tbody>
 			{% for transcode in transcode_queue %}
 			<tr>
-				<th scope="row">{{ transcode.id }}</th>
+				<th scope="row">{{ transcode.position if transcode.position }}</th>
+				<td>{{ transcode.id }}</td>
 				<td>{{ transcode.status }}</td>
 				<td>{{ moment(transcode.enqueued_at).fromNow() }}</td>
 				<td>{{ moment(transcode.started_at).fromNow() if transcode.started_at }}</td>

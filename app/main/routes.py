@@ -1652,6 +1652,7 @@ def queue():
 
     localization_queue = []
 
+    running_position = 1
     for job_id in localization_tasks_running:
         job = current_app.localize_queue.fetch_job(job_id)
         if job:
@@ -1659,12 +1660,14 @@ def queue():
             localization_queue.append(
                 {
                     "id": job.id,
+                    "position": running_position,
                     "status": job.get_status(),
                     "enqueued_at": job.enqueued_at,
                     "started_at": job.started_at,
                     "ended_at": job.ended_at,
                 }
             )
+            running_position = running_position + 1
 
     for job_id in current_app.localize_queue.job_ids:
         job = current_app.localize_queue.fetch_job(job_id)
@@ -1673,6 +1676,7 @@ def queue():
             localization_queue.append(
                 {
                     "id": job.id,
+                    "position": int(job.get_position()) + running_position,
                     "status": job.get_status(),
                     "enqueued_at": job.enqueued_at,
                     "started_at": job.started_at,
@@ -1682,6 +1686,7 @@ def queue():
 
     transcode_queue = []
 
+    running_position = 1
     for job_id in transcode_tasks_running:
         job = current_app.transcode_queue.fetch_job(job_id)
         if job:
@@ -1689,12 +1694,14 @@ def queue():
             transcode_queue.append(
                 {
                     "id": job.id,
+                    "position": running_position,
                     "status": job.get_status(),
                     "enqueued_at": job.enqueued_at,
                     "started_at": job.started_at,
                     "ended_at": job.ended_at,
                 }
             )
+            running_position = running_position + 1
 
     for job_id in current_app.transcode_queue.job_ids:
         job = current_app.transcode_queue.fetch_job(job_id)
@@ -1703,6 +1710,7 @@ def queue():
             transcode_queue.append(
                 {
                     "id": job.id,
+                    "position": int(job.get_position()) + running_position,
                     "status": job.get_status(),
                     "enqueued_at": job.enqueued_at,
                     "started_at": job.started_at,
