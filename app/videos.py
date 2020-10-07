@@ -1030,10 +1030,7 @@ def mkvpropedit_task(
         current_app.logger.info(localization_arguments)
 
         mkvpropedit_task = subprocess.Popen(
-            [
-                current_app.config["MKVPROPEDIT_BIN"],
-                file_path,
-            ]
+            [current_app.config["MKVPROPEDIT_BIN"], file_path,]
             + localization_arguments,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1342,10 +1339,7 @@ def aws_rename(old_key, new_key):
     # with the new name and then delete the old object
 
     s3.meta.client.copy(
-        {
-            "Bucket": current_app.config["AWS_BUCKET"],
-            "Key": old_key,
-        },
+        {"Bucket": current_app.config["AWS_BUCKET"], "Key": old_key,},
         current_app.config["AWS_BUCKET"],
         new_key,
     )
@@ -1529,9 +1523,7 @@ def evaluate_filename(file_path):
 
         else:
             dirname = os.path.join(
-                media_library,
-                title,
-                f"Season {tv.group('season').zfill(2)}",
+                media_library, title, f"Season {tv.group('season').zfill(2)}",
             )
 
         fullscreen = False
@@ -2414,9 +2406,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                     Key=old_record.aws_untouched_key,
                                     RestoreRequest={
                                         "Days": 1,
-                                        "GlacierJobParameters": {
-                                            "Tier": "Standard",
-                                        },
+                                        "GlacierJobParameters": {"Tier": "Standard",},
                                     },
                                 )
 
