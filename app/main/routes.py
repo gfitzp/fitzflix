@@ -913,10 +913,7 @@ def file(file_id):
 
         current_app.task_queue.enqueue(
             "app.videos.upload_task",
-            args=(
-                file.id,
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-            ),
+            args=(file.id, current_app.config["AWS_UNTOUCHED_PREFIX"],),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             at_front=True,
