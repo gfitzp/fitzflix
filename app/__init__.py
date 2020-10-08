@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import threading
 import time
 
 from logging.handlers import SMTPHandler, RotatingFileHandler
@@ -174,8 +175,6 @@ def create_app(config_class=Config):
 
     from app import models, videos
 
-    from app.models import RefQuality
-
     if not app.debug:
 
         # Configure how to handle logs when running in production mode
@@ -223,47 +222,6 @@ def create_app(config_class=Config):
 
     os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
 
-    # Get a list of the files in the import directory and add to queue if they aren't
-    # already enqueued. Add them in order of quality preference.
-
-    import_directory_files = os.listdir(app.config["IMPORT_DIR"])
-    import_directory_files.sort()
-    with app.app_context():
-        qualities = (
-            db.session.query(RefQuality.quality_title)
-            .order_by(RefQuality.preference.asc())
-            .all()
-        )
-    qualities = [quality_title for (quality_title,) in qualities]
-    for quality_title in qualities:
-        for file in import_directory_files:
-            if (
-                (not os.path.basename(file).startswith("."))
-                and f"[{quality_title}]" in file
-                and os.path.isfile(os.path.join(app.config["IMPORT_DIR"], file))
-            ):
-                lock = app.lock_manager.lock(os.path.basename(file), 1000)
-                if lock:
-                    job_queue = []
-                    localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=app.redis
-                    )
-                    job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(app.localize_queue.job_ids)
-                    if os.path.basename(file) not in job_queue:
-                        app.logger.info(
-                            f"'{os.path.basename(file)}' Found in import directory"
-                        )
-                        job = app.localize_queue.enqueue(
-                            "app.videos.localization_task",
-                            args=(os.path.basename(file),),
-                            job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                            description=f"'{os.path.basename(file)}'",
-                            job_id=os.path.basename(file),
-                        )
-
-                    app.lock_manager.unlock(lock)
-
     # Watch the import directory for file changes
 
     event_handler = MyHandler()
@@ -271,4 +229,48 @@ def create_app(config_class=Config):
     observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
     observer.start()
 
+    threading.Thread(target=initial_import, args=(app,), daemon=True).start()
+
     return app
+
+
+def initial_import(app):
+    with app.app_context():
+        from app.models import RefQuality
+
+        import_directory_files = os.listdir(app.config["IMPORT_DIR"])
+        import_directory_files.sort()
+        qualities = (
+            db.session.query(RefQuality.quality_title)
+            .order_by(RefQuality.preference.asc())
+            .all()
+        )
+        qualities = [quality_title for (quality_title,) in qualities]
+        for quality_title in qualities:
+            for file in import_directory_files:
+                if (
+                    (not os.path.basename(file).startswith("."))
+                    and f"[{quality_title}]" in file
+                    and os.path.isfile(os.path.join(app.config["IMPORT_DIR"], file))
+                ):
+                    lock = app.lock_manager.lock(os.path.basename(file), 1000)
+                    if lock:
+                        job_queue = []
+                        localization_tasks_running = StartedJobRegistry(
+                            "fitzflix-localize", connection=app.redis
+                        )
+                        job_queue.extend(localization_tasks_running.get_job_ids())
+                        job_queue.extend(app.localize_queue.job_ids)
+                        if os.path.basename(file) not in job_queue:
+                            app.logger.info(
+                                f"'{os.path.basename(file)}' Found in import directory"
+                            )
+                            job = app.localize_queue.enqueue(
+                                "app.videos.localization_task",
+                                args=(os.path.join(app.config["IMPORT_DIR"], file),),
+                                job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                                description=f"'{os.path.basename(file)}'",
+                                job_id=os.path.basename(file),
+                            )
+
+                        app.lock_manager.unlock(lock)
