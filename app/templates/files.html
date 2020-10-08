@@ -24,10 +24,9 @@
 			<tr>
 				<th scope="col">ID</th>
 				<th scope="col">Title</th>
+				<th scope="col"></th>
 				<th scope="col">File</th>
-				<th scope="col"></th>
 				<th scope="col">Quality</th>
-				<th scope="col"></th>
 			</tr>
 		</thead>
 		<tbody>
@@ -41,10 +40,9 @@
 						<a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>
 					{% endif %}
 				</td>
-				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 				<td class="align-middle">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
-				<td class="align-middle">{{ quality.quality_title }}</td>
-				<td class="align-middle">{% if quality.physical_media %}<span class="badge badge-success">Physical media</span>{% endif %}</td>
+				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
+				<td class="align-middle">{% if quality.physical_media %}<span class="badge badge-success">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
 			</tr>
 			{% endfor %}
 		</tbody>
