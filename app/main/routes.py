@@ -183,8 +183,12 @@ def movie_library():
             .paginate(page, 120, False)
         )
 
-    next_url = url_for("main.movie_library", page=movies.next_num) if movies.has_next else None
-    prev_url = url_for("main.movie_library", page=movies.prev_num) if movies.has_prev else None
+    next_url = (
+        url_for("main.movie_library", page=movies.next_num) if movies.has_next else None
+    )
+    prev_url = (
+        url_for("main.movie_library", page=movies.prev_num) if movies.has_prev else None
+    )
 
     # Form to search the movie library titles for a specific substring
 
@@ -1757,12 +1761,54 @@ def files():
     """Show a list of all the files in the library."""
 
     page = request.args.get("page", 1, type=int)
+
+    movie_rank = (
+        db.session.query(
+            File.id,
+            db.func.row_number()
+            .over(
+                partition_by=(Movie.id, File.plex_title, File.version),
+                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+            )
+            .label("rank"),
+        )
+        .join(Movie, (Movie.id == File.movie_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    tv_rank = (
+        db.session.query(
+            File.id,
+            db.func.row_number()
+            .over(
+                partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+            )
+            .label("rank"),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
     files = (
-        db.session.query(File, RefQuality, RefFeatureType, Movie, TVSeries,)
+        db.session.query(
+            File,
+            RefQuality,
+            RefFeatureType,
+            Movie,
+            TVSeries,
+            db.case(
+                [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+            ).label("rank"),
+        )
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+        .outerjoin(tv_rank, (tv_rank.c.id == File.id))
         .order_by(
             File.media_library,
             db.case(
@@ -1784,6 +1830,7 @@ def files():
         )
         .paginate(page, 1000, False)
     )
+
     next_url = url_for("main.files", page=files.next_num) if files.has_next else None
     prev_url = url_for("main.files", page=files.prev_num) if files.has_prev else None
 

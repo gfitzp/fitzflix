@@ -38,7 +38,7 @@
 			</tr>
 		</thead>
 		<tbody>
-			{% for file, quality, feature, movie, tv in files %}
+			{% for file, quality, feature, movie, tv, rank in files %}
 			<tr>
 				<th scope="row" class="align-middle">{{ file.id }}</th>
 				<td class="align-middle">
@@ -50,7 +50,7 @@
 				</td>
 				<td class="align-middle">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
 				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
-				<td class="align-middle">{% if quality.physical_media %}<span class="badge badge-success">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
+				<td class="align-middle">{% if rank == 1 %}<span class="badge badge-success">{% elif file.quality.physical_media == 1 %}<span class="badge badge-warning">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
 			</tr>
 			{% endfor %}
 		</tbody>
