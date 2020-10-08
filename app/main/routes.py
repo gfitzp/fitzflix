@@ -1685,7 +1685,6 @@ def queue():
     for job_id in localization_tasks_running:
         job = current_app.localize_queue.fetch_job(job_id)
         if job:
-            current_app.logger.info(job.get_status())
             localization_queue.append(
                 {
                     "id": job.id,
@@ -1701,7 +1700,6 @@ def queue():
     for job_id in current_app.localize_queue.job_ids:
         job = current_app.localize_queue.fetch_job(job_id)
         if job:
-            current_app.logger.info(job.get_status())
             localization_queue.append(
                 {
                     "id": job.id,
@@ -1719,7 +1717,6 @@ def queue():
     for job_id in transcode_tasks_running:
         job = current_app.transcode_queue.fetch_job(job_id)
         if job:
-            current_app.logger.info(job.get_status())
             transcode_queue.append(
                 {
                     "id": job.id,
@@ -1735,7 +1732,6 @@ def queue():
     for job_id in current_app.transcode_queue.job_ids:
         job = current_app.transcode_queue.fetch_job(job_id)
         if job:
-            current_app.logger.info(job.get_status())
             transcode_queue.append(
                 {
                     "id": job.id,
