@@ -1226,6 +1226,11 @@ def movie_shopping():
             .scalar()
         )
 
+    # If the minimum quality is greater than the maximum quality, set them to be the same
+
+    if int(min_quality) > int(max_quality):
+        min_quality = int(max_quality)
+
     # Find the preference associated with the quality ID, and set as the dropdown default
 
     min_preference = (
@@ -1356,7 +1361,7 @@ def movie_shopping():
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference < max_preference)
+            .filter(RefQuality.preference <= max_preference)
             .filter(
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
@@ -1512,6 +1517,11 @@ def tv_shopping():
             .scalar()
         )
 
+    # If the minimum quality is greater than the maximum quality, set them to be the same
+
+    if int(min_quality) > int(max_quality):
+        min_quality = int(max_quality)
+
     # Find the preference associated with the quality ID, and set as the dropdown default
 
     min_preference = (
@@ -1612,7 +1622,7 @@ def tv_shopping():
             .join(RefQuality, (RefQuality.preference == subquery.c.preference))
             .filter(subquery.c.series_id == series.id)
             .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference < max_preference)
+            .filter(RefQuality.preference <= max_preference)
             .order_by(
                 db.case([(subquery.c.season == 0, 1)], else_=0).asc(),
                 subquery.c.season.asc(),
