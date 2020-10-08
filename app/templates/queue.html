@@ -9,10 +9,9 @@
 		<thead class="thead-light">
 			<tr>
 				<th scope="col">#</th>
-				<th scope="col" style="width: 49%;">File</th>
-				<th scope="col" style="width: 17%;">Status</th>
-				<th scope="col" style="width: 17%;">Enqueued</th>
-				<th scope="col" style="width: 17%;">Started</th>
+				<th scope="col">File</th>
+				<th scope="col">Enqueued</th>
+				<th scope="col">Started</th>
 			</tr>
 		</thead>
 		<tbody>
@@ -20,7 +19,6 @@
 			<tr>
 				<th scope="row">{{ localization.position if localization.position }}</th>
 				<td>{{ localization.id }}</td>
-				<td>{{ localization.status }}</td>
 				<td>{{ moment(localization.enqueued_at).fromNow() }}</td>
 				<td>{{ moment(localization.started_at).fromNow() if localization.started_at }}</td>
 			</tr>
@@ -34,10 +32,9 @@
 		<thead class="thead-light">
 			<tr>
 				<th scope="col">#</th>
-				<th scope="col" style="width: 49%;">File</th>
-				<th scope="col" style="width: 15%;">Status</th>
-				<th scope="col" style="width: 15%;">Enqueued</th>
-				<th scope="col" style="width: 15%;">Started</th>
+				<th scope="col">File</th>
+				<th scope="col">Enqueued</th>
+				<th scope="col">Started</th>
 			</tr>
 		</thead>
 		<tbody>
@@ -45,7 +42,6 @@
 			<tr>
 				<th scope="row">{{ transcode.position if transcode.position }}</th>
 				<td>{{ transcode.id }}</td>
-				<td>{{ transcode.status }}</td>
 				<td>{{ moment(transcode.enqueued_at).fromNow() }}</td>
 				<td>{{ moment(transcode.started_at).fromNow() if transcode.started_at }}</td>
 			</tr>
