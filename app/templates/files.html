@@ -48,7 +48,7 @@
 						<a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>
 					{% endif %}
 				</td>
-				<td class="align-middle">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
+				<td class="align-middle text-right">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
 				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 				<td class="align-middle">{% if rank == 1 %}<span class="badge badge-success">{% elif file.quality.physical_media == 1 %}<span class="badge badge-warning">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
 			</tr>
