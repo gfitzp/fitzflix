@@ -164,6 +164,27 @@ def localization_task(file_path):
             move_to_rejects(file_path, "inferior quality")
             current_app.lock_manager.unlock(lock)
             current_app.logger.info(f"Removed lock {lock}")
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Received an inferior-quality file",
+                sender=current_app.config["SERVER_EMAIL"],
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/inferior_warning.txt",
+                    user=admin_user.email,
+                    basename=basename,
+                    better_versions=better_versions,
+                    rejects_directory=current_app.config["REJECTS_DIR"],
+                ),
+                html_body=render_template(
+                    "email/inferior_warning.html",
+                    user=admin_user.email,
+                    basename=basename,
+                    better_versions=better_versions,
+                    rejects_directory=current_app.config["REJECTS_DIR"],
+                ),
+            )
+
             return False
 
         # Save the untouched filename in case we need to recreate the file

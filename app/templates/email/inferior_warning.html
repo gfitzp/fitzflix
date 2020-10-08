@@ -1,0 +1,24 @@
+<p>Hello,</p>
+<p/>
+<p>The file '{{ basename }}' was not added because these better-quality files exist:</p>
+<p/>
+<table style="border-spacing: 10px;">
+	<thead>
+		<tr>
+			<th style="text-align: left;">Quality</th>
+			<th style="text-align: left;">File</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for file in better_versions %}
+		<tr>
+			<th style="">{{ file.quality.quality_title }}</th>
+			<td style="">{{ file.basename }}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+<p/>
+<p>It's been moved to {{ rejects_directory }}</p>
+<p/>
+<p>- Fitzflix</p>
