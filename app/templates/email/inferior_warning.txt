@@ -3,7 +3,7 @@ Hello,
 The file '{{ basename }}' was not added because these better-quality files exist:
 
 {% for file in better_versions %}
-  - {{ file.basename }}\t{{ file.quality.quality_title }}
+  {{ file.quality.quality_title }}	- {{ file.basename }}
 {% endfor %}
 
 It's been moved to {{ rejects_directory }}
