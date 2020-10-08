@@ -20,7 +20,15 @@
 		</li>
 		{% if pages %}
 		{% for page in pages.iter_pages() %}
-			<li class="page-item{% if page == pages.page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled">...</li>
+			{% endif %}
 		{% endfor %}
 		{% endif %}
 		<li class="page-item{% if not next_url %} disabled{% endif %}">
@@ -66,7 +74,15 @@
 		</li>
 		{% if pages %}
 		{% for page in pages.iter_pages() %}
-			<li class="page-item{% if page == pages.page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled">...</li>
+			{% endif %}
 		{% endfor %}
 		{% endif %}
 		<li class="page-item{% if not next_url %} disabled{% endif %}">
