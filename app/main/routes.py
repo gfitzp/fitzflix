@@ -977,6 +977,13 @@ def reviews():
         url_for("main.reviews", page=reviews.prev_num) if reviews.has_prev else None
     )
 
+    all_reviews = (
+        UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .order_by(UserMovieReview.date_reviewed.desc())
+        .all()
+    )
+
     # Form to request an export of all of this user's movie reviews as a CSV file
 
     review_export_form = ReviewExportForm()
@@ -1047,6 +1054,7 @@ def reviews():
         next_url=next_url,
         prev_url=prev_url,
         pages=reviews,
+        all_reviews=all_reviews,
     )
 
 
