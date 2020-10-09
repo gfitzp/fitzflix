@@ -1179,8 +1179,7 @@ def movie_shopping():
     max_quality = request.args.get(
         "max_quality",
         db.session.query(RefQuality.id)
-        .filter(RefQuality.quality_title == "Bluray-1080p")
-        .filter(RefQuality.physical_media == True)
+        .filter(RefQuality.quality_title == "WEBDL-2160p")
         .scalar(),
         type=str,
     )
