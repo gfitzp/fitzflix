@@ -16,11 +16,15 @@
 <script type="text/javascript">
 	google.charts.load("current", {packages:["corechart"]});
 	google.charts.setOnLoadCallback(drawChart);
+	function htmlDecode(input) {
+		var doc = new DOMParser().parseFromString(input, "text/html");
+		return doc.documentElement.textContent;
+	}
 	function drawChart() {
 		var data = google.visualization.arrayToDataTable([
 			['Movie', 'Rating'],
 			{% for review in all_reviews %}
-				["{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})", {{ review.rating }}],
+				[htmlDecode("{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})"), {{ review.rating }}],
 			{% endfor %}
 		]);
 		var options = {
