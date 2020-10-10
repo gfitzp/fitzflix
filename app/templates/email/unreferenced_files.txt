@@ -1,0 +1,9 @@
+Hello,
+
+These files are in AWS S3 storage, but are not in Fitzflix:
+
+{% for file in unreferenced_files %}
+  - {{ file }}
+{% endfor %}
+
+- Fitzflix

@@ -1,0 +1,13 @@
+<p>Hello,</p>
+<p/>
+<p>These files are in AWS S3 storage, but are not in Fitzflix:</p>
+<p/>
+{% if unreferenced_files %}
+<ul>
+	{% for file in unreferenced_files %}
+	<li>{{ file }}</li>
+	{% endfor %}
+</ul>
+{% endif %}
+<p/>
+<p>- Fitzflix</p>

@@ -1177,27 +1177,45 @@ def prune_aws_s3_storage_task():
 
     app.app_context().push()
 
+    unreferenced_files = []
+
     try:
         job = get_current_job()
 
         for key in get_matching_s3_keys(
-            current_app.config["AWS_BUCKET"],
-            prefix=f"{current_app.config['AWS_UNTOUCHED_PREFIX']}/",
+            app.config["AWS_BUCKET"],
+            prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
         ):
             if job:
                 job.meta["description"] = "Pruning extra files from AWS S3 storage"
                 job.meta["progress"] = -1
 
             file = File.query.filter(File.aws_untouched_key == key).first()
-            if not file:
+            if not file and key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/":
                 if job:
                     job.meta["description"] = f"Deleting extra file '{key}' from AWS"
                     job.meta["progress"] = -1
 
-                aws_delete(key)
+                unreferenced_files.append(key)
+
+                # aws_delete(key)
+
+        if unreferenced_files:
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Unreferenced AWS files",
+                sender=app.config["SERVER_EMAIL"],
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/unreferenced_files.txt", user=admin_user.email, unreferenced_files=unreferenced_files
+                ),
+                html_body=render_template(
+                    "email/unreferenced_files.html", user=admin_user.email, unreferenced_files=unreferenced_files
+                ),
+            )
 
     except Exception:
-        current_app.logger.error(traceback.format_exc())
+        app.logger.error(traceback.format_exc())
 
     else:
         return True
