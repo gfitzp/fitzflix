@@ -21,12 +21,12 @@
 		return doc.documentElement.textContent;
 	}
 	function drawChart() {
-		var data = google.visualization.arrayToDataTable([
-			['Movie', 'Rating'],
-			{% for review in all_reviews %}
-				[htmlDecode("{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})"), {{ review.rating }}],
-			{% endfor %}
-		]);
+		var data = google.visualization.arrayToDataTable(
+			[
+				['Movie', 'Rating'],
+				{% for review in all_reviews %}[htmlDecode("{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})"), {{ review.rating }}],{% endfor %}
+			], false
+		);
 		var options = {
 			legend: { position: 'none' },
 			histogram: { bucketSize: 0.5 },
