@@ -870,6 +870,7 @@ def finalize_localization(file_path, file_details, lock):
                     worse.aws_untouched_date_uploaded = None
                 db.session.delete(worse)
 
+            if worse.quality.physical_media == True
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
                     "Fitzflix - Replaced a physical media file",
