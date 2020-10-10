@@ -1354,10 +1354,6 @@ def movie_shopping():
         .scalar()
     )
 
-    # Subquery for the user's movie reviews
-    movie_reviews = (
-        db.session.query(db.func.max(
-
     if q:
         title = f"Movies to upgrade matching '{q}'"
         movies = (
