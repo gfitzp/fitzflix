@@ -1207,6 +1207,7 @@ def movie_shopping():
                    (defaults to "Bluray-1080p")
     """
 
+    page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
     library = request.args.get("library", None, type=str)
     min_quality = request.args.get("min_quality", 0, type=str)
@@ -1415,7 +1416,7 @@ def movie_shopping():
                 RefQuality.preference.asc(),
                 File.date_added.asc(),
             )
-            .all()
+            .paginate(page, 100, False)
         )
 
     else:
@@ -1471,7 +1472,7 @@ def movie_shopping():
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference < max_preference)
+            .filter(RefQuality.preference <= max_preference)
             .filter(
                 db.or_(
                     Movie.criterion_spine_number != None,
@@ -1486,13 +1487,23 @@ def movie_shopping():
                 File.version.asc(),
                 File.date_added.asc(),
             )
-            .all()
+            .paginate(page, 100, False)
         )
+
+    next_url = (
+        url_for("main.movie_shopping", page=movies.next_num, q=q, library=library, min_quality=min_quality, max_quality=max_quality) if movies.has_next else None
+    )
+    prev_url = (
+        url_for("main.movie_shopping", page=movies.prev_num, q=q, library=library, min_quality=min_quality, max_quality=max_quality) if movies.has_prev else None
+    )
 
     return render_template(
         "shopping_movie.html",
         title=title,
-        movies=movies,
+        movies=movies.items,
+        next_url=next_url,
+        prev_url=prev_url,
+        pages=movies,
         filter_form=filter_form,
         library_search_form=library_search_form,
     )

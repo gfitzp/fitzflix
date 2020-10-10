@@ -44,6 +44,29 @@
 <hr>
 {% if movies %}
 <div class="d-none d-sm-block">
+	<nav class="d-none d-sm-block" aria-label="...">
+		<ul class="pagination">
+			<li class="page-item{% if not prev_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+			</li>
+			{% if pages %}
+			{% for page in pages.iter_pages() %}
+				{% if page %}
+					{% if page == pages.page %}
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% else %}
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% endif %}
+				{% else %}
+					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+				{% endif %}
+			{% endfor %}
+			{% endif %}
+			<li class="page-item{% if not next_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+			</li>
+		</ul>
+	</nav>
 	{% for file, movie, quality, review, instruction in movies %}
 	<div class="media mb-3">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
@@ -78,11 +101,57 @@
 		</div>
 	</div>
 	{% endfor %}
+	<nav class="d-none d-sm-block" aria-label="...">
+		<ul class="pagination">
+			<li class="page-item{% if not prev_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+			</li>
+			{% if pages %}
+			{% for page in pages.iter_pages() %}
+				{% if page %}
+					{% if page == pages.page %}
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% else %}
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% endif %}
+				{% else %}
+					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+				{% endif %}
+			{% endfor %}
+			{% endif %}
+			<li class="page-item{% if not next_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+			</li>
+		</ul>
+	</nav>
 </div>
 
 <!-- Display differently on mobile device -->
 
 <div class="d-block d-sm-none mt-n2">
+	<nav class="d-none d-sm-block" aria-label="...">
+		<ul class="pagination">
+			<li class="page-item{% if not prev_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+			</li>
+			{% if pages %}
+			{% for page in pages.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+				{% if page %}
+					{% if page == pages.page %}
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% else %}
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% endif %}
+				{% else %}
+					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+				{% endif %}
+			{% endfor %}
+			{% endif %}
+			<li class="page-item{% if not next_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+			</li>
+		</ul>
+	</nav>
 	<ul class="list-group">
 		{% for file, movie, quality, review, instruction in movies %}
 			<li class="list-group-item">
@@ -117,6 +186,29 @@
 			</li>
 		{% endfor %}
 	</ul>
+	<nav class="d-none d-sm-block" aria-label="...">
+		<ul class="pagination">
+			<li class="page-item{% if not prev_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+			</li>
+			{% if pages %}
+			{% for page in pages.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+				{% if page %}
+					{% if page == pages.page %}
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% else %}
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
+					{% endif %}
+				{% else %}
+					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+				{% endif %}
+			{% endfor %}
+			{% endif %}
+			<li class="page-item{% if not next_url %} disabled{% endif %}">
+				<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+			</li>
+		</ul>
+	</nav>
 </div>
 {% endif %}
 {% endblock %}
