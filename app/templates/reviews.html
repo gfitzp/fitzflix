@@ -16,25 +16,32 @@
 <script type="text/javascript">
 	google.charts.load("current", {packages:["corechart"]});
 	google.charts.setOnLoadCallback(drawChart);
+
 	function htmlDecode(input) {
 		var doc = new DOMParser().parseFromString(input, "text/html");
 		return doc.documentElement.textContent;
-	}
+	};
+
 	function drawChart() {
 		var data = google.visualization.arrayToDataTable(
 			[
 				['Movie', 'Rating'],
-				{% for review in all_reviews %}[htmlDecode("{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})"), {{ review.rating }}],{% endfor %}
-			], false
+				{% for review in all_reviews %}
+					[htmlDecode("{{ review.movie.tmdb_title|e if review.movie.tmdb_title else review.movie.title|e }} ({{ review.movie.tmdb_release_date.strftime('%Y') if review.movie.tmdb_title else review.movie.year }})"), {{ review.rating }}],
+				{% endfor %}
+			]
 		);
+
 		var options = {
 			legend: { position: 'none' },
-			histogram: { bucketSize: 0.5 },
+			histogram: {bucketSize: 0.5, minValue: 0, maxValue: 5 },
 			chartArea: {left:'5%', top:'5%', width:'90%', height:'85%'},
 		};
+
 		var chart = new google.visualization.Histogram(document.getElementById('chart_div'));
+
 		chart.draw(data, options);
-	}
+	};
 </script>
 <div class="mb-2 col-12 col-sm-6" id="chart_div"></div>
 <nav aria-label="...">
