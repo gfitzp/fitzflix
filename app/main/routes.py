@@ -62,16 +62,23 @@ def index():
     recently_added = (
         File.query.outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
-        .filter(db.func.coalesce(File.date_updated, File.date_added) >= db.func.current_date() - 7)
+        .filter(
+            db.func.coalesce(File.date_updated, File.date_added)
+            >= db.func.current_date() - 7
+        )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
         .paginate(page, 100, False)
     )
 
     next_url = (
-        url_for("main.index", page=recently_added.next_num) if recently_added.has_next else None
+        url_for("main.index", page=recently_added.next_num)
+        if recently_added.has_next
+        else None
     )
     prev_url = (
-        url_for("main.index", page=recently_added.prev_num) if recently_added.has_prev else None
+        url_for("main.index", page=recently_added.prev_num)
+        if recently_added.has_prev
+        else None
     )
 
     form = ImportForm()
@@ -946,7 +953,10 @@ def file(file_id):
 
         current_app.task_queue.enqueue(
             "app.videos.upload_task",
-            args=(file.id, current_app.config["AWS_UNTOUCHED_PREFIX"],),
+            args=(
+                file.id,
+                current_app.config["AWS_UNTOUCHED_PREFIX"],
+            ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             at_front=True,
@@ -1161,7 +1171,6 @@ def admin():
             flash(f"Incorrect password provided", "danger")
 
         return redirect(url_for("main.admin"))
-
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
@@ -1491,10 +1500,28 @@ def movie_shopping():
         )
 
     next_url = (
-        url_for("main.movie_shopping", page=movies.next_num, q=q, library=library, min_quality=min_quality, max_quality=max_quality) if movies.has_next else None
+        url_for(
+            "main.movie_shopping",
+            page=movies.next_num,
+            q=q,
+            library=library,
+            min_quality=min_quality,
+            max_quality=max_quality,
+        )
+        if movies.has_next
+        else None
     )
     prev_url = (
-        url_for("main.movie_shopping", page=movies.prev_num, q=q, library=library, min_quality=min_quality, max_quality=max_quality) if movies.has_prev else None
+        url_for(
+            "main.movie_shopping",
+            page=movies.prev_num,
+            q=q,
+            library=library,
+            min_quality=min_quality,
+            max_quality=max_quality,
+        )
+        if movies.has_prev
+        else None
     )
 
     return render_template(
@@ -1859,7 +1886,8 @@ def files():
                 [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
             ).asc(),
             db.case(
-                [(Movie.tmdb_title != None, Movie.tmdb_release_date)], else_=Movie.year,
+                [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                else_=Movie.year,
             ).asc(),
             File.version.asc(),
             RefFeatureType.feature_type.asc(),

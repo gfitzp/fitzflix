@@ -876,10 +876,16 @@ def finalize_localization(file_path, file_details, lock):
                     sender=current_app.config["SERVER_EMAIL"],
                     recipients=[admin_user.email],
                     text_body=render_template(
-                        "email/replaced_physical_media.txt", user=admin_user.email, file=file, worse=worse
+                        "email/replaced_physical_media.txt",
+                        user=admin_user.email,
+                        file=file,
+                        worse=worse,
                     ),
                     html_body=render_template(
-                        "email/replaced_physical_media.html", user=admin_user.email, file=file, worse=worse
+                        "email/replaced_physical_media.html",
+                        user=admin_user.email,
+                        file=file,
+                        worse=worse,
                     ),
                 )
 
@@ -1037,7 +1043,6 @@ def manual_import_task():
                     app.lock_manager.unlock(lock)
 
 
-
 def mkvpropedit_task(
     file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
 ):
@@ -1109,7 +1114,10 @@ def mkvpropedit_task(
         current_app.logger.info(localization_arguments)
 
         mkvpropedit_task = subprocess.Popen(
-            [current_app.config["MKVPROPEDIT_BIN"], file_path,]
+            [
+                current_app.config["MKVPROPEDIT_BIN"],
+                file_path,
+            ]
             + localization_arguments,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1215,10 +1223,14 @@ def prune_aws_s3_storage_task():
                 sender=app.config["SERVER_EMAIL"],
                 recipients=[admin_user.email],
                 text_body=render_template(
-                    "email/unreferenced_files.txt", user=admin_user.email, unreferenced_files=unreferenced_files
+                    "email/unreferenced_files.txt",
+                    user=admin_user.email,
+                    unreferenced_files=unreferenced_files,
                 ),
                 html_body=render_template(
-                    "email/unreferenced_files.html", user=admin_user.email, unreferenced_files=unreferenced_files
+                    "email/unreferenced_files.html",
+                    user=admin_user.email,
+                    unreferenced_files=unreferenced_files,
                 ),
             )
 
@@ -1444,7 +1456,10 @@ def aws_rename(old_key, new_key):
     # with the new name and then delete the old object
 
     s3.meta.client.copy(
-        {"Bucket": current_app.config["AWS_BUCKET"], "Key": old_key,},
+        {
+            "Bucket": current_app.config["AWS_BUCKET"],
+            "Key": old_key,
+        },
         current_app.config["AWS_BUCKET"],
         new_key,
     )
@@ -1628,7 +1643,9 @@ def evaluate_filename(file_path):
 
         else:
             dirname = os.path.join(
-                media_library, title, f"Season {tv.group('season').zfill(2)}",
+                media_library,
+                title,
+                f"Season {tv.group('season').zfill(2)}",
             )
 
         fullscreen = False
@@ -2511,7 +2528,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                     Key=old_record.aws_untouched_key,
                                     RestoreRequest={
                                         "Days": 1,
-                                        "GlacierJobParameters": {"Tier": "Standard",},
+                                        "GlacierJobParameters": {
+                                            "Tier": "Standard",
+                                        },
                                     },
                                 )
 
