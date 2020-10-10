@@ -1161,7 +1161,7 @@ def admin():
             current_app.sql_queue.enqueue(
                 "app.videos.prune_aws_s3_storage_task",
                 args=None,
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                job_timeout="24h",
                 description=f"Pruning extra files from AWS S3 storage",
                 at_front=True,
             )
@@ -1353,6 +1353,10 @@ def movie_shopping():
         .filter(RefQuality.physical_media == True)
         .scalar()
     )
+
+    # Subquery for the user's movie reviews
+    movie_reviews = (
+        db.session.query(db.func.max(
 
     if q:
         title = f"Movies to upgrade matching '{q}'"
