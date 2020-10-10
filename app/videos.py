@@ -870,6 +870,19 @@ def finalize_localization(file_path, file_details, lock):
                     worse.aws_untouched_date_uploaded = None
                 db.session.delete(worse)
 
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Replaced a physical media file",
+                    sender=current_app.config["SERVER_EMAIL"],
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/replaced_physical_media.txt", user=admin_user.email, file=file, worse=worse
+                    ),
+                    html_body=render_template(
+                        "email/replaced_physical_media.html", user=admin_user.email, file=file, worse=worse
+                    ),
+                )
+
         # Move the new file into place
 
         os.rename(hidden_output_file, output_file)

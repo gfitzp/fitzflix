@@ -1,0 +1,7 @@
+Hello,
+
+The file '{{ file.basename }}' replaced a physical-quality file. You may dispose of the media for:
+
+{{ worse.basename }}
+
+- Fitzflix
