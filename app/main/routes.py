@@ -1162,6 +1162,19 @@ def admin():
 
         return redirect(url_for("main.admin"))
 
+
+    import_form = ImportForm()
+    if import_form.submit.data and import_form.validate_on_submit():
+        current_app.task_queue.enqueue(
+            "app.videos.manual_import_task",
+            args=None,
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"Scanning import directory for files",
+            at_front=True,
+        )
+        flash(f"Scanning import directory for files", "info")
+        return redirect(url_for("main.admin"))
+
     return render_template(
         "admin.html",
         title="Admin",
@@ -1170,6 +1183,7 @@ def admin():
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
         prune_form=prune_form,
+        import_form=import_form,
     )
 
 

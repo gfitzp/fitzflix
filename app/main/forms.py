@@ -49,7 +49,7 @@ class UpdateAPIKeyForm(FlaskForm):
 
 
 class ImportForm(FlaskForm):
-    submit = SubmitField("Import Videos")
+    submit = SubmitField("Scan Import Directory")
 
 
 class MovieReviewForm(FlaskForm):

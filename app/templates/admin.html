@@ -43,6 +43,14 @@
     </div>
     <div class="col-md-4">
     	<form action="" method="post">
+    		{{ import_form.hidden_tag() }}
+    		{{ import_form.submit(class_="btn btn-sm btn-success") }}
+    	</form>
+    </div>
+</div>
+<div class="row my-2">
+    <div class="col-md-4">
+    	<form action="" method="post">
     		{{ prune_form.hidden_tag() }}
     		{{ prune_form.password.label }}
     		{{ prune_form.password(class_="form-control form-control-sm mb-2") }}
