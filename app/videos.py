@@ -1190,8 +1190,16 @@ def prune_aws_s3_storage_task():
                 job.meta["description"] = "Pruning extra files from AWS S3 storage"
                 job.meta["progress"] = -1
 
-            file = File.query.filter(File.aws_untouched_key == key).first()
-            if not file and key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/":
+            aws_untouched_keys = [
+                aws_untouched_key
+                for (aws_untouched_key,) in db.session.query(
+                    File.aws_untouched_key
+                ).all()
+            ]
+            if (
+                key not in aws_untouched_keys
+                and key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
+            ):
                 if job:
                     job.meta["description"] = f"Deleting extra file '{key}' from AWS"
                     job.meta["progress"] = -1
