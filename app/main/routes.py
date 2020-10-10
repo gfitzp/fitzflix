@@ -57,12 +57,21 @@ from app.videos import *
 def index():
     """Show the ten most recently added files."""
 
+    page = request.args.get("page", 1, type=int)
+
     recently_added = (
         File.query.outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .filter(db.func.coalesce(File.date_updated, File.date_added) >= db.func.current_date() - 7)
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-        .limit(10)
-        .all()
+        .paginate(page, 100, False)
+    )
+
+    next_url = (
+        url_for("main.index", page=recently_added.next_num) if recently_added.has_next else None
+    )
+    prev_url = (
+        url_for("main.index", page=recently_added.prev_num) if recently_added.has_prev else None
     )
 
     form = ImportForm()
@@ -74,8 +83,11 @@ def index():
     return render_template(
         "recently_added.html",
         title="Recently Added",
-        recently_added=recently_added,
+        recently_added=recently_added.items,
         form=form,
+        next_url=next_url,
+        prev_url=prev_url,
+        pages=recently_added,
     )
 
 

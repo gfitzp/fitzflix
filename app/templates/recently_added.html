@@ -5,6 +5,30 @@
 	<h2 class="col-12">{{ title }}</h2>
 </div>
 <hr>
+{% if recently_added %}
+<nav aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages() %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
 {% for file in recently_added %}
 <div class="media mb-2">
 	{% if file.movie %}
@@ -37,4 +61,28 @@
 	{% endif %}
 </div>
 {% endfor %}
+<nav aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages() %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{% endif %}
 {% endblock %}
