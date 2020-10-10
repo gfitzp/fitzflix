@@ -1006,7 +1006,7 @@ def manual_import_task():
 
     app.app_context().push()
 
-    import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
+    import_directory_files = os.listdir(app.config["IMPORT_DIR"])
     import_directory_files.sort()
     qualities = (
         db.session.query(RefQuality.quality_title)
