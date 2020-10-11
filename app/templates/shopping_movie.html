@@ -135,7 +135,7 @@
 				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
 			</li>
 			{% if pages %}
-			{% for page in pages.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+			{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 				{% if page %}
 					{% if page == pages.page %}
 						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
@@ -192,7 +192,7 @@
 				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
 			</li>
 			{% if pages %}
-			{% for page in pages.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+			{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 				{% if page %}
 					{% if page == pages.page %}
 						<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_shopping', page=page, q=request.args.get('q'), library=request.args.get('library'), min_quality=request.args.get('min_quality'), max_quality=request.args.get('max_quality')) }}">{{ page }}</a></li>
