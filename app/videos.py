@@ -1038,7 +1038,9 @@ def manual_import_task():
                         )
                         job = current_app.localize_queue.enqueue(
                             "app.videos.localization_task",
-                            args=(os.path.join(current_app.config["IMPORT_DIR"], file),),
+                            args=(
+                                os.path.join(current_app.config["IMPORT_DIR"], file),
+                            ),
                             job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                             description=f"'{os.path.basename(file)}'",
                             job_id=os.path.basename(file),
@@ -1118,10 +1120,7 @@ def mkvpropedit_task(
         current_app.logger.info(localization_arguments)
 
         mkvpropedit_task = subprocess.Popen(
-            [
-                current_app.config["MKVPROPEDIT_BIN"],
-                file_path,
-            ]
+            [current_app.config["MKVPROPEDIT_BIN"], file_path,]
             + localization_arguments,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -1195,8 +1194,7 @@ def prune_aws_s3_storage_task():
         job = get_current_job()
 
         for key in get_matching_s3_keys(
-            app.config["AWS_BUCKET"],
-            prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
+            app.config["AWS_BUCKET"], prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
         ):
             if job:
                 job.meta["description"] = "Pruning extra files from AWS S3 storage"
@@ -1460,10 +1458,7 @@ def aws_rename(old_key, new_key):
     # with the new name and then delete the old object
 
     s3.meta.client.copy(
-        {
-            "Bucket": current_app.config["AWS_BUCKET"],
-            "Key": old_key,
-        },
+        {"Bucket": current_app.config["AWS_BUCKET"], "Key": old_key,},
         current_app.config["AWS_BUCKET"],
         new_key,
     )
@@ -1647,9 +1642,7 @@ def evaluate_filename(file_path):
 
         else:
             dirname = os.path.join(
-                media_library,
-                title,
-                f"Season {tv.group('season').zfill(2)}",
+                media_library, title, f"Season {tv.group('season').zfill(2)}",
             )
 
         fullscreen = False
@@ -2532,9 +2525,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                     Key=old_record.aws_untouched_key,
                                     RestoreRequest={
                                         "Days": 1,
-                                        "GlacierJobParameters": {
-                                            "Tier": "Standard",
-                                        },
+                                        "GlacierJobParameters": {"Tier": "Standard",},
                                     },
                                 )
 
