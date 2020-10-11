@@ -1009,7 +1009,7 @@ def manual_import_task():
 
     app.app_context().push()
 
-    import_directory_files = os.listdir(app.config["IMPORT_DIR"])
+    import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
     import_directory_files.sort()
     qualities = (
         db.session.query(RefQuality.quality_title)
@@ -1022,29 +1022,29 @@ def manual_import_task():
             if (
                 (not os.path.basename(file).startswith("."))
                 and f"[{quality_title}]" in file
-                and os.path.isfile(os.path.join(app.config["IMPORT_DIR"], file))
+                and os.path.isfile(os.path.join(current_app.config["IMPORT_DIR"], file))
             ):
-                lock = app.lock_manager.lock(os.path.basename(file), 1000)
+                lock = current_app.lock_manager.lock(os.path.basename(file), 1000)
                 if lock:
                     job_queue = []
                     localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=app.redis
+                        "fitzflix-localize", connection=current_app.redis
                     )
                     job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(app.localize_queue.job_ids)
+                    job_queue.extend(current_app.localize_queue.job_ids)
                     if os.path.basename(file) not in job_queue:
-                        app.logger.info(
+                        current_app.logger.info(
                             f"'{os.path.basename(file)}' Found in import directory"
                         )
-                        job = app.localize_queue.enqueue(
+                        job = current_app.localize_queue.enqueue(
                             "app.videos.localization_task",
-                            args=(os.path.join(app.config["IMPORT_DIR"], file),),
-                            job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
+                            args=(os.path.join(current_app.config["IMPORT_DIR"], file),),
+                            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                             description=f"'{os.path.basename(file)}'",
                             job_id=os.path.basename(file),
                         )
 
-                    app.lock_manager.unlock(lock)
+                    current_app.lock_manager.unlock(lock)
 
 
 def mkvpropedit_task(
