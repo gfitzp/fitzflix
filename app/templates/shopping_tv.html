@@ -31,13 +31,13 @@
 {% if series %}
 {% for tv in series %}
 <div class="media">
-	<div class="sticky-top pt-1">
+	<div class="sticky-top pt-1 mt-n1">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 	</div>
 	<div class="media-body">
-		<div class="sticky-top pt-1 pb-1" style="background: linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(255,255,255,1) 75%, rgba(255,255,255,0) 100%);"><h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_title if tv.tmdb_title else tv.title }}</a></h5></div>
+		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_title if tv.tmdb_title else tv.title }}</a></h5>
 		{% if tv.seasons %}
 			<ul class="list-group col-12 col-md-8 col-lg-4">
 			{% for season in tv.seasons %}
