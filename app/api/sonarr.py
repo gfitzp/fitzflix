@@ -2,7 +2,10 @@ import json
 import os
 import shutil
 
+from datetime import date, datetime
+
 import requests
+import urllib3
 
 from flask import current_app, jsonify, request
 
@@ -15,7 +18,7 @@ from app.models import TVSeries, User
 def add():
     """Endpoint for Sonarr to notify Fitzflix when a new video file is added."""
 
-    current_app.logger.debug(
+    current_app.logger.info(
         f"Authorization: {request.authorization}, Request: {request.get_json()}"
     )
     payload = request.get_json()
@@ -38,7 +41,7 @@ def add():
             return response
 
         response = jsonify(request.get_json())
-        current_app.logger.debug(f"Request: {request.get_json() or {}}")
+        current_app.logger.info(f"Request: {request.get_json() or {}}")
         downloaded_file_path = os.path.join(
             payload["series"].get("path"),
             payload["episodeFile"].get("relativePath"),
@@ -73,20 +76,55 @@ def add():
                 f"'{downloaded_file_path}' renamed as '{sonarr_file_path}'"
             )
 
+        # If the episode aired in the last two weeks, add it to the front of the queue
+
+        today = date.today()
+        airdate = payload["episodes"][0].get("airDate")
+        at_front = False
+        if airdate:
+            airdate = datetime.strptime(airdate, "%Y-%m-%d").date()
+            aired_days_ago = (today - airdate).days
+            current_app.logger.info(
+                f"'{os.path.basename(sonarr_file_path)}' aired {aired_days_ago} day(s) ago"
+            )
+            if aired_days_ago <= 14:
+                at_front = True
+                current_app.logger.info(
+                    f"'{os.path.basename(sonarr_file_path)}' Import will be prioritized"
+                )
+
         # Ask Sonarr to refresh its series data now that we've possibly renamed the file
 
         series = payload.get("series")
         id = series.get("id")
         if id:
             current_app.logger.info(f"Rescanning series '{series.get('title')}'")
-            params = {"apikey": current_app.config["SONARR_API_KEY"]}
-            data = {"name": "RescanSeries", "seriesId": series.get("id")}
-            r = requests.post(
+
+            # r = requests.post(
+            #     current_app.config["SONARR_URL"] + "/api/command",
+            #     params={"apikey": current_app.config["SONARR_API_KEY"]},
+            #     json={"name": "RescanSeries", "seriesId": int(id)},
+            # )
+            # current_app.logger.info(r.json())
+
+            # I *would* have used the requests code above to submit the API call to Sonarr
+            # to refresh the series, but it keeps crashing with a segmentation fault.
+            # No idea why, because the same code works perfectly fine on my local machine.
+            # Using the urllib3 code below to make the API call instead.
+
+            http = urllib3.PoolManager()
+            r = http.request(
+                "POST",
                 current_app.config["SONARR_URL"] + "/api/command",
-                params=params,
-                data=json.dumps(data),
+                headers={
+                    "X-Api-Key": current_app.config["SONARR_API_KEY"],
+                    "Content-Type": "application/json"
+                },
+                body=json.dumps(
+                    {"name": "RescanSeries", "seriesId": int(id)}
+                ).encode("utf-8"),
             )
-            current_app.logger.debug(r.json())
+            current_app.logger.info(json.loads(r.data.decode("utf-8")))
 
         # Pass the file to Fitzflix for processing; tried copying the file to the import
         # directory for processing but if another file came in while it was copying
@@ -94,14 +132,19 @@ def add():
         # directory but that wasn't supported on my NAS, so just sending the downloaded
         # file directly to Sonarr to be imported in place
 
-        current_app.logger.info(f"'{sonarr_file_path}' Sending to Fitzflix")
-        job = current_app.task_queue.enqueue(
+        job = current_app.localize_queue.enqueue(
             "app.videos.localization_task",
             args=(sonarr_file_path,),
             job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
             description=f"'{os.path.basename(sonarr_file_path)}'",
             job_id=os.path.basename(sonarr_file_path),
+            at_front=at_front
         )
+        if job:
+            current_app.logger.info(f"'{sonarr_file_path}' Sent to Fitzflix")
+
+        else:
+            response.status_code = 500
 
     else:
         response.status_code = 401
