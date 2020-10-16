@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12">{{ title }}</h2>
+</div>
+<hr>
+<img src="{{ url_for('static', filename='tmdb/movie/' + movie.tmdb_id|string + '/game.jpg')}}" style="width: 50%">
+{% endblock %}

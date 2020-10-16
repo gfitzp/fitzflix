@@ -46,6 +46,7 @@ class Config(object):
 
     # Application locations
     ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/usr/local/bin/AtomicParsley"
+    FFMPEG_BIN                          = os.environ.get("FFMPEG_BIN") or "/usr/local/bin/ffmpeg"
     HANDBRAKE_BIN                       = os.environ.get("HANDBRAKE_BIN") or "/usr/local/bin/HandBrakeCLI"
     MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/usr/local/bin/mkvmerge"
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/usr/local/bin/mkvpropedit"

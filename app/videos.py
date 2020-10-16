@@ -1878,6 +1878,81 @@ def evaluate_filename(file_path):
     return file_details
 
 
+def generate_frame(movie_id):
+    """Generate a frame for the given movie ID for the Name That Frame game."""
+
+    ranking = (
+        db.session.query(
+            File.id,
+            File.movie_id,
+            File.feature_type_id,
+            File.plex_title,
+            File.version,
+            File.fullscreen,
+            RefQuality.preference,
+            RefQuality.quality_title,
+            RefQuality.physical_media,
+            db.func.row_number()
+            .over(
+                partition_by=(
+                    File.movie_id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
+                order_by=(
+                    RefQuality.preference.desc(),
+                    File.fullscreen,
+                    File.date_added.asc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    file = (
+        File.query.join(Movie, (Movie.id == File.movie_id))
+        .filter(Movie.id == movie_id)
+        .first()
+    )
+
+    base_dir = os.path.abspath(os.path.dirname(__file__))
+
+    media_info = MediaInfo.parse(os.path.join(current_app.config["LOCALIZED_DIR"], file.file_path))
+    current_app.logger.debug(media_info.to_json())
+    for track in media_info.tracks:
+        if track.track_type == "Video":
+            duration = track.to_data().get("duration")
+            duration = int(int(float(duration)) / 1000)
+
+    random_second = random.randint(1, duration)
+    current_app.logger.debug(random_second)
+
+    frame_generation_process = subprocess.Popen(
+        [
+            current_app.config["FFMPEG_BIN"],
+            "-y",
+            "-ss",
+            str(random_second),
+            "-i",
+            os.path.join(current_app.config["LOCALIZED_DIR"], file.file_path),
+            "-vf",
+            """scale='min(1080,iw)':-1""",
+            "-vframes",
+            "1",
+            "-q:v",
+            "2",
+            os.path.join(base_dir, "static", "tmdb", "movie", str(file.movie.tmdb_id), "game.jpg")
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+
+
 def get_audio_tracks_from_file(file_path):
     """Parse a file with MediaInfo and return its audio tracks."""
 

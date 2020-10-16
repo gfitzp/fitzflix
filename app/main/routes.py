@@ -1935,3 +1935,17 @@ def files():
         prev_url=prev_url,
         pages=files,
     )
+
+
+@bp.route("/name-that-frame")
+@login_required
+def name_that_frame():
+
+    movie_id = 1
+
+    movie = Movie.query.filter_by(id=1).first()
+    current_app.logger.info(movie)
+
+    generate_frame(movie_id)
+
+    return render_template("name_that_frame.html", movie=movie)
