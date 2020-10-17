@@ -19,6 +19,7 @@ from wtforms.validators import (
     DataRequired,
     Email,
     EqualTo,
+    InputRequired,
     Optional,
     Regexp,
     ValidationError,
@@ -53,14 +54,14 @@ class ImportForm(FlaskForm):
 
 
 class MovieReviewForm(FlaskForm):
-    rating = DecimalField("Rating (out of 5)", places=1, validators=[DataRequired()])
+    rating = DecimalField("Rating (out of 5)", places=1, validators=[InputRequired()])
     review = TextAreaField("Review")
     date_watched = DateField("Date Watched", format="%Y-%m-%d", validators=[Optional()])
     review_submit = SubmitField("Rate Movie")
 
     def validate_rating(self, rating):
         if rating.data < 0 or rating.data > 5:
-            raise ValidationError("Please enter a rating between 1 and 5 stars.")
+            raise ValidationError("Please enter a rating between 0 and 5 stars.")
 
     def validate_date_watched(self, date_watched):
         if datetime.strptime(str(date_watched.data), "%Y-%m-%d") > datetime.now():
