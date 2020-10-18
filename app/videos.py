@@ -1009,44 +1009,50 @@ def manual_import_task():
 
     app.app_context().push()
 
-    import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
-    import_directory_files.sort()
-    qualities = (
-        db.session.query(RefQuality.quality_title)
-        .order_by(RefQuality.preference.asc())
-        .all()
-    )
-    qualities = [quality_title for (quality_title,) in qualities]
-    for quality_title in qualities:
-        for file in import_directory_files:
-            if (
-                (not os.path.basename(file).startswith("."))
-                and f"[{quality_title}]" in file
-                and os.path.isfile(os.path.join(current_app.config["IMPORT_DIR"], file))
-            ):
-                lock = current_app.lock_manager.lock(os.path.basename(file), 1000)
-                if lock:
-                    job_queue = []
-                    localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=current_app.redis
-                    )
-                    job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(current_app.localize_queue.job_ids)
-                    if os.path.basename(file) not in job_queue:
-                        current_app.logger.info(
-                            f"'{os.path.basename(file)}' Found in import directory"
-                        )
-                        job = current_app.localize_queue.enqueue(
-                            "app.videos.localization_task",
-                            args=(
-                                os.path.join(current_app.config["IMPORT_DIR"], file),
-                            ),
-                            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                            description=f"'{os.path.basename(file)}'",
-                            job_id=os.path.basename(file),
-                        )
+    try:
 
-                    current_app.lock_manager.unlock(lock)
+        import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
+        import_directory_files.sort()
+        qualities = (
+            db.session.query(RefQuality.quality_title)
+            .order_by(RefQuality.preference.asc())
+            .all()
+        )
+        qualities = [quality_title for (quality_title,) in qualities]
+        for quality_title in qualities:
+            for file in import_directory_files:
+                if (
+                    (not os.path.basename(file).startswith("."))
+                    and f"[{quality_title}]" in file
+                    and os.path.isfile(os.path.join(current_app.config["IMPORT_DIR"], file))
+                ):
+                    lock = current_app.lock_manager.lock(os.path.basename(file), 1000)
+                    if lock:
+                        job_queue = []
+                        localization_tasks_running = StartedJobRegistry(
+                            "fitzflix-localize", connection=current_app.redis
+                        )
+                        job_queue.extend(localization_tasks_running.get_job_ids())
+                        job_queue.extend(current_app.localize_queue.job_ids)
+                        if os.path.basename(file) not in job_queue:
+                            current_app.logger.info(
+                                f"'{os.path.basename(file)}' Found in import directory"
+                            )
+                            job = current_app.localize_queue.enqueue(
+                                "app.videos.localization_task",
+                                args=(os.path.join(current_app.config["IMPORT_DIR"], file),),
+                                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                                description=f"'{os.path.basename(file)}'",
+                                job_id=os.path.basename(file),
+                            )
+
+                        current_app.lock_manager.unlock(lock)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+    else:
+        return True
 
 
 def mkvpropedit_task(
@@ -1501,16 +1507,17 @@ def aws_upload(file_path, key_prefix="", key_name=None):
     # If the ETags match, then the files are the same and there's no need to re-upload.
 
     if response.get("Contents"):
-        local_etag = calculate_etag(file_path)
+        # TODO: remove the next line and uncomment below
+        # local_etag = calculate_etag(file_path)
         for object in response.get("Contents"):
             if object.get("Key") == key:
                 remote_etag = object.get("ETag").replace('"', "")
                 date_uploaded = object.get("LastModified")
 
-        if local_etag == remote_etag:
-            current_app.logger.info(
-                f"'{file_path}' is the same as '{key}', no need to re-upload"
-            )
+            # if local_etag == remote_etag:
+            #     current_app.logger.info(
+            #         f"'{file_path}' is the same as '{key}', no need to re-upload"
+            #     )
             return key, date_uploaded
 
         else:

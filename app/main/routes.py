@@ -1172,38 +1172,13 @@ def admin():
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
-        import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
-        import_directory_files.sort()
-        qualities = (
-            db.session.query(RefQuality.quality_title)
-            .order_by(RefQuality.preference.asc())
-            .all()
+        current_app.task_queue.enqueue(
+            "app.videos.manual_import_task",
+            args=(),
+            job_timeout="1h",
+            description="Manually scanning import directory for files",
+            atfront=True,
         )
-        qualities = [quality_title for (quality_title,) in qualities]
-        for quality_title in qualities:
-            for file in import_directory_files:
-                if (
-                    (not os.path.basename(file).startswith("."))
-                    and f"[{quality_title}]" in file
-                    and os.path.isfile(os.path.join(current_app.config["IMPORT_DIR"], file))
-                ):
-                    job_queue = []
-                    localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=current_app.redis
-                    )
-                    job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(current_app.localize_queue.job_ids)
-                    if os.path.basename(file) not in job_queue:
-                        current_app.logger.info(
-                            f"'{os.path.basename(file)}' Found in import directory"
-                        )
-                        job = current_app.localize_queue.enqueue(
-                            "app.videos.localization_task",
-                            args=(os.path.join(current_app.config["IMPORT_DIR"], file),),
-                            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                            description=f"'{os.path.basename(file)}'",
-                            job_id=os.path.basename(file),
-                        )
         flash(f"Added files in import directory to localization queue", "info")
         return redirect(url_for("main.admin"))
 
