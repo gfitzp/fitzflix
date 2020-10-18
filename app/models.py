@@ -193,13 +193,17 @@ class TMDBMixin(object):
         if tmdb_id:
             r = requests.get(
                 tmdb_api_url + "/movie/" + str(tmdb_id),
-                params={"api_key": tmdb_api_key, "append_to_response": requested_info,},
+                params={
+                    "api_key": tmdb_api_key,
+                    "append_to_response": requested_info,
+                },
             )
             r.raise_for_status()
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
             r = requests.get(
-                tmdb_api_url + "/configuration", params={"api_key": tmdb_api_key},
+                tmdb_api_url + "/configuration",
+                params={"api_key": tmdb_api_key},
             )
             r.raise_for_status()
             if r.json().get("images"):
@@ -505,7 +509,10 @@ class TMDBMixin(object):
         if tmdb_id == None:
             r = requests.get(
                 tmdb_api_url + "/search/tv",
-                params={"api_key": tmdb_api_key, "query": self.title,},
+                params={
+                    "api_key": tmdb_api_key,
+                    "query": self.title,
+                },
             )
             r.raise_for_status()
             current_app.logger.debug(f"{r.url}: {r.json()}")
@@ -516,13 +523,17 @@ class TMDBMixin(object):
         if tmdb_id:
             r = requests.get(
                 tmdb_api_url + "/tv/" + str(tmdb_id),
-                params={"api_key": tmdb_api_key, "append_to_response": requested_info,},
+                params={
+                    "api_key": tmdb_api_key,
+                    "append_to_response": requested_info,
+                },
             )
             r.raise_for_status()
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
             r = requests.get(
-                tmdb_api_url + "/configuration", params={"api_key": tmdb_api_key},
+                tmdb_api_url + "/configuration",
+                params={"api_key": tmdb_api_key},
             )
             r.raise_for_status()
             if r.json().get("images"):
@@ -1482,7 +1493,8 @@ class File(db.Model, LibraryMixin):
                     ),
                 }
                 r = requests.get(
-                    current_app.config["SONARR_URL"] + "/api/parse", params=params,
+                    current_app.config["SONARR_URL"] + "/api/parse",
+                    params=params,
                 )
                 r.raise_for_status()
                 current_app.logger.debug(r.json())

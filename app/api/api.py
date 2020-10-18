@@ -16,7 +16,9 @@ def queue_details():
     of tasks in queue, and the details of the tasks that are currently running.
     """
 
-    localizations = StartedJobRegistry("fitzflix-localize", connection=current_app.redis)
+    localizations = StartedJobRegistry(
+        "fitzflix-localize", connection=current_app.redis
+    )
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()

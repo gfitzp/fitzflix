@@ -118,11 +118,11 @@ def add():
                 current_app.config["SONARR_URL"] + "/api/command",
                 headers={
                     "X-Api-Key": current_app.config["SONARR_API_KEY"],
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
-                body=json.dumps(
-                    {"name": "RescanSeries", "seriesId": int(id)}
-                ).encode("utf-8"),
+                body=json.dumps({"name": "RescanSeries", "seriesId": int(id)}).encode(
+                    "utf-8"
+                ),
             )
             current_app.logger.info(json.loads(r.data.decode("utf-8")))
 
@@ -138,7 +138,7 @@ def add():
             job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
             description=f"'{os.path.basename(sonarr_file_path)}'",
             job_id=os.path.basename(sonarr_file_path),
-            at_front=at_front
+            at_front=at_front,
         )
         if job:
             current_app.logger.info(f"'{sonarr_file_path}' Sent to Fitzflix")
