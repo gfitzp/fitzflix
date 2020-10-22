@@ -893,6 +893,25 @@ def finalize_localization(file_path, file_details, lock):
                     ),
                 )
 
+                if current_app.config["TODO_EMAIL"]:
+                    send_email(
+                        f"Find and dispose of the media for '{worse.untouched_basename}'",
+                        sender=current_app.config["SERVER_EMAIL"],
+                        recipients=[current_app.config["TODO_EMAIL"]],
+                        text_body=render_template(
+                            "email/replaced_physical_media.txt",
+                            user=admin_user.email,
+                            file=file,
+                            worse=worse,
+                        ),
+                        html_body=render_template(
+                            "email/replaced_physical_media.html",
+                            user=admin_user.email,
+                            file=file,
+                            worse=worse,
+                        ),
+                    )
+
         # Move the new file into place
 
         os.rename(hidden_output_file, output_file)

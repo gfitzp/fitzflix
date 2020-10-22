@@ -65,6 +65,7 @@ class Config(object):
     MAIL_USE_TLS                        = os.environ.get("MAIL_USE_TLS") is not None
     SERVER_EMAIL                        = os.environ.get("SERVER_EMAIL") or os.environ.get("MAIL_USERNAME")
     ADMIN_EMAIL                         = os.environ.get("ADMIN_EMAIL") or os.environ.get("MAIL_USERNAME")
+    TODO_EMAIL                          = os.environ.get("TODO_EMAIL") or None
 
     # Transcoding configuration
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
