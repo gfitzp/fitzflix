@@ -1539,19 +1539,30 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
 
     # If the key already exists, check to see if the local and remote ETags match.
     # If the ETags match, then the files are the same and there's no need to re-upload.
+    # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
+    # Skip the whole comparison process if the force_upload flag is set to True.
 
     if response.get("Contents") and not force_upload:
-        # TODO: remove the next line and uncomment below
-        # local_etag = calculate_etag(file_path)
+        if current_app.config["IGNORE_ETAGS"]:
+            pass
+        else:
+            local_etag = calculate_etag(file_path)
+
         for object in response.get("Contents"):
             if object.get("Key") == key:
                 remote_etag = object.get("ETag").replace('"', "")
                 date_uploaded = object.get("LastModified")
+                if current_app.config["IGNORE_ETAGS"]:
+                    current_app.logger.info(
+                        f"'{file_path}' matches '{key}' and ETags are ignored, "
+                        f"no need to re-upload"
+                    )
+                    return key, date_uploaded
 
-            # if local_etag == remote_etag:
-            #     current_app.logger.info(
-            #         f"'{file_path}' is the same as '{key}', no need to re-upload"
-            #     )
+        if local_etag == remote_etag:
+            current_app.logger.info(
+                f"'{file_path}' is the same as '{key}', no need to re-upload"
+            )
             return key, date_uploaded
 
         else:
@@ -1560,6 +1571,12 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
                 f"differs from remote ETag '{remote_etag}' ('{key}'), "
                 f"re-uploading to AWS"
             )
+
+    elif force_upload:
+        current_app.logger.info(
+            f"Forcing upload of "
+            f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], key)}' to AWS"
+        )
 
     else:
         current_app.logger.info(

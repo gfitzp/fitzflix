@@ -56,6 +56,7 @@ class Config(object):
     AWS_ACCESS_KEY                      = os.environ.get("AWS_ACCESS_KEY") or None
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
+    IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None
 
     # Mail server configuration
     MAIL_USERNAME                       = os.environ.get("MAIL_USERNAME")

@@ -22,6 +22,8 @@ def queue_details():
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()
+    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
+    tasks_running = tasks.get_job_ids()
     details = {}
     if current_user.is_authenticated:
 
@@ -56,6 +58,21 @@ def queue_details():
 
         for job_id in transcodes_running:
             job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["running"].append(
+                    {
+                        "job": job_id,
+                        "description": job.meta.get("description", job.description),
+                        "progress": (
+                            job.meta.get("progress", -1) if job is not None else 100
+                        ),
+                    }
+                )
+
+        # Get the details for any tasks currently being processed
+
+        for job_id in tasks_running:
+            job = current_app.task_queue.fetch_job(job_id)
             if job:
                 details["running"].append(
                     {
