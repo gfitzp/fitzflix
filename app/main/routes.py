@@ -957,6 +957,7 @@ def file(file_id):
             args=(
                 file.id,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
+                True,
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",

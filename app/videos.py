@@ -1423,7 +1423,7 @@ def transcode_task(file_id):
     return True
 
 
-def upload_task(file_id, key_prefix=""):
+def upload_task(file_id, key_prefix="", force_upload=False):
     """Upload a file to AWS S3 storage."""
 
     app.app_context().push()
@@ -1440,7 +1440,7 @@ def upload_task(file_id, key_prefix=""):
         # Update the File record with the remote key and date it was uploaded.
 
         file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
-            file_path, key_prefix
+            file_path=file_path, key_prefix=key_prefix, force_upload=force_upload
         )
 
         db.session.commit()
@@ -1506,7 +1506,7 @@ def aws_rename(old_key, new_key):
     return new_key, datetime.utcnow()
 
 
-def aws_upload(file_path, key_prefix="", key_name=None):
+def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
     """Search for a file in AWS S3, and upload if it doesn't exist or if it differs."""
 
     if not os.path.isfile(file_path):
@@ -1540,7 +1540,7 @@ def aws_upload(file_path, key_prefix="", key_name=None):
     # If the key already exists, check to see if the local and remote ETags match.
     # If the ETags match, then the files are the same and there's no need to re-upload.
 
-    if response.get("Contents"):
+    if response.get("Contents") and not force_upload:
         # TODO: remove the next line and uncomment below
         # local_etag = calculate_etag(file_path)
         for object in response.get("Contents"):
