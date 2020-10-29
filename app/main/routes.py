@@ -1160,7 +1160,7 @@ def admin():
             flash(f"Need to be an admin user for this task!", "danger")
 
         elif current_user.check_password(prune_form.password.data):
-            current_app.sql_queue.enqueue(
+            current_app.task_queue.enqueue(
                 "app.videos.prune_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",

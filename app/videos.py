@@ -1229,36 +1229,39 @@ def prune_aws_s3_storage_task():
     try:
         job = get_current_job()
 
-        for key in get_matching_s3_keys(
+        s3_keys = [key for key in get_matching_s3_keys(
             app.config["AWS_BUCKET"],
             prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
-        ):
+        )]
+
+        aws_untouched_keys = [
+            aws_untouched_key
+            for (aws_untouched_key,) in db.session.query(
+                File.aws_untouched_key
+            ).all()
+        ]
+
+        i = 1
+
+        for key in s3_keys:
             if job:
                 job.meta["description"] = "Pruning extra files from AWS S3 storage"
-                job.meta["progress"] = -1
+                job.meta["progress"] = int((i / len(s3_keys)) * 100)
+                job.save_meta()
 
-            aws_untouched_keys = [
-                aws_untouched_key
-                for (aws_untouched_key,) in db.session.query(
-                    File.aws_untouched_key
-                ).all()
-            ]
             if (
                 key not in aws_untouched_keys
                 and key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
             ):
-                if job:
-                    job.meta["description"] = f"Deleting extra file '{key}' from AWS"
-                    job.meta["progress"] = -1
-
                 unreferenced_files.append(key)
+                aws_delete(key)
 
-                # aws_delete(key)
+            i = i + 1
 
         if unreferenced_files:
             admin_user = User.query.filter(User.admin == True).first()
             send_email(
-                "Fitzflix - Unreferenced AWS files",
+                "Fitzflix - Deleted unreferenced AWS files",
                 sender=app.config["SERVER_EMAIL"],
                 recipients=[admin_user.email],
                 text_body=render_template(
