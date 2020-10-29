@@ -48,6 +48,7 @@
     	</form>
     </div>
 </div>
+<hr>
 <div class="row my-2">
     <div class="col-md-4">
     	<form action="" method="post">
@@ -56,6 +57,7 @@
     		{{ prune_form.password(class_="form-control form-control-sm mb-2") }}
     		{{ prune_form.prune_submit(class_="btn btn-sm btn-danger") }}
     	</form>
+    	<em class="small">This will delete all files that aren't in the Fitzflix database from AWS. Be VERY SURE you want to delete them before you click!</em>
     </div>
 </div>
 {% endblock %}
