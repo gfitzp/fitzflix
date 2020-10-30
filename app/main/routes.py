@@ -902,8 +902,10 @@ def file(file_id):
                 ),
                 job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
-                at_front=True,
             )
+            if mkvpropedit_job:
+                current_app.logger.info("Queued '{file.basename}' for MKV property edits")
+
             # Check the status of the refresh job every second. If the TMDb refresh process
             # completed within 10 seconds, redirect to the updated page, otherwise redirect
             # to the existing page and give the user a link to reload the page.
@@ -957,11 +959,9 @@ def file(file_id):
             args=(
                 file.id,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
-                True,
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
-            at_front=True,
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
