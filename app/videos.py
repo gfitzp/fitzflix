@@ -1099,6 +1099,11 @@ def mkvpropedit_task(
         file = File.query.filter_by(id=file_id).first()
         file_path = os.path.join(app.config["LOCALIZED_DIR"], file.file_path)
 
+        if job:
+            job.meta["description"] = "'{file.basename}' – Updating MKV properties"
+            job.meta["progress"] = -1
+            job.save_meta()
+
         FileAudioTrack.query.filter_by(file_id=file.id).delete()
         FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
@@ -1208,6 +1213,13 @@ def mkvpropedit_task(
             file.subtitle_track = subtitle_track
             current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
             db.session.add(subtitle_track)
+
+        file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+            file_path=file_path,
+            key_prefix=app.config['AWS_UNTOUCHED_PREFIX'],
+            key_name=file.untouched_basename,
+            force_upload=False,
+        )
 
         db.session.commit()
 

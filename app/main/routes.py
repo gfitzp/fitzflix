@@ -892,7 +892,7 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvpropedit_job = current_app.sql_queue.enqueue(
+            mkvpropedit_job = current_app.task_queue.enqueue(
                 "app.videos.mkvpropedit_task",
                 args=(
                     file.id,
