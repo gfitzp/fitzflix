@@ -40,7 +40,7 @@
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 			</h5>
-			{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ moment(movie.tmdb_release_date).format("YYYY") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})<br/>
+			{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})<br/>
 			{% if file.version %}{{ file.version }}<br/>{% endif %}
 			{% if file.feature_type_id %}{{ file.plex_title }}<br/>{% endif %}
 			{{ file.quality.quality_title }}
