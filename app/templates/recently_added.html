@@ -37,6 +37,7 @@
 			{% include "_movie_poster_small.html" %}
 		</a>
 		<div class="media-body">
+			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 			</h5>
@@ -51,6 +52,7 @@
 			{% include "_tv_poster_small.html" %}
 		</a>
 		<div class="media-body">
+			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 			</h5>
