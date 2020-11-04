@@ -1100,7 +1100,7 @@ def mkvpropedit_task(
         file_path = os.path.join(app.config["LOCALIZED_DIR"], file.file_path)
 
         if job:
-            job.meta["description"] = "'{file.basename}' – Updating MKV properties"
+            job.meta["description"] = f"'{file.basename}' – Updating MKV properties"
             job.meta["progress"] = -1
             job.save_meta()
 
