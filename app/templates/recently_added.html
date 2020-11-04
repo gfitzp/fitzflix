@@ -42,7 +42,7 @@
 			</h5>
 			{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})<br/>
 			{% if file.version %}{{ file.version }}<br/>{% endif %}
-			{% if file.feature_type_id %}{{ file.plex_title }}<br/>{% endif %}
+			{% if file.feature_type_id %}{{ file.feature_type.feature_type }} - {{ file.plex_title }}<br/>{% endif %}
 			{{ file.quality.quality_title }}
 		</div>
 	{% elif file.tv_series %}
