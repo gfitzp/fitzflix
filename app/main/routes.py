@@ -882,12 +882,11 @@ def file(file_id):
     mkvpropedit_form.forced_subtitles.default = default_forced_subtitles
 
     if mkvpropedit_form.mkvpropedit_submit.data:
-        current_app.logger.info("foo!")
-        current_app.logger.info(f"Default audio: {mkvpropedit_form.default_audio.data}")
-        current_app.logger.info(
+        current_app.logger.debug(f"Default audio: {mkvpropedit_form.default_audio.data}")
+        current_app.logger.debug(
             f"Default subtitle: {mkvpropedit_form.default_subtitle.data}"
         )
-        current_app.logger.info(
+        current_app.logger.debug(
             f"Forced subtitles: {mkvpropedit_form.forced_subtitles.data}"
         )
 
@@ -906,19 +905,7 @@ def file(file_id):
             if mkvpropedit_job:
                 current_app.logger.info("Queued '{file.basename}' for MKV property edits")
 
-            # Check the status of the refresh job every second. If the TMDb refresh process
-            # completed within 10 seconds, redirect to the updated page, otherwise redirect
-            # to the existing page and give the user a link to reload the page.
-
-            waited_seconds = 0
-            while mkvpropedit_job.result == None and waited_seconds < 10:
-                time.sleep(1)
-                waited_seconds = waited_seconds + 1
-
-            if mkvpropedit_job.result:
-                flash(f"Updated MKV properties for '{file.basename}'", "success")
-            else:
-                flash(f"Updating MKV properties for '{file.basename}'", "info")
+            flash(f"Updating MKV properties for '{file.basename}'", "info")
 
         else:
             flash(
