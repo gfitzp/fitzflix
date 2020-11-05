@@ -12,7 +12,7 @@ from redlock import Redlock
 from rq.registry import StartedJobRegistry
 from rq_scheduler import Scheduler
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config
@@ -224,7 +224,7 @@ def create_app(config_class=Config):
     # Watch the import directory for file changes
 
     event_handler = MyHandler()
-    observer = Observer()
+    observer = PollingObserver()
     observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
     observer.start()
 
