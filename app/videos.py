@@ -1454,9 +1454,17 @@ def upload_task(file_id, key_prefix="", force_upload=False):
         # Pass to the aws_upload() function for uploading.
         # Update the File record with the remote key and date it was uploaded.
 
-        file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
-            file_path=file_path, key_prefix=key_prefix, force_upload=force_upload
-        )
+        if file.aws_untouched_key:
+            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                file_path=file_path,
+                key_name=file.aws_untouched_key,
+                force_upload=force_upload
+            )
+
+        else:
+            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                file_path=file_path, key_prefix=key_prefix, force_upload=force_upload
+            )
 
         db.session.commit()
 
