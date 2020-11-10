@@ -38,11 +38,11 @@ class Config(object):
     SQLALCHEMY_TRACK_MODIFICATIONS      = os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS") is not None
 
     # Fitzflix directories
-    LIBRARY_LOCATION                    = os.environ.get("LIBRARY_LOCATION") or os.path.join(basedir, "..", "library")
-    IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(LIBRARY_LOCATION, "import")
-    LOCALIZED_DIR                       = os.environ.get("LOCALIZED_DIR") or os.path.join(LIBRARY_LOCATION, "localized")
-    REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(LIBRARY_LOCATION, "rejects")
-    TRANSCODES_DIR                      = os.environ.get("TRANSCODED_DIR") or os.path.join(LIBRARY_LOCATION, "transcoded")
+    MEDIA_LOCATION                      = os.environ.get("MEDIA_LOCATION") or os.path.join(basedir, "..", "videos")
+    IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(MEDIA_LOCATION, "import")
+    LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
+    REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(MEDIA_LOCATION, "rejects")
+    TRANSCODES_DIR                      = os.environ.get("TRANSCODED_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
     # Application locations
     ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/usr/local/bin/AtomicParsley"

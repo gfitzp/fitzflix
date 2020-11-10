@@ -207,7 +207,7 @@ def localization_task(file_path):
         # Determine output directories and files to be created
 
         output_directory = os.path.join(
-            current_app.config["LOCALIZED_DIR"], file_details.get("dirname")
+            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
         hidden_output_file = os.path.join(
             output_directory, f".{file_details.get('basename')}"
@@ -524,13 +524,13 @@ def finalize_localization(file_path, file_details, lock):
         # Determine output directories and file to be created
 
         output_directory = os.path.join(
-            current_app.config["LOCALIZED_DIR"], file_details.get("dirname")
+            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )
         hidden_output_file = os.path.join(
             output_directory, f".{file_details.get('basename')}"
         )
         output_file = os.path.join(
-            current_app.config["LOCALIZED_DIR"], file_details.get("file_path")
+            current_app.config["LIBRARY_DIR"], file_details.get("file_path")
         )
 
         # See if this File record already exists in the database.
@@ -1097,7 +1097,7 @@ def mkvpropedit_task(
         # Get the record of the file to modify
 
         file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(app.config["LOCALIZED_DIR"], file.file_path)
+        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
         if job:
             job.meta["description"] = f"'{file.basename}' – Updating MKV properties"
@@ -1373,7 +1373,7 @@ def transcode_task(file_id):
 
         # Determine output directories and files to be created
 
-        input_file = os.path.join(current_app.config["LOCALIZED_DIR"], file.file_path)
+        input_file = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         output_directory = os.path.join(
             current_app.config["TRANSCODES_DIR"], file.dirname
         )
@@ -1449,7 +1449,7 @@ def upload_task(file_id, key_prefix="", force_upload=False):
         # Get the record of the file to be uploaded to AWS S3 storage
 
         file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(app.config["LOCALIZED_DIR"], file.file_path)
+        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
         # Pass to the aws_upload() function for uploading.
         # Update the File record with the remote key and date it was uploaded.
@@ -2484,23 +2484,23 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
                     os.makedirs(
                         os.path.join(
-                            current_app.config["LOCALIZED_DIR"],
+                            current_app.config["LIBRARY_DIR"],
                             file_details.get("dirname"),
                         ),
                         exist_ok=True,
                     )
                     current_app.logger.info(
-                        f"Renaming {os.path.join(current_app.config['LOCALIZED_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LOCALIZED_DIR'], file_details.get('file_path'))}'"
+                        f"Renaming {os.path.join(current_app.config['LIBRARY_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LIBRARY_DIR'], file_details.get('file_path'))}'"
                     )
 
                     try:
                         os.rename(
                             os.path.join(
-                                current_app.config["LOCALIZED_DIR"],
+                                current_app.config["LIBRARY_DIR"],
                                 old_record.file_path,
                             ),
                             os.path.join(
-                                current_app.config["LOCALIZED_DIR"],
+                                current_app.config["LIBRARY_DIR"],
                                 file_details.get("file_path"),
                             ),
                         )
@@ -2515,7 +2515,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         os.removedirs(
                             os.path.dirname(
                                 os.path.join(
-                                    current_app.config["LOCALIZED_DIR"],
+                                    current_app.config["LIBRARY_DIR"],
                                     old_record.file_path,
                                 )
                             )
