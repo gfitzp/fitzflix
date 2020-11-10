@@ -1718,13 +1718,21 @@ def evaluate_filename(file_path):
 
         extension = tv.group("extension")
 
+        # Remove spaces and periods from end of folder name, like Sonarr
+        # https://github.com/Sonarr/Sonarr/blob/phantom-develop/src/NzbDrone.Core/Organizer/FileNameBuilder.cs#L353
+
+        folder_title = title
+        while folder_title.endswith(" ") or folder_title.endswith("."):
+            folder_title = folder_title.strip(" ")
+            folder_title = folder_title.strip(".")
+
         if season == 0:
-            dirname = os.path.join(media_library, title, "Specials")
+            dirname = os.path.join(media_library, folder_title, "Specials")
 
         else:
             dirname = os.path.join(
                 media_library,
-                title,
+                folder_title,
                 f"Season {tv.group('season').zfill(2)}",
             )
 
