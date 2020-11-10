@@ -1166,7 +1166,7 @@ class File(db.Model, LibraryMixin):
 
     def delete_local_file(self, delete_directory_tree=False):
         file_to_delete = os.path.join(
-            current_app.config["LOCALIZED_DIR"], self.file_path
+            current_app.config["MEDIA_DIR"], self.file_path
         )
         try:
             os.remove(file_to_delete)
@@ -1489,7 +1489,7 @@ class File(db.Model, LibraryMixin):
                 params = {
                     "apikey": current_app.config["SONARR_API_KEY"],
                     "path": os.path.join(
-                        current_app.config["LOCALIZED_DIR"], self.file_path
+                        current_app.config["MEDIA_DIR"], self.file_path
                     ),
                 }
                 r = requests.get(

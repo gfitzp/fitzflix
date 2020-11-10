@@ -40,7 +40,7 @@ class Config(object):
     # Fitzflix directories
     LIBRARY_LOCATION                    = os.environ.get("LIBRARY_LOCATION") or os.path.join(basedir, "..", "library")
     IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(LIBRARY_LOCATION, "import")
-    LOCALIZED_DIR                       = os.environ.get("LOCALIZED_DIR") or os.path.join(LIBRARY_LOCATION, "localized")
+    MEDIA_DIR                           = os.environ.get("MEDIA_DIR") or os.path.join(LIBRARY_LOCATION, "media")
     REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(LIBRARY_LOCATION, "rejects")
     TRANSCODES_DIR                      = os.environ.get("TRANSCODED_DIR") or os.path.join(LIBRARY_LOCATION, "transcoded")
 
