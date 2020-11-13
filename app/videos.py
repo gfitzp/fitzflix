@@ -838,13 +838,12 @@ def finalize_localization(file_path, file_details, lock):
                 if tv_series.tmdb_id == None:
                     tv_series.tmdb_tv_query()
 
+            db.session.commit()
+
         except:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
             pass
-
-        else:
-            db.session.commit()
 
         # Find and remove any worse-quality files before moving the new file into place
         # so we don't delete any special features where old and new filenames are the same
