@@ -35,6 +35,7 @@ class Config(object):
     REDIS_URL                           = os.environ.get("REDIS_URL") or "redis://"
     SECRET_KEY                          = os.environ.get("SECRET_KEY") or "fitzflix-secret"
     SQLALCHEMY_DATABASE_URI             = os.environ.get("DATABASE_URL") or "sqlite:///" + os.path.join(basedir, "app.db")
+    SQLALCHEMY_ENGINE_OPTIONS           = {"pool_pre_ping": True, "pool_recycle": 300}
     SQLALCHEMY_TRACK_MODIFICATIONS      = os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS") is not None
 
     # Fitzflix directories
