@@ -1329,6 +1329,20 @@ def movie_shopping():
         .subquery()
     )
 
+    file_count = (
+        db.session.query(
+            Movie.id,
+            File.version,
+            db.func.min(RefQuality.preference).label("min_preference"),
+            db.func.count(File.id).label("file_count")
+        )
+        .join(File, (File.movie_id == Movie.id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .filter(File.feature_type_id == None)
+        .group_by(Movie.id, File.version)
+        .subquery()
+    )
+
     # Subqueries to get the preference associated with different quality thresholds
 
     dvd_quality = (
@@ -1467,6 +1481,7 @@ def movie_shopping():
                 & (UserMovieReview.user_id == current_user.id),
             )
             .join(ranked_files, (ranked_files.c.id == File.id))
+            .join(file_count, (file_count.c.id == Movie.id))
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
@@ -1479,7 +1494,8 @@ def movie_shopping():
             )
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                RefQuality.preference.asc(),
+                file_count.c.file_count.desc(),
+                file_count.c.min_preference.asc(),
                 Movie.title.asc(),
                 Movie.year.asc(),
                 File.version.asc(),
