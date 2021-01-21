@@ -2058,7 +2058,7 @@ def get_criterion_collection_from_wikipedia():
 
         criterion_collection.append(
             {
-                "title": title,
+                "title": title.upper(),
                 "year": year,
                 "spine_number": spine_number,
                 "set": set,
@@ -2277,7 +2277,7 @@ def refresh_criterion_collection_info(movie_id=None):
                 # See if the title and year for movies in our library match what we
                 # scraped from Wikipedia. If so, update it with Criterion release info.
 
-                if (movie.title == release.get("title")) and (
+                if (movie.title.upper() == release.get("title")) and (
                     movie.year == release.get("year")
                 ):
                     movie.criterion_spine_number = release.get("spine_number")
