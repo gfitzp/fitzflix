@@ -122,6 +122,13 @@ class MovieShoppingFilterForm(FlaskForm):
             ("criterion", "Films with a Criterion release"),
         ],
     )
+    media = RadioField(
+        "Media Format",
+        choices=[
+            ("all", "All media formats"),
+            ("digital", "Non-physical releases"),
+        ],
+    )
     min_quality = SelectField("Minimum quality")
     max_quality = SelectField("Maximum quality")
     filter_submit = SubmitField("Filter")

@@ -1208,6 +1208,7 @@ def movie_shopping():
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
     library = request.args.get("library", None, type=str)
+    media = request.args.get("media", None, type=str)
     min_quality = request.args.get("min_quality", 0, type=str)
     max_quality = request.args.get(
         "max_quality",
@@ -1232,6 +1233,12 @@ def movie_shopping():
     else:
         criterion_release = None
         filter_form.filter_status.default = "all"
+
+    if media == "digital":
+        filter_form.media.default = "digital"
+
+    else:
+        filter_form.media.default = "all"
 
     # Create the list of qualities for the dropdown filter
 
@@ -1285,7 +1292,9 @@ def movie_shopping():
         return redirect(
             url_for(
                 "main.movie_shopping",
+                title=title,
                 library=filter_form.filter_status.data,
+                media=filter_form.media.data,
                 min_quality=filter_form.min_quality.data,
                 max_quality=filter_form.max_quality.data,
                 q=q,
@@ -1305,7 +1314,9 @@ def movie_shopping():
         return redirect(
             url_for(
                 "main.movie_shopping",
+                title=title,
                 library=library,
+                media=media,
                 min_quality=min_quality,
                 max_quality=max_quality,
                 q=library_search_form.search_query.data,
@@ -1326,6 +1337,17 @@ def movie_shopping():
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    # Subquery to get only physical-media movies
+
+    physical_media = (
+        db.session.query(Movie.id)
+        .join(File, (File.movie_id == Movie.id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .filter(RefQuality.physical_media == True)
+        .filter(File.feature_type_id == None)
         .subquery()
     )
 
@@ -1431,6 +1453,83 @@ def movie_shopping():
             .paginate(page, 100, False)
         )
 
+    elif media == "digital":
+        movies = (
+            db.session.query(
+                File,
+                Movie,
+                RefQuality,
+                UserMovieReview,
+                db.case(
+                    [
+                        (
+                            db.and_(
+                                RefQuality.preference == dvd_quality,
+                                Movie.criterion_disc_owned == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            "Already owned",
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            "Buy Criterion edition on DVD",
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 1,
+                            ),
+                            "Buy Criterion edition on Blu-Ray",
+                        ),
+                        (File.fullscreen == True, "Buy any non-fullscreen release"),
+                        (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
+                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                    ],
+                    else_=("Already owned"),
+                ).label("instruction"),
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(
+                UserMovieReview,
+                (UserMovieReview.movie_id == Movie.id)
+                & (UserMovieReview.user_id == current_user.id),
+            )
+            .join(ranked_files, (ranked_files.c.id == File.id))
+            .join(file_count, (file_count.c.id == Movie.id))
+            .outerjoin(physical_media, (physical_media.c.id == Movie.id))
+            .filter(File.feature_type_id == None)
+            .filter(ranked_files.c.rank == 1)
+            .filter(RefQuality.preference >= min_preference)
+            .filter(RefQuality.preference <= max_preference)
+            .filter(
+                db.or_(
+                    Movie.criterion_spine_number != None,
+                    Movie.criterion_spine_number == criterion_release,
+                )
+            )
+            .filter(physical_media.c.id == None)
+            .filter(RefQuality.quality_title != "SDTV")
+            .filter(RefQuality.quality_title.notlike("HDTV-%"))
+            .order_by(
+                db.case([(File.fullscreen == True, 0)], else_=1).asc(),
+                file_count.c.file_count.desc(),
+                file_count.c.min_preference.asc(),
+                Movie.title.asc(),
+                Movie.year.asc(),
+                File.version.asc(),
+                File.date_added.asc(),
+            )
+            .paginate(page, 100, False)
+        )
+
     else:
         movies = (
             db.session.query(
@@ -1508,7 +1607,9 @@ def movie_shopping():
         url_for(
             "main.movie_shopping",
             page=movies.next_num,
+            title=title,
             q=q,
+            media=media,
             library=library,
             min_quality=min_quality,
             max_quality=max_quality,
@@ -1520,7 +1621,9 @@ def movie_shopping():
         url_for(
             "main.movie_shopping",
             page=movies.prev_num,
+            title=title,
             q=q,
+            media=media,
             library=library,
             min_quality=min_quality,
             max_quality=max_quality,
