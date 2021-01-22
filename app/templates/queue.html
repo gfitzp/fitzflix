@@ -19,8 +19,8 @@
 			<tr>
 				<th scope="row">{{ localization.position if localization.position }}</th>
 				<td>{{ localization.id }}</td>
-				<td>{{ moment(localization.enqueued_at).fromNow() }}</td>
-				<td>{{ moment(localization.started_at).fromNow() if localization.started_at }}</td>
+				<td><abbr title="{{ moment(localization.enqueued_at).fornat('LLL') }}">{{ moment(localization.enqueued_at).fromNow() }}</abbr></td>
+				<td><abbr title="{{ moment(localization.started_at).format('LLL') if localization.started_at }}">{{ moment(localization.started_at).fromNow() if localization.started_at }}</abbr></td>
 			</tr>
 			{% endfor %}
 		</tbody>
@@ -42,8 +42,8 @@
 			<tr>
 				<th scope="row">{{ transcode.position if transcode.position }}</th>
 				<td>{{ transcode.id }}</td>
-				<td>{{ moment(transcode.enqueued_at).fromNow() }}</td>
-				<td>{{ moment(transcode.started_at).fromNow() if transcode.started_at }}</td>
+				<td><abbr title="{{ moment(transcode.enqueued_at).format('LLL') }}">{{ moment(transcode.enqueued_at).fromNow() }}</abbr></td>
+				<td><abbr title="{{ moment(transcode.started_at).format('LLL') if transcode.started_at }}">{{ moment(transcode.started_at).fromNow() if transcode.started_at }}</abbr></td>
 			</tr>
 			{% endfor %}
 		</tbody>

@@ -22,8 +22,8 @@
 {% endif %}
 <h2 class="mt-n2">{{ file.basename }}</h2>
 <p>
-	<em>Added <abbr title="{{ file.date_added }} UTC">{{ moment(file.date_added).format("LLL") }}</abbr>{% if file.date_updated %}, file details last updated <abbr title="{{ file.date_updated }} UTC">{{ moment(file.date_updated).format("LLL") }}</abbr>{% endif %}</em><br>
-	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite <abbr title="{{ file.aws_untouched_date_uploaded }} UTC">{{ moment(file.aws_untouched_date_uploaded).format("LLL") }}</abbr>{% else %}Not uploaded to AWS.{% endif %}</em>
+	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em><br>
+	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 </p>
 {% if file.media_library == "Movies" %}
 	<p>{% if file.feature_type_id %}Special feature{% else %}File{% endif %} for movie <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></p>
@@ -136,14 +136,14 @@
 			{{ transcode_form.hidden_tag() }}
 			{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
 		</form>
-		{% if file.date_transcoded %}<em class="small">Transcoded <abbr title="{{ file.date_transcoded }} UTC">{{ moment(file.date_transcoded).fromNow() }}</abbr></em>{% endif %}
+		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
 	</div>
 	<div class="col-sm-4">
 		<form action="" method="post">
 			{{ upload_form.hidden_tag() }}
 			{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 		</form>
-		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite <abbr title="{{ file.aws_untouched_date_uploaded }} UTC">{{ moment(file.aws_untouched_date_uploaded).format("LLL") }}</abbr>{% else %}Not uploaded to AWS.{% endif %}</em>
+		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 	</div>
 	<div class="col-sm-4">
 	</div>
