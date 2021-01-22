@@ -115,7 +115,7 @@
 </div>
 <hr>
 <h5>Movie Data</h5>
-<p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>
+<p><em>Added <abbr title="{{ movie.date_created }} UTC">{{ moment(movie.date_created).format("LLL") }}</abbr>{% if movie.date_updated %}, last updated <abbr title="{{ movie.date_updated }} UTC">{{ moment(movie.date_updated).format("LLL") }}</abbr>{% endif %}</em></p>
 <div class="row">
 	<div class="col-sm-4">
 		<form action="" method="post">
@@ -126,7 +126,7 @@
 			</div>
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
-		{% if movie.tmdb_id %}<em class="small">TMDB data as of {{ moment(movie.tmdb_data_as_of).fromNow() }}</em>{% endif %}
+		{% if movie.tmdb_id %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
