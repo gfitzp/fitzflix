@@ -241,6 +241,9 @@ def movie_library():
 
     qualities = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
+        .join(File, (File.quality_id == RefQuality.id))
+        .distinct()
+        .filter(File.movie_id != None)
         .order_by(RefQuality.preference.asc())
         .all()
     )
