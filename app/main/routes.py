@@ -25,6 +25,7 @@ from app.main.forms import (
     MovieReviewForm,
     MovieShoppingFilterForm,
     PruneAWSStorageForm,
+    QualityFilterForm,
     ReviewExportForm,
     S3UploadForm,
     TMDBLookupForm,
@@ -113,6 +114,7 @@ def movie_library():
     page = request.args.get("page", 1, type=int)
     credit = request.args.get("credit", None, type=int)
     q = request.args.get("q", None, type=str)
+    quality = request.args.get("quality", "0", type=str)
 
     # Subquery to get the best movie files
 
@@ -181,6 +183,29 @@ def movie_library():
             .paginate(page, 120, False)
         )
 
+    elif int(quality) > 0:
+        title = "Movie Library"
+        movies = (
+            db.session.query(File, Movie, RefQuality)
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .join(ranked_files, (ranked_files.c.id == File.id))
+            .filter(File.feature_type_id == None)
+            .filter(ranked_files.c.rank == 1)
+            .filter(RefQuality.id == int(quality))
+            .order_by(
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                ).asc(),
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    else_=Movie.year,
+                ).asc(),
+                File.version.asc(),
+            )
+            .paginate(page, 120, False)
+        )
+
     else:
         title = "Movie Library"
         movies = (
@@ -204,11 +229,31 @@ def movie_library():
         )
 
     next_url = (
-        url_for("main.movie_library", page=movies.next_num) if movies.has_next else None
+        url_for("main.movie_library", page=movies.next_num, quality=quality) if movies.has_next else None
     )
     prev_url = (
-        url_for("main.movie_library", page=movies.prev_num) if movies.has_prev else None
+        url_for("main.movie_library", page=movies.prev_num, quality=quality) if movies.has_prev else None
     )
+
+    filter_form = QualityFilterForm()
+
+    # Create the list of qualities for the dropdown filter
+
+    qualities = (
+        db.session.query(RefQuality.id, RefQuality.quality_title)
+        .order_by(RefQuality.preference.asc())
+        .all()
+    )
+    filter_form.quality.choices = [("0", "All")] + [(str(id), title) for (id, title) in qualities]
+
+    filter_form.quality.default = quality
+
+    if filter_form.validate_on_submit():
+        return redirect(
+            url_for("main.movie_library", quality=filter_form.quality.data)
+        )
+
+    filter_form.process()
 
     # Form to search the movie library titles for a specific substring
 
@@ -225,6 +270,7 @@ def movie_library():
         next_url=next_url,
         prev_url=prev_url,
         pages=movies,
+        filter_form=filter_form,
         library_search_form=library_search_form,
     )
 

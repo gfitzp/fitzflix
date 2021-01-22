@@ -134,6 +134,11 @@ class MovieShoppingFilterForm(FlaskForm):
     filter_submit = SubmitField("Filter")
 
 
+class QualityFilterForm(FlaskForm):
+    quality = SelectField("Quality")
+    filter_submit = SubmitField("Filter")
+
+
 class TVShoppingFilterForm(FlaskForm):
     quality = SelectField("Maximum quality")
     filter_submit = SubmitField("Filter")
