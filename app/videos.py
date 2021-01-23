@@ -83,6 +83,12 @@ def localization_task(file_path):
 
     app.app_context().push()
 
+    if "db" not in g:
+        current_app.logger.info(
+            "No database connection exists, attempting to create one"
+        )
+        g.db = SQLAlchemy()
+
     try:
         job = get_current_job()
 
@@ -1215,7 +1221,7 @@ def mkvpropedit_task(
 
         file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
             file_path=file_path,
-            key_prefix=app.config['AWS_UNTOUCHED_PREFIX'],
+            key_prefix=app.config["AWS_UNTOUCHED_PREFIX"],
             key_name=file.untouched_basename,
             force_upload=False,
         )
@@ -1240,16 +1246,17 @@ def prune_aws_s3_storage_task():
     try:
         job = get_current_job()
 
-        s3_keys = [key for key in get_matching_s3_keys(
-            app.config["AWS_BUCKET"],
-            prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
-        )]
+        s3_keys = [
+            key
+            for key in get_matching_s3_keys(
+                app.config["AWS_BUCKET"],
+                prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
+            )
+        ]
 
         aws_untouched_keys = [
             aws_untouched_key
-            for (aws_untouched_key,) in db.session.query(
-                File.aws_untouched_key
-            ).all()
+            for (aws_untouched_key,) in db.session.query(File.aws_untouched_key).all()
         ]
 
         i = 1
@@ -1457,7 +1464,7 @@ def upload_task(file_id, key_prefix="", force_upload=False):
             file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
                 file_path=file_path,
                 key_name=file.aws_untouched_key,
-                force_upload=force_upload
+                force_upload=force_upload,
             )
 
         else:

@@ -1165,9 +1165,7 @@ class File(db.Model, LibraryMixin):
         self.__dict__.update(kwargs)
 
     def delete_local_file(self, delete_directory_tree=False):
-        file_to_delete = os.path.join(
-            current_app.config["LIBRARY_DIR"], self.file_path
-        )
+        file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
         try:
             os.remove(file_to_delete)
 
