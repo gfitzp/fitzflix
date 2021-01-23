@@ -61,13 +61,25 @@ def index():
 
     page = request.args.get("page", 1, type=int)
 
-    recently_added = (
+    last_week = (
         File.query.outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
             db.func.coalesce(File.date_updated, File.date_added)
             >= db.func.current_date() - 7
         )
+        .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
+    )
+
+    last_ten = (
+        File.query.outerjoin(Movie, (Movie.id == File.movie_id))
+        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
+        .limit(10)
+    )
+
+    recently_added = (
+        last_week.union(last_ten)
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
         .paginate(page, 100, False)
     )
@@ -229,10 +241,14 @@ def movie_library():
         )
 
     next_url = (
-        url_for("main.movie_library", page=movies.next_num, quality=quality) if movies.has_next else None
+        url_for("main.movie_library", page=movies.next_num, quality=quality)
+        if movies.has_next
+        else None
     )
     prev_url = (
-        url_for("main.movie_library", page=movies.prev_num, quality=quality) if movies.has_prev else None
+        url_for("main.movie_library", page=movies.prev_num, quality=quality)
+        if movies.has_prev
+        else None
     )
 
     filter_form = QualityFilterForm()
@@ -248,14 +264,14 @@ def movie_library():
         .order_by(RefQuality.preference.asc())
         .all()
     )
-    filter_form.quality.choices = [("0", "All")] + [(str(id), title) for (id, title) in qualities]
+    filter_form.quality.choices = [("0", "All")] + [
+        (str(id), title) for (id, title) in qualities
+    ]
 
     filter_form.quality.default = quality
 
     if filter_form.validate_on_submit():
-        return redirect(
-            url_for("main.movie_library", quality=filter_form.quality.data)
-        )
+        return redirect(url_for("main.movie_library", quality=filter_form.quality.data))
 
     filter_form.process()
 
@@ -932,7 +948,9 @@ def file(file_id):
     mkvpropedit_form.forced_subtitles.default = default_forced_subtitles
 
     if mkvpropedit_form.mkvpropedit_submit.data:
-        current_app.logger.debug(f"Default audio: {mkvpropedit_form.default_audio.data}")
+        current_app.logger.debug(
+            f"Default audio: {mkvpropedit_form.default_audio.data}"
+        )
         current_app.logger.debug(
             f"Default subtitle: {mkvpropedit_form.default_subtitle.data}"
         )
@@ -953,7 +971,9 @@ def file(file_id):
                 description=f"'{file.basename}'",
             )
             if mkvpropedit_job:
-                current_app.logger.info("Queued '{file.basename}' for MKV property edits")
+                current_app.logger.info(
+                    "Queued '{file.basename}' for MKV property edits"
+                )
 
             flash(f"Updating MKV properties for '{file.basename}'", "info")
 
@@ -1410,7 +1430,7 @@ def movie_shopping():
             Movie.id,
             File.version,
             db.func.min(RefQuality.preference).label("min_preference"),
-            db.func.count(File.id).label("file_count")
+            db.func.count(File.id).label("file_count"),
         )
         .join(File, (File.movie_id == Movie.id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
