@@ -139,7 +139,7 @@
 <!-- Display differently on mobile device -->
 
 <div class="d-block d-sm-none mt-n2">
-	<nav class="d-none d-sm-block" aria-label="...">
+	<nav class="d-block d-sm-none" aria-label="...">
 		<ul class="pagination">
 			<li class="page-item{% if not prev_url %} disabled{% endif %}">
 				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
@@ -196,7 +196,7 @@
 			</li>
 		{% endfor %}
 	</ul>
-	<nav class="d-none d-sm-block" aria-label="...">
+	<nav class="d-block d-sm-none mt-2" aria-label="...">
 		<ul class="pagination">
 			<li class="page-item{% if not prev_url %} disabled{% endif %}">
 				<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
