@@ -1240,7 +1240,7 @@ def admin():
             description="Manually scanning import directory for files",
             atfront=True,
         )
-        flash(f"Added files in import directory to localization queue", "info")
+        flash(f"Added files in import directory to import queue", "info")
         return redirect(url_for("main.admin"))
 
     return render_template(
@@ -1923,7 +1923,7 @@ def tv_shopping():
     )
 
 
-@bp.route("/queue")
+@bp.route("/queue", methods=["GET", "POST"])
 @login_required
 def queue():
     """Show a list of all localization and transcode tasks in queue."""
@@ -1999,9 +1999,22 @@ def queue():
                 }
             )
 
+    import_form = ImportForm()
+    if import_form.submit.data and import_form.validate_on_submit():
+        current_app.task_queue.enqueue(
+            "app.videos.manual_import_task",
+            args=(),
+            job_timeout="1h",
+            description="Manually scanning import directory for files",
+            atfront=True,
+        )
+        flash(f"Added files in import directory to import queue", "info")
+        return redirect(url_for("main.queue"))
+
     return render_template(
         "queue.html",
         title="Queue",
+        import_form=import_form,
         localization_queue=localization_queue,
         transcode_queue=transcode_queue,
     )

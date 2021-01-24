@@ -1,7 +1,15 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">{{ title }}</h2>
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		<form class="form-inline float-sm-right mb-2"action="" method="post">
+    		{{ import_form.hidden_tag() }}
+    		{{ import_form.submit(class_="btn btn-sm btn-success") }}
+    	</form>
+	</div>
+</div>
 <hr>
 {% if localization_queue %}
 	<h3 class="mt-2 mb-2">Import Queue</h3>
