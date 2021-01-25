@@ -126,7 +126,7 @@ class MovieShoppingFilterForm(FlaskForm):
         "Media Format",
         choices=[
             ("all", "All media formats"),
-            ("digital", "Non-physical releases"),
+            ("digital", "Digital downloads only"),
         ],
     )
     min_quality = SelectField("Minimum quality")
