@@ -66,7 +66,7 @@ def index():
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
             db.func.coalesce(File.date_updated, File.date_added)
-            >= db.func.current_date() - 7
+            >= db.func.adddate(db.func.now(), -7)
         )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
     )
