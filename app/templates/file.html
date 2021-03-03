@@ -146,6 +146,10 @@
 		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 	</div>
 	<div class="col-sm-4">
+		<form action="" method="post">
+			{{ delete_form.hidden_tag() }}
+			{{ delete_form.delete_submit(class_="btn btn-sm btn-danger") }}
+		</form>
 	</div>
 </div>
 {% endblock %}

@@ -19,6 +19,7 @@ from app.main.forms import (
     CriterionForm,
     CriterionRefreshForm,
     EditProfileForm,
+    FileDeleteForm,
     ImportForm,
     LibrarySearchForm,
     MKVPropEditForm,
@@ -1022,6 +1023,41 @@ def file(file_id):
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
+
+    # Form to delete and purge the file from the database
+
+    delete_form = FileDeleteForm()
+    if delete_form.delete_submit.data and delete_form.validate_on_submit():
+
+        try:
+            # TODO: Delete the archived version from S3
+            # (For some reason, I can call the function in app.videos, but it silently fails)
+            # For now, we just delete the local file and remove from the database;
+            # the AWS file can be removed later as an unreferenced file
+            # in the Admin page with the "Prune AWS Storage" button.
+
+            # file.aws_untouched_date_deleted = aws_delete(file.aws_untouched_key)
+
+            file.delete_local_file()
+            db.session.delete(file)
+
+        except:
+            db.session.rollback()
+            flash(f"Unable to delete '{file.basename}'!", "danger")
+            return redirect(url_for("main.file", file_id=file.id))
+
+        db.session.commit()
+
+        flash(f"Deleted '{file.basename}' and removed from database.", "success")
+
+        if file.movie_id:
+            return redirect(url_for("main.movie_files", movie_id=file.movie_id))
+
+        elif file.series_id and file.season:
+            return redirect(url_for("main.season", series_id=file.series_id, season=file.season))
+
+        else:
+            return redirect(url_for("main.index"))
 
     return render_template(
         "file.html",
