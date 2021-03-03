@@ -169,3 +169,7 @@ class MKVPropEditForm(FlaskForm):
 class PruneAWSStorageForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
     prune_submit = SubmitField("Prune AWS S3 Storage")
+
+
+class FileDeleteForm(FlaskForm):
+    delete_submit = SubmitField("Delete and Purge File")
