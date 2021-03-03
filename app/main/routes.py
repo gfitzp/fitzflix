@@ -1335,10 +1335,12 @@ def movie_shopping():
     filter_form = MovieShoppingFilterForm()
     if library == "criterion":
         criterion_release = True
+        criterion_owned_false = False
         filter_form.filter_status.default = "criterion"
 
     else:
         criterion_release = None
+        criterion_owned_false = None
         filter_form.filter_status.default = "all"
 
     if media == "digital":
@@ -1550,6 +1552,12 @@ def movie_shopping():
                     Movie.criterion_spine_number == criterion_release,
                 )
             )
+            .filter(
+                db.or_(
+                    Movie.criterion_disc_owned == None,
+                    Movie.criterion_disc_owned == criterion_owned_false
+                )
+            )
             .order_by(
                 Movie.title.asc(),
                 Movie.year.asc(),
@@ -1620,6 +1628,12 @@ def movie_shopping():
                 db.or_(
                     Movie.criterion_spine_number != None,
                     Movie.criterion_spine_number == criterion_release,
+                )
+            )
+            .filter(
+                db.or_(
+                    Movie.criterion_disc_owned == None,
+                    Movie.criterion_disc_owned == criterion_owned_false
                 )
             )
             .filter(physical_media.c.id == None)
@@ -1696,6 +1710,12 @@ def movie_shopping():
                 db.or_(
                     Movie.criterion_spine_number != None,
                     Movie.criterion_spine_number == criterion_release,
+                )
+            )
+            .filter(
+                db.or_(
+                    Movie.criterion_disc_owned == None,
+                    Movie.criterion_disc_owned == criterion_owned_false
                 )
             )
             .order_by(
