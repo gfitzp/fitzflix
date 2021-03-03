@@ -72,7 +72,7 @@
 		</div>
 	{% elif file.tv_series %}
 		{% set tv = file.tv_series %}
-		<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">
+		<a href="{{ url_for('main.file', file_id=file.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 		<div class="media-body">
