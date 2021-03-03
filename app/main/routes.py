@@ -1070,6 +1070,7 @@ def file(file_id):
         mkvpropedit_form=mkvpropedit_form,
         transcode_form=transcode_form,
         upload_form=upload_form,
+        delete_form=delete_form,
     )
 
 
