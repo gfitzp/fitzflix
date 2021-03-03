@@ -81,435 +81,437 @@ def localization_task(file_path):
     - Pass the localized file to a separate process to add to the database.
     """
 
-    app.app_context().push()
+    # app.app_context().push()
 
-    if "db" not in g:
-        current_app.logger.info(
-            "No database connection exists, attempting to create one"
-        )
-        g.db = SQLAlchemy()
+    # Initalize the database
+    # https://stackoverflow.com/a/60438156
 
-    try:
-        job = get_current_job()
+    # db.init_app(app)
 
-        # If the incoming file doesn't exist, there's nothing for us to do
+    with app.app_context():
+        db.init_app(app)
 
-        if not os.path.exists(file_path):
-            return False
+        try:
+            job = get_current_job()
 
-        # Parse movie or TV show info from the file name
+            # If the incoming file doesn't exist, there's nothing for us to do
 
-        basename = os.path.basename(file_path)
-        file_details = evaluate_filename(file_path)
-        current_app.logger.debug(file_details)
-        if not file_details:
-            current_app.logger.error(
-                f"'{basename}' doesn't match expected naming formats!"
+            if not os.path.exists(file_path):
+                return False
+
+            # Parse movie or TV show info from the file name
+
+            basename = os.path.basename(file_path)
+            file_details = evaluate_filename(file_path)
+            current_app.logger.debug(file_details)
+            if not file_details:
+                current_app.logger.error(
+                    f"'{basename}' doesn't match expected naming formats!"
+                )
+                move_to_rejects(file_path, "incorrect filename")
+
+            # We don't want to process other versions of this video at the same time,
+            # so create a identifier using specific movie or tv show fields to use when
+            # creating the lock. If we try to process any other files with this same
+            # identifier, the lock will prevent us from processing it until the previous file
+            # is done being processed.
+
+            if file_details.get("media_library") == "Movies":
+                file_identifier = {
+                    "title": file_details.get("title"),
+                    "year": file_details.get("year"),
+                    "feature_type": file_details.get("feature_type_name"),
+                    "plex_title": file_details.get("plex_title"),
+                    "version": file_details.get("version"),
+                }
+
+            elif file_details.get("media_library") == "TV Shows":
+                file_identifier = {
+                    "title": file_details.get("title"),
+                    "season": file_details.get("season"),
+                    "episode": file_details.get("episode"),
+                }
+
+            file_identifier = json.dumps(file_identifier)
+            current_app.logger.debug(f"'{basename}' Lock identifier: {file_identifier}")
+
+            # Multiply by 1000 since we need to specify the redlock timeout in milliseconds
+
+            lock = current_app.lock_manager.lock(
+                file_identifier, current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
             )
-            move_to_rejects(file_path, "incorrect filename")
+            current_app.logger.info(f"Created lock {lock}")
 
-        # We don't want to process other versions of this video at the same time,
-        # so create a identifier using specific movie or tv show fields to use when
-        # creating the lock. If we try to process any other files with this same
-        # identifier, the lock will prevent us from processing it until the previous file
-        # is done being processed.
+            # If we didn't get a lock, return this task to the localization queue after
+            # 45 to 75 minutes to be processed once the lock becomes available
 
-        if file_details.get("media_library") == "Movies":
-            file_identifier = {
-                "title": file_details.get("title"),
-                "year": file_details.get("year"),
-                "feature_type": file_details.get("feature_type_name"),
-                "plex_title": file_details.get("plex_title"),
-                "version": file_details.get("version"),
-            }
+            if not lock:
+                sleep_duration = random.randint(45, 75)
+                current_app.logger.warning(
+                    f"'{basename}' Lock exists, "
+                    f"returning to queue after {sleep_duration} minutes"
+                )
+                current_app.localize_scheduler.enqueue_in(
+                    timedelta(minutes=sleep_duration),
+                    "app.videos.localization_task",
+                    file_path=file_path,
+                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_description=f"'{basename}'",
+                )
+                return False
 
-        elif file_details.get("media_library") == "TV Shows":
-            file_identifier = {
-                "title": file_details.get("title"),
-                "season": file_details.get("season"),
-                "episode": file_details.get("episode"),
-            }
+            # See if any better-quality versions of this file already exist
 
-        file_identifier = json.dumps(file_identifier)
-        current_app.logger.debug(f"'{basename}' Lock identifier: {file_identifier}")
+            better_versions = File(**file_details).find_better_files()
+            if better_versions:
+                current_app.logger.info(
+                    f"Better versions of '{basename}' exist; skipping import"
+                )
+                for better in better_versions:
+                    current_app.logger.debug(vars(better))
 
-        # Multiply by 1000 since we need to specify the redlock timeout in milliseconds
+                move_to_rejects(file_path, "inferior quality")
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Received an inferior-quality file",
+                    sender=current_app.config["SERVER_EMAIL"],
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/inferior_warning.txt",
+                        user=admin_user.email,
+                        basename=basename,
+                        better_versions=better_versions,
+                        rejects_directory=current_app.config["REJECTS_DIR"],
+                    ),
+                    html_body=render_template(
+                        "email/inferior_warning.html",
+                        user=admin_user.email,
+                        basename=basename,
+                        better_versions=better_versions,
+                        rejects_directory=current_app.config["REJECTS_DIR"],
+                    ),
+                )
 
-        lock = current_app.lock_manager.lock(
-            file_identifier, current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
-        )
-        current_app.logger.info(f"Created lock {lock}")
+                return False
 
-        # If we didn't get a lock, return this task to the localization queue after
-        # 45 to 75 minutes to be processed once the lock becomes available
+            # Save the untouched filename in case we need to recreate the file
 
-        if not lock:
-            sleep_duration = random.randint(45, 75)
-            current_app.logger.warning(
-                f"'{basename}' Lock exists, "
-                f"returning to queue after {sleep_duration} minutes"
+            file_details["untouched_basename"] = os.path.basename(file_path)
+
+            # Upload the untouched file to AWS S3 storage for safekeeping
+
+            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+                (
+                    file_details["aws_untouched_key"],
+                    file_details["aws_untouched_date_uploaded"],
+                ) = aws_upload(file_path, current_app.config["AWS_UNTOUCHED_PREFIX"])
+
+            # Start localization process
+
+            current_app.logger.info(f"'{basename}' Starting localization process")
+
+            # Determine output directories and files to be created
+
+            output_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
             )
-            current_app.localize_scheduler.enqueue_in(
-                timedelta(minutes=sleep_duration),
-                "app.videos.localization_task",
-                file_path=file_path,
-                timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                job_description=f"'{basename}'",
-            )
-            return False
-
-        # See if any better-quality versions of this file already exist
-
-        better_versions = File(**file_details).find_better_files()
-        if better_versions:
-            current_app.logger.info(
-                f"Better versions of '{basename}' exist; skipping import"
-            )
-            for better in better_versions:
-                current_app.logger.debug(vars(better))
-
-            move_to_rejects(file_path, "inferior quality")
-            current_app.lock_manager.unlock(lock)
-            current_app.logger.info(f"Removed lock {lock}")
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Received an inferior-quality file",
-                sender=current_app.config["SERVER_EMAIL"],
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/inferior_warning.txt",
-                    user=admin_user.email,
-                    basename=basename,
-                    better_versions=better_versions,
-                    rejects_directory=current_app.config["REJECTS_DIR"],
-                ),
-                html_body=render_template(
-                    "email/inferior_warning.html",
-                    user=admin_user.email,
-                    basename=basename,
-                    better_versions=better_versions,
-                    rejects_directory=current_app.config["REJECTS_DIR"],
-                ),
+            hidden_output_file = os.path.join(
+                output_directory, f".{file_details.get('basename')}"
             )
 
-            return False
+            # Parse the incoming file and get its details with MediaInfo
 
-        # Save the untouched filename in case we need to recreate the file
-
-        file_details["untouched_basename"] = os.path.basename(file_path)
-
-        # Upload the untouched file to AWS S3 storage for safekeeping
-
-        if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
-            (
-                file_details["aws_untouched_key"],
-                file_details["aws_untouched_date_uploaded"],
-            ) = aws_upload(file_path, current_app.config["AWS_UNTOUCHED_PREFIX"])
-
-        # Start localization process
-
-        current_app.logger.info(f"'{basename}' Starting localization process")
-
-        # Determine output directories and files to be created
-
-        output_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-        )
-        hidden_output_file = os.path.join(
-            output_directory, f".{file_details.get('basename')}"
-        )
-
-        # Parse the incoming file and get its details with MediaInfo
-
-        current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
-        media_info = MediaInfo.parse(file_path)
-        current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
-
-        for track in media_info.tracks:
-            if track.track_type == "General" and track.format:
-                current_app.logger.info(f"'{basename}' File container {track.format}")
-                file_details["container"] = track.format
-
-        # Export a localized version of the incoming file
-
-        if file_details.get("container") == "Matroska":
-            current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
-
-            # Sometimes the input mkv file is missing track details, such as the number
-            # of subtitle elements in a subtitle track, which we need for us to tell
-            # whether or not there is possibly a forced subtitle track; this command
-            # adds those details to the file if they are missing.
-
-            current_app.logger.info(f"'{basename}' Adding track statistics tags")
-            if job:
-                job.meta["description"] = f"'{basename}' — Adding track statistics tags"
-                job.save_meta()
-
-            statistics_tags_process = subprocess.Popen(
-                [
-                    current_app.config["MKVPROPEDIT_BIN"],
-                    "--add-track-statistics-tags",
-                    file_path,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-            )
-            for line in statistics_tags_process.stdout:
-                progress_match = re.search("Progress\: \d+\%", line)
-                if progress_match:
-                    progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
-                    progress = int(progress_match.group("percent"))
-                    current_app.logger.info(
-                        f"'{basename}' Adding track statistics tags: {progress}%"
-                    )
-                    if job:
-                        job.meta["progress"] = progress
-                        job.save_meta()
-
-            # Re-parse the file now that the track statistics tags have been added
-
-            current_app.logger.info(
-                f"'{basename}' Parsing added statistics with MediaInfo"
-            )
+            current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
             media_info = MediaInfo.parse(file_path)
             current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
-            audio_tracks = get_audio_tracks_from_file(file_path)
-            subtitle_tracks = get_subtitle_tracks_from_file(file_path)
-
-            # Change from ISO-639-2 to ISO-639-3 language code
-            # if the file was written by MakeMKV
-
-            native_language = current_app.config["NATIVE_LANGUAGE"]
 
             for track in media_info.tracks:
+                if track.track_type == "General" and track.format:
+                    current_app.logger.info(f"'{basename}' File container {track.format}")
+                    file_details["container"] = track.format
+
+            # Export a localized version of the incoming file
+
+            if file_details.get("container") == "Matroska":
+                current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
+
+                # Sometimes the input mkv file is missing track details, such as the number
+                # of subtitle elements in a subtitle track, which we need for us to tell
+                # whether or not there is possibly a forced subtitle track; this command
+                # adds those details to the file if they are missing.
+
+                current_app.logger.info(f"'{basename}' Adding track statistics tags")
+                if job:
+                    job.meta["description"] = f"'{basename}' — Adding track statistics tags"
+                    job.save_meta()
+
+                statistics_tags_process = subprocess.Popen(
+                    [
+                        current_app.config["MKVPROPEDIT_BIN"],
+                        "--add-track-statistics-tags",
+                        file_path,
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    bufsize=1,
+                )
+                for line in statistics_tags_process.stdout:
+                    progress_match = re.search("Progress\: \d+\%", line)
+                    if progress_match:
+                        progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                        progress = int(progress_match.group("percent"))
+                        current_app.logger.info(
+                            f"'{basename}' Adding track statistics tags: {progress}%"
+                        )
+                        if job:
+                            job.meta["progress"] = progress
+                            job.save_meta()
+
+                # Re-parse the file now that the track statistics tags have been added
+
+                current_app.logger.info(
+                    f"'{basename}' Parsing added statistics with MediaInfo"
+                )
+                media_info = MediaInfo.parse(file_path)
+                current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
+                audio_tracks = get_audio_tracks_from_file(file_path)
+                subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+
+                # Change from ISO-639-2 to ISO-639-3 language code
+                # if the file was written by MakeMKV
+
+                native_language = current_app.config["NATIVE_LANGUAGE"]
+
+                for track in media_info.tracks:
+                    if (
+                        track.track_type == "General"
+                        and "MakeMKV" in track.writing_application
+                    ):
+                        native_language = iso_639_3_native_language()
+                        current_app.logger.warn(
+                            f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                            f"code '{native_language}' instead of user-supplied "
+                            f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
+                            f"processing this file with mkvmerge"
+                        )
+
+                # Determine which audio tracks to export
+
+                # If the first audio track is in our native language, remove all other languages
+
                 if (
-                    track.track_type == "General"
-                    and "MakeMKV" in track.writing_application
+                    len(audio_tracks) >= 1
+                    and audio_tracks[0].get("language") == native_language
                 ):
-                    native_language = iso_639_3_native_language()
-                    current_app.logger.warn(
-                        f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                        f"code '{native_language}' instead of user-supplied "
-                        f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                        f"processing this file with mkvmerge"
+                    current_app.logger.info(
+                        f"'{basename}' First audio track matches native language "
+                        f"'{native_language}'"
+                    )
+                    output_audio_langs = native_language
+
+                # If the first audio track isn't our native language, but our language is present,
+                # export the first audio track + all other native-language audio
+                # (it's probably a dub, or there are native-language commentary tracks, etc.)
+
+                elif native_language in [track["language"] for track in audio_tracks]:
+                    current_app.logger.info(
+                        f"'{basename}' First audio track is foreign, "
+                        f"but '{native_language}' audio is present"
+                    )
+                    output_audio_langs = f"1,{native_language}"
+
+                # If no native-language track is present, export only the first audio track
+                # (it's probably a subtitled movie with no commentary track)
+
+                else:
+                    current_app.logger.info(
+                        f"'{basename}' No '{native_language}' audio track"
+                    )
+                    output_audio_langs = "1"
+
+                # Determine which tracks to export and create the output file
+
+                os.makedirs(output_directory, exist_ok=True)
+
+                # Non-native audio, native-language subtitles present
+
+                if (
+                    len(audio_tracks) >= 1
+                    and audio_tracks[0].get("language") != native_language
+                    and native_language in [track["language"] for track in subtitle_tracks]
+                ):
+                    current_app.logger.info(
+                        f"'{basename}' Non-native audio, "
+                        f"but '{native_language}' subtitles are present"
+                    )
+                    mkvmerge_process = subprocess.Popen(
+                        [
+                            current_app.config["MKVMERGE_BIN"],
+                            "-o",
+                            hidden_output_file,
+                            "-a",
+                            output_audio_langs,
+                            "-s",
+                            native_language,
+                            "--title",
+                            "",
+                            "--track-name",
+                            "-1:",
+                            file_path,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
                     )
 
-            # Determine which audio tracks to export
+                # Native-language audio, native-language subtitles present
 
-            # If the first audio track is in our native language, remove all other languages
+                elif native_language in [track["language"] for track in subtitle_tracks]:
+                    current_app.logger.info(
+                        f"'{basename}' '{native_language}' audio and subtitles"
+                    )
+                    mkvmerge_process = subprocess.Popen(
+                        [
+                            current_app.config["MKVMERGE_BIN"],
+                            "-o",
+                            hidden_output_file,
+                            "-a",
+                            output_audio_langs,
+                            "-s",
+                            native_language,
+                            "--title",
+                            "",
+                            "--track-name",
+                            "-1:",
+                            file_path,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
 
-            if (
-                len(audio_tracks) >= 1
-                and audio_tracks[0].get("language") == native_language
-            ):
-                current_app.logger.info(
-                    f"'{basename}' First audio track matches native language "
-                    f"'{native_language}'"
-                )
-                output_audio_langs = native_language
+                # No native-language subtitles
 
-            # If the first audio track isn't our native language, but our language is present,
-            # export the first audio track + all other native-language audio
-            # (it's probably a dub, or there are native-language commentary tracks, etc.)
+                elif len(subtitle_tracks) >= 1:
+                    current_app.logger.info(
+                        f"'{basename}' No '{native_language}' subtitles"
+                    )
+                    mkvmerge_process = subprocess.Popen(
+                        [
+                            current_app.config["MKVMERGE_BIN"],
+                            "-o",
+                            hidden_output_file,
+                            "-a",
+                            output_audio_langs,
+                            "--no-subtitles",
+                            "--title",
+                            "",
+                            "--track-name",
+                            "-1:",
+                            file_path,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
 
-            elif native_language in [track["language"] for track in audio_tracks]:
-                current_app.logger.info(
-                    f"'{basename}' First audio track is foreign, "
-                    f"but '{native_language}' audio is present"
-                )
-                output_audio_langs = f"1,{native_language}"
+                # No subtitles whatsoever
 
-            # If no native-language track is present, export only the first audio track
-            # (it's probably a subtitled movie with no commentary track)
+                else:
+                    current_app.logger.info(f"'{basename}' No subtitles whatsoever")
+                    mkvmerge_process = subprocess.Popen(
+                        [
+                            current_app.config["MKVMERGE_BIN"],
+                            "-o",
+                            hidden_output_file,
+                            "-a",
+                            output_audio_langs,
+                            "--no-subtitles",
+                            "--title",
+                            "",
+                            "--track-name",
+                            "-1:",
+                            file_path,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
 
-            else:
-                current_app.logger.info(
-                    f"'{basename}' No '{native_language}' audio track"
-                )
-                output_audio_langs = "1"
-
-            # Determine which tracks to export and create the output file
-
-            os.makedirs(output_directory, exist_ok=True)
-
-            # Non-native audio, native-language subtitles present
-
-            if (
-                len(audio_tracks) >= 1
-                and audio_tracks[0].get("language") != native_language
-                and native_language in [track["language"] for track in subtitle_tracks]
-            ):
-                current_app.logger.info(
-                    f"'{basename}' Non-native audio, "
-                    f"but '{native_language}' subtitles are present"
-                )
-                mkvmerge_process = subprocess.Popen(
-                    [
-                        current_app.config["MKVMERGE_BIN"],
-                        "-o",
-                        hidden_output_file,
-                        "-a",
-                        output_audio_langs,
-                        "-s",
-                        native_language,
-                        "--title",
-                        "",
-                        "--track-name",
-                        "-1:",
-                        file_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-
-            # Native-language audio, native-language subtitles present
-
-            elif native_language in [track["language"] for track in subtitle_tracks]:
-                current_app.logger.info(
-                    f"'{basename}' '{native_language}' audio and subtitles"
-                )
-                mkvmerge_process = subprocess.Popen(
-                    [
-                        current_app.config["MKVMERGE_BIN"],
-                        "-o",
-                        hidden_output_file,
-                        "-a",
-                        output_audio_langs,
-                        "-s",
-                        native_language,
-                        "--title",
-                        "",
-                        "--track-name",
-                        "-1:",
-                        file_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-
-            # No native-language subtitles
-
-            elif len(subtitle_tracks) >= 1:
-                current_app.logger.info(
-                    f"'{basename}' No '{native_language}' subtitles"
-                )
-                mkvmerge_process = subprocess.Popen(
-                    [
-                        current_app.config["MKVMERGE_BIN"],
-                        "-o",
-                        hidden_output_file,
-                        "-a",
-                        output_audio_langs,
-                        "--no-subtitles",
-                        "--title",
-                        "",
-                        "--track-name",
-                        "-1:",
-                        file_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-
-            # No subtitles whatsoever
+                for line in mkvmerge_process.stdout:
+                    progress_match = re.search("Progress\: \d+\%", line)
+                    if progress_match:
+                        progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                        progress = int(progress_match.group("percent"))
+                        current_app.logger.info(f"'{basename}' Localizing: {progress}%")
+                        if job:
+                            job.meta["description"] = f"'{basename}' — Localizing"
+                            job.meta["progress"] = progress
+                            job.save_meta()
 
             else:
-                current_app.logger.info(f"'{basename}' No subtitles whatsoever")
-                mkvmerge_process = subprocess.Popen(
-                    [
-                        current_app.config["MKVMERGE_BIN"],
-                        "-o",
-                        hidden_output_file,
-                        "-a",
-                        output_audio_langs,
-                        "--no-subtitles",
-                        "--title",
-                        "",
-                        "--track-name",
-                        "-1:",
-                        file_path,
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
+                if file_details.get("container") == "MPEG-4":
+                    current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
+                    atomicparsley_process = subprocess.Popen(
+                        [
+                            current_app.config["ATOMICPARSLEY_BIN"],
+                            file_path,
+                            "--metaEnema",
+                            "--overWrite",
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
+                    for line in atomicparsley_process.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(f"'{os.path.basename(file_path)}' {line}")
+                        if job:
+                            job.meta[
+                                "description"
+                            ] = f"'{os.path.basename(file_path)}' — Removing MPEG-4 metadata"
+                            job.meta["progress"] = -1
+                            job.save_meta()
 
-            for line in mkvmerge_process.stdout:
-                progress_match = re.search("Progress\: \d+\%", line)
-                if progress_match:
-                    progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
-                    progress = int(progress_match.group("percent"))
-                    current_app.logger.info(f"'{basename}' Localizing: {progress}%")
-                    if job:
-                        job.meta["description"] = f"'{basename}' — Localizing"
-                        job.meta["progress"] = progress
-                        job.save_meta()
+                    current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
+
+                else:
+                    current_app.logger.info(
+                        f"'{basename}' Not Matroska or MPEG-4, importing as-is"
+                    )
+
+                current_app.logger.info(f"'{basename}' Copying to '{hidden_output_file}'")
+                os.makedirs(output_directory, exist_ok=True)
+                if job:
+                    job.meta["description"] = f"'{basename}' — Copying to destination"
+                    job.meta["progress"] = -1
+                    job.save_meta()
+
+                shutil.copy(file_path, hidden_output_file)
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            move_to_rejects(file_path, "exception")
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
 
         else:
-            if file_details.get("container") == "MPEG-4":
-                current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
-                atomicparsley_process = subprocess.Popen(
-                    [
-                        current_app.config["ATOMICPARSLEY_BIN"],
-                        file_path,
-                        "--metaEnema",
-                        "--overWrite",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-                for line in atomicparsley_process.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(f"'{os.path.basename(file_path)}' {line}")
-                    if job:
-                        job.meta[
-                            "description"
-                        ] = f"'{os.path.basename(file_path)}' — Removing MPEG-4 metadata"
-                        job.meta["progress"] = -1
-                        job.save_meta()
+            current_app.sql_queue.enqueue(
+                "app.videos.finalize_localization",
+                args=(file_path, file_details, lock),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"'{basename}'",
+            )
 
-                current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
-
-            else:
-                current_app.logger.info(
-                    f"'{basename}' Not Matroska or MPEG-4, importing as-is"
-                )
-
-            current_app.logger.info(f"'{basename}' Copying to '{hidden_output_file}'")
-            os.makedirs(output_directory, exist_ok=True)
-            if job:
-                job.meta["description"] = f"'{basename}' — Copying to destination"
-                job.meta["progress"] = -1
-                job.save_meta()
-
-            shutil.copy(file_path, hidden_output_file)
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        move_to_rejects(file_path, "exception")
-        current_app.lock_manager.unlock(lock)
-        current_app.logger.info(f"Removed lock {lock}")
-
-    else:
-        current_app.sql_queue.enqueue(
-            "app.videos.finalize_localization",
-            args=(file_path, file_details, lock),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=f"'{basename}'",
-        )
-
-    return True
+        return True
 
 
 def finalize_localization(file_path, file_details, lock):
@@ -522,387 +524,376 @@ def finalize_localization(file_path, file_details, lock):
     - Changes are committed to the database.
     """
 
-    app.app_context().push()
+    # app.app_context().push()
 
-    try:
-        job = get_current_job()
+    # Initalize the database
+    # https://stackoverflow.com/a/60438156
 
-        # Determine output directories and file to be created
+    # db.init_app(app)
 
-        output_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-        )
-        hidden_output_file = os.path.join(
-            output_directory, f".{file_details.get('basename')}"
-        )
-        output_file = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("file_path")
-        )
+    with app.app_context():
+        db.init_app(app)
 
-        # See if this File record already exists in the database.
-        # If not, create a new one. Otherwise, update that existing record.
+        try:
+            job = get_current_job()
 
-        file = File.query.filter_by(file_path=file_details.get("file_path")).first()
-        if not file:
-            file = File(**file_details)
-            current_app.logger.debug(vars(file))
-            current_app.logger.info(f"{file} Creating File record")
-            db.session.add(file)
+            # Determine output directories and file to be created
 
-        else:
-            current_app.logger.info(f"{file} Existing File record found")
-
-            # Clear metadata for existing File record
-
-            file.date_updated = datetime.utcnow()
-            file.date_transcoded = None
-            file.date_archived = None
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-        if file.media_library == "Movies":
-
-            # See if a Movie record already exists; if not, create one.
-
-            current_app.logger.info(
-                f"{file} Searching in Movies table using "
-                f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
+            output_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
             )
-            movie = Movie.query.filter_by(
-                title=file_details.get("title"), year=file_details.get("year")
-            ).first()
-            if not movie:
-                movie = Movie(
+            hidden_output_file = os.path.join(
+                output_directory, f".{file_details.get('basename')}"
+            )
+            output_file = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+            )
+
+            # See if this File record already exists in the database.
+            # If not, create a new one. Otherwise, update that existing record.
+
+            file = File.query.filter_by(file_path=file_details.get("file_path")).first()
+            if not file:
+                file = File(**file_details)
+                current_app.logger.debug(vars(file))
+                current_app.logger.info(f"{file} Creating File record")
+                db.session.add(file)
+
+            else:
+                current_app.logger.info(f"{file} Existing File record found")
+
+                # Clear metadata for existing File record
+
+                file.date_updated = datetime.utcnow()
+                file.date_transcoded = None
+                file.date_archived = None
+                FileAudioTrack.query.filter_by(file_id=file.id).delete()
+                FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
+            if file.media_library == "Movies":
+
+                # See if a Movie record already exists; if not, create one.
+
+                current_app.logger.info(
+                    f"{file} Searching in Movies table using "
+                    f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
+                )
+                movie = Movie.query.filter_by(
                     title=file_details.get("title"), year=file_details.get("year")
-                )
-                current_app.logger.info(f"{file} Creating {movie}")
-                criterion_collection = get_criterion_collection_from_wikipedia()
-                for release in criterion_collection:
-                    if (movie.title == release.get("title")) and (
-                        movie.year == release.get("year")
-                    ):
-                        movie.criterion_spine_number = release.get("spine_number")
-
-                        # Decided against automatically adding the box set title
-                        # movie.criterion_set_title = release.get("set")
-
-                        movie.criterion_in_print = release.get("in_print")
-                        movie.criterion_bluray = release.get("bluray")
-                        if movie.criterion_disc_owned == None:
-                            movie.criterion_disc_owned = False
-
-                        current_app.logger.info(
-                            f"{movie} Assigning Criterion Collection "
-                            f"spine #{movie.criterion_spine_number}"
-                        )
-
-                db.session.add(movie)
-
-            file.movie = movie
-            current_app.logger.info(f"{file} Associating with {movie}")
-
-            # Set the special feature type if the file is a special feature
-
-            if file_details.get("feature_type_name"):
-                feature_type = RefFeatureType.query.filter_by(
-                    feature_type=file_details.get("feature_type_name")
                 ).first()
-                file.feature_type = feature_type
-                current_app.logger.info(f"{file} Marking as {feature_type}")
+                if not movie:
+                    movie = Movie(
+                        title=file_details.get("title"), year=file_details.get("year")
+                    )
+                    current_app.logger.info(f"{file} Creating {movie}")
+                    criterion_collection = get_criterion_collection_from_wikipedia()
+                    for release in criterion_collection:
+                        if (movie.title == release.get("title")) and (
+                            movie.year == release.get("year")
+                        ):
+                            movie.criterion_spine_number = release.get("spine_number")
 
-        elif file.media_library == "TV Shows":
+                            # Decided against automatically adding the box set title
+                            # movie.criterion_set_title = release.get("set")
 
-            # See if a TVSeries record exists; if not, create one
+                            movie.criterion_in_print = release.get("in_print")
+                            movie.criterion_bluray = release.get("bluray")
+                            if movie.criterion_disc_owned == None:
+                                movie.criterion_disc_owned = False
 
-            current_app.logger.info(
-                f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
-            )
-            tv_series = TVSeries.query.filter_by(
-                title=file_details.get("title")
+                            current_app.logger.info(
+                                f"{movie} Assigning Criterion Collection "
+                                f"spine #{movie.criterion_spine_number}"
+                            )
+
+                    db.session.add(movie)
+
+                file.movie = movie
+                current_app.logger.info(f"{file} Associating with {movie}")
+
+                # Set the special feature type if the file is a special feature
+
+                if file_details.get("feature_type_name"):
+                    feature_type = RefFeatureType.query.filter_by(
+                        feature_type=file_details.get("feature_type_name")
+                    ).first()
+                    file.feature_type = feature_type
+                    current_app.logger.info(f"{file} Marking as {feature_type}")
+
+            elif file.media_library == "TV Shows":
+
+                # See if a TVSeries record exists; if not, create one
+
+                current_app.logger.info(
+                    f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
+                )
+                tv_series = TVSeries.query.filter_by(
+                    title=file_details.get("title")
+                ).first()
+                if not tv_series:
+                    tv_series = TVSeries(title=file_details.get("title"))
+                    current_app.logger.info(f"{file} Creating {tv_series}")
+                    db.session.add(tv_series)
+
+                file.tv_series = tv_series
+                current_app.logger.info(f"{file} Associating with {tv_series}")
+
+            # Set file quality details
+
+            quality = RefQuality.query.filter_by(
+                quality_title=file_details.get("quality_title")
             ).first()
-            if not tv_series:
-                tv_series = TVSeries(title=file_details.get("title"))
-                current_app.logger.info(f"{file} Creating {tv_series}")
-                db.session.add(tv_series)
+            file.quality = quality
+            current_app.logger.info(f"{file} Setting file_quality {quality}")
 
-            file.tv_series = tv_series
-            current_app.logger.info(f"{file} Associating with {tv_series}")
+            # Parse the localized file and get its details with MediaInfo
 
-        # Set file quality details
-
-        quality = RefQuality.query.filter_by(
-            quality_title=file_details.get("quality_title")
-        ).first()
-        file.quality = quality
-        current_app.logger.info(f"{file} Setting file_quality {quality}")
-
-        # Parse the localized file and get its details with MediaInfo
-
-        media_info = MediaInfo.parse(hidden_output_file)
-        current_app.logger.debug(
-            f"'{os.path.basename(hidden_output_file)}' -> {media_info.to_json()}"
-        )
-        output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
-        output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
-
-        # Set file video track info
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.format:
-                file.format = track.format
-                break
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.codec_id:
-                file.codec = track.codec_id
-                break
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.bit_rate:
-                file.video_bitrate_kbps = track.bit_rate / 1000
-                break
-
-        # Put the final touches on the output file and move it into place
-
-        if file_details.get("container") == "Matroska":
-
-            # Set the first audio track as default
-
-            if len(output_audio_tracks) >= 1:
-                current_app.logger.info(
-                    f"'{os.path.basename(hidden_output_file)}' "
-                    f"Setting the first audio track as default"
-                )
-                if output_audio_tracks[0].get("language") == "und":
-                    mkvpropedit_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVPROPEDIT_BIN"],
-                            hidden_output_file,
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "flag-default=1",
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "language=und",
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                else:
-                    mkvpropedit_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVPROPEDIT_BIN"],
-                            hidden_output_file,
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "flag-default=1",
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                for line in mkvpropedit_process.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(
-                        f"'{os.path.basename(hidden_output_file)}' {line}"
-                    )
-
-            # Change from ISO-639-2 to ISO-639-3 language code
-            # if the file was written by MakeMKV
-
-            native_language = current_app.config["NATIVE_LANGUAGE"]
-
-            for track in media_info.tracks:
-                if (
-                    track.track_type == "General"
-                    and "MakeMKV" in track.writing_application
-                ):
-                    native_language = iso_639_3_native_language()
-                    current_app.logger.warn(
-                        f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                        f"code '{native_language}' instead of user-supplied "
-                        f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                        f"processing this file with mkvmerge"
-                    )
-
-            # Set the first subtitle track as default if the first audio is foreign
-            # and if there isn't already a default subtitle track
-
-            existing_default_subtitle_track = False
-            for track in output_subtitle_tracks:
-                if track["default"] == True:
-                    existing_default_subtitle_track = True
-
-            if (
-                len(output_subtitle_tracks) >= 1
-                and output_audio_tracks[0].get("language") != native_language
-                and output_audio_tracks[0].get("language") != "und"
-                and not existing_default_subtitle_track
-            ):
-                current_app.logger.info(
-                    f"'{os.path.basename(hidden_output_file)}' "
-                    f"Setting the first subtitle track as default"
-                )
-                mkvpropedit_process = subprocess.run(
-                    [
-                        current_app.config["MKVPROPEDIT_BIN"],
-                        hidden_output_file,
-                        "--edit",
-                        "track:s1",
-                        "--set",
-                        "flag-default=1",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-                for line in mkvpropedit_process.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(
-                        f"'{os.path.basename(hidden_output_file)}' {line}"
-                    )
-
-            # Rebuild the audio and subtitle track info
-            # now that we've possibly made modifications
-
+            media_info = MediaInfo.parse(hidden_output_file)
+            current_app.logger.debug(
+                f"'{os.path.basename(hidden_output_file)}' -> {media_info.to_json()}"
+            )
             output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
             output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
 
-        # Set file audio track info
+            # Set file video track info
 
-        for i, track in enumerate(output_audio_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            audio_track = FileAudioTrack(**track)
-            file.audio_track = audio_track
-            current_app.logger.info(f"{file} Adding audio track {audio_track}")
-            db.session.add(audio_track)
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.format:
+                    file.format = track.format
+                    break
 
-        # Set file subtitle track info
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.codec_id:
+                    file.codec = track.codec_id
+                    break
 
-        possibly_forced_subtitle = False
-        if len(output_subtitle_tracks) > 1:
-            main_subtitle_track = output_subtitle_tracks[0].get("elements")
-            for i, track in enumerate(output_subtitle_tracks[1:]):
-                track_length = track.get("elements")
-                forced_flag = track.get("forced")
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.bit_rate:
+                    file.video_bitrate_kbps = track.bit_rate / 1000
+                    break
 
-                # If a track is less than 1/3 the length of the first subtitle track,
-                # but it's not marked as forced, speculate that it might be a forced
-                # subtitle track
+            # Put the final touches on the output file and move it into place
 
-                if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
-                    current_app.logger.warning(
-                        f"{file} Subtitle track {i+2} has {track_length} elements "
-                        f"and may be a forced subtitle track!"
+            if file_details.get("container") == "Matroska":
+
+                # Set the first audio track as default
+
+                if len(output_audio_tracks) >= 1:
+                    current_app.logger.info(
+                        f"'{os.path.basename(hidden_output_file)}' "
+                        f"Setting the first audio track as default"
                     )
-                    output_subtitle_tracks[i + 1]["forced"] = None
-                    possibly_forced_subtitle = True
+                    if output_audio_tracks[0].get("language") == "und":
+                        mkvpropedit_process = subprocess.Popen(
+                            [
+                                current_app.config["MKVPROPEDIT_BIN"],
+                                hidden_output_file,
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "flag-default=1",
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "language=und",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True,
+                            bufsize=1,
+                        )
 
-        for i, track in enumerate(output_subtitle_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            subtitle_track = FileSubtitleTrack(**track)
-            file.subtitle_track = subtitle_track
-            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
-            db.session.add(subtitle_track)
+                    else:
+                        mkvpropedit_process = subprocess.Popen(
+                            [
+                                current_app.config["MKVPROPEDIT_BIN"],
+                                hidden_output_file,
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "flag-default=1",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True,
+                            bufsize=1,
+                        )
 
-        # Set the localized date
+                    for line in mkvpropedit_process.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(
+                            f"'{os.path.basename(hidden_output_file)}' {line}"
+                        )
 
-        file.date_localized = datetime.utcnow()
+                # Change from ISO-639-2 to ISO-639-3 language code
+                # if the file was written by MakeMKV
 
-        # Set the AWS archived fields if the file was uploaded to AWS S3 storage
+                native_language = current_app.config["NATIVE_LANGUAGE"]
 
-        file.aws_untouched_key = file_details.get("aws_untouched_key")
-        file.aws_untouched_date_uploaded = file_details.get(
-            "aws_untouched_date_uploaded"
-        )
+                for track in media_info.tracks:
+                    if (
+                        track.track_type == "General"
+                        and "MakeMKV" in track.writing_application
+                    ):
+                        native_language = iso_639_3_native_language()
+                        current_app.logger.warn(
+                            f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                            f"code '{native_language}' instead of user-supplied "
+                            f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
+                            f"processing this file with mkvmerge"
+                        )
 
-        # Get or refresh movie or tv series details and download images
+                # Set the first subtitle track as default if the first audio is foreign
+                # and if there isn't already a default subtitle track
 
-        try:
+                existing_default_subtitle_track = False
+                for track in output_subtitle_tracks:
+                    if track["default"] == True:
+                        existing_default_subtitle_track = True
 
-            # Establish a savepoint with db.session.begin_nested(), so if any of the
-            # queries to get show metadata fail, we can just roll back those changes to
-            # the savepoint and still commit the movie / tv show, file, and its tracks.
-
-            db.session.begin_nested()
-            if file.movie_id:
-                if movie.tmdb_id == None:
-                    movie.tmdb_movie_query()
-
-            elif file.series_id:
-                if tv_series.tmdb_id == None:
-                    tv_series.tmdb_tv_query()
-
-            db.session.commit()
-
-        except:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
-            pass
-
-        # Find and remove any worse-quality files before moving the new file into place
-        # so we don't delete any special features where old and new filenames are the same
-
-        worse_files = file.find_worse_files()
-        for worse in worse_files:
-            worse.delete_local_file()
-
-            # If the new file is from digital media, delete only worse digital-media files
-            # (we always want to keep the best physical-media file)
-            #
-            # Otherwise, if the new file is from physical media, delete all worse files
-            # regardless of media source
-
-            if (
-                worse.quality.physical_media == file.quality.physical_media
-                or file.quality.physical_media == True
-            ):
-                if worse.aws_untouched_date_uploaded:
-                    worse.aws_untouched_date_deleted = aws_delete(
-                        worse.aws_untouched_key
+                if (
+                    len(output_subtitle_tracks) >= 1
+                    and output_audio_tracks[0].get("language") != native_language
+                    and output_audio_tracks[0].get("language") != "und"
+                    and not existing_default_subtitle_track
+                ):
+                    current_app.logger.info(
+                        f"'{os.path.basename(hidden_output_file)}' "
+                        f"Setting the first subtitle track as default"
                     )
-                    worse.aws_untouched_date_uploaded = None
-                db.session.delete(worse)
+                    mkvpropedit_process = subprocess.run(
+                        [
+                            current_app.config["MKVPROPEDIT_BIN"],
+                            hidden_output_file,
+                            "--edit",
+                            "track:s1",
+                            "--set",
+                            "flag-default=1",
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
+                    for line in mkvpropedit_process.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(
+                            f"'{os.path.basename(hidden_output_file)}' {line}"
+                        )
 
-            if (
-                worse.quality.physical_media == True
-                and file.quality.physical_media == True
-            ):
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Replaced a physical media file",
-                    sender=current_app.config["SERVER_EMAIL"],
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/replaced_physical_media.txt",
-                        user=admin_user.email,
-                        file=file,
-                        worse=worse,
-                    ),
-                    html_body=render_template(
-                        "email/replaced_physical_media.html",
-                        user=admin_user.email,
-                        file=file,
-                        worse=worse,
-                    ),
-                )
+                # Rebuild the audio and subtitle track info
+                # now that we've possibly made modifications
 
-                if current_app.config["TODO_EMAIL"]:
+                output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
+                output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
+
+            # Set file audio track info
+
+            for i, track in enumerate(output_audio_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                audio_track = FileAudioTrack(**track)
+                file.audio_track = audio_track
+                current_app.logger.info(f"{file} Adding audio track {audio_track}")
+                db.session.add(audio_track)
+
+            # Set file subtitle track info
+
+            possibly_forced_subtitle = False
+            if len(output_subtitle_tracks) > 1:
+                main_subtitle_track = output_subtitle_tracks[0].get("elements")
+                for i, track in enumerate(output_subtitle_tracks[1:]):
+                    track_length = track.get("elements")
+                    forced_flag = track.get("forced")
+
+                    # If a track is less than 1/3 the length of the first subtitle track,
+                    # but it's not marked as forced, speculate that it might be a forced
+                    # subtitle track
+
+                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
+                        current_app.logger.warning(
+                            f"{file} Subtitle track {i+2} has {track_length} elements "
+                            f"and may be a forced subtitle track!"
+                        )
+                        output_subtitle_tracks[i + 1]["forced"] = None
+                        possibly_forced_subtitle = True
+
+            for i, track in enumerate(output_subtitle_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                subtitle_track = FileSubtitleTrack(**track)
+                file.subtitle_track = subtitle_track
+                current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
+                db.session.add(subtitle_track)
+
+            # Set the localized date
+
+            file.date_localized = datetime.utcnow()
+
+            # Set the AWS archived fields if the file was uploaded to AWS S3 storage
+
+            file.aws_untouched_key = file_details.get("aws_untouched_key")
+            file.aws_untouched_date_uploaded = file_details.get(
+                "aws_untouched_date_uploaded"
+            )
+
+            # Get or refresh movie or tv series details and download images
+
+            try:
+
+                # Establish a savepoint with db.session.begin_nested(), so if any of the
+                # queries to get show metadata fail, we can just roll back those changes to
+                # the savepoint and still commit the movie / tv show, file, and its tracks.
+
+                db.session.begin_nested()
+                if file.movie_id:
+                    if movie.tmdb_id == None:
+                        movie.tmdb_movie_query()
+
+                elif file.series_id:
+                    if tv_series.tmdb_id == None:
+                        tv_series.tmdb_tv_query()
+
+                db.session.commit()
+
+            except:
+                current_app.logger.error(traceback.format_exc())
+                db.session.rollback()
+                pass
+
+            # Find and remove any worse-quality files before moving the new file into place
+            # so we don't delete any special features where old and new filenames are the same
+
+            worse_files = file.find_worse_files()
+            for worse in worse_files:
+                worse.delete_local_file()
+
+                # If the new file is from digital media, delete only worse digital-media files
+                # (we always want to keep the best physical-media file)
+                #
+                # Otherwise, if the new file is from physical media, delete all worse files
+                # regardless of media source
+
+                if (
+                    worse.quality.physical_media == file.quality.physical_media
+                    or file.quality.physical_media == True
+                ):
+                    if worse.aws_untouched_date_uploaded:
+                        worse.aws_untouched_date_deleted = aws_delete(
+                            worse.aws_untouched_key
+                        )
+                        worse.aws_untouched_date_uploaded = None
+                    db.session.delete(worse)
+
+                if (
+                    worse.quality.physical_media == True
+                    and file.quality.physical_media == True
+                ):
+                    admin_user = User.query.filter(User.admin == True).first()
                     send_email(
-                        f"Find and dispose of the media for '{worse.untouched_basename}'",
+                        "Fitzflix - Replaced a physical media file",
                         sender=current_app.config["SERVER_EMAIL"],
-                        recipients=[current_app.config["TODO_EMAIL"]],
+                        recipients=[admin_user.email],
                         text_body=render_template(
                             "email/replaced_physical_media.txt",
                             user=admin_user.email,
@@ -917,75 +908,94 @@ def finalize_localization(file_path, file_details, lock):
                         ),
                     )
 
-        # Move the new file into place
+                    if current_app.config["TODO_EMAIL"]:
+                        send_email(
+                            f"Find and dispose of the media for '{worse.untouched_basename}'",
+                            sender=current_app.config["SERVER_EMAIL"],
+                            recipients=[current_app.config["TODO_EMAIL"]],
+                            text_body=render_template(
+                                "email/replaced_physical_media.txt",
+                                user=admin_user.email,
+                                file=file,
+                                worse=worse,
+                            ),
+                            html_body=render_template(
+                                "email/replaced_physical_media.html",
+                                user=admin_user.email,
+                                file=file,
+                                worse=worse,
+                            ),
+                        )
 
-        os.rename(hidden_output_file, output_file)
+            # Move the new file into place
 
-        db.session.commit()
+            os.rename(hidden_output_file, output_file)
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        move_to_rejects(file_path, "exception")
-        db.session.rollback()
+            db.session.commit()
 
-    else:
-        current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            move_to_rejects(file_path, "exception")
+            db.session.rollback()
 
-        # Remove the file that was imported unless it was replaced by the localized file
-        # (we don't want to remove the file we just created!)
+        else:
+            current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
 
-        if file_path != output_file:
-            try:
-                os.remove(file_path)
+            # Remove the file that was imported unless it was replaced by the localized file
+            # (we don't want to remove the file we just created!)
 
-            except FileNotFoundError:
-                pass
+            if file_path != output_file:
+                try:
+                    os.remove(file_path)
 
-        # Pass the TV series title to Sonarr to refresh the series data
-        # (ignore any exceptions, since it's no big deal if Sonarr can't refresh)
+                except FileNotFoundError:
+                    pass
 
-        if file.series_id:
-            try:
-                file.refresh_sonarr()
+            # Pass the TV series title to Sonarr to refresh the series data
+            # (ignore any exceptions, since it's no big deal if Sonarr can't refresh)
 
-            except Exception:
-                pass
+            if file.series_id:
+                try:
+                    file.refresh_sonarr()
 
-        if file.media_library == "Movies" and movie.tmdb_id == None:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Added a movie without a TMDb ID",
-                sender=current_app.config["SERVER_EMAIL"],
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
-                ),
-                html_body=render_template(
-                    "email/no_tmdb_id.html", user=admin_user.email, movie=movie
-                ),
-            )
+                except Exception:
+                    pass
 
-        if possibly_forced_subtitle == True:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Possibly forced subtitle track",
-                sender=current_app.config["SERVER_EMAIL"],
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/possibly_forced_subtitle.txt",
-                    user=admin_user.email,
-                    file=file,
-                ),
-                html_body=render_template(
-                    "email/possibly_forced_subtitle.html",
-                    user=admin_user.email,
-                    file=file,
-                ),
-            )
+            if file.media_library == "Movies" and movie.tmdb_id == None:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Added a movie without a TMDb ID",
+                    sender=current_app.config["SERVER_EMAIL"],
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
+                    ),
+                    html_body=render_template(
+                        "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                    ),
+                )
 
-    finally:
-        current_app.lock_manager.unlock(lock)
-        current_app.logger.info(f"Removed lock {lock}")
+            if possibly_forced_subtitle == True:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Possibly forced subtitle track",
+                    sender=current_app.config["SERVER_EMAIL"],
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/possibly_forced_subtitle.txt",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                    html_body=render_template(
+                        "email/possibly_forced_subtitle.html",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                )
+
+        finally:
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
 
 
 def finalize_transcoding(file_id, lock):
@@ -1487,7 +1497,6 @@ def upload_task(file_id, key_prefix="", force_upload=False):
 
 def aws_delete(key):
     """Delete an object from AWS S3 storage."""
-
     s3_client = boto3.client(
         "s3",
         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
@@ -1552,7 +1561,7 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
 
     key = os.path.join(key_prefix, key)
 
-    config = Config(connect_timeout=20, retries={"max_attempts": 3})
+    config = Config(connect_timeout=20, retries={"max_attempts": 10})
     s3_client = boto3.client(
         "s3",
         config=config,
@@ -2560,7 +2569,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         ):
 
                             config = Config(
-                                connect_timeout=20, retries={"max_attempts": 3}
+                                connect_timeout=20, retries={"max_attempts": 10}
                             )
                             s3_client = boto3.client(
                                 "s3",
