@@ -390,6 +390,7 @@ def upgrade():
             {"feature_type": "Scenes"},
             {"feature_type": "Shorts"},
             {"feature_type": "Trailers"},
+            {"feature_type": "Other"},
         ],
     )
     op.bulk_insert(
