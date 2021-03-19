@@ -555,6 +555,7 @@ def movie(movie_id):
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
         criterion_form=criterion_form,
+        radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
 
@@ -1768,6 +1769,7 @@ def movie_shopping():
         pages=movies,
         filter_form=filter_form,
         library_search_form=library_search_form,
+        radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
 

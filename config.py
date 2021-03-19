@@ -77,6 +77,11 @@ class Config(object):
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None
     SONARR_URL                          = os.environ.get("SONARR_URL") or None
 
+    # Radarr configuration
+    RADARR_API_KEY                      = os.environ.get("RADARR_API_KEY") or None
+    RADARR_URL                          = os.environ.get("RADARR_URL") or None
+    RADARR_PROXY_URL                    = os.environ.get("RADARR_PROXY_URL") or RADARR_URL
+
     # TMDb configuration
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"

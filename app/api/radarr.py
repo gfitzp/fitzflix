@@ -14,9 +14,9 @@ from app.api import bp
 from app.models import TVSeries, User
 
 
-@bp.route("/sonarr/add", methods=["POST"])
-def sonarr_add():
-    """Endpoint for Sonarr to notify Fitzflix when a new video file is added."""
+@bp.route("/radarr/add", methods=["POST"])
+def radarr_add():
+    """Endpoint for Radarr to notify Fitzflix when a new video file is added."""
 
     current_app.logger.info(
         f"Authorization: {request.authorization}, Request: {request.get_json()}"
@@ -43,8 +43,8 @@ def sonarr_add():
         response = jsonify(request.get_json())
         current_app.logger.info(f"Request: {request.get_json() or {}}")
         downloaded_file_path = os.path.join(
-            payload["series"].get("path"),
-            payload["episodeFile"].get("relativePath"),
+            payload["movie"].get("folderPath"),
+            payload["movieFile"].get("relativePath"),
         )
 
         # Downgrade quality title and rename the downloaded file.
@@ -58,56 +58,41 @@ def sonarr_add():
         #                   - Bluray-1080p          WEBDL-1080p
         #                   - Bluray-1080p Remux    WEBDL-1080p
 
-        original_quality = payload["episodeFile"].get("quality")
+        original_quality = payload["movieFile"].get("quality")
         new_quality = (
             original_quality.replace("DVD", "WEBDL-480p")
             .replace("Bluray", "WEBDL")
+            .replace("Remux-", "WEBDL-")
             .replace(" Remux", "")
         )
-        sonarr_file_name = os.path.basename(downloaded_file_path).replace(
+        radarr_file_name = os.path.basename(downloaded_file_path).replace(
             f"[{original_quality}]", f"[{new_quality}]"
         )
-        sonarr_file_path = os.path.join(
-            os.path.dirname(downloaded_file_path), sonarr_file_name
+        radarr_file_path = os.path.join(
+            os.path.dirname(downloaded_file_path), radarr_file_name
         )
-        if downloaded_file_path != sonarr_file_path:
-            shutil.move(downloaded_file_path, sonarr_file_path)
+        if downloaded_file_path != radarr_file_path:
+            shutil.move(downloaded_file_path, radarr_file_path)
             current_app.logger.info(
-                f"'{downloaded_file_path}' renamed as '{sonarr_file_path}'"
+                f"'{downloaded_file_path}' renamed as '{radarr_file_path}'"
             )
 
-        # If the episode aired in the last two weeks, add it to the front of the queue
+        # Ask Radarr to refresh its series data now that we've possibly renamed the file
 
-        today = date.today()
-        airdate = payload["episodes"][0].get("airDate")
-        at_front = False
-        if airdate:
-            airdate = datetime.strptime(airdate, "%Y-%m-%d").date()
-            aired_days_ago = (today - airdate).days
-            current_app.logger.info(
-                f"'{os.path.basename(sonarr_file_path)}' aired {aired_days_ago} day(s) ago"
-            )
-            if aired_days_ago <= 14:
-                at_front = True
-                current_app.logger.info(
-                    f"'{os.path.basename(sonarr_file_path)}' Import will be prioritized"
-                )
-
-        # Ask Sonarr to refresh its series data now that we've possibly renamed the file
-
-        series = payload.get("series")
-        id = series.get("id")
+        id = payload["movie"].get("id")
         if id:
-            current_app.logger.info(f"Rescanning series '{series.get('title')}'")
+            current_app.logger.info(
+                f"Rescanning movie '{os.path.dirname(downloaded_file_path)}'"
+            )
 
             # r = requests.post(
-            #     current_app.config["SONARR_URL"] + "/api/command",
-            #     params={"apikey": current_app.config["SONARR_API_KEY"]},
+            #     current_app.config["radarr_URL"] + "/api/command",
+            #     params={"apikey": current_app.config["radarr_API_KEY"]},
             #     json={"name": "RescanSeries", "seriesId": int(id)},
             # )
             # current_app.logger.info(r.json())
 
-            # I *would* have used the requests code above to submit the API call to Sonarr
+            # I *would* have used the requests code above to submit the API call to Radarr
             # to refresh the series, but it keeps crashing with a segmentation fault.
             # No idea why, because the same code works perfectly fine on my local machine.
             # Using the urllib3 code below to make the API call instead.
@@ -115,12 +100,12 @@ def sonarr_add():
             http = urllib3.PoolManager()
             r = http.request(
                 "POST",
-                current_app.config["SONARR_URL"] + "/api/command",
+                current_app.config["RADARR_URL"] + "/api/v3/command",
                 headers={
-                    "X-Api-Key": current_app.config["SONARR_API_KEY"],
+                    "X-Api-Key": current_app.config["RADARR_API_KEY"],
                     "Content-Type": "application/json",
                 },
-                body=json.dumps({"name": "RescanSeries", "seriesId": int(id)}).encode(
+                body=json.dumps({"name": "RefreshMovie", "movieIds": int(id)}).encode(
                     "utf-8"
                 ),
             )
@@ -134,14 +119,13 @@ def sonarr_add():
 
         job = current_app.localize_queue.enqueue(
             "app.videos.localization_task",
-            args=(sonarr_file_path,),
+            args=(radarr_file_path,),
             job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-            description=f"'{os.path.basename(sonarr_file_path)}'",
-            job_id=os.path.basename(sonarr_file_path),
-            at_front=at_front,
+            description=f"'{os.path.basename(radarr_file_path)}'",
+            job_id=os.path.basename(radarr_file_path),
         )
         if job:
-            current_app.logger.info(f"'{sonarr_file_path}' Sent to Fitzflix")
+            current_app.logger.info(f"'{radarr_file_path}' Sent to Fitzflix")
 
         else:
             response.status_code = 500
