@@ -3,7 +3,7 @@ import os
 import random
 import time
 
-from logging.handlers import SMTPHandler, RotatingFileHandler
+from logging.handlers import SMTPHandler
 
 import rq
 
@@ -204,9 +204,7 @@ def create_app(config_class=Config):
         if not os.path.exists("logs"):
             os.mkdir("logs")
 
-        file_handler = RotatingFileHandler(
-            "logs/fitzflix.log", maxBytes=10485760, backupCount=10
-        )
+        file_handler = logging.FileHandler("logs/fitzflix.log")
         file_handler.setFormatter(
             logging.Formatter(
                 "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
