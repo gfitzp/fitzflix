@@ -131,10 +131,13 @@
                         set_queue_count(queue_details.count);
                         console.log(queue_details.running);
                         running = queue_details.running;
+
                         oldTasks = document.getElementById("running-tasks")
+
                         while (oldTasks.firstChild) {
                             oldTasks.firstChild.remove();
                         }
+
                         for (var i = 0; i < running.length; i++) {
                             var newAlert = document.createElement("div");
                             newAlert.className = "alert alert-info mt-3";
@@ -164,6 +167,50 @@
                             document.getElementById(newAlert.id).appendChild(newProgress);
 //                             set_task_progress(running[i].job, running[i].progress);
                         }
+
+                        localizations = queue_details.localization_queue;
+
+                        oldLocalizationTasks = document.getElementById("localization-tasks")
+                        if (oldLocalizationTasks) {
+							while (oldLocalizationTasks.firstChild) {
+								oldLocalizationTasks.firstChild.remove();
+							}
+
+							for (var i = 0; i < localizations.length; i++) {
+
+								var localizationPosition = document.createElement("th");
+								localizationPosition.setAttribute("scope", "row");
+								$(localizationPosition).text(localizations[i].position);
+
+								var localizationId = document.createElement("td");
+								$(localizationId).text(localizations[i].id);
+
+								var enqueuedDate = document.createElement("abbr");
+								enqueuedDate.setAttribute("title", localizations[i].enqueued_at);
+								$(enqueuedDate).text(moment(localizations[i].enqueued_at).fromNow());
+
+								var localizationEnqueued = document.createElement("td");
+								localizationEnqueued.appendChild(enqueuedDate);
+
+								var startedDate = document.createElement("abbr");
+								startedDate.setAttribute("title", localizations[i].started_at);
+								if (localizations[i].started_at) {
+									$(startedDate).text(moment(localizations[i].started_at).fromNow());
+								}
+
+								var localizationStarted = document.createElement("td");
+								localizationStarted.appendChild(startedDate);
+
+								var localizationRow = document.createElement("tr");
+								localizationRow.appendChild(localizationPosition);
+								localizationRow.appendChild(localizationId);
+								localizationRow.appendChild(localizationEnqueued);
+								localizationRow.appendChild(localizationStarted);
+
+								document.getElementById("localization-tasks").appendChild(localizationRow);
+
+							}
+						}
                     }
                 );
             }, 5000);

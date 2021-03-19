@@ -11,7 +11,6 @@
 	</div>
 </div>
 <hr>
-{% if localization_queue %}
 	<h3 class="mt-2 mb-2">Import Queue</h3>
 	<table class="table table-striped">
 		<thead class="thead-light">
@@ -22,7 +21,7 @@
 				<th scope="col">Started</th>
 			</tr>
 		</thead>
-		<tbody>
+		<tbody id="localization-tasks">
 			{% for localization in localization_queue %}
 			<tr>
 				<th scope="row">{{ localization.position if localization.position }}</th>
@@ -33,7 +32,6 @@
 			{% endfor %}
 		</tbody>
 	</table>
-{% endif %}
 {% if transcode_queue %}
 	<h3 class="mt-2 mb-2">Transcode Queue</h3>
 	<table class="table table-striped">
