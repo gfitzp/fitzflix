@@ -1382,7 +1382,7 @@ def movie_shopping():
     # If the minimum quality is greater than the maximum quality, set them to be the same
 
     if int(min_quality) > int(max_quality):
-        min_quality = int(max_quality)
+        max_quality = int(min_quality)
 
     # Find the preference associated with the quality ID, and set as the dropdown default
 
