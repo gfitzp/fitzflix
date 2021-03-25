@@ -9,7 +9,7 @@ from datetime import datetime
 from rq.job import Job
 from rq.registry import StartedJobRegistry, ScheduledJobRegistry
 
-from flask import render_template, flash, jsonify, redirect, url_for, request, Markup
+from flask import render_template, flash, jsonify, redirect, url_for, request, send_from_directory, Markup
 from flask_login import current_user, login_user, logout_user, login_required
 from werkzeug.urls import url_parse
 
@@ -52,6 +52,23 @@ from app.main import bp
 from app.email import send_email
 from app.videos import *
 
+
+@bp.route("/browserconfig.xml")
+def browserconfigXml():
+    return send_from_directory(os.path.join(current_app.root_path, "static"), "browserconfig.xml", mimetype="image/png")
+
+@bp.route("/mstile-150x150.png")
+def mstilePng():
+    return send_from_directory(os.path.join(current_app.root_path, "static"), "mstile-150x150.png", mimetype="image/png")
+
+@bp.route("/apple-touch-icon-precomposed.png")
+@bp.route("/apple-touch-icon.png")
+def androidPng():
+    return send_from_directory(os.path.join(current_app.root_path, "static"), "apple-touch-icon.png", mimetype="image/png")
+
+@bp.route("/favicon.ico")
+def favicon():
+    return send_from_directory(os.path.join(current_app.root_path, "static"), "favicon.ico", mimetype="image/vnd.microsoft.icon")
 
 @bp.route("/", methods=["GET", "POST"])
 @bp.route("/index", methods=["GET", "POST"])
