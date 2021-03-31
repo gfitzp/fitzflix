@@ -8,7 +8,7 @@
 {% if series %}
 {% for tv in series %}
 <div class="media">
-	<div class="sticky-top pt-1 mt-n1" style="z-index: 100;">
+	<div class="sticky-top pt-1 mt-n1" style="z-index: 100; top: 60px;">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
