@@ -1659,7 +1659,7 @@ def movie_shopping():
             .filter(RefQuality.quality_title.notlike("HDTV-%"))
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                file_count.c.file_count.desc(),
+                db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
                 file_count.c.min_preference.asc(),
                 Movie.title.asc(),
                 Movie.year.asc(),
@@ -1738,7 +1738,7 @@ def movie_shopping():
             )
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                file_count.c.file_count.desc(),
+                db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
                 file_count.c.min_preference.asc(),
                 Movie.title.asc(),
                 Movie.year.asc(),
