@@ -1720,6 +1720,7 @@ def movie_shopping():
             )
             .join(ranked_files, (ranked_files.c.id == File.id))
             .join(file_count, (file_count.c.id == Movie.id))
+            .outerjoin(physical_media, (physical_media.c.id == Movie.id))
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
@@ -1739,6 +1740,12 @@ def movie_shopping():
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
+                db.case(
+                    [
+                        ((physical_media.c.id == None) & (RefQuality.quality_title != "SDTV") & (RefQuality.quality_title.notlike("HDTV-%")), 0),
+                    ],
+                    else_=1
+                ).asc(),
                 file_count.c.min_preference.asc(),
                 Movie.title.asc(),
                 Movie.year.asc(),
