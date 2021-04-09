@@ -912,7 +912,7 @@ class UserMovieReview(db.Model):
     half_stars = db.Column(db.Integer, nullable=False)
     review = db.Column(db.Text)
     date_watched = db.Column(db.DateTime)
-    date_reviewed = db.Column(db.DateTime, default=datetime.utcnow)
+    date_reviewed = db.Column(db.DateTime)
 
     def __repr__(self):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"

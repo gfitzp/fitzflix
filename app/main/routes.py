@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import math
 import os
 import secrets
@@ -29,6 +30,7 @@ from app.main.forms import (
     PruneAWSStorageForm,
     QualityFilterForm,
     ReviewExportForm,
+    ReviewUploadForm,
     S3UploadForm,
     TMDBLookupForm,
     TMDBRefreshForm,
@@ -480,6 +482,7 @@ def movie(movie_id):
             half_stars=half_stars,
             review=movie_review_form.review.data,
             date_watched=movie_review_form.date_watched.data,
+            date_reviewed=datetime.utcnow,
         )
         db.session.add(review)
         db.session.commit()
@@ -1118,7 +1121,11 @@ def reviews():
     reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .filter(UserMovieReview.user_id == int(current_user.id))
-        .order_by(UserMovieReview.date_reviewed.desc())
+        .order_by(
+            UserMovieReview.date_reviewed.desc(),
+            UserMovieReview.rating.desc(),
+            Movie.title.asc(),
+        )
         .paginate(page, 50, False)
     )
     next_url = (
@@ -1132,13 +1139,14 @@ def reviews():
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .filter(UserMovieReview.user_id == int(current_user.id))
         .order_by(UserMovieReview.date_reviewed.desc())
+        .order_by(UserMovieReview.date_watched.desc())
         .all()
     )
 
     # Form to request an export of all of this user's movie reviews as a CSV file
 
     review_export_form = ReviewExportForm()
-    if review_export_form.validate_on_submit():
+    if review_export_form.export_submit.data and review_export_form.validate_on_submit():
 
         # Create the header columns for the CSV
 
@@ -1154,6 +1162,7 @@ def reviews():
             .order_by(
                 UserMovieReview.date_watched.desc(),
                 UserMovieReview.date_reviewed.desc(),
+                UserMovieReview.rating.desc(),
             )
             .all()
         )
@@ -1197,10 +1206,25 @@ def reviews():
 
         return redirect(url_for("main.reviews"))
 
+    review_upload_form = ReviewUploadForm()
+    if review_upload_form.upload_submit.data and review_upload_form.validate_on_submit():
+        ratings = request.files["file"].readlines()
+        for rating in ratings:
+            movie_rating = json.loads(rating)
+            if movie_rating["rating"] >= 0:
+                current_app.sql_queue.enqueue(
+                    "app.videos.review_task",
+                    args=(current_user.id, movie_rating["name"], movie_rating["rating"]),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"Reviewing {movie_rating['name']}",
+                )
+        return redirect(url_for("main.reviews"))
+
     return render_template(
         "reviews.html",
         title="My Movie Reviews",
         review_export_form=review_export_form,
+        review_upload_form=review_upload_form,
         reviews=reviews.items,
         next_url=next_url,
         prev_url=prev_url,

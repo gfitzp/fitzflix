@@ -5,6 +5,7 @@ from wtforms import (
     BooleanField,
     DateField,
     DecimalField,
+    FileField,
     IntegerField,
     PasswordField,
     RadioField,
@@ -24,6 +25,7 @@ from wtforms.validators import (
     Regexp,
     ValidationError,
 )
+from wtforms.widgets import HiddenInput
 from app.models import User
 
 
@@ -146,6 +148,11 @@ class TVShoppingFilterForm(FlaskForm):
 
 class ReviewExportForm(FlaskForm):
     export_submit = SubmitField("Export Reviews")
+
+
+class ReviewUploadForm(FlaskForm):
+    file = FileField("Reviews File")
+    upload_submit = SubmitField("Upload Reviews")
 
 
 class S3UploadForm(FlaskForm):

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import random
 import re
@@ -1331,6 +1332,104 @@ def rename_task(file_id, new_key):
             old_key, new_key
         )
         db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+
+    else:
+        return True
+
+
+def review_task(user_id, title, rating):
+    """Import movie reviews from a Netflix export."""
+
+    app.app_context().push()
+
+    try:
+        movie = Movie.query.filter_by(title=title).first()
+
+        if not movie:
+            tmdb_info = {}
+            if not current_app.config["TMDB_API_KEY"]:
+                return False
+            tmdb_api_key = current_app.config["TMDB_API_KEY"]
+            tmdb_api_url = current_app.config["TMDB_API_URL"]
+            requested_info = "credits,external_ids,images,keywords,release_dates,videos"
+            current_app.logger.info(f"'{title}' not in database, searching in TMDB")
+            r = requests.get(
+                tmdb_api_url + "/search/movie",
+                params={
+                    "api_key": tmdb_api_key,
+                    "query": title,
+                },
+            )
+            r.raise_for_status()
+            current_app.logger.debug(f"{r.url}: {r.json()}")
+            if len(r.json().get("results")) > 0:
+                first_result = r.json().get("results")[0]
+                tmdb_id = first_result.get("id")
+
+                if tmdb_id and title == first_result.get("title"):
+                    current_app.logger.info(f"'{title}' Getting details from TMDB")
+                    r = requests.get(
+                        tmdb_api_url + "/movie/" + str(tmdb_id),
+                        params={
+                            "api_key": tmdb_api_key,
+                            "append_to_response": requested_info,
+                        },
+                    )
+                    r.raise_for_status()
+                    current_app.logger.debug(f"{r.url}: {r.json()}")
+                    tmdb_info = r.json()
+
+                    tmdb_title = tmdb_info.get("title")
+                    if tmdb_info.get("release_date"):
+                        tmdb_release_date = datetime.strptime(
+                            tmdb_info.get("release_date"), "%Y-%m-%d"
+                        )
+                        tmdb_year = tmdb_release_date.year
+
+                    if tmdb_title and tmdb_year:
+                        movie = Movie(title=tmdb_title, year=tmdb_year)
+                        db.session.add(movie)
+
+                        try:
+                            # Establish a savepoint with db.session.begin_nested(), so if any of the
+                            # queries to get show metadata fail, we can just roll back those changes to
+                            # the savepoint and still commit the movie / tv show, file, and its tracks.
+
+                            db.session.begin_nested()
+                            movie.tmdb_movie_query()
+                            db.session.commit()
+
+                        except:
+                            current_app.logger.error(traceback.format_exc())
+                            db.session.rollback()
+                            pass
+
+        if movie:
+            modified_rating = round(rating * 2) / 2
+            whole_stars = math.floor(modified_rating)
+            if modified_rating % 1 == 0:
+                half_stars = 0
+            else:
+                half_stars = 1
+
+            review = UserMovieReview(
+                user_id=user_id,
+                movie_id=movie.id,
+                rating=rating,
+                modified_rating=modified_rating,
+                whole_stars=whole_stars,
+                half_stars=half_stars,
+                review="",
+                date_watched=None,
+                date_reviewed=None,
+            )
+            db.session.add(review)
+            db.session.commit()
+            current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
 
     except Exception:
         current_app.logger.error(traceback.format_exc())
