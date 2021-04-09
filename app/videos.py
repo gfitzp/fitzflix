@@ -14,6 +14,7 @@ from datetime import datetime
 from datetime import timedelta
 
 import boto3
+import botocore
 import requests
 import rq
 
@@ -292,7 +293,7 @@ def localization_task(file_path):
                         and "MakeMKV" in track.writing_application
                     ):
                         native_language = iso_639_3_native_language()
-                        current_app.logger.warn(
+                        current_app.logger.warning(
                             f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
                             f"code '{native_language}' instead of user-supplied "
                             f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
@@ -737,7 +738,7 @@ def finalize_localization(file_path, file_details, lock):
                         and "MakeMKV" in track.writing_application
                     ):
                         native_language = iso_639_3_native_language()
-                        current_app.logger.warn(
+                        current_app.logger.warning(
                             f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
                             f"code '{native_language}' instead of user-supplied "
                             f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
@@ -1660,7 +1661,7 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
 
     key = os.path.join(key_prefix, key)
 
-    config = Config(connect_timeout=20, retries={"max_attempts": 10})
+    config = Config(connect_timeout=20, retries={"mode": "standard", "max_attempts": 10})
     s3_client = boto3.client(
         "s3",
         config=config,
@@ -1728,15 +1729,50 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
 
     # Upload the file to AWS S3 storage
 
-    response = s3_client.upload_file(
-        file_path,
-        current_app.config["AWS_BUCKET"],
-        key,
-        Callback=UploadProgressPercentage(file_path),
-    )
+    # Thanks to https://codeflex.co/python-s3-multipart-file-upload-with-metadata-and-progress-indicator/
+    # for the logic on how to handle failures; I couldn't figure out that
+    # botocore.exceptions.ClientError and boto3.exceptions.S3UploadFailedError
+    # returned different error formats until I saw this post.
 
-    current_app.logger.info(f"Uploaded '{file_path}' to AWS")
-    return key, datetime.utcnow()
+    MAX_RETRY_COUNT = 10
+    retry = MAX_RETRY_COUNT
+
+    while retry > 0:
+        try:
+            response = s3_client.upload_file(
+                file_path,
+                current_app.config["AWS_BUCKET"],
+                key,
+                Callback=UploadProgressPercentage(file_path),
+            )
+            retry = 0
+
+        except boto3.exceptions.S3UploadFailedError as e:
+            retry = retry - 1
+            if "BadDigest" in str(e):
+                current_app.logger.warn(e)
+                current_app.logger.warn(
+                    f"'{file_path}' Retrying upload, "
+                    f"this is retry {MAX_RETRY_COUNT - retry} out of {MAX_RETRY_COUNT}"
+                )
+
+            else:
+                current_app.logger.error(e)
+                raise
+
+        except:
+            raise
+
+        else:
+            current_app.logger.info(f"Uploaded '{file_path}' to AWS")
+            return key, datetime.utcnow()
+
+    current_app.logger.error(
+        f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
+    )
+    move_to_rejects(file_path, "upload error")
+
+
 
 
 def calculate_etag(file_path):
@@ -2668,7 +2704,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         ):
 
                             config = Config(
-                                connect_timeout=20, retries={"max_attempts": 10}
+                                connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
                             )
                             s3_client = boto3.client(
                                 "s3",
