@@ -956,6 +956,8 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     criterion_disc_owned = db.Column(db.Boolean)
     criterion_bluray = db.Column(db.Boolean)
 
+    shopping_list_exclude = db.Column(db.Boolean)
+
     files = db.relationship(
         "File", backref="movie", lazy="dynamic", cascade="all,delete,delete-orphan"
     )

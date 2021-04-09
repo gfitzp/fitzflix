@@ -173,3 +173,9 @@ class PruneAWSStorageForm(FlaskForm):
 
 class FileDeleteForm(FlaskForm):
     delete_submit = SubmitField("Delete and Purge File")
+
+
+class MovieShoppingExcludeForm(FlaskForm):
+    movie_id = IntegerField("Movie ID", validators=[Optional()], widget=HiddenInput())
+    add_submit = SubmitField("Add to List")
+    exclude_submit = SubmitField("Remove from List")

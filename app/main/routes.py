@@ -24,6 +24,7 @@ from app.main.forms import (
     LibrarySearchForm,
     MKVPropEditForm,
     MovieReviewForm,
+    MovieShoppingExcludeForm,
     MovieShoppingFilterForm,
     PruneAWSStorageForm,
     QualityFilterForm,
@@ -438,6 +439,19 @@ def movie(movie_id):
         .all()
     )
 
+    movie_shopping_exclude_form = MovieShoppingExcludeForm()
+    if movie_shopping_exclude_form.add_submit.data and movie_shopping_exclude_form.validate_on_submit():
+        movie.shopping_list_exclude = 0
+        db.session.commit()
+        flash(f"Added '{title}' to the shopping list")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    elif movie_shopping_exclude_form.exclude_submit.data and movie_shopping_exclude_form.validate_on_submit():
+        movie.shopping_list_exclude = 1
+        db.session.commit()
+        flash(f"Removed '{title}' from the shopping list")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     # Form to review a movie. A user can review the same movie multiple times
     # (tastes change!), so this just adds an additional review to the UserMovieReview
     # table for this film.
@@ -568,6 +582,7 @@ def movie(movie_id):
         review=review,
         films=films,
         features=features,
+        movie_shopping_exclude_form=movie_shopping_exclude_form,
         movie_review_form=movie_review_form,
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
@@ -1576,6 +1591,12 @@ def movie_shopping():
                     Movie.criterion_disc_owned == criterion_owned_false
                 )
             )
+            .filter(
+                db.or_(
+                    Movie.shopping_list_exclude == None,
+                    Movie.shopping_list_exclude == False,
+                )
+            )
             .order_by(
                 Movie.title.asc(),
                 Movie.year.asc(),
@@ -1657,6 +1678,12 @@ def movie_shopping():
             .filter(physical_media.c.id == None)
             .filter(RefQuality.quality_title != "SDTV")
             .filter(RefQuality.quality_title.notlike("HDTV-%"))
+            .filter(
+                db.or_(
+                    Movie.shopping_list_exclude == None,
+                    Movie.shopping_list_exclude == False,
+                )
+            )
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
@@ -1737,6 +1764,12 @@ def movie_shopping():
                     Movie.criterion_disc_owned == criterion_owned_false
                 )
             )
+            .filter(
+                db.or_(
+                    Movie.shopping_list_exclude == None,
+                    Movie.shopping_list_exclude == False,
+                )
+            )
             .order_by(
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
@@ -1755,6 +1788,8 @@ def movie_shopping():
             .paginate(page, 100, False)
         )
 
+    movie_shopping_exclude_form = MovieShoppingExcludeForm()
+
     next_url = (
         url_for(
             "main.movie_shopping",
@@ -1765,6 +1800,7 @@ def movie_shopping():
             library=library,
             min_quality=min_quality,
             max_quality=max_quality,
+            movie_shopping_exclude_form=movie_shopping_exclude_form,
         )
         if movies.has_next
         else None
@@ -1779,10 +1815,29 @@ def movie_shopping():
             library=library,
             min_quality=min_quality,
             max_quality=max_quality,
+            movie_shopping_exclude_form=movie_shopping_exclude_form,
         )
         if movies.has_prev
         else None
     )
+
+    if movie_shopping_exclude_form.add_submit.data and movie_shopping_exclude_form.validate_on_submit():
+        movie = Movie.query.filter_by(id=int(movie_shopping_exclude_form.movie_id.data)).first()
+        movie.shopping_list_exclude = 1
+        db.session.commit()
+        flash(f"Added '{movie.title}' to the shopping list")
+        return redirect(
+            url_for("main.movie_shopping", page=page, q=q, library=library, media=media, min_quality=min_quality, max_quality=max_quality),
+        )
+
+    elif movie_shopping_exclude_form.exclude_submit.data and movie_shopping_exclude_form.validate_on_submit():
+        movie = Movie.query.filter_by(id=int(movie_shopping_exclude_form.movie_id.data)).first()
+        movie.shopping_list_exclude = 1
+        db.session.commit()
+        flash(f"Removed '{movie.title}' from the shopping list")
+        return redirect(
+            url_for("main.movie_shopping", page=page, q=q, library=library, media=media, min_quality=min_quality, max_quality=max_quality),
+        )
 
     return render_template(
         "shopping_movie.html",
@@ -1794,6 +1849,7 @@ def movie_shopping():
         filter_form=filter_form,
         library_search_form=library_search_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
+        movie_shopping_exclude_form=movie_shopping_exclude_form,
     )
 
 
