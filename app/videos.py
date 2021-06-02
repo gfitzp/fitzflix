@@ -104,6 +104,11 @@ def localization_task(file_path):
             # Parse movie or TV show info from the file name
 
             basename = os.path.basename(file_path)
+
+            # If the file name contains "temp-1234.", then ignore it
+            if re.search("\-temp\-\d+\.", basename):
+                return False
+
             file_details = evaluate_filename(file_path)
             current_app.logger.debug(file_details)
             if not file_details:
