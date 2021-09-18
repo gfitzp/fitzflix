@@ -1603,18 +1603,18 @@ def movie_shopping():
             .filter(
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
-            .filter(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_spine_number == criterion_release,
-                )
-            )
-            .filter(
-                db.or_(
-                    Movie.criterion_disc_owned == None,
-                    Movie.criterion_disc_owned == criterion_owned_false
-                )
-            )
+#             .filter(
+#                 db.or_(
+#                     Movie.criterion_spine_number != None,
+#                     Movie.criterion_spine_number == criterion_release,
+#                 )
+#             )
+#             .filter(
+#                 db.or_(
+#                     Movie.criterion_disc_owned == None,
+#                     Movie.criterion_disc_owned == criterion_owned_false
+#                 )
+#             )
             .filter(
                 db.or_(
                     Movie.shopping_list_exclude == None,
