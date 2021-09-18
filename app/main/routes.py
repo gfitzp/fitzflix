@@ -1192,7 +1192,7 @@ def reviews():
 
         send_email(
             "Fitzflix - Your movie reviews",
-            sender=current_app.config["SERVER_EMAIL"],
+            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
             recipients=[current_user.email],
             text_body=render_template("email/reviews.txt", user=current_user),
             html_body=render_template("email/reviews.html", user=current_user),

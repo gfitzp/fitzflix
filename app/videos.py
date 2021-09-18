@@ -183,7 +183,7 @@ def localization_task(file_path):
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
                     "Fitzflix - Received an inferior-quality file",
-                    sender=current_app.config["SERVER_EMAIL"],
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                     recipients=[admin_user.email],
                     text_body=render_template(
                         "email/inferior_warning.txt",
@@ -899,7 +899,7 @@ def finalize_localization(file_path, file_details, lock):
                     admin_user = User.query.filter(User.admin == True).first()
                     send_email(
                         "Fitzflix - Replaced a physical media file",
-                        sender=current_app.config["SERVER_EMAIL"],
+                        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                         recipients=[admin_user.email],
                         text_body=render_template(
                             "email/replaced_physical_media.txt",
@@ -918,7 +918,7 @@ def finalize_localization(file_path, file_details, lock):
                     if current_app.config["TODO_EMAIL"]:
                         send_email(
                             f"Find and dispose of the media for '{worse.untouched_basename}'",
-                            sender=current_app.config["SERVER_EMAIL"],
+                            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                             recipients=[current_app.config["TODO_EMAIL"]],
                             text_body=render_template(
                                 "email/replaced_physical_media.txt",
@@ -972,7 +972,7 @@ def finalize_localization(file_path, file_details, lock):
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
                     "Fitzflix - Added a movie without a TMDb ID",
-                    sender=current_app.config["SERVER_EMAIL"],
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                     recipients=[admin_user.email],
                     text_body=render_template(
                         "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
@@ -986,7 +986,7 @@ def finalize_localization(file_path, file_details, lock):
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
                     "Fitzflix - Possibly forced subtitle track",
-                    sender=current_app.config["SERVER_EMAIL"],
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                     recipients=[admin_user.email],
                     text_body=render_template(
                         "email/possibly_forced_subtitle.txt",
@@ -1297,7 +1297,7 @@ def prune_aws_s3_storage_task():
             admin_user = User.query.filter(User.admin == True).first()
             send_email(
                 "Fitzflix - Deleted unreferenced AWS files",
-                sender=app.config["SERVER_EMAIL"],
+                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                 recipients=[admin_user.email],
                 text_body=render_template(
                     "email/unreferenced_files.txt",
