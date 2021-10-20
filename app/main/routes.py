@@ -570,6 +570,7 @@ def movie(movie_id):
             movie.criterion_set_title = None
 
         movie.criterion_in_print = criterion_form.in_print.data
+        movie.criterion_bluray = criterion_form.bluray_release.data
         movie.criterion_disc_owned = criterion_form.owned.data
 
         db.session.commit()

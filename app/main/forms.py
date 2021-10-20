@@ -83,6 +83,7 @@ class CriterionForm(FlaskForm):
     spine_number = IntegerField("Spine #", validators=[Optional()])
     set_title = StringField("Collector's Set Title", validators=[Optional()])
     in_print = BooleanField("In Print", validators=[Optional()])
+    bluray_release = BooleanField("Blu-ray Release", validators=[Optional()])
     owned = BooleanField("Owned", validators=[Optional()])
     criterion_submit = SubmitField("Update Criterion Info")
 

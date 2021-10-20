@@ -171,6 +171,10 @@
 				{{ criterion_form.in_print.label }}
 			</div>
 			<div class="form-check">
+				{{ criterion_form.bluray_release(class_="form-check-input", checked=(movie.criterion_bluray|default(false, true))) }}
+				{{ criterion_form.bluray_release.label }}
+			</div>
+			<div class="form-check">
 				{{ criterion_form.owned(class_="form-check-input", checked=(movie.criterion_disc_owned|default(false, true))) }}
 				{{ criterion_form.owned.label }}
 			</div>
