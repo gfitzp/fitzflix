@@ -2485,9 +2485,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
             # See if the requested tmdb_id already exists in the Movie table.
             # If so, we'll use that existing Movie record.
 
-            existing_movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
-            if existing_movie:
-                movie = existing_movie
+            if movie.tmdb_id != None:
+                existing_movie = Movie.query.filter_by(tmdb_id=movie.tmdb_id).first()
+                current_app.logger.info(f"Existing movie: {existing_movie}")
+                if existing_movie:
+                    movie = existing_movie
 
             # If the user specified a tmdb_id, get the info for that tmdb_id.
             # If not, try to find a movie from TMDB based on the movie's title and year.
@@ -2516,7 +2518,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 or (updated_tmdb_id != original_tmdb_id)
             ):
                 current_app.logger.info(
-                    f"Movie information changed! Migrating to {movie}"
+                    f"Movie information changed! Migrating {existing_movie} to {movie}"
                 )
 
                 # Get a list of files that were associated with the old Movie record
@@ -2822,7 +2824,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
             # See if the requested tmdb_id already exists in the TVSeries table.
             # If so, we'll use that existing TVSeries record.
 
-            existing_series = TVSeries.query.filter_by(tmdb_id=tmdb_id).first()
+            if tv_show.tmdb_id != None:
+                existing_series = TVSeries.query.filter_by(tmdb_id=tv_show.tmdb_id).first()
+                current_app.logger.info(f"Existing TV Series: {existing_series}")
+                if existing_series:
+                    tv_show = existing_series
 
             # If the user specified a tmdb_id, get the info for that tmdb_id.
             # If not, try to find a tv show from TMDB based on the show's title.
