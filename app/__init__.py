@@ -10,6 +10,7 @@ import rq
 from redis import Redis
 from redlock import Redlock
 from rq.registry import StartedJobRegistry
+from rq_scheduler import Scheduler
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers.polling import PollingObserver
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -131,6 +132,11 @@ def create_app(config_class=Config):
     app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
     app.task_queue = rq.Queue("fitzflix-tasks", connection=app.redis)
     app.sql_queue = rq.Queue("fitzflix-sql", connection=app.redis)
+
+    app.localize_scheduler = Scheduler("fitzflix-localize", connection=app.redis)
+    app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
+    app.task_scheduler = Scheduler("fitzflix-tasks", connection=app.redis)
+    app.sql_scheduler = Scheduler("fitzflix-sql", connection=app.redis)
 
     # Configure the Redis redlock manager
 
