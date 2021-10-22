@@ -2487,7 +2487,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
             if movie.tmdb_id != None:
                 existing_movie = Movie.query.filter_by(tmdb_id=movie.tmdb_id).first()
-                current_app.logger.info(f"Existing movie: {existing_movie}")
                 if existing_movie:
                     movie = existing_movie
 

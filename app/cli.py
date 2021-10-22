@@ -23,8 +23,8 @@ def register(app):
     def tmdb():
         """Refresh library information from TMDB."""
 
-        movies = Movie.query.filter_by(tmdb_id != None).order_by(Movie.title.asc(), Movie.year.asc()).all()
-        tv_shows = TVSeries.query.filter_by(tmdb_id != None).order_by(TVSeries.title.asc()).all()
+        movies = Movie.query.filter(Movie.tmdb_id != None).order_by(Movie.title.asc(), Movie.year.asc()).all()
+        tv_shows = TVSeries.query.filter(TVSeries.tmdb_id != None).order_by(TVSeries.title.asc()).all()
 
         for movie in movies:
             refresh_job = app.sql_queue.enqueue(
