@@ -33,7 +33,7 @@ def register(app):
                 job_timeout=app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
-            app.logger.info("Queueing TMDB refresh for '{movie.title} ({movie.year})'")
+            app.logger.info(f"Queueing TMDB refresh for '{movie.title} ({movie.year})'")
 
         for tv in tv_shows:
             refresh_job = app.sql_queue.enqueue(
@@ -42,7 +42,7 @@ def register(app):
                 job_timeout=app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
-            app.logger.info("Queueing TMDB refresh for '{tv.title}'")
+            app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
 
     @app.cli.command()
     def prune():
