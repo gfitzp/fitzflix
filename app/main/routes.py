@@ -1710,6 +1710,40 @@ def movie_shopping():
                 )
             )
             .order_by(
+                db.case(
+                    [
+                        (
+                            db.and_(
+                                RefQuality.preference == dvd_quality,
+                                Movie.criterion_disc_owned == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            1
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            0
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 1,
+                            ),
+                            0
+                        ),
+                        (File.fullscreen == True, 0),
+                        (RefQuality.preference < dvd_quality, 0),
+                        (RefQuality.preference < bluray_quality, 0),
+                    ],
+                    else_=1
+                ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
                 file_count.c.min_preference.asc(),
@@ -1796,6 +1830,40 @@ def movie_shopping():
                 )
             )
             .order_by(
+                db.case(
+                    [
+                        (
+                            db.and_(
+                                RefQuality.preference == dvd_quality,
+                                Movie.criterion_disc_owned == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            1
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 0,
+                            ),
+                            0
+                        ),
+                        (
+                            db.and_(
+                                RefQuality.preference <= bluray_quality,
+                                Movie.criterion_disc_owned == 0,
+                                Movie.criterion_in_print == 1,
+                                Movie.criterion_bluray == 1,
+                            ),
+                            0
+                        ),
+                        (File.fullscreen == True, 0),
+                        (RefQuality.preference < dvd_quality, 0),
+                        (RefQuality.preference < bluray_quality, 0),
+                    ],
+                    else_=1
+                ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
                 db.case(
