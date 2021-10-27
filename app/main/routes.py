@@ -10,7 +10,16 @@ from datetime import datetime
 from rq.job import Job
 from rq.registry import StartedJobRegistry, ScheduledJobRegistry
 
-from flask import render_template, flash, jsonify, redirect, url_for, request, send_from_directory, Markup
+from flask import (
+    render_template,
+    flash,
+    jsonify,
+    redirect,
+    url_for,
+    request,
+    send_from_directory,
+    Markup,
+)
 from flask_login import current_user, login_user, logout_user, login_required
 from werkzeug.urls import url_parse
 
@@ -58,20 +67,40 @@ from app.videos import *
 
 @bp.route("/browserconfig.xml")
 def browserconfigXml():
-    return send_from_directory(os.path.join(current_app.root_path, "static"), "browserconfig.xml", mimetype="image/png")
+    return send_from_directory(
+        os.path.join(current_app.root_path, "static"),
+        "browserconfig.xml",
+        mimetype="image/png",
+    )
+
 
 @bp.route("/mstile-150x150.png")
 def mstilePng():
-    return send_from_directory(os.path.join(current_app.root_path, "static"), "mstile-150x150.png", mimetype="image/png")
+    return send_from_directory(
+        os.path.join(current_app.root_path, "static"),
+        "mstile-150x150.png",
+        mimetype="image/png",
+    )
+
 
 @bp.route("/apple-touch-icon-precomposed.png")
 @bp.route("/apple-touch-icon.png")
 def androidPng():
-    return send_from_directory(os.path.join(current_app.root_path, "static"), "apple-touch-icon.png", mimetype="image/png")
+    return send_from_directory(
+        os.path.join(current_app.root_path, "static"),
+        "apple-touch-icon.png",
+        mimetype="image/png",
+    )
+
 
 @bp.route("/favicon.ico")
 def favicon():
-    return send_from_directory(os.path.join(current_app.root_path, "static"), "favicon.ico", mimetype="image/vnd.microsoft.icon")
+    return send_from_directory(
+        os.path.join(current_app.root_path, "static"),
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon",
+    )
+
 
 @bp.route("/", methods=["GET", "POST"])
 @bp.route("/index", methods=["GET", "POST"])
@@ -442,13 +471,19 @@ def movie(movie_id):
     )
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
-    if movie_shopping_exclude_form.add_submit.data and movie_shopping_exclude_form.validate_on_submit():
+    if (
+        movie_shopping_exclude_form.add_submit.data
+        and movie_shopping_exclude_form.validate_on_submit()
+    ):
         movie.shopping_list_exclude = 0
         db.session.commit()
         flash(f"Added '{title}' to the shopping list")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    elif movie_shopping_exclude_form.exclude_submit.data and movie_shopping_exclude_form.validate_on_submit():
+    elif (
+        movie_shopping_exclude_form.exclude_submit.data
+        and movie_shopping_exclude_form.validate_on_submit()
+    ):
         movie.shopping_list_exclude = 1
         db.session.commit()
         flash(f"Removed '{title}' from the shopping list")
@@ -1091,7 +1126,9 @@ def file(file_id):
             return redirect(url_for("main.movie_files", movie_id=file.movie_id))
 
         elif file.series_id and file.season:
-            return redirect(url_for("main.season", series_id=file.series_id, season=file.season))
+            return redirect(
+                url_for("main.season", series_id=file.series_id, season=file.season)
+            )
 
         else:
             return redirect(url_for("main.index"))
@@ -1147,7 +1184,10 @@ def reviews():
     # Form to request an export of all of this user's movie reviews as a CSV file
 
     review_export_form = ReviewExportForm()
-    if review_export_form.export_submit.data and review_export_form.validate_on_submit():
+    if (
+        review_export_form.export_submit.data
+        and review_export_form.validate_on_submit()
+    ):
 
         # Create the header columns for the CSV
 
@@ -1208,14 +1248,21 @@ def reviews():
         return redirect(url_for("main.reviews"))
 
     review_upload_form = ReviewUploadForm()
-    if review_upload_form.upload_submit.data and review_upload_form.validate_on_submit():
+    if (
+        review_upload_form.upload_submit.data
+        and review_upload_form.validate_on_submit()
+    ):
         ratings = request.files["file"].readlines()
         for rating in ratings:
             movie_rating = json.loads(rating)
             if movie_rating["rating"] >= 0:
                 current_app.sql_queue.enqueue(
                     "app.videos.review_task",
-                    args=(current_user.id, movie_rating["name"], movie_rating["rating"]),
+                    args=(
+                        current_user.id,
+                        movie_rating["name"],
+                        movie_rating["rating"],
+                    ),
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     description=f"Reviewing {movie_rating['name']}",
                 )
@@ -1684,9 +1731,9 @@ def movie_shopping():
                     db.and_(
                         criterion_release == True,
                         Movie.criterion_spine_number != None,
-                        Movie.criterion_in_print == 1
+                        Movie.criterion_in_print == 1,
                     ),
-                    criterion_release != True
+                    criterion_release != True,
                 ),
             )
             .filter(
@@ -1704,7 +1751,7 @@ def movie_shopping():
                                 Movie.criterion_disc_owned == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            1
+                            1,
                         ),
                         (
                             db.and_(
@@ -1713,7 +1760,7 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            0
+                            0,
                         ),
                         (
                             db.and_(
@@ -1722,16 +1769,19 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 1,
                             ),
-                            0
+                            0,
                         ),
                         (File.fullscreen == True, 0),
                         (RefQuality.preference < dvd_quality, 0),
                         (RefQuality.preference < bluray_quality, 0),
                     ],
-                    else_=1
+                    else_=1,
                 ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
+                db.case(
+                    [(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)],
+                    else_=0,
+                ).desc(),
                 file_count.c.min_preference.asc(),
                 Movie.title.asc(),
                 Movie.year.asc(),
@@ -1802,9 +1852,9 @@ def movie_shopping():
                     db.and_(
                         criterion_release == True,
                         Movie.criterion_spine_number != None,
-                        Movie.criterion_in_print == 1
+                        Movie.criterion_in_print == 1,
                     ),
-                    criterion_release != True
+                    criterion_release != True,
                 ),
             )
             .filter(
@@ -1822,7 +1872,7 @@ def movie_shopping():
                                 Movie.criterion_disc_owned == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            1
+                            1,
                         ),
                         (
                             db.and_(
@@ -1831,7 +1881,7 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            0
+                            0,
                         ),
                         (
                             db.and_(
@@ -1840,21 +1890,29 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 1,
                             ),
-                            0
+                            0,
                         ),
                         (File.fullscreen == True, 0),
                         (RefQuality.preference < dvd_quality, 0),
                         (RefQuality.preference < bluray_quality, 0),
                     ],
-                    else_=1
+                    else_=1,
                 ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                db.case([(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)], else_=0).desc(),
+                db.case(
+                    [(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)],
+                    else_=0,
+                ).desc(),
                 db.case(
                     [
-                        ((physical_media.c.id == None) & (RefQuality.quality_title != "SDTV") & (RefQuality.quality_title.notlike("HDTV-%")), 0),
+                        (
+                            (physical_media.c.id == None)
+                            & (RefQuality.quality_title != "SDTV")
+                            & (RefQuality.quality_title.notlike("HDTV-%")),
+                            0,
+                        ),
                     ],
-                    else_=1
+                    else_=1,
                 ).asc(),
                 file_count.c.min_preference.asc(),
                 Movie.title.asc(),
@@ -1898,22 +1956,48 @@ def movie_shopping():
         else None
     )
 
-    if movie_shopping_exclude_form.add_submit.data and movie_shopping_exclude_form.validate_on_submit():
-        movie = Movie.query.filter_by(id=int(movie_shopping_exclude_form.movie_id.data)).first()
+    if (
+        movie_shopping_exclude_form.add_submit.data
+        and movie_shopping_exclude_form.validate_on_submit()
+    ):
+        movie = Movie.query.filter_by(
+            id=int(movie_shopping_exclude_form.movie_id.data)
+        ).first()
         movie.shopping_list_exclude = 1
         db.session.commit()
         flash(f"Added '{movie.title}' to the shopping list")
         return redirect(
-            url_for("main.movie_shopping", page=page, q=q, library=library, media=media, min_quality=min_quality, max_quality=max_quality),
+            url_for(
+                "main.movie_shopping",
+                page=page,
+                q=q,
+                library=library,
+                media=media,
+                min_quality=min_quality,
+                max_quality=max_quality,
+            ),
         )
 
-    elif movie_shopping_exclude_form.exclude_submit.data and movie_shopping_exclude_form.validate_on_submit():
-        movie = Movie.query.filter_by(id=int(movie_shopping_exclude_form.movie_id.data)).first()
+    elif (
+        movie_shopping_exclude_form.exclude_submit.data
+        and movie_shopping_exclude_form.validate_on_submit()
+    ):
+        movie = Movie.query.filter_by(
+            id=int(movie_shopping_exclude_form.movie_id.data)
+        ).first()
         movie.shopping_list_exclude = 1
         db.session.commit()
         flash(f"Removed '{movie.title}' from the shopping list")
         return redirect(
-            url_for("main.movie_shopping", page=page, q=q, library=library, media=media, min_quality=min_quality, max_quality=max_quality),
+            url_for(
+                "main.movie_shopping",
+                page=page,
+                q=q,
+                library=library,
+                media=media,
+                min_quality=min_quality,
+                max_quality=max_quality,
+            ),
         )
 
     return render_template(

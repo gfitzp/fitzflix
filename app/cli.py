@@ -1,7 +1,7 @@
 from app.models import Movie, TVSeries
 
-def register(app):
 
+def register(app):
     @app.cli.group()
     def refresh():
         """Refresh data from various services."""
@@ -23,8 +23,16 @@ def register(app):
     def tmdb():
         """Refresh library information from TMDB."""
 
-        movies = Movie.query.filter(Movie.tmdb_id != None).order_by(Movie.title.asc(), Movie.year.asc()).all()
-        tv_shows = TVSeries.query.filter(TVSeries.tmdb_id != None).order_by(TVSeries.title.asc()).all()
+        movies = (
+            Movie.query.filter(Movie.tmdb_id != None)
+            .order_by(Movie.title.asc(), Movie.year.asc())
+            .all()
+        )
+        tv_shows = (
+            TVSeries.query.filter(TVSeries.tmdb_id != None)
+            .order_by(TVSeries.title.asc())
+            .all()
+        )
 
         for movie in movies:
             refresh_job = app.sql_queue.enqueue(

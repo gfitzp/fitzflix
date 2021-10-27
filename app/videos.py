@@ -236,7 +236,9 @@ def localization_task(file_path):
 
             for track in media_info.tracks:
                 if track.track_type == "General" and track.format:
-                    current_app.logger.info(f"'{basename}' File container {track.format}")
+                    current_app.logger.info(
+                        f"'{basename}' File container {track.format}"
+                    )
                     file_details["container"] = track.format
 
             # Export a localized version of the incoming file
@@ -251,7 +253,9 @@ def localization_task(file_path):
 
                 current_app.logger.info(f"'{basename}' Adding track statistics tags")
                 if job:
-                    job.meta["description"] = f"'{basename}' — Adding track statistics tags"
+                    job.meta[
+                        "description"
+                    ] = f"'{basename}' — Adding track statistics tags"
                     job.save_meta()
 
                 statistics_tags_process = subprocess.Popen(
@@ -268,7 +272,9 @@ def localization_task(file_path):
                 for line in statistics_tags_process.stdout:
                     progress_match = re.search("Progress\: \d+\%", line)
                     if progress_match:
-                        progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                        progress_match = re.match(
+                            "^Progress\: (?P<percent>\d+)\%", line
+                        )
                         progress = int(progress_match.group("percent"))
                         current_app.logger.info(
                             f"'{basename}' Adding track statistics tags: {progress}%"
@@ -348,7 +354,8 @@ def localization_task(file_path):
                 if (
                     len(audio_tracks) >= 1
                     and audio_tracks[0].get("language") != native_language
-                    and native_language in [track["language"] for track in subtitle_tracks]
+                    and native_language
+                    in [track["language"] for track in subtitle_tracks]
                 ):
                     current_app.logger.info(
                         f"'{basename}' Non-native audio, "
@@ -377,7 +384,9 @@ def localization_task(file_path):
 
                 # Native-language audio, native-language subtitles present
 
-                elif native_language in [track["language"] for track in subtitle_tracks]:
+                elif native_language in [
+                    track["language"] for track in subtitle_tracks
+                ]:
                     current_app.logger.info(
                         f"'{basename}' '{native_language}' audio and subtitles"
                     )
@@ -455,7 +464,9 @@ def localization_task(file_path):
                 for line in mkvmerge_process.stdout:
                     progress_match = re.search("Progress\: \d+\%", line)
                     if progress_match:
-                        progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                        progress_match = re.match(
+                            "^Progress\: (?P<percent>\d+)\%", line
+                        )
                         progress = int(progress_match.group("percent"))
                         current_app.logger.info(f"'{basename}' Localizing: {progress}%")
                         if job:
@@ -480,7 +491,9 @@ def localization_task(file_path):
                     )
                     for line in atomicparsley_process.stdout:
                         line = line.replace("\n", "")
-                        current_app.logger.info(f"'{os.path.basename(file_path)}' {line}")
+                        current_app.logger.info(
+                            f"'{os.path.basename(file_path)}' {line}"
+                        )
                         if job:
                             job.meta[
                                 "description"
@@ -495,7 +508,9 @@ def localization_task(file_path):
                         f"'{basename}' Not Matroska or MPEG-4, importing as-is"
                     )
 
-                current_app.logger.info(f"'{basename}' Copying to '{hidden_output_file}'")
+                current_app.logger.info(
+                    f"'{basename}' Copying to '{hidden_output_file}'"
+                )
                 os.makedirs(output_directory, exist_ok=True)
                 if job:
                     job.meta["description"] = f"'{basename}' — Copying to destination"
@@ -792,7 +807,9 @@ def finalize_localization(file_path, file_details, lock):
                 # now that we've possibly made modifications
 
                 output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
-                output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
+                output_subtitle_tracks = get_subtitle_tracks_from_file(
+                    hidden_output_file
+                )
 
             # Set file audio track info
 
@@ -830,7 +847,9 @@ def finalize_localization(file_path, file_details, lock):
                 track["track"] = i + 1
                 subtitle_track = FileSubtitleTrack(**track)
                 file.subtitle_track = subtitle_track
-                current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
+                current_app.logger.info(
+                    f"{file} Adding subtitle track {subtitle_track}"
+                )
                 db.session.add(subtitle_track)
 
             # Set the localized date
@@ -1666,7 +1685,9 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
 
     key = os.path.join(key_prefix, key)
 
-    config = Config(connect_timeout=20, retries={"mode": "standard", "max_attempts": 10})
+    config = Config(
+        connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+    )
     s3_client = boto3.client(
         "s3",
         config=config,
@@ -1776,8 +1797,6 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
         f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
     )
     move_to_rejects(file_path, "upload error")
-
-
 
 
 def calculate_etag(file_path):
@@ -2710,7 +2729,8 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         ):
 
                             config = Config(
-                                connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+                                connect_timeout=20,
+                                retries={"mode": "standard", "max_attempts": 10},
                             )
                             s3_client = boto3.client(
                                 "s3",
@@ -2824,7 +2844,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
             # If so, we'll use that existing TVSeries record.
 
             if tv_show.tmdb_id != None:
-                existing_series = TVSeries.query.filter_by(tmdb_id=tv_show.tmdb_id).first()
+                existing_series = TVSeries.query.filter_by(
+                    tmdb_id=tv_show.tmdb_id
+                ).first()
                 current_app.logger.info(f"Existing TV Series: {existing_series}")
                 if existing_series:
                     tv_show = existing_series

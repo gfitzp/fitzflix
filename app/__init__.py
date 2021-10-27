@@ -118,7 +118,6 @@ def create_app(config_class=Config):
 
             app.logger.debug(event)
 
-
     app = Flask(__name__)
 
     # Build the application configuration from the config.py file
