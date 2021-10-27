@@ -36,7 +36,7 @@
     <title>{% block title %}{{title|default}}{% endblock title %}</title>
     {%- endblock head %}
   </head>
-  <body{% block body_attribs %}{% endblock body_attribs %} style="padding-top: 60px;" onload="titleTheme()">
+  <body{% block body_attribs %}{% endblock body_attribs %} style="padding-top: 60px;">
     {% block body -%}
     {% block navbar %}
     {%- endblock navbar %}
@@ -69,6 +69,8 @@
 				}
 			}
 		}
+
+		document.addEventListener("DOMContentLoaded", titleTheme);
 	</script>
 	{%- endblock scripts %}
 	{%- endblock body %}
