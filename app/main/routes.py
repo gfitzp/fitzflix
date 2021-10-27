@@ -1367,7 +1367,7 @@ def movie_shopping():
     - min_quality: show all movies where the best quality is at least this good
                    (defaults to "Unknown")
     - max_quality: show all movies where the best quality is *below* this threshold
-                   (defaults to "Bluray-1080p")
+                   (defaults to "Bluray-2160p Remux")
     """
 
     page = request.args.get("page", 1, type=int)
