@@ -1604,18 +1604,6 @@ def movie_shopping():
             .filter(
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
-#             .filter(
-#                 db.or_(
-#                     Movie.criterion_spine_number != None,
-#                     Movie.criterion_spine_number == criterion_release,
-#                 )
-#             )
-#             .filter(
-#                 db.or_(
-#                     Movie.criterion_disc_owned == None,
-#                     Movie.criterion_disc_owned == criterion_owned_false
-#                 )
-#             )
             .filter(
                 db.or_(
                     Movie.shopping_list_exclude == None,
@@ -1688,21 +1676,19 @@ def movie_shopping():
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
             .filter(RefQuality.preference <= max_preference)
-            .filter(
-                db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_spine_number == criterion_release,
-                )
-            )
-            .filter(
-                db.or_(
-                    Movie.criterion_disc_owned == None,
-                    Movie.criterion_disc_owned == criterion_owned_false
-                )
-            )
             .filter(physical_media.c.id == None)
             .filter(RefQuality.quality_title != "SDTV")
             .filter(RefQuality.quality_title.notlike("HDTV-%"))
+            .filter(
+                db.or_(
+                    db.and_(
+                        criterion_release == True,
+                        Movie.criterion_spine_number != None,
+                        Movie.criterion_in_print == 1
+                    ),
+                    criterion_release != True
+                ),
+            )
             .filter(
                 db.or_(
                     Movie.shopping_list_exclude == None,
@@ -1813,15 +1799,13 @@ def movie_shopping():
             .filter(RefQuality.preference <= max_preference)
             .filter(
                 db.or_(
-                    Movie.criterion_spine_number != None,
-                    Movie.criterion_spine_number == criterion_release,
-                )
-            )
-            .filter(
-                db.or_(
-                    Movie.criterion_disc_owned == None,
-                    Movie.criterion_disc_owned == criterion_owned_false
-                )
+                    db.and_(
+                        criterion_release == True,
+                        Movie.criterion_spine_number != None,
+                        Movie.criterion_in_print == 1
+                    ),
+                    criterion_release != True
+                ),
             )
             .filter(
                 db.or_(
