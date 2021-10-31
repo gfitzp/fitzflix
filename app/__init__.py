@@ -4,6 +4,7 @@ import random
 import time
 
 from logging.handlers import SMTPHandler
+from urllib.parse import quote_plus
 
 import rq
 
@@ -123,6 +124,7 @@ def create_app(config_class=Config):
     # Build the application configuration from the config.py file
 
     app.config.from_object(config_class)
+    app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
 
     # Configure the Redis connection and queues
 
