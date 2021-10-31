@@ -222,6 +222,7 @@ def movie_library():
 
     elif q:
         title = f"Movies matching '{q}'"
+        q = q.replace(" ", "%")
         movies = (
             db.session.query(File, Movie, RefQuality)
             .join(Movie, (Movie.id == File.movie_id))
@@ -2161,6 +2162,8 @@ def tv_shopping():
 
     tv = []
     if q:
+        title = f"TV Shows to upgrade matching '{q}'"
+        q = q.replace(" ", "%")
         t = (
             TVSeries.query.filter(
                 db.or_(
@@ -2170,7 +2173,6 @@ def tv_shopping():
             .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc())
             .all()
         )
-        title = f"TV Shows to upgrade matching '{q}'"
 
     else:
         t = TVSeries.query.order_by(
