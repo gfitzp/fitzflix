@@ -233,8 +233,13 @@ def movie_library():
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
             .order_by(
-                db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
                 ).asc(),
                 db.case(
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
@@ -256,8 +261,13 @@ def movie_library():
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.id == int(quality))
             .order_by(
-                db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
                 ).asc(),
                 db.case(
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
@@ -278,8 +288,13 @@ def movie_library():
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .order_by(
-                db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
                 ).asc(),
                 db.case(
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
@@ -414,8 +429,12 @@ def criterion_collection():
             db.case(
                 [(Movie.tmdb_title != None, Movie.tmdb_release_date)], else_=Movie.year
             ).asc(),
-            db.case(
-                [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+            db.func.regexp_replace(
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                ),
+                "^(The|A|An)\s",
+                "",
             ).asc(),
             File.version.asc(),
         )
@@ -694,7 +713,9 @@ def tv_library():
     )
 
     tv = []
-    for series in TVSeries.query.order_by(TVSeries.title.asc()).all():
+    for series in TVSeries.query.order_by(
+        db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc()
+    ).all():
         seasons = []
         s = (
             db.session.query(
@@ -1658,7 +1679,7 @@ def movie_shopping():
                 )
             )
             .order_by(
-                Movie.title.asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 RefQuality.preference.asc(),
@@ -1783,7 +1804,7 @@ def movie_shopping():
                     else_=0,
                 ).desc(),
                 file_count.c.min_preference.asc(),
-                Movie.title.asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 File.date_added.asc(),
@@ -1915,7 +1936,7 @@ def movie_shopping():
                     else_=1,
                 ).asc(),
                 file_count.c.min_preference.asc(),
-                Movie.title.asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 File.date_added.asc(),
@@ -2146,13 +2167,15 @@ def tv_shopping():
                     TVSeries.title.ilike(f"%{q}%"), TVSeries.tmdb_name.ilike(f"%{q}%")
                 )
             )
-            .order_by(TVSeries.title.asc())
+            .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc())
             .all()
         )
         title = f"TV Shows to upgrade matching '{q}'"
 
     else:
-        t = TVSeries.query.order_by(TVSeries.title.asc()).all()
+        t = TVSeries.query.order_by(
+            db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc()
+        ).all()
         title = f"TV Shows to upgrade"
 
     for series in t:
@@ -2372,8 +2395,12 @@ def files():
         .outerjoin(tv_rank, (tv_rank.c.id == File.id))
         .order_by(
             File.media_library,
-            db.case(
-                [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+            db.func.regexp_replace(
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                ),
+                "^(The|A|An)\s",
+                "",
             ).asc(),
             db.case(
                 [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
@@ -2381,8 +2408,13 @@ def files():
             ).asc(),
             File.version.asc(),
             RefFeatureType.feature_type.asc(),
-            db.case(
-                [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)], else_=TVSeries.title
+            db.func.regexp_replace(
+                db.case(
+                    [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                    else_=TVSeries.title,
+                ),
+                "^(The|A|An)\s",
+                "",
             ).asc(),
             File.season.asc(),
             File.episode.asc(),
