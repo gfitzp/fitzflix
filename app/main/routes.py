@@ -537,7 +537,7 @@ def movie(movie_id):
             half_stars=half_stars,
             review=movie_review_form.review.data,
             date_watched=movie_review_form.date_watched.data,
-            date_reviewed=datetime.utcnow,
+            date_reviewed=datetime.utcnow(),
         )
         db.session.add(review)
         db.session.commit()
