@@ -34,7 +34,7 @@ def radarr_add():
             response.status_code = 401
             return response
 
-        # If Sonarr is just confirming the connection, return a valid status code
+        # If Radarr is just confirming the connection, return a valid status code
 
         response.status_code = 202
         if payload.get("eventType") == "Test":
@@ -115,7 +115,7 @@ def radarr_add():
         # directory for processing but if another file came in while it was copying
         # then the first copy was abandoned, and tried doing a hard link to the import
         # directory but that wasn't supported on my NAS, so just sending the downloaded
-        # file directly to Sonarr to be imported in place
+        # file directly to Radarr to be imported in place
 
         job = current_app.localize_queue.enqueue(
             "app.videos.localization_task",
