@@ -13,6 +13,35 @@
 	{%- block styles %}
     <!-- Bootstrap CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css" integrity="sha384-B0vP5xmATw1+K9KRQjQERJvTumQW0nPEzvF6L/Z6nronJ3oUOFUFpCjEUQouq2+l" crossorigin="anonymous">
+    <style>
+		.flash{
+
+		  -moz-animation: flash 1s ease-out;
+		  -moz-animation-iteration-count: 1;
+
+		  -webkit-animation: flash 1s ease-out;
+		  -webkit-animation-iteration-count: 1;
+
+		  -ms-animation: flash 1s ease-out;
+		  -ms-animation-iteration-count: 1;
+
+		}
+
+		@-webkit-keyframes flash {
+			0% { background-color:#ff0000;}
+			100% {background-color:none;}
+		}
+
+		@-moz-keyframes flash {
+			0% { background-color:#ff0000;}
+			100% {background-color:none;}
+		}
+
+		@-ms-keyframes flash {
+			0% { background-color:#ff0000;}
+			100% {background-color:none;}
+		}
+    </style>
 	{%- endblock styles %}
 
 	<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">

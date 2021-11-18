@@ -107,20 +107,30 @@
 	{{ super() }}
     {{ moment.include_moment(version="2.29.1") }}
 	<script>
+        {%if current_user.is_authenticated %}
+
 		function set_queue_count(n) {
             $("#queue_count").text(n);
         }
 
-        {%if current_user.is_authenticated %}
+        function flash_queue_count() {
+        	$("#queue_count").addClass("flash");
+            setTimeout(
+            	function() {
+            		$("#queue_count").removeClass("flash");
+            	}, 1000
+            );
+        }
 
 		function current_queue() {
 			$.ajax('{{ url_for('api.queue_details') }}').done(
 				function(queue_details) {
 					console.log(queue_details);
-					// TODO: make an increase in the queue count noticible
-					// get the current contents of the #queue-count id
-					// if queue_details.count > #queue-count value, flash the queue badge
+					current_queue_count = parseInt(document.getElementById("queue_count").textContent, 10);
 					set_queue_count(queue_details.count);
+					if (queue_details.count > current_queue_count) {
+						flash_queue_count();
+					}
 					console.log(queue_details.running);
 					running = queue_details.running;
 
