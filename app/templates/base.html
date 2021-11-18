@@ -79,8 +79,16 @@
 {% block content %}
 <div class="container mt-2 mb-2">
 	{% if current_user.is_authenticated %}
-		<div id="running-tasks"></div>
-	{% endif %}
+ 	<div id="running-tasks">
+ 		{% with tasks = current_user.get_tasks_in_progress() %}
+ 		{% if tasks %}
+ 			{% for task in tasks %}
+ 			<div class="alert alert-info mt-3" role="alert" id="{{ task.job }}">{{ task.description }}...</div>
+ 			{% endfor %}
+ 		{% endif %}
+ 		{% endwith %}
+ 	</div>
+ 	{% endif %}
 
 
 	<div id="flash-notifications">
