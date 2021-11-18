@@ -175,7 +175,6 @@
 						newProgress.appendChild(newProgressBar);
 						document.getElementById("running-tasks").appendChild(newAlert);
 						document.getElementById(newAlert.id).appendChild(newProgress);
-		//                             set_task_progress(running[i].job, running[i].progress);
 					}
 
 					localizations = queue_details.localization_queue;
@@ -228,9 +227,6 @@
 
         $(current_queue());
 
-        function set_task_progress(task_id, progress) {
-            $("#" + task_id + "-progress").text(progress + "%");
-        }
         {% endif %}
     </script>
 {% endblock %}
