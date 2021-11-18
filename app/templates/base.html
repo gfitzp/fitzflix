@@ -79,15 +79,7 @@
 {% block content %}
 <div class="container mt-2 mb-2">
 	{% if current_user.is_authenticated %}
-	<div id="running-tasks">
-		{% with tasks = current_user.get_tasks_in_progress() %}
-		{% if tasks %}
-			{% for task in tasks %}
-			<div class="alert alert-info mt-3" role="alert" id="{{ task.job }}">{{ task.description }}...</div>
-			{% endfor %}
-		{% endif %}
-		{% endwith %}
-	</div>
+		<div id="running-tasks"></div>
 	{% endif %}
 
 
@@ -120,101 +112,103 @@
         }
 
         {%if current_user.is_authenticated %}
-        $(function() {
-            setInterval(function() {
-                $.ajax('{{ url_for('api.queue_details') }}').done(
-                    function(queue_details) {
-                        console.log(queue_details);
-                        // TODO: make an increase in the queue count noticible
-                        // get the current contents of the #queue-count id
-                        // if queue_details.count > #queue-count value, flash the queue badge
-                        set_queue_count(queue_details.count);
-                        console.log(queue_details.running);
-                        running = queue_details.running;
 
-                        oldTasks = document.getElementById("running-tasks")
+		function current_queue() {
+			$.ajax('{{ url_for('api.queue_details') }}').done(
+				function(queue_details) {
+					console.log(queue_details);
+					// TODO: make an increase in the queue count noticible
+					// get the current contents of the #queue-count id
+					// if queue_details.count > #queue-count value, flash the queue badge
+					set_queue_count(queue_details.count);
+					console.log(queue_details.running);
+					running = queue_details.running;
 
-                        while (oldTasks.firstChild) {
-                            oldTasks.firstChild.remove();
-                        }
+					oldTasks = document.getElementById("running-tasks")
 
-                        for (var i = 0; i < running.length; i++) {
-                            var newAlert = document.createElement("div");
-                            newAlert.className = "alert alert-info mt-3";
-                            newAlert.setAttribute("role", "alert");
-                            newAlert.id = running[i].job;
-                            var newProgress = document.createElement("div");
-							newProgress.className = "progress mt-1";
-							var newProgressBar = document.createElement("div");
-							newProgressBar.setAttribute("role", "progressbar");
-							newProgressBar.setAttribute("aria-valuemin", "0");
-							newProgressBar.setAttribute("aria-valuemax", "100");
-                            if (running[i].progress >= 0) {
-	                            $(newAlert).text(running[i].description + "... " + running[i].progress + "%");
-	                            newProgressBar.className = "progress-bar bg-info";
-	                            newProgressBar.setAttribute("style", "width: " + running[i].progress + "%");
-	                            newProgressBar.setAttribute("aria-valuenow", running[i].progress);
-	                            console.log(running[i].job, running[i].description, running[i].progress);
-	                        } else {
-								$(newAlert).text(running[i].description + "...");
-	                            newProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
-	                            newProgressBar.setAttribute("style", "width: 100%");
-	                            newProgressBar.setAttribute("aria-valuenow", "100");
-	                        	console.log(running[i].job, running[i].description);
-	                        }
-	                        newProgress.appendChild(newProgressBar);
-                            document.getElementById("running-tasks").appendChild(newAlert);
-                            document.getElementById(newAlert.id).appendChild(newProgress);
-//                             set_task_progress(running[i].job, running[i].progress);
-                        }
+					while (oldTasks.firstChild) {
+						oldTasks.firstChild.remove();
+					}
 
-                        localizations = queue_details.localization_queue;
-
-                        oldLocalizationTasks = document.getElementById("localization-tasks")
-                        if (oldLocalizationTasks) {
-							while (oldLocalizationTasks.firstChild) {
-								oldLocalizationTasks.firstChild.remove();
-							}
-
-							for (var i = 0; i < localizations.length; i++) {
-
-								var localizationPosition = document.createElement("th");
-								localizationPosition.setAttribute("scope", "row");
-								$(localizationPosition).text(localizations[i].position);
-
-								var localizationId = document.createElement("td");
-								$(localizationId).text(localizations[i].id);
-
-								var enqueuedDate = document.createElement("abbr");
-								enqueuedDate.setAttribute("title", localizations[i].enqueued_at);
-								$(enqueuedDate).text(moment(localizations[i].enqueued_at).fromNow());
-
-								var localizationEnqueued = document.createElement("td");
-								localizationEnqueued.appendChild(enqueuedDate);
-
-								var startedDate = document.createElement("abbr");
-								startedDate.setAttribute("title", localizations[i].started_at);
-								if (localizations[i].started_at) {
-									$(startedDate).text(moment(localizations[i].started_at).fromNow());
-								}
-
-								var localizationStarted = document.createElement("td");
-								localizationStarted.appendChild(startedDate);
-
-								var localizationRow = document.createElement("tr");
-								localizationRow.appendChild(localizationPosition);
-								localizationRow.appendChild(localizationId);
-								localizationRow.appendChild(localizationEnqueued);
-								localizationRow.appendChild(localizationStarted);
-
-								document.getElementById("localization-tasks").appendChild(localizationRow);
-
-							}
+					for (var i = 0; i < running.length; i++) {
+						var newAlert = document.createElement("div");
+						newAlert.className = "alert alert-info mt-3";
+						newAlert.setAttribute("role", "alert");
+						newAlert.id = running[i].job;
+						var newProgress = document.createElement("div");
+						newProgress.className = "progress mt-1";
+						var newProgressBar = document.createElement("div");
+						newProgressBar.setAttribute("role", "progressbar");
+						newProgressBar.setAttribute("aria-valuemin", "0");
+						newProgressBar.setAttribute("aria-valuemax", "100");
+						if (running[i].progress >= 0) {
+							$(newAlert).text(running[i].description + "... " + running[i].progress + "%");
+							newProgressBar.className = "progress-bar bg-info";
+							newProgressBar.setAttribute("style", "width: " + running[i].progress + "%");
+							newProgressBar.setAttribute("aria-valuenow", running[i].progress);
+							console.log(running[i].job, running[i].description, running[i].progress);
+						} else {
+							$(newAlert).text(running[i].description + "...");
+							newProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
+							newProgressBar.setAttribute("style", "width: 100%");
+							newProgressBar.setAttribute("aria-valuenow", "100");
+							console.log(running[i].job, running[i].description);
 						}
-                    }
-                );
-            }, 5000);
-        });
+						newProgress.appendChild(newProgressBar);
+						document.getElementById("running-tasks").appendChild(newAlert);
+						document.getElementById(newAlert.id).appendChild(newProgress);
+		//                             set_task_progress(running[i].job, running[i].progress);
+					}
+
+					localizations = queue_details.localization_queue;
+
+					oldLocalizationTasks = document.getElementById("localization-tasks")
+					if (oldLocalizationTasks) {
+						while (oldLocalizationTasks.firstChild) {
+							oldLocalizationTasks.firstChild.remove();
+						}
+
+						for (var i = 0; i < localizations.length; i++) {
+
+							var localizationPosition = document.createElement("th");
+							localizationPosition.setAttribute("scope", "row");
+							$(localizationPosition).text(localizations[i].position);
+
+							var localizationId = document.createElement("td");
+							$(localizationId).text(localizations[i].id);
+
+							var enqueuedDate = document.createElement("abbr");
+							enqueuedDate.setAttribute("title", localizations[i].enqueued_at);
+							$(enqueuedDate).text(moment(localizations[i].enqueued_at).fromNow());
+
+							var localizationEnqueued = document.createElement("td");
+							localizationEnqueued.appendChild(enqueuedDate);
+
+							var startedDate = document.createElement("abbr");
+							startedDate.setAttribute("title", localizations[i].started_at);
+							if (localizations[i].started_at) {
+								$(startedDate).text(moment(localizations[i].started_at).fromNow());
+							}
+
+							var localizationStarted = document.createElement("td");
+							localizationStarted.appendChild(startedDate);
+
+							var localizationRow = document.createElement("tr");
+							localizationRow.appendChild(localizationPosition);
+							localizationRow.appendChild(localizationId);
+							localizationRow.appendChild(localizationEnqueued);
+							localizationRow.appendChild(localizationStarted);
+
+							document.getElementById("localization-tasks").appendChild(localizationRow);
+
+						}
+					}
+				}
+			);
+			setTimeout(current_queue, 5000);
+		}
+
+        $(current_queue());
 
         function set_task_progress(task_id, progress) {
             $("#" + task_id + "-progress").text(progress + "%");
