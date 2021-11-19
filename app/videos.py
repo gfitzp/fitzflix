@@ -2158,6 +2158,9 @@ def get_audio_tracks_from_file(file_path):
             if language == "und":
                 audio_track["language"] = "und"
 
+            elif "zxx" in language:
+                audio_track["language"] = "zxx"
+
             else:
                 audio_track["language"] = language[3]
 
@@ -2339,6 +2342,9 @@ def get_subtitle_tracks_from_file(file_path):
             language = track.to_data().get("other_language", "und")
             if language == "und":
                 subtitle_track["language"] = "und"
+
+            elif "zxx" in language:
+                subtitle_track["language"] = "zxx"
 
             else:
                 subtitle_track["language"] = language[3]
