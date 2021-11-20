@@ -177,46 +177,46 @@
 						document.getElementById(newAlert.id).appendChild(newProgress);
 					}
 
-					localizations = queue_details.localization_queue;
+					all_tasks = queue_details.all;
 
-					oldLocalizationTasks = document.getElementById("localization-tasks")
-					if (oldLocalizationTasks) {
-						while (oldLocalizationTasks.firstChild) {
-							oldLocalizationTasks.firstChild.remove();
+					oldTasks = document.getElementById("all-tasks");
+					if (oldTasks) {
+						while (oldTasks.firstChild) {
+							oldTasks.firstChild.remove();
 						}
 
-						for (var i = 0; i < localizations.length; i++) {
+						for (var i = 0; i < all_tasks.length; i++) {
 
-							var localizationPosition = document.createElement("th");
-							localizationPosition.setAttribute("scope", "row");
-							$(localizationPosition).text(localizations[i].position);
+							var taskPosition = document.createElement("th");
+							taskPosition.setAttribute("scope", "row");
+							$(taskPosition).text(all_tasks[i].position);
 
-							var localizationId = document.createElement("td");
-							$(localizationId).text(localizations[i].id);
+							var taskId = document.createElement("td");
+							$(taskId).text(all_tasks[i].description);
 
 							var enqueuedDate = document.createElement("abbr");
-							enqueuedDate.setAttribute("title", localizations[i].enqueued_at);
-							$(enqueuedDate).text(moment(localizations[i].enqueued_at).fromNow());
+							enqueuedDate.setAttribute("title", all_tasks[i].enqueued_at);
+							$(enqueuedDate).text(moment(all_tasks[i].enqueued_at).fromNow());
 
-							var localizationEnqueued = document.createElement("td");
-							localizationEnqueued.appendChild(enqueuedDate);
+							var taskEnqueued = document.createElement("td");
+							taskEnqueued.appendChild(enqueuedDate);
 
 							var startedDate = document.createElement("abbr");
-							startedDate.setAttribute("title", localizations[i].started_at);
-							if (localizations[i].started_at) {
-								$(startedDate).text(moment(localizations[i].started_at).fromNow());
+							startedDate.setAttribute("title", all_tasks[i].started_at);
+							if (all_tasks[i].started_at) {
+								$(startedDate).text(moment(all_tasks[i].started_at).fromNow());
 							}
 
-							var localizationStarted = document.createElement("td");
-							localizationStarted.appendChild(startedDate);
+							var taskStarted = document.createElement("td");
+							taskStarted.appendChild(startedDate);
 
-							var localizationRow = document.createElement("tr");
-							localizationRow.appendChild(localizationPosition);
-							localizationRow.appendChild(localizationId);
-							localizationRow.appendChild(localizationEnqueued);
-							localizationRow.appendChild(localizationStarted);
+							var taskRow = document.createElement("tr");
+							taskRow.appendChild(taskPosition);
+							taskRow.appendChild(taskId);
+							taskRow.appendChild(taskEnqueued);
+							taskRow.appendChild(taskStarted);
 
-							document.getElementById("localization-tasks").appendChild(localizationRow);
+							document.getElementById("all-tasks").appendChild(taskRow);
 
 						}
 					}

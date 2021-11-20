@@ -24,7 +24,9 @@ def queue_details():
     transcodes_running = transcodes.get_job_ids()
     tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
     tasks_running = tasks.get_job_ids()
+
     details = {}
+
     if current_user.is_authenticated:
 
         # Count the number of tasks in queue and number of tasks running.
@@ -35,11 +37,13 @@ def queue_details():
             + len(localization_tasks_running)
             + len(current_app.transcode_queue.job_ids)
             + len(transcodes_running)
+            + len(current_app.task_queue.job_ids)
+            + len(tasks_running)
         )
 
-        details["running"] = []
+        # Create list of tasks currently running
 
-        # Get the details for the running jobs in the tasks queue
+        details["running"] = []
 
         for job_id in localization_tasks_running:
             job = current_app.localize_queue.fetch_job(job_id)
@@ -53,8 +57,6 @@ def queue_details():
                         ),
                     }
                 )
-
-        # Get the details for the running jobs in the transcoding queue
 
         for job_id in transcodes_running:
             job = current_app.transcode_queue.fetch_job(job_id)
@@ -69,8 +71,6 @@ def queue_details():
                     }
                 )
 
-        # Get the details for any tasks currently being processed
-
         for job_id in tasks_running:
             job = current_app.task_queue.fetch_job(job_id)
             if job:
@@ -84,37 +84,98 @@ def queue_details():
                     }
                 )
 
-        details["localization_queue"] = []
 
-        running_position = 1
+        # Create list of all tasks in queue
+
+        details["all"] = []
         for job_id in localization_tasks_running:
             job = current_app.localize_queue.fetch_job(job_id)
             if job:
-                details["localization_queue"].append(
+                details["all"].append(
                     {
                         "id": job.id,
-                        "position": running_position,
                         "status": job.get_status(),
                         "enqueued_at": job.enqueued_at,
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
                     }
                 )
-                running_position = running_position + 1
+
+        for job_id in transcodes_running:
+            job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in tasks_running:
+            job = current_app.task_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
 
         for job_id in current_app.localize_queue.job_ids:
             job = current_app.localize_queue.fetch_job(job_id)
             if job:
-                details["localization_queue"].append(
+                details["all"].append(
                     {
                         "id": job.id,
-                        "position": int(job.get_position()) + running_position,
                         "status": job.get_status(),
                         "enqueued_at": job.enqueued_at,
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
                     }
                 )
+
+        for job_id in current_app.transcode_queue.job_ids:
+            job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in current_app.task_queue.job_ids:
+            job = current_app.task_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        details["all"] = sorted(details["all"], key=lambda d: (d["started_at"] is None, d["started_at"], d["enqueued_at"] is None, d["enqueued_at"]))
+
+        for i, task in enumerate(details["all"]):
+            details["all"][i]["position"] = i + 1
 
         return jsonify(details)
 

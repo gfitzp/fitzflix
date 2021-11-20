@@ -11,48 +11,15 @@
 	</div>
 </div>
 <hr>
-	<h3 class="mt-2 mb-2">Import Queue</h3>
 	<table class="table table-striped">
 		<thead class="thead-light">
 			<tr>
 				<th scope="col">#</th>
-				<th scope="col">File</th>
+				<th scope="col">Task</th>
 				<th scope="col">Enqueued</th>
 				<th scope="col">Started</th>
 			</tr>
 		</thead>
-		<tbody id="localization-tasks">
-			{% for localization in localization_queue %}
-			<tr>
-				<th scope="row">{{ localization.position if localization.position }}</th>
-				<td>{{ localization.id }}</td>
-				<td><abbr title="{{ localization.enqueued_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(localization.enqueued_at).fromNow() }}</abbr></td>
-				<td>{% if localization.started_at %}<abbr title="{{ localization.started_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(localization.started_at).fromNow() }}</abbr>{% endif %}</td>
-			</tr>
-			{% endfor %}
-		</tbody>
+		<tbody id="all-tasks"></tbody>
 	</table>
-{% if transcode_queue %}
-	<h3 class="mt-2 mb-2">Transcode Queue</h3>
-	<table class="table table-striped">
-		<thead class="thead-light">
-			<tr>
-				<th scope="col">#</th>
-				<th scope="col">File</th>
-				<th scope="col">Enqueued</th>
-				<th scope="col">Started</th>
-			</tr>
-		</thead>
-		<tbody>
-			{% for transcode in transcode_queue %}
-			<tr>
-				<th scope="row">{{ transcode.position if transcode.position }}</th>
-				<td>{{ transcode.id }}</td>
-				<td><abbr title="{{ transcode.enqueued_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(transcode.enqueued_at).fromNow() }}</abbr></td>
-				<td>{% if transcode.started_at %}<abbr title="{{ transcode.started_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(transcode.started_at).fromNow() }}</abbr>{% endif %}</td>
-			</tr>
-			{% endfor %}
-		</tbody>
-	</table>
-{% endif %}
 {% endblock %}
