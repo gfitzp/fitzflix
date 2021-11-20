@@ -90,7 +90,8 @@
 {% endif %}
 {% if file.container == "Matroska" %}
 <div class="row align-items-end">
-	<div class="col-md-4">
+	<div class="col-md-8">
+		<hr class="d-block d-md-none">
 		<form action="" method="post">
 			{{ mkvpropedit_form.hidden_tag() }}
 			{% if audio_tracks %}
@@ -105,30 +106,32 @@
 				</div>
 			{% endif %}
 			{% if subtitle_tracks %}
-				<div class="form-group">
-					Default subtitle track:
-					{% for subfield in mkvpropedit_form.default_subtitle %}
-					<div class="form-check">
-						{{ subfield(class_="form-check-input") }}
-						{{ subfield.label(class_="form-check-label") }}
+				<div class="row align-items-end">
+					<div class="form-group col-xl-4 col-lg-5">
+						Default subtitle track:
+						{% for subfield in mkvpropedit_form.default_subtitle %}
+						<div class="form-check">
+							{{ subfield(class_="form-check-input") }}
+							{{ subfield.label(class_="form-check-label") }}
+						</div>
+						{% endfor %}
 					</div>
-					{% endfor %}
-				</div>
-				<div class="form-group">
-					Forced subtitle tracks:
-					{% for subfield in mkvpropedit_form.forced_subtitles %}
-					<div class="form-check">
-						{{ subfield(class_="form-check-input") }}
-						{{ subfield.label(class_="form-check-label") }}
+					<div class="form-group col">
+						Forced subtitle tracks:
+						{% for subfield in mkvpropedit_form.forced_subtitles %}
+						<div class="form-check">
+							{{ subfield(class_="form-check-input") }}
+							{{ subfield.label(class_="form-check-label") }}
+						</div>
+						{% endfor %}
 					</div>
-					{% endfor %}
-				</div>
-			{% endif %}
+				{% endif %}
+			</div>
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
 		</form>
 	</div>
-	<div class="col-md-4"></div>
 	<div class="col-md-4">
+		<hr class="d-block d-md-none">
 		<form action="" method="post">
 			{{ mkvmerge_form.hidden_tag() }}
 			{% if audio_tracks %}
