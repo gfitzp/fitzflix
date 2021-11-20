@@ -89,7 +89,7 @@
 </table>
 {% endif %}
 {% if file.container == "Matroska" %}
-<div class="row">
+<div class="row align-items-end">
 	<div class="col-md-4">
 		<form action="" method="post">
 			{{ mkvpropedit_form.hidden_tag() }}
@@ -125,6 +125,35 @@
 				</div>
 			{% endif %}
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
+		</form>
+	</div>
+	<div class="col-md-4"></div>
+	<div class="col-md-4">
+		<form action="" method="post">
+			{{ mkvmerge_form.hidden_tag() }}
+			{% if audio_tracks %}
+			<div class="form-group">
+				Audio tracks:
+				{% for subfield in mkvmerge_form.audio_tracks %}
+				<div class="form-check">
+					{{ subfield(class_="form-check-input") }}
+					{{ subfield.label(class_="form-check-label") }}
+				</div>
+				{% endfor %}
+			</div>
+			{% endif %}
+			{% if subtitle_tracks %}
+			<div class="form-group">
+				Subtitle tracks:
+				{% for subfield in mkvmerge_form.subtitle_tracks %}
+				<div class="form-check">
+					{{ subfield(class_="form-check-input") }}
+					{{ subfield.label(class_="form-check-label") }}
+				</div>
+				{% endfor %}
+			</div>
+			{% endif %}
+			{{ mkvmerge_form.mkvmerge_submit(class_="btn btn-sm btn-danger mb-2") }}
 		</form>
 	</div>
 </div>

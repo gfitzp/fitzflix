@@ -174,6 +174,12 @@ class MKVPropEditForm(FlaskForm):
     mkvpropedit_submit = SubmitField("Update MKV Properties")
 
 
+class MKVMergeForm(FlaskForm):
+    audio_tracks = MultiCheckboxField("Audio tracks", validators=[Optional()])
+    subtitle_tracks = MultiCheckboxField("Subtitle tracks", validators=[Optional()])
+    mkvmerge_submit = SubmitField("Remux MKV File")
+
+
 class PruneAWSStorageForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
     prune_submit = SubmitField("Prune AWS S3 Storage")

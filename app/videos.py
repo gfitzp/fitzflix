@@ -1255,6 +1255,15 @@ def mkvpropedit_task(
             current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
             db.session.add(subtitle_track)
 
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        raise
+
+    else:
+        db.session.commit()
+
+    try:
         file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
             file_path=file_path,
             key_prefix=app.config["AWS_UNTOUCHED_PREFIX"],
@@ -1262,13 +1271,147 @@ def mkvpropedit_task(
             force_upload=False,
         )
 
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+
+    else:
         db.session.commit()
+        return True
+
+
+def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
+    """Remux a MKV file."""
+
+    app.app_context().push()
+
+    try:
+        job = get_current_job()
+
+        file = File.query.filter_by(id=file_id).first()
+        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+        if job:
+            job.meta["description"] = f"'{file.basename}' – Remuxing"
+            job.save_meta()
+
+        FileAudioTrack.query.filter_by(file_id=file.id).delete()
+        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
+        output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+        hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+
+        command = [
+            current_app.config["MKVMERGE_BIN"],
+            "-o",
+            hidden_output_file,
+            "--title",
+            "",
+            "--track-name",
+            "-1:",
+        ]
+
+        if len(audio_tracks) >= 1:
+            output_audio_tracks = ",".join(map(str, audio_tracks))
+            command.extend(["-a", output_audio_tracks])
+        else:
+            command.append("--no-audio")
+
+        if len(subtitle_tracks) >= 1:
+            output_subtitle_tracks = ",".join(map(str, subtitle_tracks))
+            command.extend(["-s", output_subtitle_tracks])
+        else:
+            command.append("--no-subtitles")
+
+        command.append(file_path)
+
+        mkvmerge_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+
+        for line in mkvmerge_process.stdout:
+            progress_match = re.search("Progress\: \d+\%", line)
+            if progress_match:
+                progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                progress = int(progress_match.group("percent"))
+                current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
+                if job:
+                    job.meta["description"] = f"'{file.basename}' – Remuxing"
+                    job.meta["progress"] = progress
+                    job.save_meta()
+
+        # Move the new file into place
+
+        os.rename(hidden_output_file, file_path)
+
+        # Rebuild the audio and subtitle track info now that we've made modifications
+
+        output_audio_tracks = get_audio_tracks_from_file(file_path)
+        output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+
+        # Set file audio track info
+
+        for i, track in enumerate(output_audio_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            audio_track = FileAudioTrack(**track)
+            file.audio_track = audio_track
+            current_app.logger.info(f"{file} Adding audio track {audio_track}")
+            db.session.add(audio_track)
+
+        # Set file subtitle track info
+
+        if len(output_subtitle_tracks) > 1:
+            main_subtitle_track = output_subtitle_tracks[0].get("elements")
+            for i, track in enumerate(output_subtitle_tracks[1:]):
+                track_length = track.get("elements")
+                forced_flag = track.get("forced")
+
+                # If a track is less than 1/3 the length of the first subtitle track,
+                # but it's not marked as forced, speculate that it might be a forced
+                # subtitle track
+
+                if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
+                    current_app.logger.warning(
+                        f"{file} Subtitle track {i+2} has {track_length} elements "
+                        f"and may be a forced subtitle track!"
+                    )
+                    output_subtitle_tracks[i + 1]["forced"] = None
+
+        for i, track in enumerate(output_subtitle_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            subtitle_track = FileSubtitleTrack(**track)
+            file.subtitle_track = subtitle_track
+            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
+            db.session.add(subtitle_track)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        raise
+
+    else:
+        db.session.commit()
+
+    try:
+        file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+            file_path=file_path,
+            key_prefix=app.config["AWS_UNTOUCHED_PREFIX"],
+            key_name=file.untouched_basename,
+            force_upload=False,
+        )
 
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
 
     else:
+        db.session.commit()
         return True
 
 

@@ -32,6 +32,7 @@ from app.main.forms import (
     FileDeleteForm,
     ImportForm,
     LibrarySearchForm,
+    MKVMergeForm,
     MKVPropEditForm,
     MovieReviewForm,
     MovieShoppingExcludeForm,
@@ -1082,6 +1083,68 @@ def file(file_id):
 
     mkvpropedit_form.process()
 
+    # Form to remux the file minus certain tracks
+
+    mkvmerge_form = MKVMergeForm()
+
+    audio_track_choices = []
+    default_audio_tracks = []
+
+    subtitle_track_choices = []
+    default_subtitle_tracks = []
+
+    for audio_track in audio_tracks:
+        audio_track_choices.append(
+            (
+                audio_track.track,
+                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language})",
+            )
+        )
+        default_audio_tracks.append(audio_track.track)
+
+    for subtitle_track in subtitle_tracks:
+        subtitle_track_choices.append(
+            (
+                subtitle_track.track,
+                f"Track {subtitle_track.track} ({subtitle_track.elements}-element {subtitle_track.language})",
+            )
+        )
+        default_subtitle_tracks.append(subtitle_track.track)
+
+    mkvmerge_form.audio_tracks.choices = audio_track_choices
+    mkvmerge_form.audio_tracks.default = default_audio_tracks
+
+    mkvmerge_form.subtitle_tracks.choices = subtitle_track_choices
+    mkvmerge_form.subtitle_tracks.default = default_subtitle_tracks
+
+    if mkvmerge_form.mkvmerge_submit.data:
+        current_app.logger.info(f"Audio tracks: {mkvmerge_form.audio_tracks.data}")
+        current_app.logger.info(f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}")
+
+        if file.container == "Matroska":
+            mkvmerge_job = current_app.task_queue.enqueue(
+                "app.videos.mkvmerge_task",
+                args=(
+                    file.id,
+                    mkvmerge_form.audio_tracks.data,
+                    mkvmerge_form.subtitle_tracks.data,
+                ),
+                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                description=f"'{file.basename}'",
+            )
+            if mkvmerge_job:
+                current_app.logger.info(
+                    "Queued '{file.basename}' for MKV remuxing"
+                )
+            flash(f"Remuxing MKV file '{file.basename}'", "info")
+
+        else:
+            flash(f"Unable to remux '{file.basename}' since it is not an MKV file!", "danger")
+
+        return redirect(url_for("main.file", file_id=file.id))
+
+    mkvmerge_form.process()
+
     # Form to request this file to be transcoded
 
     transcode_form = TranscodeForm()
@@ -1164,6 +1227,7 @@ def file(file_id):
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
         mkvpropedit_form=mkvpropedit_form,
+        mkvmerge_form=mkvmerge_form,
         transcode_form=transcode_form,
         upload_form=upload_form,
         delete_form=delete_form,
@@ -2255,6 +2319,8 @@ def queue():
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcode_tasks_running = transcodes.get_job_ids()
+    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
+    tasks_running = tasks.get_job_ids()
 
     localization_queue = []
 
