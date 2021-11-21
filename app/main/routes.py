@@ -2407,12 +2407,14 @@ def queue():
     )
 
 
-@bp.route("/library/files")
+@bp.route("/library/files", methods=["GET", "POST"])
 @login_required
 def files():
     """Show a list of all the files in the library."""
 
     page = request.args.get("page", 1, type=int)
+    q = request.args.get("q", None, type=str)
+    quality = request.args.get("quality", "0", type=str)
 
     movie_rank = (
         db.session.query(
@@ -2444,63 +2446,256 @@ def files():
         .subquery()
     )
 
-    files = (
-        db.session.query(
-            File,
-            RefQuality,
-            RefFeatureType,
-            Movie,
-            TVSeries,
-            db.case(
-                [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
-            ).label("rank"),
-        )
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
-        .outerjoin(Movie, (Movie.id == File.movie_id))
-        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
-        .outerjoin(movie_rank, (movie_rank.c.id == File.id))
-        .outerjoin(tv_rank, (tv_rank.c.id == File.id))
-        .order_by(
-            File.media_library,
-            db.func.regexp_replace(
+    if q and int(quality) > 0:
+        this_quality = RefQuality.query.filter_by(id=int(quality)).first_or_404()
+        title = f"{this_quality.quality_title} files matching '{q}'"
+        q = q.replace(" ", "%")
+        files = (
+            db.session.query(
+                File,
+                RefQuality,
+                RefFeatureType,
+                Movie,
+                TVSeries,
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
-                ),
-                "^(The|A|An)\s",
-                "",
-            ).asc(),
-            db.case(
-                [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
-                else_=Movie.year,
-            ).asc(),
-            File.version.asc(),
-            RefFeatureType.feature_type.asc(),
-            db.func.regexp_replace(
+                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                ).label("rank"),
+            )
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+            .outerjoin(Movie, (Movie.id == File.movie_id))
+            .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+            .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+            .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+            .filter(File.basename.ilike(f"%{q}%"))
+            .filter(RefQuality.id == int(quality))
+            .order_by(
+                File.media_library,
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
                 db.case(
-                    [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
-                    else_=TVSeries.title,
-                ),
-                "^(The|A|An)\s",
-                "",
-            ).asc(),
-            File.season.asc(),
-            File.episode.asc(),
-            File.last_episode.asc(),
-            RefQuality.preference.asc(),
-            File.basename.asc(),
+                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    else_=Movie.year,
+                ).asc(),
+                File.version.asc(),
+                RefFeatureType.feature_type.asc(),
+                db.func.regexp_replace(
+                    db.case(
+                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        else_=TVSeries.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                File.season.asc(),
+                File.episode.asc(),
+                File.last_episode.asc(),
+                RefQuality.preference.asc(),
+                File.basename.asc(),
+            )
+            .paginate(page, 1000, False)
         )
-        .paginate(page, 1000, False)
-    )
 
-    next_url = url_for("main.files", page=files.next_num) if files.has_next else None
-    prev_url = url_for("main.files", page=files.prev_num) if files.has_prev else None
+    elif q:
+        title = f"Files matching '{q}'"
+        q = q.replace(" ", "%")
+        files = (
+            db.session.query(
+                File,
+                RefQuality,
+                RefFeatureType,
+                Movie,
+                TVSeries,
+                db.case(
+                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                ).label("rank"),
+            )
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+            .outerjoin(Movie, (Movie.id == File.movie_id))
+            .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+            .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+            .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+            .filter(File.basename.ilike(f"%{q}%"))
+            .order_by(
+                File.media_library,
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    else_=Movie.year,
+                ).asc(),
+                File.version.asc(),
+                RefFeatureType.feature_type.asc(),
+                db.func.regexp_replace(
+                    db.case(
+                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        else_=TVSeries.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                File.season.asc(),
+                File.episode.asc(),
+                File.last_episode.asc(),
+                RefQuality.preference.asc(),
+                File.basename.asc(),
+            )
+            .paginate(page, 1000, False)
+        )
+
+    elif int(quality) > 0:
+        this_quality = RefQuality.query.filter_by(id=int(quality)).first_or_404()
+        title = f"{this_quality.quality_title} files"
+        files = (
+            db.session.query(
+                File,
+                RefQuality,
+                RefFeatureType,
+                Movie,
+                TVSeries,
+                db.case(
+                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                ).label("rank"),
+            )
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+            .outerjoin(Movie, (Movie.id == File.movie_id))
+            .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+            .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+            .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+            .filter(RefQuality.id == int(quality))
+            .order_by(
+                File.media_library,
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    else_=Movie.year,
+                ).asc(),
+                File.version.asc(),
+                RefFeatureType.feature_type.asc(),
+                db.func.regexp_replace(
+                    db.case(
+                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        else_=TVSeries.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                File.season.asc(),
+                File.episode.asc(),
+                File.last_episode.asc(),
+                RefQuality.preference.asc(),
+                File.basename.asc(),
+            )
+            .paginate(page, 1000, False)
+        )
+
+    else:
+        title = "All Files"
+        files = (
+            db.session.query(
+                File,
+                RefQuality,
+                RefFeatureType,
+                Movie,
+                TVSeries,
+                db.case(
+                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                ).label("rank"),
+            )
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+            .outerjoin(Movie, (Movie.id == File.movie_id))
+            .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+            .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+            .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+            .order_by(
+                File.media_library,
+                db.func.regexp_replace(
+                    db.case(
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                db.case(
+                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    else_=Movie.year,
+                ).asc(),
+                File.version.asc(),
+                RefFeatureType.feature_type.asc(),
+                db.func.regexp_replace(
+                    db.case(
+                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        else_=TVSeries.title,
+                    ),
+                    "^(The|A|An)\s",
+                    "",
+                ).asc(),
+                File.season.asc(),
+                File.episode.asc(),
+                File.last_episode.asc(),
+                RefQuality.preference.asc(),
+                File.basename.asc(),
+            )
+            .paginate(page, 1000, False)
+        )
+
+    next_url = url_for("main.files", page=files.next_num, quality=quality) if files.has_next else None
+    prev_url = url_for("main.files", page=files.prev_num, quality=quality) if files.has_prev else None
+
+    filter_form = QualityFilterForm()
+
+    qualities = (
+        db.session.query(RefQuality.id, RefQuality.quality_title)
+        .join(File, (File.quality_id == RefQuality.id))
+        .distinct()
+        .filter(File.movie_id != None)
+        .filter(File.feature_type_id == None)
+        .order_by(RefQuality.preference.asc())
+        .all()
+    )
+    filter_form.quality.choices = [("0", "All")] + [
+        (str(id), title) for (id, title) in qualities
+    ]
+
+    filter_form.quality.default = quality
+
+    if filter_form.validate_on_submit():
+        return redirect(url_for("main.files", q=q, quality=filter_form.quality.data))
+
+    filter_form.process()
+
+    library_search_form = LibrarySearchForm()
+    if library_search_form.validate_on_submit():
+        return redirect(
+            url_for("main.files", q=library_search_form.search_query.data, quality=filter_form.quality.data)
+        )
 
     return render_template(
         "files.html",
-        title="All Files",
+        title=title,
         files=files.items,
         next_url=next_url,
         prev_url=prev_url,
         pages=files,
+        filter_form=filter_form,
+        library_search_form=library_search_form,
     )

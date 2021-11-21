@@ -1,7 +1,32 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">{{ title }}</h2>
+<div class="mt-2 mb-n2">
+	<h2>{{ title }}</h2>
+</div>
+<div class="row align-items-end">
+	<div class="col-sm-12 col-md-7 col-lg-8 mb-md-n4">
+		<form action="" method="post">
+			{{ filter_form.hidden_tag() }}
+			<div class="form-row">
+				<div class="col-12 col-sm-11 col-md-11">
+					<div class="form-group form-inline">
+						{{ filter_form.quality.label(class_="mr-2") }}
+						{{ filter_form.quality(class_="form-control form-control-sm col-5 col-md-6 col-lg-5 mr-2") }}
+						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col col-md-2") }}
+					</div>
+				</div>
+			</div>
+		</form>
+	</div>
+	<div class="col-sm-12 col-md-5 col-lg-4 mb-md-n3">
+		<form class="form-inline float-sm-right mb-2" action="" method="post">
+			{{ library_search_form.hidden_tag() }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm mr-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ml-2 col") }}
+		</form>
+	</div>
+</div>
 <hr>
 {% if files %}
 	<nav class="d-none d-sm-block" aria-label="...">
@@ -13,9 +38,9 @@
 			{% for page in pages.iter_pages() %}
 				{% if page %}
 					{% if page == pages.page %}
-						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% else %}
-						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% endif %}
 				{% else %}
 					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -36,9 +61,9 @@
 			{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 				{% if page %}
 					{% if page == pages.page %}
-						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% else %}
-						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% endif %}
 				{% else %}
 					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -87,9 +112,9 @@
 			{% for page in pages.iter_pages() %}
 				{% if page %}
 					{% if page == pages.page %}
-						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% else %}
-						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% endif %}
 				{% else %}
 					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -110,9 +135,9 @@
 			{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 				{% if page %}
 					{% if page == pages.page %}
-						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item active"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% else %}
-						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page) }}">{{ page }}</a></li>
+						<li class="page-item"><a class="page-link" href="{{ url_for('main.files', page=page, quality=request.args.get('quality'), q=request.args.get('q')) }}">{{ page }}</a></li>
 					{% endif %}
 				{% else %}
 					<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
