@@ -1055,7 +1055,7 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvpropedit_job = current_app.task_queue.enqueue(
+            mkvpropedit_job = current_app.localize_queue.enqueue(
                 "app.videos.mkvpropedit_task",
                 args=(
                     file.id,
@@ -1065,6 +1065,7 @@ def file(file_id):
                 ),
                 job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
+                atfront=True,
             )
             if mkvpropedit_job:
                 current_app.logger.info(
@@ -1122,7 +1123,7 @@ def file(file_id):
         current_app.logger.info(f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}")
 
         if file.container == "Matroska":
-            mkvmerge_job = current_app.task_queue.enqueue(
+            mkvmerge_job = current_app.localize_queue.enqueue(
                 "app.videos.mkvmerge_task",
                 args=(
                     file.id,
@@ -1131,6 +1132,7 @@ def file(file_id):
                 ),
                 job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
+                atfront=True,
             )
             if mkvmerge_job:
                 current_app.logger.info(
@@ -1177,6 +1179,7 @@ def file(file_id):
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
+            atfront=True,
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
