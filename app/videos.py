@@ -1420,6 +1420,32 @@ def prune_aws_s3_storage_task():
 
     app.app_context().push()
 
+    localizations = StartedJobRegistry(
+        "fitzflix-localize", connection=current_app.redis
+    )
+    localization_tasks_running = localizations.get_job_ids()
+    transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+    transcodes_running = transcodes.get_job_ids()
+
+    if (
+        len(current_app.localize_queue.job_ids)
+        + len(localization_tasks_running)
+        + len(current_app.transcode_queue.job_ids)
+        + len(transcodes_running)
+    ) > 0:
+        current_app.task_scheduler.enqueue_in(
+            timedelta(minutes=5),
+            "app.videos.prune_aws_s3_storage_task",
+            args=None,
+            job_timeout="24h",
+            description=f"Pruning extra files from AWS S3 storage",
+            at_front=True,
+        )
+        current_app.logger.info(
+            "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to prune"
+        )
+        return True
+
     unreferenced_files = []
 
     try:
