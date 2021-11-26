@@ -41,52 +41,54 @@
 {% if audio_tracks or subtitle_tracks %}
 <hr>
 <h3 class="mt-2 mb-2">Tracks</h3>
-<table class="table">
-	{% if audio_tracks %}
-	<thead class="thead-light">
-		<tr>
-			<th scope="col">Audio Track</th>
-			<th scope="col">Language</th>
-			<th scope="col">Format</th>
-			<th scope="col"></th>
-			<th scope="col">Notes</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for audio in audio_tracks %}
-		<tr>
-			<th scope="row">{{ audio.track }}</th>
-			<td>{{ audio.language }}</td>
-			<td>{{ audio.format }}</td>
-			<td>{{ audio.channels }} channel{% if audio.channels|int > 1 %}s{% endif %}</td>
-			<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
-		</tr>
-		{% endfor %}
-	</tbody>
-	{% endif %}
-	{% if subtitle_tracks %}
-	<thead class="thead-light">
-		<tr>
-			<th scope="col">Subtitle Track</th>
-			<th scope="col">Language</th>
-			<th scope="col">Format</th>
-			<th scope="col"></th>
-			<th scope="col">Notes</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for subtitle in subtitle_tracks %}
-		<tr>
-			<th scope="row">{{ subtitle.track }}</th>
-			<td>{{ subtitle.language }}</td>
-			<td>{{ subtitle.format }}</td>
-			<td>{{ subtitle.elements }} elements</td>
-			<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
-		</tr>
-		{% endfor %}
-	</tbody>
-	{% endif %}
-</table>
+<div class="table-responsive">
+	<table class="table">
+		{% if audio_tracks %}
+		<thead class="thead-light">
+			<tr>
+				<th scope="col">Audio Track</th>
+				<th scope="col">Language</th>
+				<th scope="col">Format</th>
+				<th scope="col"></th>
+				<th scope="col">Notes</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for audio in audio_tracks %}
+			<tr>
+				<th scope="row">{{ audio.track }}</th>
+				<td>{{ audio.language }}</td>
+				<td>{{ audio.format }}</td>
+				<td>{{ audio.channels }} channel{% if audio.channels|int > 1 %}s{% endif %}</td>
+				<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
+			</tr>
+			{% endfor %}
+		</tbody>
+		{% endif %}
+		{% if subtitle_tracks %}
+		<thead class="thead-light">
+			<tr>
+				<th scope="col">Subtitle Track</th>
+				<th scope="col">Language</th>
+				<th scope="col">Format</th>
+				<th scope="col"></th>
+				<th scope="col">Notes</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for subtitle in subtitle_tracks %}
+			<tr>
+				<th scope="row">{{ subtitle.track }}</th>
+				<td>{{ subtitle.language }}</td>
+				<td>{{ subtitle.format }}</td>
+				<td>{{ subtitle.elements }} elements</td>
+				<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
+			</tr>
+			{% endfor %}
+		</tbody>
+		{% endif %}
+	</table>
+</div>
 {% endif %}
 {% if file.container == "Matroska" %}
 <div class="row align-items-end">

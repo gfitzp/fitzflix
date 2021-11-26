@@ -75,34 +75,36 @@
 			</li>
 		</ul>
 	</nav>
-	<table class="table table-striped">
-		<thead class="thead-light">
-			<tr>
-				<th scope="col">ID</th>
-				<th scope="col">Title</th>
-				<th scope="col"></th>
-				<th scope="col">File</th>
-				<th scope="col">Quality</th>
-			</tr>
-		</thead>
-		<tbody>
-			{% for file, quality, feature, movie, tv, rank in files %}
-			<tr>
-				<th scope="row" class="align-middle">{{ file.id }}</th>
-				<td class="align-middle">
-					{% if movie %}
-						<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a>
-					{% elif tv %}
-						<a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>
-					{% endif %}
-				</td>
-				<td class="align-middle text-right">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
-				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
-				<td class="align-middle">{% if rank == 1 %}<span class="badge badge-success">{% elif file.quality.physical_media == 1 %}<span class="badge badge-warning">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
-			</tr>
-			{% endfor %}
-		</tbody>
-	</table>
+	<div class="table-responsive">
+		<table class="table table-striped">
+			<thead class="thead-light">
+				<tr>
+					<th scope="col">ID</th>
+					<th scope="col">Title</th>
+					<th scope="col"></th>
+					<th scope="col">File</th>
+					<th scope="col">Quality</th>
+				</tr>
+			</thead>
+			<tbody>
+				{% for file, quality, feature, movie, tv, rank in files %}
+				<tr>
+					<th scope="row" class="align-middle">{{ file.id }}</th>
+					<td class="align-middle">
+						{% if movie %}
+							<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a>
+						{% elif tv %}
+							<a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>
+						{% endif %}
+					</td>
+					<td class="align-middle text-right">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
+					<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
+					<td class="align-middle">{% if rank == 1 %}<span class="badge badge-success">{% elif file.quality.physical_media == 1 %}<span class="badge badge-warning">{% else %}<span class="badge badge-light">{% endif %}{{ quality.quality_title }}</span></td>
+				</tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</div>
 	<nav class="d-none d-sm-block" aria-label="...">
 		<ul class="pagination">
 			<li class="page-item{% if not prev_url %} disabled{% endif %}">
