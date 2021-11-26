@@ -1473,6 +1473,22 @@ def prune_aws_s3_storage_task():
                 ),
             )
 
+        else:
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - No unreferenced AWS files to delete",
+                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/no_unreferenced_files.txt",
+                    user=admin_user.email,
+                ),
+                html_body=render_template(
+                    "email/no_unreferenced_files.html",
+                    user=admin_user.email,
+                ),
+            )
+
     except Exception:
         app.logger.error(traceback.format_exc())
 
