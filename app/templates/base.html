@@ -83,7 +83,7 @@
  		{% with tasks = current_user.get_tasks_in_progress() %}
  		{% if tasks %}
  			{% for task in tasks %}
- 			<div class="alert alert-info mt-3" role="alert" id="{{ task.job }}">{{ task.description }}...</div>
+ 			<div class="alert alert-info mt-3" role="alert" id="{{ task.id }}">{{ task.description }}...</div>
  			{% endfor %}
  		{% endif %}
  		{% endwith %}
@@ -121,11 +121,11 @@
             $("#queue_count").text(n);
         }
 
-        function flash_queue_count() {
-        	$("#queue_count").addClass("flash");
+        function flash_queue_count(color) {
+        	$("#queue_count").addClass("flash-" + color);
             setTimeout(
             	function() {
-            		$("#queue_count").removeClass("flash");
+            		$("#queue_count").removeClass("flash-" + color);
             	}, 1000
             );
         }
@@ -136,8 +136,10 @@
 					console.log(queue_details);
 					current_queue_count = parseInt(document.getElementById("queue_count").textContent, 10);
 					set_queue_count(queue_details.count);
-					if (queue_details.count > current_queue_count) {
-						flash_queue_count();
+					if (queue_details.count < current_queue_count) {
+						flash_queue_count("green");
+					} else if (queue_details.count > current_queue_count) {
+						flash_queue_count("red");
 					}
 					console.log(queue_details.running);
 					running = queue_details.running;
@@ -152,7 +154,7 @@
 						var newAlert = document.createElement("div");
 						newAlert.className = "alert alert-info mt-3";
 						newAlert.setAttribute("role", "alert");
-						newAlert.id = running[i].job;
+						newAlert.id = running[i].id;
 						var newProgress = document.createElement("div");
 						newProgress.className = "progress mt-1";
 						var newProgressBar = document.createElement("div");
@@ -164,13 +166,13 @@
 							newProgressBar.className = "progress-bar bg-info";
 							newProgressBar.setAttribute("style", "width: " + running[i].progress + "%");
 							newProgressBar.setAttribute("aria-valuenow", running[i].progress);
-							console.log(running[i].job, running[i].description, running[i].progress);
+							console.log(running[i].id, running[i].description, running[i].progress);
 						} else {
 							$(newAlert).text(running[i].description + "...");
 							newProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
 							newProgressBar.setAttribute("style", "width: 100%");
 							newProgressBar.setAttribute("aria-valuenow", "100");
-							console.log(running[i].job, running[i].description);
+							console.log(running[i].id, running[i].description);
 						}
 						newProgress.appendChild(newProgressBar);
 						document.getElementById("running-tasks").appendChild(newAlert);
@@ -189,9 +191,11 @@
 
 							var taskPosition = document.createElement("th");
 							taskPosition.setAttribute("scope", "row");
+							taskPosition.setAttribute("class", "col-1");
 							$(taskPosition).text(all_tasks[i].position);
 
 							var taskId = document.createElement("td");
+							taskId.setAttribute("class", "col-5 col-sm-5 col-lg-7");
 							$(taskId).text(all_tasks[i].description);
 
 							var enqueuedDate = document.createElement("abbr");
@@ -199,6 +203,7 @@
 							$(enqueuedDate).text(moment(all_tasks[i].enqueued_at).fromNow());
 
 							var taskEnqueued = document.createElement("td");
+							taskEnqueued.setAttribute("class", "col-3 col-sm-3 col-lg-2");
 							taskEnqueued.appendChild(enqueuedDate);
 
 							var startedDate = document.createElement("abbr");
@@ -208,9 +213,11 @@
 							}
 
 							var taskStarted = document.createElement("td");
+							taskStarted.setAttribute("class", "col-3 col-sm-3 col-lg-2");
 							taskStarted.appendChild(startedDate);
 
 							var taskRow = document.createElement("tr");
+							taskRow.setAttribute("class", "d-flex");
 							taskRow.appendChild(taskPosition);
 							taskRow.appendChild(taskId);
 							taskRow.appendChild(taskEnqueued);
