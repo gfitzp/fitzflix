@@ -22,14 +22,12 @@ def queue_details():
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()
-    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-    tasks_running = tasks.get_job_ids()
 
     details = {}
 
     if current_user.is_authenticated:
 
-        # Count the number of tasks in queue and number of tasks running.
+        # Count the number of localizations and transcodes in queue and running.
         # We're only interested in the task and transcode queues.
 
         details["count"] = (
@@ -37,11 +35,9 @@ def queue_details():
             + len(localization_tasks_running)
             + len(current_app.transcode_queue.job_ids)
             + len(transcodes_running)
-            + len(current_app.task_queue.job_ids)
-            + len(tasks_running)
         )
 
-        # Create list of tasks currently running
+        # Create list of localizations and transcodes currently running
 
         details["running"] = []
 
@@ -50,7 +46,11 @@ def queue_details():
             if job:
                 details["running"].append(
                     {
-                        "job": job_id,
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
                         "progress": (
                             job.meta.get("progress", -1) if job is not None else 100
@@ -63,7 +63,11 @@ def queue_details():
             if job:
                 details["running"].append(
                     {
-                        "job": job_id,
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
                         "progress": (
                             job.meta.get("progress", -1) if job is not None else 100
@@ -71,21 +75,9 @@ def queue_details():
                     }
                 )
 
-        for job_id in tasks_running:
-            job = current_app.task_queue.fetch_job(job_id)
-            if job:
-                details["running"].append(
-                    {
-                        "job": job_id,
-                        "description": job.meta.get("description", job.description),
-                        "progress": (
-                            job.meta.get("progress", -1) if job is not None else 100
-                        ),
-                    }
-                )
+        details["running"] = sorted(details["running"], key=lambda d: d["started_at"])
 
-
-        # Create list of all tasks in queue
+        # Create list of all localizations and transcodes in queue
 
         details["all"] = []
         for job_id in localization_tasks_running:
@@ -104,20 +96,6 @@ def queue_details():
 
         for job_id in transcodes_running:
             job = current_app.transcode_queue.fetch_job(job_id)
-            if job:
-                details["all"].append(
-                    {
-                        "id": job.id,
-                        "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
-                        "started_at": job.started_at,
-                        "ended_at": job.ended_at,
-                        "description": job.meta.get("description", job.description),
-                    }
-                )
-
-        for job_id in tasks_running:
-            job = current_app.task_queue.fetch_job(job_id)
             if job:
                 details["all"].append(
                     {
@@ -158,21 +136,15 @@ def queue_details():
                     }
                 )
 
-        for job_id in current_app.task_queue.job_ids:
-            job = current_app.task_queue.fetch_job(job_id)
-            if job:
-                details["all"].append(
-                    {
-                        "id": job.id,
-                        "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
-                        "started_at": job.started_at,
-                        "ended_at": job.ended_at,
-                        "description": job.meta.get("description", job.description),
-                    }
-                )
-
-        details["all"] = sorted(details["all"], key=lambda d: (d["started_at"] is None, d["started_at"], d["enqueued_at"] is None, d["enqueued_at"]))
+        details["all"] = sorted(
+            details["all"],
+            key=lambda d: (
+                d["started_at"] is None,
+                d["started_at"],
+                d["enqueued_at"] is None,
+                d["enqueued_at"],
+            ),
+        )
 
         for i, task in enumerate(details["all"]):
             details["all"][i]["position"] = i + 1
