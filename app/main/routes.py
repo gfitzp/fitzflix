@@ -1630,7 +1630,11 @@ def movie_shopping():
 
     ranked_files = (
         db.session.query(
-            File.id,
+            File.id.label("file_id"),
+            Movie.id.label("movie_id"),
+            Movie.title,
+            File.version,
+            RefQuality.quality_title,
             db.func.row_number()
             .over(
                 partition_by=(Movie.id, File.plex_title, File.version),
@@ -1668,6 +1672,43 @@ def movie_shopping():
         .subquery()
     )
 
+    # Subquery to get the current user's average ratings for each movie
+    # The math on modified_rating, whole_stars, and half_stars is done when creating
+    # the review, but we have to do it dynamically here because we need it to be
+    # translated for drawing the *average* review stars on the shopping page.
+
+    rating = (
+        db.session.query(
+            UserMovieReview.user_id,
+            UserMovieReview.movie_id,
+            db.func.avg(UserMovieReview.rating).label("rating"),
+            (db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2).label(
+                "modified_rating"
+            ),
+            db.func.floor(
+                db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2
+            ).label("whole_stars"),
+            db.case(
+                [
+                    (
+                        db.func.mod(
+                            (
+                                db.func.round(db.func.avg(UserMovieReview.rating) * 2)
+                                / 2
+                            ),
+                            1,
+                        )
+                        == 0,
+                        0,
+                    ),
+                ],
+                else_=(1),
+            ).label("half_stars"),
+        )
+        .group_by(UserMovieReview.user_id, UserMovieReview.movie_id)
+        .subquery()
+    )
+
     # Subqueries to get the preference associated with different quality thresholds
 
     dvd_quality = (
@@ -1689,7 +1730,10 @@ def movie_shopping():
                 File,
                 Movie,
                 RefQuality,
-                UserMovieReview,
+                rating.c.rating,
+                rating.c.modified_rating,
+                rating.c.whole_stars,
+                rating.c.half_stars,
                 db.case(
                     [
                         (
@@ -1728,11 +1772,10 @@ def movie_shopping():
             .join(Movie, (Movie.id == File.movie_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
             .outerjoin(
-                UserMovieReview,
-                (UserMovieReview.movie_id == Movie.id)
-                & (UserMovieReview.user_id == current_user.id),
+                rating,
+                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
             )
-            .join(ranked_files, (ranked_files.c.id == File.id))
+            .join(ranked_files, (ranked_files.c.file_id == File.id))
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
@@ -1757,12 +1800,31 @@ def movie_shopping():
         )
 
     elif media == "digital":
+        physical_media = (
+            db.session.query(
+                File.movie_id,
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .filter(
+                db.or_(
+                    RefQuality.physical_media == True,
+                    RefQuality.quality_title == "SDTV",
+                    RefQuality.quality_title.ilike("HDTV-%"),
+                )
+            )
+            .subquery()
+        )
+
         movies = (
             db.session.query(
                 File,
                 Movie,
                 RefQuality,
-                UserMovieReview,
+                rating.c.rating,
+                rating.c.modified_rating,
+                rating.c.whole_stars,
+                rating.c.half_stars,
                 db.case(
                     [
                         (
@@ -1801,20 +1863,15 @@ def movie_shopping():
             .join(Movie, (Movie.id == File.movie_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
             .outerjoin(
-                UserMovieReview,
-                (UserMovieReview.movie_id == Movie.id)
-                & (UserMovieReview.user_id == current_user.id),
+                rating,
+                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
             )
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .join(file_count, (file_count.c.id == Movie.id))
-            .outerjoin(physical_media, (physical_media.c.id == Movie.id))
+            .join(ranked_files, (ranked_files.c.file_id == File.id))
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
             .filter(RefQuality.preference <= max_preference)
-            .filter(physical_media.c.id == None)
-            .filter(RefQuality.quality_title != "SDTV")
-            .filter(RefQuality.quality_title.notlike("HDTV-%"))
+            .filter(Movie.id.not_in(physical_media))
             .filter(
                 db.or_(
                     db.and_(
@@ -1868,10 +1925,9 @@ def movie_shopping():
                 ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case(
-                    [(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)],
+                    [(rating.c.whole_stars >= 3, rating.c.rating)],
                     else_=0,
                 ).desc(),
-                file_count.c.min_preference.asc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
@@ -1886,7 +1942,10 @@ def movie_shopping():
                 File,
                 Movie,
                 RefQuality,
-                UserMovieReview,
+                rating.c.rating,
+                rating.c.modified_rating,
+                rating.c.whole_stars,
+                rating.c.half_stars,
                 db.case(
                     [
                         (
@@ -1925,13 +1984,10 @@ def movie_shopping():
             .join(Movie, (Movie.id == File.movie_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
             .outerjoin(
-                UserMovieReview,
-                (UserMovieReview.movie_id == Movie.id)
-                & (UserMovieReview.user_id == current_user.id),
+                rating,
+                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
             )
-            .join(ranked_files, (ranked_files.c.id == File.id))
-            .join(file_count, (file_count.c.id == Movie.id))
-            .outerjoin(physical_media, (physical_media.c.id == Movie.id))
+            .join(ranked_files, (ranked_files.c.file_id == File.id))
             .filter(File.feature_type_id == None)
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
@@ -1989,13 +2045,13 @@ def movie_shopping():
                 ).asc(),
                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case(
-                    [(UserMovieReview.whole_stars >= 3, UserMovieReview.rating)],
+                    [(rating.c.whole_stars >= 3, rating.c.rating)],
                     else_=0,
                 ).desc(),
                 db.case(
                     [
                         (
-                            (physical_media.c.id == None)
+                            (RefQuality.physical_media == 0)
                             & (RefQuality.quality_title != "SDTV")
                             & (RefQuality.quality_title.notlike("HDTV-%")),
                             0,
@@ -2003,7 +2059,6 @@ def movie_shopping():
                     ],
                     else_=1,
                 ).asc(),
-                file_count.c.min_preference.asc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
@@ -2476,7 +2531,8 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
                     ),
                     "^(The|A|An)\s",
                     "",
@@ -2529,7 +2585,8 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
                     ),
                     "^(The|A|An)\s",
                     "",
@@ -2582,7 +2639,8 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
                     ),
                     "^(The|A|An)\s",
                     "",
@@ -2633,7 +2691,8 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        else_=Movie.title,
                     ),
                     "^(The|A|An)\s",
                     "",
@@ -2661,8 +2720,16 @@ def files():
             .paginate(page, 1000, False)
         )
 
-    next_url = url_for("main.files", page=files.next_num, quality=quality) if files.has_next else None
-    prev_url = url_for("main.files", page=files.prev_num, quality=quality) if files.has_prev else None
+    next_url = (
+        url_for("main.files", page=files.next_num, quality=quality)
+        if files.has_next
+        else None
+    )
+    prev_url = (
+        url_for("main.files", page=files.prev_num, quality=quality)
+        if files.has_prev
+        else None
+    )
 
     filter_form = QualityFilterForm()
 
@@ -2689,7 +2756,11 @@ def files():
     library_search_form = LibrarySearchForm()
     if library_search_form.validate_on_submit():
         return redirect(
-            url_for("main.files", q=library_search_form.search_query.data, quality=filter_form.quality.data)
+            url_for(
+                "main.files",
+                q=library_search_form.search_query.data,
+                quality=filter_form.quality.data,
+            )
         )
 
     return render_template(
