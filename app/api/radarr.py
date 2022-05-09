@@ -109,7 +109,6 @@ def radarr_add():
                     "utf-8"
                 ),
             )
-            current_app.logger.info(json.loads(r.data.decode("utf-8")))
 
         # Pass the file to Fitzflix for processing; tried copying the file to the import
         # directory for processing but if another file came in while it was copying
