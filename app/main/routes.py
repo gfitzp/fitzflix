@@ -983,10 +983,58 @@ def file(file_id):
     if file.movie_id:
         movie = Movie.query.filter_by(id=int(file.movie_id)).first_or_404()
         tv = None
+        file_rank = (
+            db.session.query(
+                File.id,
+                db.func.row_number()
+                .over(
+                    partition_by=(Movie.id, File.plex_title, File.version),
+                    order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                )
+                .label("rank"),
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .subquery()
+        )
+        best_file = (
+            db.session.query(
+                File,
+                db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
+            )
+            .join(file_rank, (file_rank.c.id == File.id))
+            .filter(File.id == int(file_id))
+            .filter(file_rank.c.rank == 1)
+            .first()
+        )
 
     elif file.series_id:
         movie = None
         tv = TVSeries.query.filter_by(id=int(file.series_id)).first_or_404()
+        file_rank = (
+            db.session.query(
+                File.id,
+                db.func.row_number()
+                .over(
+                    partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                    order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                )
+                .label("rank"),
+            )
+            .join(TVSeries, (TVSeries.id == File.series_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .subquery()
+        )
+        best_file = (
+            db.session.query(
+                File,
+                db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
+            )
+            .join(file_rank, (file_rank.c.id == File.id))
+            .filter(File.id == int(file_id))
+            .filter(file_rank.c.rank == 1)
+            .first()
+        )
 
     # Get the details of each of the audio and subtitle tracks for this file
 
