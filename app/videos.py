@@ -116,6 +116,7 @@ def localization_task(file_path):
                     f"'{basename}' doesn't match expected naming formats!"
                 )
                 move_to_rejects(file_path, "incorrect filename")
+                return False
 
             # We don't want to process other versions of this video at the same time,
             # so create a identifier using specific movie or tv show fields to use when
