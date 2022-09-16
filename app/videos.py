@@ -1174,7 +1174,7 @@ def mkvpropedit_task(
         file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
         if job:
-            job.meta["description"] = f"'{file.basename}' – Updating MKV properties"
+            job.meta["description"] = f"'{file.basename}' — Updating MKV properties"
             job.meta["progress"] = -1
             job.save_meta()
 
@@ -1325,7 +1325,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
         file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
         if job:
-            job.meta["description"] = f"'{file.basename}' – Remuxing"
+            job.meta["description"] = f"'{file.basename}' — Remuxing"
             job.save_meta()
 
         FileAudioTrack.query.filter_by(file_id=file.id).delete()
@@ -1373,7 +1373,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
                 progress = int(progress_match.group("percent"))
                 current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
                 if job:
-                    job.meta["description"] = f"'{file.basename}' – Remuxing"
+                    job.meta["description"] = f"'{file.basename}' — Remuxing"
                     job.meta["progress"] = progress
                     job.save_meta()
 
@@ -1719,7 +1719,7 @@ def transcode_task(file_id):
                 "app.videos.transcode_task",
                 file_id=file_id,
                 timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                job_description=f"'{file.plex_title}'",
+                description=f"'{file.plex_title}'",
             )
             return False
 
@@ -1926,6 +1926,7 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
 
 def aws_delete(key):
     """Delete an object from AWS S3 storage."""
+
     s3_client = boto3.client(
         "s3",
         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],

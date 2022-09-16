@@ -1173,7 +1173,9 @@ def file(file_id):
 
     if mkvmerge_form.mkvmerge_submit.data:
         current_app.logger.info(f"Audio tracks: {mkvmerge_form.audio_tracks.data}")
-        current_app.logger.info(f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}")
+        current_app.logger.info(
+            f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}"
+        )
 
         if file.container == "Matroska":
             mkvmerge_job = current_app.localize_queue.enqueue(
@@ -1188,13 +1190,14 @@ def file(file_id):
                 atfront=True,
             )
             if mkvmerge_job:
-                current_app.logger.info(
-                    "Queued '{file.basename}' for MKV remuxing"
-                )
+                current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")
             flash(f"Remuxing MKV file '{file.basename}'", "info")
 
         else:
-            flash(f"Unable to remux '{file.basename}' since it is not an MKV file!", "danger")
+            flash(
+                f"Unable to remux '{file.basename}' since it is not an MKV file!",
+                "danger",
+            )
 
         return redirect(url_for("main.file", file_id=file.id))
 
@@ -1224,11 +1227,12 @@ def file(file_id):
 
         # Enqueue an upload task for this file
 
-        current_app.task_queue.enqueue(
+        current_app.localize_queue.enqueue(
             "app.videos.upload_task",
             args=(
                 file.id,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
+                True,
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
