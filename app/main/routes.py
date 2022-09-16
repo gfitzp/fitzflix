@@ -1246,7 +1246,7 @@ def file(file_id):
 
             # file.aws_untouched_date_deleted = aws_delete(file.aws_untouched_key)
 
-            file.delete_local_file()
+            file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
 
         except:
