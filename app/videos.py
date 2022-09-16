@@ -2039,7 +2039,10 @@ def evaluate_filename(file_path):
 
     # Determine if basename matches movie or tv formats
 
-    movie_match = re.search("(.+) \((\d{4})\) \-(?: (.+) | )\[(.+)\]\.(.+)", basename)
+    movie_match = re.search(
+        "(.+) \((\d{4})\)(?: (\{edition\-(.+)\}) | )\-(?: (.+) | )\[(.+)\]\.(.+)",
+        basename,
+    )
     tv_match = re.search(
         "(.+) \- S(\d+)E(\d+)(?:\-E(\d+))? \-(?: (.+) | )\[(.+)\]\.(.+)", basename
     )
@@ -2137,7 +2140,7 @@ def evaluate_filename(file_path):
 
     elif movie_match:
         movie = re.match(
-            "(?P<title>.+) \((?P<year>\d{4})\) \-(?: (?P<version>.+) | )"
+            "(?P<title>.+) \((?P<year>\d{4})\)(?: \{edition\-(?P<edition>.+)\} | )\-(?: (?P<version>.+) | )"
             "\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
             basename,
         )
@@ -2210,11 +2213,22 @@ def evaluate_filename(file_path):
 
         current_app.logger.info(f"File: {basename}")
         current_app.logger.info(f"Movie: {title} ({year})")
-        dirname = os.path.join(media_library, sanitize_string(f"{title} ({year})"))
+        edition = None
         feature_type = None
         special_feature = None
         fullscreen = False
         extension = movie.group("extension")
+
+        if movie.group("edition"):
+            edition = movie.group("edition")
+            version = edition
+            dirname = os.path.join(
+                media_library,
+                sanitize_string(f"{title} ({year}) {{edition-{edition}}}"),
+            )
+
+        else:
+            dirname = os.path.join(media_library, sanitize_string(f"{title} ({year})"))
 
         if movie.group("version"):
             version = movie.group("version")
@@ -2288,24 +2302,37 @@ def evaluate_filename(file_path):
                 basename = f"{special_feature}.{extension}"
 
             elif fullscreen and len(version_strings) == 1:
-                version = None
-                plex_title = f"{title} ({year})"
+                if edition:
+                    plex_title = f"{title} ({year}) {{edition-{edition}}}"
+                else:
+                    version = None
+                    plex_title = f"{title} ({year})"
                 basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
 
             elif fullscreen:
                 version_strings.pop(version_strings.index("Full Screen"))
                 version = " - ".join(version_strings)
-                plex_title = f"{title} ({year}) - {version}"
+                if edition:
+                    plex_title = f"{title} ({year}) {{edition-{edition}}} - {version}"
+                else:
+                    plex_title = f"{title} ({year}) - {version}"
                 basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
 
             else:
                 version = " - ".join(version_strings)
-                plex_title = f"{title} ({year}) - {version}"
+                if edition:
+                    plex_title = f"{title} ({year}) {{edition-{edition}}} - {version}"
+                else:
+                    plex_title = f"{title} ({year}) - {version}"
                 basename = f"{plex_title} [{quality_title}].{extension}"
 
         else:
-            version = None
-            plex_title = f"{title} ({year})"
+            if edition:
+                version = edition
+                plex_title = f"{title} ({year}) {{edition-{edition}}}"
+            else:
+                version = None
+                plex_title = f"{title} ({year})"
             basename = f"{plex_title} - [{quality_title}].{extension}"
 
         basename = sanitize_string(basename)
@@ -2727,10 +2754,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 or (updated_year != original_year)
                 or (updated_tmdb_id != original_tmdb_id)
             ):
-                current_app.logger.info(
-                    f"Movie information changed! Migrating {existing_movie} to {movie}"
-                )
-
                 # Get a list of files that were associated with the old Movie record
 
                 old_files = File.query.filter_by(movie_id=original_movie_id).all()
