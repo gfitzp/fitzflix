@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 import traceback
+import urllib.parse
 
 from datetime import datetime
 from datetime import timedelta
@@ -71,10 +72,36 @@ class UploadProgressPercentage(object):
                 self._job.save_meta()
 
 
+class DownloadProgressPercentage(object):
+    """Return the download progress as a callback when downloading a file from AWS S3."""
+
+    def __init__(self, client, bucket, key):
+        self._file_path = key
+        app.logger.info(client.head_object(Bucket=bucket, Key=key).get("ContentLength"))
+        self._size = client.head_object(Bucket=bucket, Key=key).get("ContentLength", 0)
+        self._seen_so_far = 0
+        self._lock = threading.Lock()
+        self._job = rq.get_current_job()
+
+    def __call__(self, bytes_amount):
+        with self._lock:
+            self._seen_so_far += bytes_amount
+            progress = int((self._seen_so_far / self._size) * 100)
+            app.logger.info(
+                f"'{os.path.basename(self._file_path)}' Downloading from AWS: {progress}%"
+            )
+            if self._job:
+                self._job.meta[
+                    "description"
+                ] = f"'{os.path.basename(self._file_path)}' — Downloading from AWS"
+                self._job.meta["progress"] = progress
+                self._job.save_meta()
+
+
 # Tasks
 
 
-def localization_task(file_path):
+def localization_task(file_path, force_upload=False, ignore_etag=False):
     """Archive an untouched file and remove unnecessary language tracks.
 
     - Untouched file is uploaded to AWS S3 storage for safekeeping.
@@ -214,7 +241,12 @@ def localization_task(file_path):
                 (
                     file_details["aws_untouched_key"],
                     file_details["aws_untouched_date_uploaded"],
-                ) = aws_upload(file_path, current_app.config["AWS_UNTOUCHED_PREFIX"])
+                ) = aws_upload(
+                    file_path,
+                    current_app.config["AWS_UNTOUCHED_PREFIX"],
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                )
 
             # Start localization process
 
@@ -1269,7 +1301,7 @@ def mkvpropedit_task(
             file_path=file_path,
             key_prefix=app.config["AWS_UNTOUCHED_PREFIX"],
             key_name=file.untouched_basename,
-            force_upload=False,
+            force_upload=True,
         )
 
     except Exception:
@@ -1404,7 +1436,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             file_path=file_path,
             key_prefix=app.config["AWS_UNTOUCHED_PREFIX"],
             key_name=file.untouched_basename,
-            force_upload=False,
+            force_upload=True,
         )
 
     except Exception:
@@ -1764,7 +1796,90 @@ def transcode_task(file_id):
     return True
 
 
-def upload_task(file_id, key_prefix="", force_upload=False):
+def download_task(key, basename):
+    """Download a file from AWS S3 storage."""
+
+    app.app_context().push()
+    job = get_current_job()
+    job.meta["description"] = f"'{basename}' — Downloading from AWS"
+
+    try:
+        current_app.logger.info(
+            f"Starting download of '{basename}' from AWS S3 storage"
+        )
+        aws_download(key, basename)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+
+    else:
+        return True
+
+
+def sqs_retrieve_task():
+    """Poll AWS SQS for possible files ready to download."""
+
+    app.app_context().push()
+
+    sqs_client = boto3.client(
+        "sqs",
+        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        region_name="us-east-1",
+    )
+    response = sqs_client.receive_message(
+        QueueUrl=current_app.config["AWS_SQS_URL"],
+        AttributeNames=["SentTimestamp"],
+        MaxNumberOfMessages=1,
+        MessageAttributeNames=["All"],
+        VisibilityTimeout=7200,
+        WaitTimeSeconds=0,
+    )
+
+    current_app.logger.info(response)
+
+    while response.get("Messages"):
+
+        job = get_current_job()
+
+        response_body = json.loads(response["Messages"][0]["Body"])
+
+        receipt_handle = response["Messages"][0]["ReceiptHandle"]
+        key = urllib.parse.unquote_plus(
+            response_body["Records"][0]["s3"]["object"]["key"]
+        )
+
+        current_app.logger.info(receipt_handle)
+        current_app.logger.info(key)
+
+        try:
+            aws_download(key, os.path.basename(key), receipt_handle)
+
+        except:
+            current_app.logger.info(f"Unable to download '{os.path.basename(key)}'!")
+
+        else:
+            response = sqs_client.delete_message(
+                QueueUrl=current_app.config["AWS_SQS_URL"], ReceiptHandle=receipt_handle
+            )
+            current_app.logger.info(response)
+            current_app.logger.info(f"Deleted message '{receipt_handle}' from SQS")
+
+        response = sqs_client.receive_message(
+            QueueUrl=current_app.config["AWS_SQS_URL"],
+            AttributeNames=["SentTimestamp"],
+            MaxNumberOfMessages=1,
+            MessageAttributeNames=["All"],
+            VisibilityTimeout=7200,
+            WaitTimeSeconds=0,
+        )
+
+        current_app.logger.info(response)
+
+    return True
+
+
+def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
     """Upload a file to AWS S3 storage."""
 
     app.app_context().push()
@@ -1785,11 +1900,15 @@ def upload_task(file_id, key_prefix="", force_upload=False):
                 file_path=file_path,
                 key_name=file.aws_untouched_key,
                 force_upload=force_upload,
+                ignore_etag=ignore_etag,
             )
 
         else:
             file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
-                file_path=file_path, key_prefix=key_prefix, force_upload=force_upload
+                file_path=file_path,
+                key_prefix=key_prefix,
+                force_upload=force_upload,
+                ignore_etag=ignore_etag,
             )
 
         db.session.commit()
@@ -1815,6 +1934,56 @@ def aws_delete(key):
     response = s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
     current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
     return datetime.utcnow()
+
+
+def aws_download(key, basename, sqs_receipt_handle=None):
+    """Download an object from AWS S3 storage."""
+
+    MAX_RETRY_COUNT = 10
+    retry = MAX_RETRY_COUNT
+
+    current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
+
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+    )
+    current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
+
+    while retry > 0:
+        try:
+            response = s3_client.download_file(
+                current_app.config["AWS_BUCKET"],
+                key,
+                os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"),
+                Callback=DownloadProgressPercentage(
+                    s3_client,
+                    current_app.config["AWS_BUCKET"],
+                    key,
+                ),
+            )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            retry = retry - 1
+
+        else:
+            current_app.logger.info(f"'{basename}' downloaded from AWS S3 storage")
+
+            # TODO: do proper rename when complete
+            os.rename(
+                os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"),
+                os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
+            )
+            if sqs_receipt_handle:
+                current_app.logger.info("TODO: delete message from SQS queue")
+            return True
+
+    current_app.logger.error(
+        f"Tried to download '{basename}' {str(MAX_RETRY_COUNT)} times but couldn't!"
+    )
+    return False
 
 
 def aws_rename(old_key, new_key):
@@ -1854,7 +2023,73 @@ def aws_rename(old_key, new_key):
     return new_key, datetime.utcnow()
 
 
-def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
+def aws_restore(key, days=1, tier="Standard"):
+    """Request a file at AWS to be restored from Glacier status for download."""
+
+    app.app_context().push()
+
+    try:
+        config = Config(
+            connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+        )
+        s3_client = boto3.client(
+            "s3",
+            config=config,
+            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        )
+
+        # Make sure the key exists in the AWS bucket
+
+        response = s3_client.list_objects(
+            Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
+        )
+
+        current_app.logger.info(response["Contents"])
+
+        # If the key exists, restore it
+
+        if response["Contents"][0]["Key"]:
+            if response["Contents"][0]["StorageClass"] == "STANDARD":
+                current_app.logger.info(f"'{key}' doesn't need to be restored; attempting to download")
+                current_app.download_queue.enqueue(
+                    "app.videos.download_task",
+                    args=(key, os.path.basename(key)),
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    description=f"'{os.path.basename(key)}'",
+                    atfront=True,
+                )
+                return
+
+            else:
+                response = s3_client.restore_object(
+                    Bucket=current_app.config["AWS_BUCKET"],
+                    Key=self.aws_untouched_key,
+                    RestoreRequest={
+                        "Days": 1,
+                        "GlacierJobParameters": {"Tier": "Standard"},
+                    },
+                )
+                current_app.logger.info(response)
+
+    except boto3.exceptions.RestoreAlreadyInProgress as e:
+        current_app.logger.info(f"'{key}' is already in process of being restored")
+        return
+
+    except Exception as e:
+        current_app.logger.error(e)
+        raise
+
+    else:
+        current_app.logger.info(
+            f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
+        )
+        return
+
+
+def aws_upload(
+    file_path, key_prefix="", key_name=None, force_upload=False, ignore_etag=False
+):
     """Search for a file in AWS S3, and upload if it doesn't exist or if it differs."""
 
     if not os.path.isfile(file_path):
@@ -1890,49 +2125,40 @@ def aws_upload(file_path, key_prefix="", key_name=None, force_upload=False):
     # If the key already exists, check to see if the local and remote ETags match.
     # If the ETags match, then the files are the same and there's no need to re-upload.
     # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
-    # Skip the whole comparison process if the force_upload flag is set to True.
 
-    if response.get("Contents") and not force_upload:
-        if current_app.config["IGNORE_ETAGS"]:
-            pass
-        else:
+    if not force_upload:
+
+        if response.get("Contents"):
+            for object in response.get("Contents"):
+                if object.get("Key") == key:
+                    remote_etag = object.get("ETag").replace('"', "")
+                    date_uploaded = object.get("LastModified")
+
+            if ignore_etag or current_app.config["IGNORE_ETAGS"]:
+                current_app.logger.info(
+                    f"'{file_path}' matches '{key}' and ETags are ignored, "
+                    f"no need to re-upload"
+                )
+                return key, date_uploaded
+
             local_etag = calculate_etag(file_path)
+            if local_etag == remote_etag:
+                current_app.logger.info(
+                    f"'{file_path}' is the same as '{key}', no need to re-upload"
+                )
+                return key, date_uploaded
 
-        for object in response.get("Contents"):
-            if object.get("Key") == key:
-                remote_etag = object.get("ETag").replace('"', "")
-                date_uploaded = object.get("LastModified")
-                if current_app.config["IGNORE_ETAGS"]:
-                    current_app.logger.info(
-                        f"'{file_path}' matches '{key}' and ETags are ignored, "
-                        f"no need to re-upload"
-                    )
-                    return key, date_uploaded
-
-        if local_etag == remote_etag:
-            current_app.logger.info(
-                f"'{file_path}' is the same as '{key}', no need to re-upload"
-            )
-            return key, date_uploaded
-
-        else:
             current_app.logger.info(
                 f"Local ETag '{local_etag}' ('{file_path}') "
                 f"differs from remote ETag '{remote_etag}' ('{key}'), "
                 f"re-uploading to AWS"
             )
 
-    elif force_upload:
-        current_app.logger.info(
-            f"Forcing upload of "
-            f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], key)}' to AWS"
-        )
-
-    else:
-        current_app.logger.info(
-            f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], key)}' "
-            f"doesn't exist at AWS"
-        )
+        else:
+            current_app.logger.info(
+                f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], key)}' "
+                f"doesn't exist at AWS"
+            )
 
     current_app.logger.info(
         f"Uploading '{file_path}' to "

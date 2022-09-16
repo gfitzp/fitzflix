@@ -51,13 +51,14 @@ class Config(object):
     MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/usr/local/bin/mkvmerge"
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/usr/local/bin/mkvpropedit"
 
-    # AWS S3 configuration
+    # AWS configuration
     ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
     AWS_BUCKET                          = os.environ.get("AWS_BUCKET") or None
     AWS_ACCESS_KEY                      = os.environ.get("AWS_ACCESS_KEY") or None
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
     IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None
+    AWS_SQS_URL                         = os.environ.get("AWS_SQS_URL") or None
 
     # Mail server configuration
     MAIL_USERNAME                       = os.environ.get("MAIL_USERNAME")

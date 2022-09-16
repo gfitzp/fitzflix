@@ -166,18 +166,27 @@
 <hr>
 <div class="row">
 	<div class="col-sm-4">
+		{% if best_file %}
 		<form action="" method="post">
 			{{ transcode_form.hidden_tag() }}
 			{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
 		</form>
 		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
+		{% endif %}
 	</div>
 	<div class="col-sm-4">
+		{% if best_file %}
 		<form action="" method="post">
 			{{ upload_form.hidden_tag() }}
 			{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 		</form>
 		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
+		<p/>
+		<form action="" method="post">
+			{{ download_form.hidden_tag() }}
+			{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}
+		</form>
+		{% endif %}
 	</div>
 	<div class="col-sm-4">
 		<form action="" method="post">
@@ -186,4 +195,5 @@
 		</form>
 	</div>
 </div>
+
 {% endblock %}

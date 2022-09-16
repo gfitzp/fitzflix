@@ -8,6 +8,7 @@ from time import time
 from urllib.parse import urlparse
 
 import boto3
+import botocore
 import jwt
 import requests
 

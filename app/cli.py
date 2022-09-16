@@ -77,3 +77,13 @@ def register(app):
             atfront=True,
         )
         app.logger.info("Scanning import directory for files")
+
+    @app.cli.command()
+    def sqs():
+        """Download restored files from AWS S3."""
+
+        app.download_queue.enqueue(
+            "app.videos.sqs_retrieve_task",
+            description=f"Polling AWS SQS for files to download",
+        )
+        app.logger.info(f"Polling AWS SQS for files to download")

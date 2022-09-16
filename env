@@ -11,10 +11,11 @@ SQLALCHEMY_DATABASE_URI=
 # before any processing is done
 ARCHIVE_ORIGINAL_MEDIA=
 
-# AWS S3 connection information
+# AWS connection information
 AWS_BUCKET=
 AWS_ACCESS_KEY=
 AWS_SECRET_KEY=
+AWS_SQS_URL=
 
 # Mail server connection information
 MAIL_USERNAME=

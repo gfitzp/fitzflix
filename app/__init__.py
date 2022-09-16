@@ -133,11 +133,13 @@ def create_app(config_class=Config):
     app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
     app.task_queue = rq.Queue("fitzflix-tasks", connection=app.redis)
     app.sql_queue = rq.Queue("fitzflix-sql", connection=app.redis)
+    app.download_queue = rq.Queue("fitzflix-download", connection=app.redis)
 
     app.localize_scheduler = Scheduler("fitzflix-localize", connection=app.redis)
     app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
     app.task_scheduler = Scheduler("fitzflix-tasks", connection=app.redis)
     app.sql_scheduler = Scheduler("fitzflix-sql", connection=app.redis)
+    app.download_scheduler = Scheduler("fitzflix-download", connection=app.redis)
 
     # Configure the Redis redlock manager
 

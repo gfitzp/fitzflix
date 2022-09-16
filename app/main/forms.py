@@ -156,6 +156,10 @@ class ReviewUploadForm(FlaskForm):
     upload_submit = SubmitField("Upload Reviews")
 
 
+class S3DownloadForm(FlaskForm):
+    s3_download_submit = SubmitField("Download from AWS")
+
+
 class S3UploadForm(FlaskForm):
     s3_upload_submit = SubmitField("Upload to AWS")
 

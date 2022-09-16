@@ -7,6 +7,10 @@ import secrets
 
 from datetime import datetime
 
+import boto3
+import botocore
+
+from botocore.client import Config
 from rq.job import Job
 from rq.registry import StartedJobRegistry, ScheduledJobRegistry
 
@@ -41,6 +45,7 @@ from app.main.forms import (
     QualityFilterForm,
     ReviewExportForm,
     ReviewUploadForm,
+    S3DownloadForm,
     S3UploadForm,
     TMDBLookupForm,
     TMDBRefreshForm,
@@ -1232,6 +1237,22 @@ def file(file_id):
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
 
+    download_form = S3DownloadForm()
+    if download_form.s3_download_submit.data and download_form.validate_on_submit():
+
+        # Enqueue a restore task for this file
+
+        current_app.task_queue.enqueue(
+            "app.videos.aws_restore",
+            args=(file.aws_untouched_key,),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+        )
+        flash(
+            f"Requesting '{file.untouched_basename}' to be restored from AWS Glacier",
+            "info"
+        )
+        return redirect(url_for("main.file", file_id=file.id))
+
     # Form to delete and purge the file from the database
 
     delete_form = FileDeleteForm()
@@ -1281,7 +1302,9 @@ def file(file_id):
         mkvmerge_form=mkvmerge_form,
         transcode_form=transcode_form,
         upload_form=upload_form,
+        download_form=download_form,
         delete_form=delete_form,
+        best_file=best_file,
     )
 
 
