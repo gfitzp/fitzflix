@@ -46,10 +46,10 @@ class Config(object):
     TRANSCODES_DIR                      = os.environ.get("TRANSCODED_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
     # Application locations
-    ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/usr/local/bin/AtomicParsley"
-    HANDBRAKE_BIN                       = os.environ.get("HANDBRAKE_BIN") or "/usr/local/bin/HandBrakeCLI"
-    MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/usr/local/bin/mkvmerge"
-    MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/usr/local/bin/mkvpropedit"
+    ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/opt/homebrew/bin/AtomicParsley"
+    HANDBRAKE_BIN                       = os.environ.get("HANDBRAKE_BIN") or "/opt/homebrew/bin/HandBrakeCLI"
+    MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/opt/homebrew/bin/mkvmerge"
+    MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/opt/homebrew/bin/mkvpropedit"
 
     # AWS configuration
     ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
