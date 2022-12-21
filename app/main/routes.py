@@ -1118,7 +1118,7 @@ def file(file_id):
                 ),
                 job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
-                atfront=True,
+                at_front=True,
             )
             if mkvpropedit_job:
                 current_app.logger.info(
@@ -1187,7 +1187,7 @@ def file(file_id):
                 ),
                 job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
-                atfront=True,
+                at_front=True,
             )
             if mkvmerge_job:
                 current_app.logger.info(f"Queued '{file.basename}' for MKV remuxing")
@@ -1236,7 +1236,7 @@ def file(file_id):
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
-            atfront=True,
+            at_front=True,
         )
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
@@ -1544,7 +1544,7 @@ def admin():
             args=(),
             job_timeout="1h",
             description="Manually scanning import directory for files",
-            atfront=True,
+            at_front=True,
         )
         flash(f"Added files in import directory to import queue", "info")
         return redirect(url_for("main.admin"))
@@ -2526,7 +2526,7 @@ def queue():
             args=(),
             job_timeout="1h",
             description="Manually scanning import directory for files",
-            atfront=True,
+            at_front=True,
         )
         flash(f"Added files in import directory to import queue", "info")
         return redirect(url_for("main.queue"))
