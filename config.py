@@ -18,6 +18,7 @@ class Config(object):
     TEN_MINUTES     = ONE_MINUTE * 10
     ONE_HOUR        = ONE_MINUTE * 60
     TWO_HOURS       = ONE_HOUR * 2
+    SIX_HOURS       = ONE_HOUR * 6
     ONE_DAY         = ONE_HOUR * 24
     TWO_DAYS        = ONE_DAY * 2
 
@@ -93,7 +94,7 @@ class Config(object):
     # Task timeouts; if specifying in the .env file, set as number of seconds
     LOCALIZATION_TASK_TIMEOUT           = os.environ.get("LOCALIZATION_TASK_TIMEOUT") or ONE_DAY
     SQL_TASK_TIMEOUT                    = os.environ.get("SQL_TASK_TIMEOUT") or TEN_MINUTES
-    UPLOAD_TASK_TIMEOUT                 = os.environ.get("UPLOAD_TASK_TIMEOUT") or TWO_HOURS
+    UPLOAD_TASK_TIMEOUT                 = os.environ.get("UPLOAD_TASK_TIMEOUT") or SIX_HOURS
     TRANSCODE_TASK_TIMEOUT              = os.environ.get("TRANSCODE_TASK_TIMEOUT") or TWO_DAYS
 
     # fmt: on
