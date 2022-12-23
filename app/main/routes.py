@@ -1122,7 +1122,7 @@ def file(file_id):
             )
             if mkvpropedit_job:
                 current_app.logger.info(
-                    "Queued '{file.basename}' for MKV property edits"
+                    f"Queued '{file.basename}' for MKV property edits"
                 )
 
             flash(f"Updating MKV properties for '{file.basename}'", "info")
