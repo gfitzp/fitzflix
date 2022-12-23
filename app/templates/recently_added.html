@@ -68,7 +68,17 @@
 			<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})</a><br/>
 			{% if file.version %}{{ file.version }}<br/>{% endif %}
 			{% if file.feature_type_id %}{{ file.feature_type.feature_type }} - {{ file.plex_title }}<br/>{% endif %}
-			{{ file.quality.quality_title }}
+			{{ file.quality.quality_title }}<br/>
+			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge badge-warning">
+				{% elif track.default == 1 %}<span class="badge badge-success">
+				{% else %}<span class="badge badge-light">
+				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
+			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
+				{% if track.default == 1 %}<span class="badge badge-success">
+				{% elif track.forced == 1 %}<span class="badge badge-warning">
+				{% else %}<span class="badge badge-light">
+				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 		</div>
 	{% elif file.tv_series %}
 		{% set tv = file.tv_series %}
@@ -82,7 +92,17 @@
 			</h5>
 			<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ file.tv_series.tmdb_title if file.tv_series.tmdb_title else file.tv_series.title }}</a><br/>
 			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
-			{{ file.quality.quality_title }}
+			{{ file.quality.quality_title }}<br/>
+			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge badge-warning">
+				{% elif track.default == 1 %}<span class="badge badge-success">
+				{% else %}<span class="badge badge-light">
+				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
+			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
+				{% if track.default == 1 %}<span class="badge badge-success">
+				{% elif track.forced == 1 %}<span class="badge badge-warning">
+				{% else %}<span class="badge badge-light">
+				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 		</div>
 	{% endif %}
 </div>

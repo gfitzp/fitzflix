@@ -846,11 +846,14 @@ def finalize_localization(file_path, file_details, lock):
 
             # Set file audio track info
 
+            possibly_foreign_language = False
             for i, track in enumerate(output_audio_tracks):
                 track["file_id"] = file.id
                 track["track"] = i + 1
                 audio_track = FileAudioTrack(**track)
                 file.audio_track = audio_track
+                if track["track"] == 1 and audio_track.language not in [current_app.config["NATIVE_LANGUAGE"], "und", "zxx"]:
+                    possibly_foreign_language = True
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
@@ -1031,6 +1034,24 @@ def finalize_localization(file_path, file_details, lock):
                     ),
                     html_body=render_template(
                         "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                    ),
+                )
+
+            if possibly_foreign_language == True:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Foreign audio track added",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/possibly_foreign_audio.txt",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                    html_body=render_template(
+                        "email/possibly_foreign_audio.html",
+                        user=admin_user.email,
+                        file=file,
                     ),
                 )
 

@@ -1,0 +1,9 @@
+Hello,
+
+The file '{{ file.basename }}' was added and its first audio track was in a foreign language.
+
+Go here to to remux if necessary:
+
+{{ url_for("main.file", file_id=file.id, _external=True) }}
+
+- Fitzflix

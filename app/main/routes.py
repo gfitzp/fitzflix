@@ -118,7 +118,8 @@ def index():
     page = request.args.get("page", 1, type=int)
 
     last_week = (
-        File.query.outerjoin(Movie, (Movie.id == File.movie_id))
+        File.query.join(FileAudioTrack, (FileAudioTrack.file_id == File.id))
+        .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
             db.func.coalesce(File.date_updated, File.date_added)
@@ -128,8 +129,8 @@ def index():
     )
 
     last_ten = (
-        File.query.outerjoin(Movie, (Movie.id == File.movie_id))
-        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        File.query.join(FileAudioTrack, (FileAudioTrack.file_id == File.id))
+        .outerjoin(Movie, (Movie.id == File.movie_id))
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
         .limit(10)
     )
@@ -161,6 +162,7 @@ def index():
         "recently_added.html",
         title="Recently Added",
         recently_added=recently_added.items,
+        native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
         form=form,
         next_url=next_url,
         prev_url=prev_url,

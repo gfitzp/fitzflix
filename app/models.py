@@ -1156,10 +1156,10 @@ class File(db.Model, LibraryMixin):
     aws_untouched_date_uploaded = db.Column(db.DateTime)
     aws_untouched_date_deleted = db.Column(db.DateTime)
     subtrack = db.relationship(
-        "FileSubtitleTrack", backref="file", lazy="dynamic", cascade="all,delete"
+        "FileSubtitleTrack", backref="file", lazy="select", cascade="all,delete"
     )
     audiotrack = db.relationship(
-        "FileAudioTrack", backref="file", lazy="dynamic", cascade="all,delete"
+        "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
 
     def __repr__(self):
