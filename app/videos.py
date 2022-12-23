@@ -1351,6 +1351,36 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
         output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
         hidden_output_file = os.path.join(output_directory, f".{file.basename}")
 
+        audio_start = None
+        subtitle_start = None
+
+        media_info = MediaInfo.parse(file_path)
+        tracks = [track for track in media_info.tracks if track.track_id is not None]
+
+        current_app.logger.info("MediaInfo tracks: ", tracks)
+
+        for i, track in enumerate(tracks):
+            if track.track_type == "Audio" and audio_start == None:
+                audio_start = i
+            if track.track_type == "Text" and subtitle_start == None:
+                subtitle_start = i
+
+        current_app.logger.info(f"Audio tracks: ")
+        current_app.logger.info(audio_tracks)
+        current_app.logger.info("Subtitle tracks: ")
+        current_app.logger.info(subtitle_tracks)
+
+        current_app.logger.info(f"First audio track: {str(audio_start)}")
+        current_app.logger.info(f"First subtitle track: {str(subtitle_start)}")
+
+        audio_tracks = [audio_start + int(track) - 1 for track in audio_tracks]
+        subtitle_tracks = [subtitle_start + int(track) - 1 for track in subtitle_tracks]
+
+        current_app.logger.info("Modified audio tracks: ")
+        current_app.logger.info(audio_tracks)
+        current_app.logger.info("Modified subtitle tracks: ")
+        current_app.logger.info(subtitle_tracks)
+
         command = [
             current_app.config["MKVMERGE_BIN"],
             "-o",
@@ -1374,6 +1404,8 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             command.append("--no-subtitles")
 
         command.append(file_path)
+
+        current_app.logger.info(command)
 
         mkvmerge_process = subprocess.Popen(
             command,
