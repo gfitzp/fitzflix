@@ -2022,8 +2022,6 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"),
                 os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
             )
-            if sqs_receipt_handle:
-                current_app.logger.info("TODO: delete message from SQS queue")
             return True
 
     current_app.logger.error(
