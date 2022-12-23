@@ -84,6 +84,7 @@ def register(app):
 
         app.download_queue.enqueue(
             "app.videos.sqs_retrieve_task",
+            job_timeout="2h",
             description=f"Polling AWS SQS for files to download",
         )
         app.logger.info(f"Polling AWS SQS for files to download")
