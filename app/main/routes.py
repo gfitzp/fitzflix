@@ -1110,7 +1110,7 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvpropedit_job = current_app.localize_queue.enqueue(
+            mkvpropedit_job = current_app.mkvpropedit_queue.enqueue(
                 "app.videos.mkvpropedit_task",
                 args=(
                     file.id,
@@ -1118,9 +1118,8 @@ def file(file_id):
                     mkvpropedit_form.default_subtitle.data,
                     mkvpropedit_form.forced_subtitles.data,
                 ),
-                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
-                at_front=True,
             )
             if mkvpropedit_job:
                 current_app.logger.info(
@@ -1255,7 +1254,7 @@ def file(file_id):
         )
         flash(
             f"Requesting '{file.untouched_basename}' to be restored from AWS Glacier",
-            "info"
+            "info",
         )
         return redirect(url_for("main.file", file_id=file.id))
 
