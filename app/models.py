@@ -896,6 +896,10 @@ class User(UserMixin, db.Model):
         transcodes_running = transcodes.get_job_ids()
         tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
         tasks_running = tasks.get_job_ids()
+        mkvpropedit_tasks = StartedJobRegistry(
+            "fitzflix-mkvpropedit", connection=current_app.redis
+        )
+        mkvpropedit_tasks_running = mkvpropedit_tasks.get_job_ids()
         jobs_in_queue = (
             len(current_app.localize_queue.job_ids)
             + len(localization_tasks_running)
@@ -903,6 +907,8 @@ class User(UserMixin, db.Model):
             + len(transcodes_running)
             + len(current_app.task_queue.job_ids)
             + len(tasks_running)
+            + len(current_app.mkvpropedit_queue.job_ids)
+            + len(mkvpropedit_tasks_running)
         )
         return jobs_in_queue
 

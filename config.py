@@ -96,5 +96,6 @@ class Config(object):
     SQL_TASK_TIMEOUT                    = os.environ.get("SQL_TASK_TIMEOUT") or TEN_MINUTES
     UPLOAD_TASK_TIMEOUT                 = os.environ.get("UPLOAD_TASK_TIMEOUT") or SIX_HOURS
     TRANSCODE_TASK_TIMEOUT              = os.environ.get("TRANSCODE_TASK_TIMEOUT") or TWO_DAYS
+    MKVPROPEDIT_TASK_TIMEOUT            = os.environ.get("MKVPROPEDIT_TASK_TIMEOUT") or SIX_HOURS
 
     # fmt: on
