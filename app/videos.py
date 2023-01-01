@@ -1316,18 +1316,25 @@ def mkvpropedit_task(
 
     else:
         db.session.commit()
-        current_app.localize_queue.enqueue(
-            "app.videos.upload_task",
-            args=(
-                file.id,
+
+    if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+        try:
+            (file.aws_untouched_key, file.aws_untouched_date_uploaded,) = aws_upload(
+                file_path,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
-                True,
-            ),
-            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-            at_front=True,
-        )
-        return True
+                force_upload=True,
+                ignore_etag=True,
+            )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            raise
+
+        else:
+            db.session.commit()
+
+    return True
 
 
 def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
@@ -1479,17 +1486,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
     else:
         db.session.commit()
-        current_app.localize_queue.enqueue(
-            "app.videos.upload_task",
-            args=(
-                file.id,
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-                True,
-            ),
-            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
-            description=f"'{file.basename}'",
-            at_front=True,
-        )
+        mkvpropedit_task(file.id, 1, None, None)
         return True
 
 
