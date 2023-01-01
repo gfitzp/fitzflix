@@ -852,7 +852,11 @@ def finalize_localization(file_path, file_details, lock):
                 track["track"] = i + 1
                 audio_track = FileAudioTrack(**track)
                 file.audio_track = audio_track
-                if track["track"] == 1 and audio_track.language not in [current_app.config["NATIVE_LANGUAGE"], "und", "zxx"]:
+                if track["track"] == 1 and audio_track.language not in [
+                    current_app.config["NATIVE_LANGUAGE"],
+                    "und",
+                    "zxx",
+                ]:
                     possibly_foreign_language = True
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
@@ -2092,7 +2096,9 @@ def aws_restore(key, days=1, tier="Standard"):
 
         if response["Contents"][0]["Key"]:
             if response["Contents"][0]["StorageClass"] == "STANDARD":
-                current_app.logger.info(f"'{key}' doesn't need to be restored; attempting to download")
+                current_app.logger.info(
+                    f"'{key}' doesn't need to be restored; attempting to download"
+                )
                 current_app.download_queue.enqueue(
                     "app.videos.download_task",
                     args=(key, os.path.basename(key)),
