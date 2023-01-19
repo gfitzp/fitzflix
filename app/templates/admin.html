@@ -52,10 +52,10 @@
 <div class="row my-2">
     <div class="col-md-4">
     	<form action="" method="post">
-    		{{ prune_form.hidden_tag() }}
-    		{{ prune_form.password.label }}
-    		{{ prune_form.password(class_="form-control form-control-sm mb-2") }}
-    		{{ prune_form.prune_submit(class_="btn btn-sm btn-danger") }}
+    		{{ sync_form.hidden_tag() }}
+    		{{ sync_form.password.label }}
+    		{{ sync_form.password(class_="form-control form-control-sm mb-2") }}
+    		{{ sync_form.sync_submit(class_="btn btn-sm btn-danger") }}
     	</form>
     	<em class="small">This will delete all files that aren't in the Fitzflix database from AWS. Be <b>VERY SURE</b> you want to delete them before you click!</em>
     </div>

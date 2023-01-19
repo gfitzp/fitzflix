@@ -184,9 +184,9 @@ class MKVMergeForm(FlaskForm):
     mkvmerge_submit = SubmitField("Remux MKV File")
 
 
-class PruneAWSStorageForm(FlaskForm):
+class SyncAWSStorageForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
-    prune_submit = SubmitField("Prune AWS S3 Storage")
+    sync_submit = SubmitField("Sync AWS S3 Storage")
 
 
 class FileDeleteForm(FlaskForm):

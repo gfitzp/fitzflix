@@ -28,6 +28,8 @@ def queue_details():
         "fitzflix-mkvpropedit", connection=current_app.redis
     )
     mkvpropedit_tasks_running = mkvpropedit_tasks.get_job_ids()
+    upload_tasks = StartedJobRegistry("fitzflix-upload", connection=current_app.redis)
+    upload_tasks_running = upload_tasks.get_job_ids()
 
     details = {}
 
@@ -37,14 +39,16 @@ def queue_details():
         # We're only interested in the task and transcode queues.
 
         details["count"] = (
-            len(current_app.localize_queue.job_ids)
-            + len(localization_tasks_running)
-            + len(current_app.transcode_queue.job_ids)
+            len(localization_tasks_running)
             + len(transcodes_running)
             + len(download_tasks_running)
             + len(mkvpropedit_tasks_running)
+            + len(upload_tasks_running)
+            + len(current_app.localize_queue.job_ids)
+            + len(current_app.transcode_queue.job_ids)
+            + len(current_app.download_queue.job_ids)
             + len(current_app.mkvpropedit_queue.job_ids)
-            # + len(current_app.download_queue.job_ids)
+            + len(current_app.upload_queue.job_ids)
         )
 
         # Create list of localizations and transcodes currently running
@@ -104,6 +108,23 @@ def queue_details():
 
         for job_id in mkvpropedit_tasks_running:
             job = current_app.mkvpropedit_queue.fetch_job(job_id)
+            if job:
+                details["running"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                        "progress": (
+                            job.meta.get("progress", -1) if job is not None else 100
+                        ),
+                    }
+                )
+
+        for job_id in upload_tasks_running:
+            job = current_app.upload_queue.fetch_job(job_id)
             if job:
                 details["running"].append(
                     {
@@ -180,6 +201,20 @@ def queue_details():
                     }
                 )
 
+        for job_id in upload_tasks_running:
+            job = current_app.upload_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
         for job_id in current_app.localize_queue.job_ids:
             job = current_app.localize_queue.fetch_job(job_id)
             if job:
@@ -208,6 +243,20 @@ def queue_details():
                     }
                 )
 
+        for job_id in current_app.download_queue.job_ids:
+            job = current_app.download_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
         for job_id in current_app.mkvpropedit_queue.job_ids:
             job = current_app.mkvpropedit_queue.fetch_job(job_id)
             if job:
@@ -222,19 +271,19 @@ def queue_details():
                     }
                 )
 
-        #         for job_id in current_app.download_queue.job_ids:
-        #             job = current_app.download_queue.fetch_job(job_id)
-        #             if job:
-        #                 details["all"].append(
-        #                     {
-        #                         "id": job.id,
-        #                         "status": job.get_status(),
-        #                         "enqueued_at": job.enqueued_at,
-        #                         "started_at": job.started_at,
-        #                         "ended_at": job.ended_at,
-        #                         "description": job.meta.get("description", job.description),
-        #                     }
-        #                 )
+        for job_id in current_app.upload_queue.job_ids:
+            job = current_app.upload_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
 
         details["all"] = sorted(
             details["all"],

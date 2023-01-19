@@ -41,7 +41,7 @@ from app.main.forms import (
     MovieReviewForm,
     MovieShoppingExcludeForm,
     MovieShoppingFilterForm,
-    PruneAWSStorageForm,
+    SyncAWSStorageForm,
     QualityFilterForm,
     ReviewExportForm,
     ReviewUploadForm,
@@ -1268,7 +1268,7 @@ def file(file_id):
             # (For some reason, I can call the function in app.videos, but it silently fails)
             # For now, we just delete the local file and remove from the database;
             # the AWS file can be removed later as an unreferenced file
-            # in the Admin page with the "Prune AWS Storage" button.
+            # in the Admin page with the "Sync AWS Storage" button.
 
             # file.aws_untouched_date_deleted = aws_delete(file.aws_untouched_key)
 
@@ -1518,20 +1518,20 @@ def admin():
         flash(f"Refreshing TMDb information for entire library", "info")
         return redirect(url_for("main.admin"))
 
-    prune_form = PruneAWSStorageForm()
-    if prune_form.prune_submit.data and prune_form.validate_on_submit():
+    sync_form = SyncAWSStorageForm()
+    if sync_form.sync_submit.data and sync_form.validate_on_submit():
         if not current_user.admin:
             flash(f"Need to be an admin user for this task!", "danger")
 
-        elif current_user.check_password(prune_form.password.data):
+        elif current_user.check_password(sync_form.password.data):
             current_app.task_queue.enqueue(
-                "app.videos.prune_aws_s3_storage_task",
+                "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",
-                description=f"Pruning extra files from AWS S3 storage",
+                description=f"Syncing files from AWS S3 storage",
                 at_front=True,
             )
-            flash(f"Pruning extra files from AWS S3 storage", "info")
+            flash(f"Syncing files with AWS S3 storage", "info")
 
         else:
             flash(f"Incorrect password provided", "danger")
@@ -1557,7 +1557,7 @@ def admin():
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
-        prune_form=prune_form,
+        sync_form=sync_form,
         import_form=import_form,
     )
 
@@ -2445,80 +2445,10 @@ def tv_shopping():
 @bp.route("/queue", methods=["GET", "POST"])
 @login_required
 def queue():
-    """Show a list of all localization and transcode tasks in queue."""
+    """Show a list of all localization and transcode tasks in queue.
 
-    localizations = StartedJobRegistry(
-        "fitzflix-localize", connection=current_app.redis
-    )
-    localization_tasks_running = localizations.get_job_ids()
-    transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
-    transcode_tasks_running = transcodes.get_job_ids()
-    tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-    tasks_running = tasks.get_job_ids()
-
-    localization_queue = []
-
-    running_position = 1
-    for job_id in localization_tasks_running:
-        job = current_app.localize_queue.fetch_job(job_id)
-        if job:
-            localization_queue.append(
-                {
-                    "id": job.id,
-                    "position": running_position,
-                    "status": job.get_status(),
-                    "enqueued_at": job.enqueued_at,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                }
-            )
-            running_position = running_position + 1
-
-    for job_id in current_app.localize_queue.job_ids:
-        job = current_app.localize_queue.fetch_job(job_id)
-        if job:
-            localization_queue.append(
-                {
-                    "id": job.id,
-                    "position": int(job.get_position()) + running_position,
-                    "status": job.get_status(),
-                    "enqueued_at": job.enqueued_at,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                }
-            )
-
-    transcode_queue = []
-
-    running_position = 1
-    for job_id in transcode_tasks_running:
-        job = current_app.transcode_queue.fetch_job(job_id)
-        if job:
-            transcode_queue.append(
-                {
-                    "id": job.id,
-                    "position": running_position,
-                    "status": job.get_status(),
-                    "enqueued_at": job.enqueued_at,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                }
-            )
-            running_position = running_position + 1
-
-    for job_id in current_app.transcode_queue.job_ids:
-        job = current_app.transcode_queue.fetch_job(job_id)
-        if job:
-            transcode_queue.append(
-                {
-                    "id": job.id,
-                    "position": int(job.get_position()) + running_position,
-                    "status": job.get_status(),
-                    "enqueued_at": job.enqueued_at,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                }
-            )
+    See api.queue_details for how the queue is generated.
+    """
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
@@ -2536,8 +2466,6 @@ def queue():
         "queue.html",
         title="Queue",
         import_form=import_form,
-        localization_queue=localization_queue,
-        transcode_queue=transcode_queue,
     )
 
 

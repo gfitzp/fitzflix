@@ -1494,7 +1494,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
         return True
 
 
-def prune_aws_s3_storage_task():
+def sync_aws_s3_storage_task():
     """Remove AWS files that aren't in the library."""
 
     app.app_context().push()
@@ -1514,14 +1514,14 @@ def prune_aws_s3_storage_task():
     ) > 0:
         current_app.task_scheduler.enqueue_in(
             timedelta(minutes=5),
-            "app.videos.prune_aws_s3_storage_task",
+            "app.videos.sync_aws_s3_storage_task",
             args=None,
             job_timeout="24h",
-            description=f"Pruning extra files from AWS S3 storage",
+            description=f"Syncing files with AWS S3 storage",
             at_front=True,
         )
         current_app.logger.info(
-            "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to prune"
+            "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to sync"
         )
         return True
 
@@ -1538,27 +1538,50 @@ def prune_aws_s3_storage_task():
             )
         ]
 
+        files = File.query.all()
+
+        for i, file in enumerate(files):
+            if job:
+                job.meta["description"] = "Queuing local files for S3 upload"
+                job.meta["progress"] = int((i / len(files)) * 100)
+                job.save_meta()
+
+            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+
+            if file.aws_untouched_key not in s3_keys and os.path.isfile(file_path):
+                current_app.logger.info(
+                    f"'{file.aws_untouched_key}' Queuing for upload to AWS"
+                )
+                current_app.upload_queue.enqueue(
+                    "app.videos.upload_task",
+                    args=(
+                        file.id,
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        True,
+                    ),
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    description=f"'{file.basename}'",
+                )
+            elif file.aws_untouched_key in s3_keys:
+                current_app.logger.info(f"'{file.aws_untouched_key}' Exists in AWS S3")
+
         aws_untouched_keys = [
             aws_untouched_key
             for (aws_untouched_key,) in db.session.query(File.aws_untouched_key).all()
         ]
 
-        i = 1
-
-        for key in s3_keys:
+        for i, remote_key in enumerate(s3_keys):
             if job:
                 job.meta["description"] = "Pruning extra files from AWS S3 storage"
                 job.meta["progress"] = int((i / len(s3_keys)) * 100)
                 job.save_meta()
 
             if (
-                key not in aws_untouched_keys
-                and key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
+                remote_key not in aws_untouched_keys
+                and remote_key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
             ):
-                unreferenced_files.append(key)
-                aws_delete(key)
-
-            i = i + 1
+                unreferenced_files.append(remote_key)
+                aws_delete(remote_key)
 
         if unreferenced_files:
             admin_user = User.query.filter(User.admin == True).first()
