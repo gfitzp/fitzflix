@@ -3018,18 +3018,17 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
             # See if the requested tmdb_id already exists in the Movie table.
             # If so, we'll use that existing Movie record.
-
-            if movie.tmdb_id != None:
-                existing_movie = Movie.query.filter_by(tmdb_id=movie.tmdb_id).first()
-                if existing_movie:
-                    movie = existing_movie
-
             # If the user specified a tmdb_id, get the info for that tmdb_id.
             # If not, try to find a movie from TMDB based on the movie's title and year.
 
-            if tmdb_id:
-                movie.tmdb_movie_query(tmdb_id)
-
+            current_app.logger.info(f"tmdb_id: {tmdb_id}")
+            if tmdb_id != None:
+                existing_movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+                if existing_movie:
+                    movie = existing_movie
+                    current_app.logger.info(f"Existing movie: {movie}")
+                else:
+                    movie.tmdb_movie_query(tmdb_id)
             else:
                 movie.tmdb_movie_query()
 
