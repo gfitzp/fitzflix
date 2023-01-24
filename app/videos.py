@@ -322,7 +322,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     f"'{basename}' Parsing added statistics with MediaInfo"
                 )
                 media_info = MediaInfo.parse(file_path)
-                current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
+                current_app.logger.info(f"'{basename}' -> {media_info.to_json()}")
                 audio_tracks = get_audio_tracks_from_file(file_path)
                 subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
