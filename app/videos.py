@@ -3444,6 +3444,11 @@ def sanitize_string(
         string = string.replace("  ", " ")
 
     string = string.strip()
+
+    # Remove leading period if name begins with a period, so it won't be invisible
+    if string[0] == ".":
+        string = string[1:]
+
     return string
 
 
