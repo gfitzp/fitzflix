@@ -1110,7 +1110,7 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvpropedit_job = current_app.mkvpropedit_queue.enqueue(
+            mkvpropedit_job = current_app.file_queue.enqueue(
                 "app.videos.mkvpropedit_task",
                 args=(
                     file.id,
@@ -1179,7 +1179,7 @@ def file(file_id):
         )
 
         if file.container == "Matroska":
-            mkvmerge_job = current_app.localize_queue.enqueue(
+            mkvmerge_job = current_app.import_queue.enqueue(
                 "app.videos.mkvmerge_task",
                 args=(
                     file.id,
@@ -1228,7 +1228,7 @@ def file(file_id):
 
         # Enqueue an upload task for this file
 
-        current_app.localize_queue.enqueue(
+        current_app.import_queue.enqueue(
             "app.videos.upload_task",
             args=(
                 file.id,
@@ -1247,7 +1247,7 @@ def file(file_id):
 
         # Enqueue a restore task for this file
 
-        current_app.task_queue.enqueue(
+        current_app.request_queue.enqueue(
             "app.videos.aws_restore",
             args=(file.aws_untouched_key,),
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -1524,7 +1524,7 @@ def admin():
             flash(f"Need to be an admin user for this task!", "danger")
 
         elif current_user.check_password(sync_form.password.data):
-            current_app.task_queue.enqueue(
+            current_app.request_queue.enqueue(
                 "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",
@@ -1540,7 +1540,7 @@ def admin():
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
-        current_app.task_queue.enqueue(
+        current_app.request_queue.enqueue(
             "app.videos.manual_import_task",
             args=(),
             job_timeout="1h",
@@ -2452,7 +2452,7 @@ def queue():
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
-        current_app.task_queue.enqueue(
+        current_app.request_queue.enqueue(
             "app.videos.manual_import_task",
             args=(),
             job_timeout="1h",

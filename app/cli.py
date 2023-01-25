@@ -56,7 +56,7 @@ def register(app):
     def prune():
         """Remove unreferenced files from AWS storage."""
 
-        app.task_queue.enqueue(
+        app.request_queue.enqueue(
             "app.videos.prune_aws_s3_storage_task",
             args=None,
             job_timeout="24h",
@@ -69,7 +69,7 @@ def register(app):
     def scan():
         """Scan import directory for files to be imported."""
 
-        app.task_queue.enqueue(
+        app.request_queue.enqueue(
             "app.videos.manual_import_task",
             args=(),
             job_timeout="1h",
@@ -82,7 +82,7 @@ def register(app):
     def sqs():
         """Download restored files from AWS S3."""
 
-        app.download_queue.enqueue(
+        app.file_queue.enqueue(
             "app.videos.sqs_retrieve_task",
             job_timeout="2h",
             description=f"Polling AWS SQS for files to download",

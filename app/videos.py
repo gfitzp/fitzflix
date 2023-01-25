@@ -186,7 +186,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     f"'{basename}' Lock exists, "
                     f"returning to queue after {sleep_duration} minutes"
                 )
-                current_app.localize_scheduler.enqueue_in(
+                current_app.import_scheduler.enqueue_in(
                     timedelta(minutes=sleep_duration),
                     "app.videos.localization_task",
                     file_path=file_path,
@@ -1150,15 +1150,15 @@ def manual_import_task():
                     if lock:
                         job_queue = []
                         localization_tasks_running = StartedJobRegistry(
-                            "fitzflix-localize", connection=current_app.redis
+                            "fitzflix-import", connection=current_app.redis
                         )
                         job_queue.extend(localization_tasks_running.get_job_ids())
-                        job_queue.extend(current_app.localize_queue.job_ids)
+                        job_queue.extend(current_app.import_queue.job_ids)
                         if os.path.basename(file) not in job_queue:
                             current_app.logger.info(
                                 f"'{os.path.basename(file)}' Found in import directory"
                             )
-                            job = current_app.localize_queue.enqueue(
+                            job = current_app.import_queue.enqueue(
                                 "app.videos.localization_task",
                                 args=(
                                     os.path.join(
@@ -1500,19 +1500,19 @@ def sync_aws_s3_storage_task():
     app.app_context().push()
 
     localizations = StartedJobRegistry(
-        "fitzflix-localize", connection=current_app.redis
+        "fitzflix-import", connection=current_app.redis
     )
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()
 
     if (
-        len(current_app.localize_queue.job_ids)
+        len(current_app.import_queue.job_ids)
         + len(localization_tasks_running)
         + len(current_app.transcode_queue.job_ids)
         + len(transcodes_running)
     ) > 0:
-        current_app.task_scheduler.enqueue_in(
+        current_app.request_scheduler.enqueue_in(
             timedelta(minutes=5),
             "app.videos.sync_aws_s3_storage_task",
             args=None,
@@ -1552,7 +1552,7 @@ def sync_aws_s3_storage_task():
                 current_app.logger.info(
                     f"'{file.aws_untouched_key}' Queuing for upload to AWS"
                 )
-                current_app.upload_queue.enqueue(
+                current_app.file_queue.enqueue(
                     "app.videos.upload_task",
                     args=(
                         file.id,
@@ -2122,7 +2122,7 @@ def aws_restore(key, days=1, tier="Standard"):
                 current_app.logger.info(
                     f"'{key}' doesn't need to be restored; attempting to download"
                 )
-                current_app.download_queue.enqueue(
+                current_app.file_queue.enqueue(
                     "app.videos.download_task",
                     args=(key, os.path.basename(key)),
                     job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
@@ -3269,7 +3269,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
                             if storage_class == "STANDARD":
 
-                                current_app.task_queue.enqueue(
+                                current_app.request_queue.enqueue(
                                     "app.videos.rename_task",
                                     args=(
                                         old_record.id,
@@ -3311,7 +3311,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                 # Standard restoration takes up to 12 hours,
                                 # so schedule the restoration to take place in 13 hours
 
-                                current_app.task_scheduler.enqueue_in(
+                                current_app.request_scheduler.enqueue_in(
                                     timedelta(hours=13),
                                     "app.videos.rename_task",
                                     file_id=old_record.id,

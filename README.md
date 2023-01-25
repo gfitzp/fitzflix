@@ -76,7 +76,7 @@ rqscheduler
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-tasks
+rq worker fitzflix-user-request
 ```
 
 ```

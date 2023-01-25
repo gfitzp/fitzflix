@@ -867,51 +867,6 @@ class User(UserMixin, db.Model):
             return
         return User.query.get(id)
 
-    def get_tasks_in_progress(self):
-        tasks = StartedJobRegistry("fitzflix-queue", connection=current_app.redis)
-        tasks_running = tasks.get_job_ids()
-        details = []
-        for job_id in tasks_running:
-            job = current_app.task_queue.fetch_job(job_id)
-            if job:
-                details.append(
-                    {
-                        "job": job_id,
-                        "description": job.description,
-                        "progress": (
-                            job.meta.get("progress", 0) if job is not None else 100
-                        ),
-                    }
-                )
-        return details
-
-    def get_queue_count(self):
-        localizations = StartedJobRegistry(
-            "fitzflix-localize", connection=current_app.redis
-        )
-        localization_tasks_running = localizations.get_job_ids()
-        transcodes = StartedJobRegistry(
-            "fitzflix-transcode", connection=current_app.redis
-        )
-        transcodes_running = transcodes.get_job_ids()
-        tasks = StartedJobRegistry("fitzflix-tasks", connection=current_app.redis)
-        tasks_running = tasks.get_job_ids()
-        mkvpropedit_tasks = StartedJobRegistry(
-            "fitzflix-mkvpropedit", connection=current_app.redis
-        )
-        mkvpropedit_tasks_running = mkvpropedit_tasks.get_job_ids()
-        jobs_in_queue = (
-            len(current_app.localize_queue.job_ids)
-            + len(localization_tasks_running)
-            + len(current_app.transcode_queue.job_ids)
-            + len(transcodes_running)
-            + len(current_app.task_queue.job_ids)
-            + len(tasks_running)
-            + len(current_app.mkvpropedit_queue.job_ids)
-            + len(mkvpropedit_tasks_running)
-        )
-        return jobs_in_queue
-
 
 class UserMovieReview(db.Model):
     id = db.Column(db.Integer, primary_key=True)

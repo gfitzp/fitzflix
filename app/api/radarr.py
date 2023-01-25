@@ -116,7 +116,7 @@ def radarr_add():
         # directory but that wasn't supported on my NAS, so just sending the downloaded
         # file directly to Radarr to be imported in place
 
-        job = current_app.localize_queue.enqueue(
+        job = current_app.import_queue.enqueue(
             "app.videos.localization_task",
             args=(radarr_file_path,),
             job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],

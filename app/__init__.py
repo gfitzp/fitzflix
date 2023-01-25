@@ -54,10 +54,10 @@ def create_app(config_class=Config):
                 if lock:
                     job_queue = []
                     localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=app.redis
+                        "fitzflix-import", connection=app.redis
                     )
                     job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(app.localize_queue.job_ids)
+                    job_queue.extend(app.import_queue.job_ids)
                     app.logger.debug(job_queue)
 
                     # Use the file basename as the job id, so we can see if this file is
@@ -67,7 +67,7 @@ def create_app(config_class=Config):
                         app.logger.info(
                             f"'{os.path.basename(event.dest_path)}' Found in import directory"
                         )
-                        job = app.localize_queue.enqueue(
+                        job = app.import_queue.enqueue(
                             "app.videos.localization_task",
                             args=(event.dest_path,),
                             job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
@@ -91,10 +91,10 @@ def create_app(config_class=Config):
                 if lock:
                     job_queue = []
                     localization_tasks_running = StartedJobRegistry(
-                        "fitzflix-localize", connection=app.redis
+                        "fitzflix-import", connection=app.redis
                     )
                     job_queue.extend(localization_tasks_running.get_job_ids())
-                    job_queue.extend(app.localize_queue.job_ids)
+                    job_queue.extend(app.import_queue.job_ids)
                     app.logger.debug(job_queue)
 
                     # Use the file basename as the job id, so we can see if this file is
@@ -104,7 +104,7 @@ def create_app(config_class=Config):
                         app.logger.info(
                             f"'{os.path.basename(event.src_path)}' Found in import directory"
                         )
-                        job = app.localize_queue.enqueue(
+                        job = app.import_queue.enqueue(
                             "app.videos.localization_task",
                             args=(event.src_path,),
                             job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
@@ -130,20 +130,16 @@ def create_app(config_class=Config):
 
     app.redis = Redis.from_url(app.config["REDIS_URL"])
     app.sql_queue = rq.Queue("fitzflix-sql", connection=app.redis)
-    app.task_queue = rq.Queue("fitzflix-tasks", connection=app.redis)
-    app.localize_queue = rq.Queue("fitzflix-localize", connection=app.redis)
+    app.request_queue = rq.Queue("fitzflix-user-request", connection=app.redis)
+    app.import_queue = rq.Queue("fitzflix-import", connection=app.redis)
     app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
-    app.download_queue = rq.Queue("fitzflix-download", connection=app.redis)
-    app.mkvpropedit_queue = rq.Queue("fitzflix-mkvpropedit", connection=app.redis)
-    app.upload_queue = rq.Queue("fitzflix-upload", connection=app.redis)
+    app.file_queue = rq.Queue("fitzflix-file-operation", connection=app.redis)
 
     app.sql_scheduler = Scheduler("fitzflix-sql", connection=app.redis)
-    app.task_scheduler = Scheduler("fitzflix-tasks", connection=app.redis)
-    app.localize_scheduler = Scheduler("fitzflix-localize", connection=app.redis)
+    app.request_scheduler = Scheduler("fitzflix-user-request", connection=app.redis)
+    app.import_scheduler = Scheduler("fitzflix-import", connection=app.redis)
     app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
-    app.download_scheduler = Scheduler("fitzflix-download", connection=app.redis)
-    app.mkvpropedit_scheduler = Scheduler("fitzflix-mkvpropedit", connection=app.redis)
-    app.upload_scheduler = Scheduler("fitzflix-upload", connection=app.redis)
+    app.file_scheduler = Scheduler("fitzflix-file-operation", connection=app.redis)
 
     # Configure the Redis redlock manager
 
