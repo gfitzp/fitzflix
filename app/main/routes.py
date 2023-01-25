@@ -1228,7 +1228,7 @@ def file(file_id):
 
         # Enqueue an upload task for this file
 
-        current_app.import_queue.enqueue(
+        current_app.file_queue.enqueue(
             "app.videos.upload_task",
             args=(
                 file.id,
@@ -1524,7 +1524,7 @@ def admin():
             flash(f"Need to be an admin user for this task!", "danger")
 
         elif current_user.check_password(sync_form.password.data):
-            current_app.request_queue.enqueue(
+            current_app.sql_queue.enqueue(
                 "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",

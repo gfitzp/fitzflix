@@ -80,9 +80,9 @@
 <div class="container mt-2 mb-2">
 	{% if current_user.is_authenticated %}
  	<div id="running-tasks">
- 		{% with tasks = current_user.get_tasks_in_progress() %}
+ 		{% with tasks = current_user.get_queue_details() %}
  		{% if tasks %}
- 			{% for task in tasks %}
+ 			{% for task in tasks.running %}
  			<div class="alert alert-info mt-3" role="alert" id="{{ task.id }}">{{ task.description }}...</div>
  			{% endfor %}
  		{% endif %}

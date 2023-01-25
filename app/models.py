@@ -867,6 +867,183 @@ class User(UserMixin, db.Model):
             return
         return User.query.get(id)
 
+    def get_queue_details(self):
+        imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
+        imports_running = imports.get_job_ids()
+        transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+        transcodes_running = transcodes.get_job_ids()
+        file_operations = StartedJobRegistry("fitzflix-file-operation", connection=current_app.redis)
+        file_operations_running = file_operations.get_job_ids()
+
+        details = {}
+        details["count"] = self.get_queue_count()
+        details["running"] = []
+
+        for job_id in imports_running:
+            job = current_app.import_queue.fetch_job(job_id)
+            if job:
+                details["running"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                        "progress": (
+                            job.meta.get("progress", -1) if job is not None else 100
+                        ),
+                    }
+                )
+
+        for job_id in transcodes_running:
+            job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["running"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                        "progress": (
+                            job.meta.get("progress", -1) if job is not None else 100
+                        ),
+                    }
+                )
+
+        for job_id in file_operations_running:
+            job = current_app.file_queue.fetch_job(job_id)
+            if job:
+                details["running"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                        "progress": (
+                            job.meta.get("progress", -1) if job is not None else 100
+                        ),
+                    }
+                )
+
+        details["running"] = sorted(details["running"], key=lambda d: d["started_at"])
+
+        # Create list of all localizations and transcodes in queue
+
+        details["all"] = []
+        for job_id in imports_running:
+            job = current_app.import_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in transcodes_running:
+            job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in file_operations_running:
+            job = current_app.file_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in current_app.import_queue.job_ids:
+            job = current_app.import_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in current_app.transcode_queue.job_ids:
+            job = current_app.transcode_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        for job_id in current_app.file_queue.job_ids:
+            job = current_app.file_queue.fetch_job(job_id)
+            if job:
+                details["all"].append(
+                    {
+                        "id": job.id,
+                        "status": job.get_status(),
+                        "enqueued_at": job.enqueued_at,
+                        "started_at": job.started_at,
+                        "ended_at": job.ended_at,
+                        "description": job.meta.get("description", job.description),
+                    }
+                )
+
+        details["all"] = sorted(
+            details["all"],
+            key=lambda d: (
+                d["started_at"] is None,
+                d["started_at"],
+                d["enqueued_at"] is None,
+                d["enqueued_at"],
+            ),
+        )
+
+        for i, task in enumerate(details["all"]):
+            details["all"][i]["position"] = i + 1
+
+        return details
+
+    def get_queue_count(self):
+        imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
+        imports_running = imports.get_job_ids()
+        transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+        transcodes_running = transcodes.get_job_ids()
+        file_operations = StartedJobRegistry("fitzflix-file-operation", connection=current_app.redis)
+        file_operations_running = file_operations.get_job_ids()
+        jobs_in_queue = len(imports_running) + len(transcodes_running) + len(file_operations_running) + len(current_app.import_queue.job_ids) + len(current_app.transcode_queue.job_ids) + len(current_app.file_queue.job_ids)
+        return jobs_in_queue
+
 
 class UserMovieReview(db.Model):
     id = db.Column(db.Integer, primary_key=True)
