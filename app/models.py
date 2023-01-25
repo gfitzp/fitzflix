@@ -870,9 +870,13 @@ class User(UserMixin, db.Model):
     def get_queue_details(self):
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
         imports_running = imports.get_job_ids()
-        transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+        transcodes = StartedJobRegistry(
+            "fitzflix-transcode", connection=current_app.redis
+        )
         transcodes_running = transcodes.get_job_ids()
-        file_operations = StartedJobRegistry("fitzflix-file-operation", connection=current_app.redis)
+        file_operations = StartedJobRegistry(
+            "fitzflix-file-operation", connection=current_app.redis
+        )
         file_operations_running = file_operations.get_job_ids()
 
         details = {}
@@ -1037,11 +1041,22 @@ class User(UserMixin, db.Model):
     def get_queue_count(self):
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
         imports_running = imports.get_job_ids()
-        transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
+        transcodes = StartedJobRegistry(
+            "fitzflix-transcode", connection=current_app.redis
+        )
         transcodes_running = transcodes.get_job_ids()
-        file_operations = StartedJobRegistry("fitzflix-file-operation", connection=current_app.redis)
+        file_operations = StartedJobRegistry(
+            "fitzflix-file-operation", connection=current_app.redis
+        )
         file_operations_running = file_operations.get_job_ids()
-        jobs_in_queue = len(imports_running) + len(transcodes_running) + len(file_operations_running) + len(current_app.import_queue.job_ids) + len(current_app.transcode_queue.job_ids) + len(current_app.file_queue.job_ids)
+        jobs_in_queue = (
+            len(imports_running)
+            + len(transcodes_running)
+            + len(file_operations_running)
+            + len(current_app.import_queue.job_ids)
+            + len(current_app.transcode_queue.job_ids)
+            + len(current_app.file_queue.job_ids)
+        )
         return jobs_in_queue
 
 

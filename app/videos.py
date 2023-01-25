@@ -1499,9 +1499,7 @@ def sync_aws_s3_storage_task():
 
     app.app_context().push()
 
-    localizations = StartedJobRegistry(
-        "fitzflix-import", connection=current_app.redis
-    )
+    localizations = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
     localization_tasks_running = localizations.get_job_ids()
     transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
     transcodes_running = transcodes.get_job_ids()
