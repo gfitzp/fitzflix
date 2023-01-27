@@ -1530,7 +1530,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
 
 def sync_aws_s3_storage_task():
-    """Remove AWS files that aren't in the library."""
+    """Add files to AWS, and remove files that aren't in the library."""
 
     app.app_context().push()
 

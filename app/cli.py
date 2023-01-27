@@ -53,11 +53,11 @@ def register(app):
             app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
 
     @app.cli.command()
-    def prune():
-        """Remove unreferenced files from AWS storage."""
+    def sync():
+        """Sync library with AWS storage."""
 
         app.request_queue.enqueue(
-            "app.videos.prune_aws_s3_storage_task",
+            "app.videos.sync_aws_s3_storage_task",
             args=None,
             job_timeout="24h",
             description=f"Pruning extra files from AWS S3 storage",
