@@ -909,7 +909,11 @@ def finalize_localization(file_path, file_details, lock):
                     # but it's not marked as forced, speculate that it might be a forced
                     # subtitle track
 
-                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
+                    if (
+                        track_length > 0
+                        and track_length <= (main_subtitle_track * 0.3)
+                        and not forced_flag
+                    ):
                         current_app.logger.warning(
                             f"{file} Subtitle track {i+2} has {track_length} elements "
                             f"and may be a forced subtitle track!"
