@@ -57,7 +57,7 @@ Update `command`, `directory`, and `user` fields in `fitzflix_supervisor.ini` fi
 
 ```
 brew install supervisor &&
-cp fitzflix_supervisor.ini /usr/local/etc/supervisor.d/ &&
+cp fitzflix_supervisor.ini /opt/homebrew/etc/supervisor.d/ &&
 brew services start supervisor
 ```
 
@@ -74,6 +74,15 @@ rqscheduler
 
 #### Workers
 
+Run a max of 1 SQL worker so database operations are properly serialized.
+
+```
+source venv/bin/activate &&
+rq worker fitzflix-sql
+```
+
+Vary the number of following workers according to needs:
+
 ```
 source venv/bin/activate &&
 rq worker fitzflix-user-request
@@ -81,14 +90,17 @@ rq worker fitzflix-user-request
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-transcode
+rq worker fitzflix-import fitzflix-file-operation
 ```
-
-Run a max of 1 SQL worker.
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-sql
+rq worker fitzflix-transcode fitzflix-import fitzflix-file-operation
+```
+
+```
+source venv/bin/activate &&
+rq worker fitzflix-file-operation fitzflix-import
 ```
 
 ### Flask
