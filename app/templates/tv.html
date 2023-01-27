@@ -3,7 +3,7 @@
 {% block app_content %}
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}">TV Shows</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}#{{ tv.id }}">TV Shows</a></li>
 		<li class="breadcrumb-item active" aria-current="page">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</li>
 	</ol>
 </nav>
