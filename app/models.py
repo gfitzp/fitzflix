@@ -1689,6 +1689,7 @@ class FileAudioTrack(db.Model):
     format = db.Column(db.String(64))
     channels = db.Column(db.String(64))
     default = db.Column(db.Boolean)
+    streamorder = db.Column(db.Integer, nullable=False)
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 
@@ -1705,6 +1706,7 @@ class FileSubtitleTrack(db.Model):
     elements = db.Column(db.Integer, nullable=False)
     default = db.Column(db.Boolean)
     forced = db.Column(db.Boolean)
+    streamorder = db.Column(db.Integer, nullable=False)
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 

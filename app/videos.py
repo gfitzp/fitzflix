@@ -394,6 +394,25 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                         f"'{basename}' Non-native audio, "
                         f"but '{native_language}' subtitles are present"
                     )
+
+                    default_subtitle_tracks = []
+
+                    # Turn on the first native-language subtitle track
+                    for i, track in enumerate(subtitle_tracks):
+                        if track["language"] == native_language:
+                            default_subtitle_tracks.extend(
+                                ["--default-track-flag", f"{track['streamorder']}:1"]
+                            )
+                            first_native_language_sub_track = i
+                            break
+
+                    # Turn off all the subsequent native-language subtitle tracks
+                    for track in subtitle_tracks[i + 1 :]:
+                        if track["language"] == native_language:
+                            default_subtitle_tracks.extend(
+                                ["--default-track-flag", f"{track['streamorder']}:0"]
+                            )
+
                     mkvmerge_process = subprocess.Popen(
                         [
                             current_app.config["MKVMERGE_BIN"],
@@ -403,6 +422,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             output_audio_langs,
                             "-s",
                             native_language,
+                        ]
+                        + default_subtitle_tracks
+                        + [
                             "--title",
                             "",
                             "--track-name",
@@ -423,6 +445,16 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     current_app.logger.info(
                         f"'{basename}' '{native_language}' audio and subtitles"
                     )
+
+                    default_subtitle_tracks = []
+
+                    # Since it has native-language audio, turn off all subtitle tracks
+                    for track in subtitle_tracks:
+                        if track["language"] == native_language:
+                            default_subtitle_tracks.extend(
+                                ["--default-track-flag", f"{track['streamorder']}:0"]
+                            )
+
                     mkvmerge_process = subprocess.Popen(
                         [
                             current_app.config["MKVMERGE_BIN"],
@@ -432,6 +464,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             output_audio_langs,
                             "-s",
                             native_language,
+                        ]
+                        + default_subtitle_tracks
+                        + [
                             "--title",
                             "",
                             "--track-name",
@@ -2671,6 +2706,7 @@ def get_audio_tracks_from_file(file_path):
             else:
                 audio_track["language"] = language[3]
 
+            audio_track["streamorder"] = int(track.to_data().get("streamorder"))
             audio_track["format"] = track.to_data().get("format")
             audio_track["channels"] = int(track.to_data().get("channel_s"))
             audio_track["default"] = (
@@ -2856,6 +2892,7 @@ def get_subtitle_tracks_from_file(file_path):
             else:
                 subtitle_track["language"] = language[3]
 
+            subtitle_track["streamorder"] = int(track.to_data().get("streamorder"))
             subtitle_track["elements"] = int(
                 track.to_data().get("count_of_elements", 0)
             )
