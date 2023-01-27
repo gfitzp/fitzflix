@@ -18,8 +18,6 @@ def queue_details():
 
     if current_user.is_authenticated:
 
-        current_app.logger.info(current_user.get_queue_details())
-
         return jsonify(current_user.get_queue_details())
 
     else:
