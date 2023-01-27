@@ -80,9 +80,9 @@ def register(app):
 
     @app.cli.command()
     def sqs():
-        """Download restored files from AWS S3."""
+        """Check for restored files at AWS S3."""
 
-        app.file_queue.enqueue(
+        app.request_queue.enqueue(
             "app.videos.sqs_retrieve_task",
             job_timeout="2h",
             description=f"Polling AWS SQS for files to download",

@@ -1898,7 +1898,7 @@ def transcode_task(file_id):
     return True
 
 
-def download_task(key, basename):
+def download_task(key, basename, sqs_receipt_handle=None):
     """Download a file from AWS S3 storage."""
 
     app.app_context().push()
@@ -1909,7 +1909,7 @@ def download_task(key, basename):
         current_app.logger.info(
             f"Starting download of '{basename}' from AWS S3 storage"
         )
-        aws_download(key, basename)
+        aws_download(key, basename, sqs_receipt_handle)
 
     except Exception:
         current_app.logger.error(traceback.format_exc())
@@ -1922,6 +1922,7 @@ def sqs_retrieve_task():
     """Poll AWS SQS for possible files ready to download."""
 
     app.app_context().push()
+    current_app.logger.info("Checking AWS SQS...")
 
     sqs_client = boto3.client(
         "sqs",
@@ -1934,15 +1935,13 @@ def sqs_retrieve_task():
         AttributeNames=["SentTimestamp"],
         MaxNumberOfMessages=1,
         MessageAttributeNames=["All"],
-        VisibilityTimeout=7200,
+        VisibilityTimeout=43200,
         WaitTimeSeconds=0,
     )
 
     current_app.logger.info(response)
 
     while response.get("Messages"):
-
-        job = get_current_job()
 
         response_body = json.loads(response["Messages"][0]["Body"])
 
@@ -1954,25 +1953,19 @@ def sqs_retrieve_task():
         current_app.logger.info(receipt_handle)
         current_app.logger.info(key)
 
-        try:
-            aws_download(key, os.path.basename(key), receipt_handle)
-
-        except:
-            current_app.logger.info(f"Unable to download '{os.path.basename(key)}'!")
-
-        else:
-            response = sqs_client.delete_message(
-                QueueUrl=current_app.config["AWS_SQS_URL"], ReceiptHandle=receipt_handle
-            )
-            current_app.logger.info(response)
-            current_app.logger.info(f"Deleted message '{receipt_handle}' from SQS")
+        current_app.file_queue.enqueue(
+            "app.videos.download_task",
+            args=(key, os.path.basename(key), receipt_handle),
+            job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+            description=f"'{os.path.basename(key)}' — Downloading from AWS",
+        )
 
         response = sqs_client.receive_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
             AttributeNames=["SentTimestamp"],
             MaxNumberOfMessages=1,
             MessageAttributeNames=["All"],
-            VisibilityTimeout=7200,
+            VisibilityTimeout=43200,
             WaitTimeSeconds=0,
         )
 
@@ -2052,7 +2045,12 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
         aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
     )
-    current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
+    sqs_client = boto3.client(
+        "sqs",
+        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        region_name="us-east-1",
+    )
 
     while retry > 0:
         try:
@@ -2074,11 +2072,30 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         else:
             current_app.logger.info(f"'{basename}' downloaded from AWS S3 storage")
 
-            # TODO: do proper rename when complete
             os.rename(
                 os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"),
                 os.path.join(current_app.config["IMPORT_DIR"], f"{basename}"),
             )
+
+            if sqs_receipt_handle:
+                try:
+                    response = sqs_client.delete_message(
+                        QueueUrl=current_app.config["AWS_SQS_URL"],
+                        ReceiptHandle=sqs_receipt_handle,
+                    )
+                    current_app.logger.info(response)
+
+                except:
+                    current_app.logger.warn(
+                        f"Unable to delete message '{sqs_receipt_handle}' from SQS"
+                    )
+                    return False
+
+                else:
+                    current_app.logger.info(
+                        f"Deleted message '{sqs_receipt_handle}' from SQS"
+                    )
+
             return True
 
     current_app.logger.error(
