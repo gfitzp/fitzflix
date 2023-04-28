@@ -33,7 +33,7 @@ pymediainfo==5.1.0
 python-dateutil==2.8.1
 python-dotenv==0.17.1
 python-editor==1.0.4
-redis==3.5.3
+redis==4.4.4
 redlock-py==1.0.8
 requests==2.26.0
 rq==1.8.1
