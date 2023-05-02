@@ -158,24 +158,6 @@ def create_app(config_class=Config):
 
     ProxyFix(app, x_proto=1, x_host=1, x_prefix=1)
 
-    # Build blueprints
-
-    from app.errors import bp as errors_bp
-
-    app.register_blueprint(errors_bp)
-
-    from app.auth import bp as auth_bp
-
-    app.register_blueprint(auth_bp, url_prefix="/auth")
-
-    from app.main import bp as main_bp
-
-    app.register_blueprint(main_bp)
-
-    from app.api import bp as api_bp
-
-    app.register_blueprint(api_bp, url_prefix="/api")
-
     from app import models, videos
 
     if not app.debug:
