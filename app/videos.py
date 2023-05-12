@@ -2188,7 +2188,7 @@ def aws_restore(key, days=1, tier="Standard"):
             else:
                 response = s3_client.restore_object(
                     Bucket=current_app.config["AWS_BUCKET"],
-                    Key=self.aws_untouched_key,
+                    Key=key,
                     RestoreRequest={
                         "Days": 1,
                         "GlacierJobParameters": {"Tier": "Standard"},
@@ -2196,13 +2196,13 @@ def aws_restore(key, days=1, tier="Standard"):
                 )
                 current_app.logger.info(response)
 
-    except boto3.exceptions.RestoreAlreadyInProgress as e:
-        current_app.logger.info(f"'{key}' is already in process of being restored")
-        return
-
     except Exception as e:
-        current_app.logger.error(e)
-        raise
+        if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
+            current_app.logger.info(f"'{key}' is already in process of being restored")
+
+        else:
+            current_app.logger.error(e)
+            raise
 
     else:
         current_app.logger.info(
