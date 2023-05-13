@@ -1249,40 +1249,48 @@ def mkvpropedit_task(
         audio_tracks = get_audio_tracks_from_file(file_path)
         subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
+        current_app.logger.info(f"{file.basename} file_id: {file_id}")
+        current_app.logger.info(f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}")
+        current_app.logger.info(f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}")
+        current_app.logger.info(f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}")
+
         audio_track_arguments = []
         subtitle_track_arguments = []
         for track_id, track in enumerate(audio_tracks, 1):
-            if str(track_id) == default_audio_track:
+            if int(track_id) == int(default_audio_track):
                 audio_track_arguments.append(
                     f"--edit track:a{track_id} --set flag-default=1"
                 )
 
             else:
                 audio_track_arguments.append(
-                    f"--edit track:a{track_id} --set flag-default=0"
+                    f"--edit track:a{str(track_id)} --set flag-default=0"
                 )
 
         if default_subtitle_track or forced_subtitle_tracks:
             for track_id, track in enumerate(subtitle_tracks, 1):
-                if str(track_id) == default_subtitle_track:
+                if int(track_id) == int(default_subtitle_track):
                     subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-default=1"
+                        f"--edit track:s{str(track_id)} --set flag-default=1"
                     )
 
                 else:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-default=0"
+                        f"--edit track:s{str(track_id)} --set flag-default=0"
                     )
 
-                if str(track_id) in forced_subtitle_tracks:
+                if track_id in forced_subtitle_tracks:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-forced=1"
+                        f"--edit track:s{str(track_id)} --set flag-forced=1"
                     )
 
                 else:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-forced=0"
+                        f"--edit track:s{str(track_id)} --set flag-forced=0"
                     )
+
+        current_app.logger.info(f"{file.basename} audio_track_arguments: {audio_track_arguments}")
+        current_app.logger.info(f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}")
 
         # subprocess expects an array of arguments,
         # so we need to split the arguments on spaces
@@ -1293,7 +1301,7 @@ def mkvpropedit_task(
         for arg in subtitle_track_arguments:
             localization_arguments.extend(arg.split())
 
-        current_app.logger.info(localization_arguments)
+        current_app.logger.info(f"{file.basename} localization_arguments: {localization_arguments}")
 
         mkvpropedit_task = subprocess.Popen(
             [
