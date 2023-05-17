@@ -45,10 +45,11 @@
 					<h6><a href="{{ url_for('main.season', series_id=tv.id, season=season.season) }}"><span class="text-body">{% if season.season == 0 %}Specials{% else %}Season {{ season.season }}{% endif %}</span></a></h6>
 					<p class="mt-n2"><span class="text-muted">{{ season.instruction }}</span></p>
 					{% if season.instruction != "Already owned" %}
-						<div class="dropdown show mt-n2">
-							<a class="btn btn-primary btn-sm dropdown-toggle" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-								Find
-							</a>
+						<div class="btn-group mt-n2">
+							<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on&submit=Search&action=search" rel="noreferrer">Find</a>
+							<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-toggle="dropdown" aria-expanded="false">
+								<span class="sr-only">Toggle dropdown</span>
+							</button>
 							{% include "_shopping_search_dropdown.html" %}
 						</div>
 					{% endif %}

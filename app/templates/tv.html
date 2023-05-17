@@ -32,8 +32,11 @@
 	</div>
 	{% endif %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
-		<div class="dropdown show">
-			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Find</a>
+		<div class="btn-group show btn-block">
+			<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on&submit=Search&action=search" rel="noreferrer">Find</a>
+			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-expanded="false">
+				<span class="sr-only">Toggle dropdown</span>
+			</button>
 			{% include "_shopping_search_dropdown.html" %}
 		</div>
 	</div>
