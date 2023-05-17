@@ -763,8 +763,8 @@ def finalize_localization(file_path, file_details, lock):
             # Put the final touches on the output file and move it into place
 
             if file_details.get("container") == "Matroska":
-
                 # Set the first audio track as default
+                # TODO: set all other audio tracks as flag-default=0
 
                 if len(output_audio_tracks) >= 1:
                     current_app.logger.info(
@@ -1588,7 +1588,10 @@ def mkvpropedit_task(
 
     if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
         try:
-            (file.aws_untouched_key, file.aws_untouched_date_uploaded,) = aws_upload(
+            (
+                file.aws_untouched_key,
+                file.aws_untouched_date_uploaded,
+            ) = aws_upload(
                 file_path,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
                 force_upload=True,
@@ -2174,7 +2177,6 @@ def sqs_retrieve_task():
     current_app.logger.info(response)
 
     while response.get("Messages"):
-
         response_body = json.loads(response["Messages"][0]["Body"])
 
         receipt_handle = response["Messages"][0]["ReceiptHandle"]
@@ -2480,7 +2482,6 @@ def aws_upload(
     # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
 
     if not force_upload:
-
         if response.get("Contents"):
             for object in response.get("Contents"):
                 if object.get("Key") == key:
@@ -2576,7 +2577,6 @@ def calculate_etag(file_path):
 
     file_size = os.path.getsize(file_path)
     if file_size < EIGHT_MEGABYTES:
-
         # The file is less than 8 MB, so read the file in one go, and return its MD5 hash
 
         with open(file_path, "rb") as f:
@@ -2591,7 +2591,6 @@ def calculate_etag(file_path):
 
         with open(file_path, "rb") as f:
             for chunk in iter(lambda: f.read(EIGHT_MEGABYTES), b""):
-
                 # Concatenate all of the MD5 hashes together
                 md5_digests.append(hashlib.md5(chunk).digest())
                 progress = int((f.tell() / file_size) * 100)
@@ -2753,7 +2752,6 @@ def evaluate_filename(file_path):
             r.raise_for_status()
 
         except Exception:
-
             # Don't let a TMDb API issue prevent us from importing the file
 
             current_app.logger.warning(traceback.format_exc())
@@ -2826,7 +2824,6 @@ def evaluate_filename(file_path):
             special_feature_types = [result[0] for result in special_feature_types]
 
             if fullscreen == True:
-
                 # Rearrange "Full Screen" in the version string.
                 # I'd like "Full Screen" to go at the end of the version string
                 # if there's no special feature type:
@@ -2859,7 +2856,6 @@ def evaluate_filename(file_path):
                     version_strings.append("Full Screen")
 
             for type in special_feature_types:
-
                 # If it has a special feature identifier, get everything after the
                 # identifier, and use that as the name of the special feature
 
@@ -3275,7 +3271,6 @@ def refresh_criterion_collection_info(movie_id=None):
 
         for movie in movies:
             for release in criterion_collection:
-
                 # See if the title and year for movies in our library match what we
                 # scraped from Wikipedia. If so, update it with Criterion release info.
 
@@ -3316,7 +3311,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
         job = get_current_job()
 
         if library == "Movies":
-
             # Get the Movie record to be updated
 
             movie = Movie.query.filter_by(id=id).first()
@@ -3366,7 +3360,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 old_files = File.query.filter_by(movie_id=original_movie_id).all()
 
                 for old_record in old_files:
-
                     # Reconstruct the original filename but with the new movie title/year
 
                     basename, extension = os.path.splitext(old_record.basename)
@@ -3452,7 +3445,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     )
 
                     for each_best_file in best_files:
-
                         # Look at each best file, and identify all of their worse ones
 
                         worse_files = each_best_file.find_worse_files()
@@ -3549,7 +3541,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                             old_record.aws_untouched_key
                             and old_record.aws_untouched_date_uploaded
                         ):
-
                             config = Config(
                                 connect_timeout=20,
                                 retries={"mode": "standard", "max_attempts": 10},
@@ -3580,7 +3571,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                         storage_class = object.get("StorageClass")
 
                             if storage_class == "STANDARD":
-
                                 current_app.request_queue.enqueue(
                                     "app.videos.rename_task",
                                     args=(
@@ -3597,7 +3587,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                 )
 
                             else:
-
                                 # Request the old object to be restored at AWS
 
                                 s3_client = boto3.client(
@@ -3640,7 +3629,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 db.session.commit()
 
                 if updated_movie_id != original_movie_id:
-
                     # Migrate reviews to the new movie if the movie_id changed
 
                     reviews = UserMovieReview.query.filter_by(
@@ -3657,7 +3645,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     db.session.delete(original_movie_record)
 
         elif library == "TV Shows":
-
             # Get the TVSeries record to be updated
 
             tv_show = TVSeries.query.filter_by(id=id).first()

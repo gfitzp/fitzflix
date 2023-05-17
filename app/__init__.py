@@ -46,7 +46,6 @@ def create_app(config_class=Config):
             if os.path.basename(event.src_path).startswith(
                 "."
             ) and not os.path.basename(event.dest_path).startswith("."):
-
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
@@ -83,7 +82,6 @@ def create_app(config_class=Config):
             # Process only those files that are not invisible
 
             if not os.path.basename(event.src_path).startswith("."):
-
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
@@ -161,11 +159,9 @@ def create_app(config_class=Config):
     from app import models, videos
 
     if not app.debug:
-
         # Configure how to handle logs when running in production mode
 
         if app.config["MAIL_SERVER"]:
-
             # Email any exceptions
 
             auth = None

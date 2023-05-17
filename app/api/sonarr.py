@@ -24,7 +24,6 @@ def sonarr_add():
     payload = request.get_json()
     response = jsonify({})
     if request.authorization.get("username") and request.authorization.get("password"):
-
         # Check the user email and password to confirm if they're a valid user
 
         user = User.query.filter_by(email=request.authorization.get("username")).first()

@@ -17,11 +17,9 @@ def queue_details():
     """
 
     if current_user.is_authenticated:
-
         return jsonify(current_user.get_queue_details())
 
     else:
-
         # The user could not be authenticated, return a 401 http error code
 
         return jsonify({}), 401

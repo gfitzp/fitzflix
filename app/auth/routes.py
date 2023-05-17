@@ -85,7 +85,6 @@ def register():
 
     form = RegistrationForm()
     if form.validate_on_submit():
-
         # If there's no admin user yet, set the admin flag to true,
         # so the first account is now the admin account
 

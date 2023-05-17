@@ -8,7 +8,6 @@ load_dotenv(os.path.join(basedir, ".env"))
 
 
 class Config(object):
-
     # fmt: off
 
     # Time constants
