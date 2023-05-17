@@ -49,6 +49,7 @@ from app.main.forms import (
     S3UploadForm,
     TMDBLookupForm,
     TMDBRefreshForm,
+    TrackMetadataScanForm,
     TranscodeForm,
     TVShoppingFilterForm,
     UpdateAPIKeyForm,
@@ -523,7 +524,6 @@ def movie(movie_id):
 
     movie_review_form = MovieReviewForm(date_watched=datetime.now())
     if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
-
         # Users can rate a movie from 0-5. While a user can use decimals, we can only
         # able to display their review with whole or half stars, so here round the rating
         # to the nearest 0.5, and use that to determine the number of whole stars to
@@ -572,7 +572,6 @@ def movie(movie_id):
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
@@ -779,7 +778,6 @@ def tv(series_id):
 
     transcode_form = TranscodeForm()
     if transcode_form.transcode_all.data and transcode_form.validate_on_submit():
-
         # Subquery to get the best files for this TV series
 
         ranked_files = (
@@ -825,7 +823,6 @@ def tv(series_id):
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
@@ -1048,6 +1045,22 @@ def file(file_id):
     audio_tracks = FileAudioTrack.query.filter_by(file_id=file.id).all()
     subtitle_tracks = FileSubtitleTrack.query.filter_by(file_id=file.id).all()
 
+    # Form to rescan the file's metadata
+
+    metadata_scan_form = TrackMetadataScanForm()
+
+    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
+        track_metadata_scan(file.id)
+        # Enqueue a scan task for this file
+
+        #         current_app.file_queue.enqueue(
+        #             "app.videos.track_metadata_scan_task",
+        #             args=(file.id,),
+        #             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+        #         )
+        flash(f"Rescanned track metadata for '{file.basename}'", "info")
+        return redirect(url_for("main.file", file_id=file.id))
+
     # Form to edit the file's attributes
 
     mkvpropedit_form = MKVPropEditForm()
@@ -1058,7 +1071,7 @@ def file(file_id):
         default_audio_choices.append(
             (
                 audio_track.track,
-                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language})",
+                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language} {audio_track.codec})",
             )
         )
         if audio_track.default == True:
@@ -1152,7 +1165,7 @@ def file(file_id):
         audio_track_choices.append(
             (
                 audio_track.track,
-                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language})",
+                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language} {audio_track.codec})",
             )
         )
         default_audio_tracks.append(audio_track.track)
@@ -1208,7 +1221,6 @@ def file(file_id):
 
     transcode_form = TranscodeForm()
     if transcode_form.transcode_submit.data and transcode_form.validate_on_submit():
-
         # Enqueue a transcode task for this file
 
         current_app.transcode_queue.enqueue(
@@ -1225,7 +1237,6 @@ def file(file_id):
 
     upload_form = S3UploadForm()
     if upload_form.s3_upload_submit.data and upload_form.validate_on_submit():
-
         # Enqueue an upload task for this file
 
         current_app.file_queue.enqueue(
@@ -1244,7 +1255,6 @@ def file(file_id):
 
     download_form = S3DownloadForm()
     if download_form.s3_download_submit.data and download_form.validate_on_submit():
-
         # Enqueue a restore task for this file
 
         current_app.request_queue.enqueue(
@@ -1262,7 +1272,6 @@ def file(file_id):
 
     delete_form = FileDeleteForm()
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
-
         try:
             # TODO: Delete the archived version from S3
             # (For some reason, I can call the function in app.videos, but it silently fails)
@@ -1303,6 +1312,7 @@ def file(file_id):
         tv=tv,
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
+        metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
         mkvmerge_form=mkvmerge_form,
         transcode_form=transcode_form,
@@ -1353,7 +1363,6 @@ def reviews():
         review_export_form.export_submit.data
         and review_export_form.validate_on_submit()
     ):
-
         # Create the header columns for the CSV
 
         csv_export = [
@@ -1538,6 +1547,26 @@ def admin():
 
         return redirect(url_for("main.admin"))
 
+    # Form to rescan the file's metadata
+
+    metadata_scan_form = TrackMetadataScanForm()
+
+    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
+        # Enqueue a scan task for this file
+
+        files = File.query.all()
+        for file in files:
+            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+            if os.path.isfile(file_path):
+                current_app.sql_queue.enqueue(
+                    "app.videos.track_metadata_scan_task",
+                    args=(file.id,),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"{file.basename} – Scanning track metadata",
+                )
+        flash(f"Rescanning track metadata", "info")
+        return redirect(url_for("main.admin"))
+
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
         current_app.request_queue.enqueue(
@@ -1558,6 +1587,7 @@ def admin():
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
         sync_form=sync_form,
+        metadata_scan_form=metadata_scan_form,
         import_form=import_form,
     )
 
@@ -2379,7 +2409,6 @@ def tv_shopping():
         title = f"TV Shows to upgrade"
 
     for series in t:
-
         seasons = []
         s = (
             db.session.query(

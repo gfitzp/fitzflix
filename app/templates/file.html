@@ -40,8 +40,18 @@
 </p>
 {% if audio_tracks or subtitle_tracks %}
 <hr>
-<h3 class="mt-2 mb-2">Tracks</h3>
-<div class="table-responsive">
+<div class="row mt-n2 mb-n3 d-flex">
+	<h3 class="col-12 col-sm-auto mr-auto mb-n1">Tracks</h3>
+	{% if best_file %}
+	<div class="col-12 col-sm-auto mt-2">
+		<form class="form-inline float-sm-right mb-2" action="" method="post">
+			{{ metadata_scan_form.hidden_tag() }}
+			{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+	</div>
+	{% endif %}
+</div>
+<div class="table-responsive mt-3">
 	<table class="table">
 		{% if audio_tracks %}
 		<thead class="thead-light">
@@ -50,6 +60,7 @@
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
 				<th scope="col"></th>
+				<th scope="col">kbps</th>
 				<th scope="col">Notes</th>
 			</tr>
 		</thead>
@@ -58,8 +69,9 @@
 			<tr>
 				<th scope="row">{{ audio.track }}</th>
 				<td>{{ audio.language }}</td>
-				<td>{{ audio.format }}</td>
+				<td>{{ audio.codec }}{% if audio.format and ( audio.codec|string() != audio.format|string() ) %} ({{ audio.format }}){% endif %}</td>
 				<td>{{ audio.channels }} channel{% if audio.channels|int > 1 %}s{% endif %}</td>
+				<td>{% if audio.bitrate_kbps %}{{ audio.bitrate_kbps }}{% else %}—{% endif %}</td>
 				<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
 			</tr>
 			{% endfor %}
@@ -72,6 +84,7 @@
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
 				<th scope="col"></th>
+				<th scope="col"></th>
 				<th scope="col">Notes</th>
 			</tr>
 		</thead>
@@ -82,6 +95,7 @@
 				<td>{{ subtitle.language }}</td>
 				<td>{{ subtitle.format }}</td>
 				<td>{{ subtitle.elements }} elements</td>
+				<td></td>
 				<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
 			</tr>
 			{% endfor %}

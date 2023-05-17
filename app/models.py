@@ -1388,7 +1388,6 @@ class File(db.Model, LibraryMixin):
         return file_identifier
 
     def find_better_files(self):
-
         # Dear Future Glenn:
         #
         # This place is a message, and part of a system of messages - pay attention to it!
@@ -1447,7 +1446,6 @@ class File(db.Model, LibraryMixin):
         current_app.logger.debug(f"Import vars: {vars(self)}")
 
         if self.media_library == "Movies":
-
             # If the new file is a full screen version, better quality files that would
             # prevent this file from importing would be:
             # - the exact same movie, also full screen, in a better quality
@@ -1507,7 +1505,6 @@ class File(db.Model, LibraryMixin):
                 )
 
         elif self.media_library == "TV Shows":
-
             # If the new file is a full screen version, existing files that would
             # prevent this file from importing would be:
             # - same tv episode range, also full screen, in same quality
@@ -1690,6 +1687,11 @@ class FileAudioTrack(db.Model):
     channels = db.Column(db.String(64))
     default = db.Column(db.Boolean)
     streamorder = db.Column(db.Integer, nullable=False)
+    codec = db.Column(db.String(64))
+    bitrate = db.Column(db.Integer)
+    bitrate_kbps = db.Column(db.Integer)
+    bit_depth = db.Column(db.Integer)
+    sampling_rate = db.Column(db.Integer)
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 

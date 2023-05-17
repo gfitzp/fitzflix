@@ -29,19 +29,25 @@
 </div>
 <hr>
 <div class="row my-2">
-    <div class="col-md-4">
+    <div class="col-md-3">
     	<form action="" method="post">
     		{{ criterion_refresh_form.hidden_tag() }}
     		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
     	<form action="" method="post">
     		{{ tmdb_refresh_form.hidden_tag() }}
     		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
+    	<form action="" method="post">
+    		{{ metadata_scan_form.hidden_tag() }}
+    		{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-3">
     	<form action="" method="post">
     		{{ import_form.hidden_tag() }}
     		{{ import_form.submit(class_="btn btn-sm btn-success") }}

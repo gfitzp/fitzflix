@@ -322,7 +322,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     f"'{basename}' Parsing added statistics with MediaInfo"
                 )
                 media_info = MediaInfo.parse(file_path)
-                current_app.logger.info(f"'{basename}' -> {media_info.to_json()}")
+                current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
                 audio_tracks = get_audio_tracks_from_file(file_path)
                 subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
@@ -661,7 +661,6 @@ def finalize_localization(file_path, file_details, lock):
                 FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
             if file.media_library == "Movies":
-
                 # See if a Movie record already exists; if not, create one.
 
                 current_app.logger.info(
@@ -711,7 +710,6 @@ def finalize_localization(file_path, file_details, lock):
                     current_app.logger.info(f"{file} Marking as {feature_type}")
 
             elif file.media_library == "TV Shows":
-
                 # See if a TVSeries record exists; if not, create one
 
                 current_app.logger.info(
@@ -945,7 +943,6 @@ def finalize_localization(file_path, file_details, lock):
             # Get or refresh movie or tv series details and download images
 
             try:
-
                 # Establish a savepoint with db.session.begin_nested(), so if any of the
                 # queries to get show metadata fail, we can just roll back those changes to
                 # the savepoint and still commit the movie / tv show, file, and its tracks.
@@ -1167,7 +1164,6 @@ def manual_import_task():
     app.app_context().push()
 
     try:
-
         import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
         import_directory_files.sort()
         qualities = (
@@ -1218,6 +1214,134 @@ def manual_import_task():
 
     else:
         return True
+
+
+def track_metadata_scan_task(file_id):
+    """Rescan a file's metadata as a background task."""
+
+    app.app_context().push()
+
+    try:
+        job = get_current_job()
+
+        file = File.query.filter_by(id=file_id).first()
+        file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+
+        if os.path.isfile(file_path):
+            if job:
+                job.meta["description"] = f"{file.basename} – Scanning track metadata"
+                job.meta["progress"] = -1
+                job.save_meta()
+            track_metadata_scan(file.id)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        raise
+
+    else:
+        db.session.commit()
+
+    return True
+
+
+def track_metadata_scan(file_id):
+    """Rescan a file's metadata on demand."""
+
+    try:
+        file = File.query.filter_by(id=file_id).first()
+        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+        # Clear metadata for existing File record
+
+        file.date_updated = datetime.utcnow()
+        FileAudioTrack.query.filter_by(file_id=file.id).delete()
+        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
+        media_info = MediaInfo.parse(file_path)
+        current_app.logger.debug(
+            f"'{os.path.basename(file_path)}' -> {media_info.to_json()}"
+        )
+
+        # Set file video track info
+
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.format:
+                file.format = track.format
+                break
+
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.codec_id:
+                file.codec = track.codec_id
+                break
+
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.bit_rate:
+                file.video_bitrate_kbps = track.bit_rate / 1000
+                break
+
+        output_audio_tracks = get_audio_tracks_from_file(file_path)
+        output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+
+        # Set file audio track info
+
+        possibly_foreign_language = False
+        for i, track in enumerate(output_audio_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            audio_track = FileAudioTrack(**track)
+            file.audio_track = audio_track
+            if track["track"] == 1 and audio_track.language not in [
+                current_app.config["NATIVE_LANGUAGE"],
+                "und",
+                "zxx",
+            ]:
+                possibly_foreign_language = True
+            current_app.logger.info(f"{file} Adding audio track {audio_track}")
+            db.session.add(audio_track)
+
+        # Set file subtitle track info
+
+        possibly_forced_subtitle = False
+        if len(output_subtitle_tracks) > 1:
+            main_subtitle_track = output_subtitle_tracks[0].get("elements")
+            for i, track in enumerate(output_subtitle_tracks[1:]):
+                track_length = track.get("elements")
+                forced_flag = track.get("forced")
+
+                # If a track is less than 1/3 the length of the first subtitle track,
+                # but it's not marked as forced, speculate that it might be a forced
+                # subtitle track
+
+                if (
+                    track_length > 0
+                    and track_length <= (main_subtitle_track * 0.3)
+                    and not forced_flag
+                ):
+                    current_app.logger.warning(
+                        f"{file} Subtitle track {i+2} has {track_length} elements "
+                        f"and may be a forced subtitle track!"
+                    )
+                    output_subtitle_tracks[i + 1]["forced"] = None
+                    possibly_forced_subtitle = True
+
+        for i, track in enumerate(output_subtitle_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            subtitle_track = FileSubtitleTrack(**track)
+            file.subtitle_track = subtitle_track
+            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
+            db.session.add(subtitle_track)
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        raise
+
+    else:
+        db.session.commit()
+
+    return True
 
 
 def mkvpropedit_task(
@@ -2740,6 +2864,33 @@ def get_audio_tracks_from_file(file_path):
             audio_track["channels"] = int(track.to_data().get("channel_s"))
             audio_track["default"] = (
                 True if track.to_data().get("default") == "Yes" else False
+            )
+            audio_track["codec"] = track.to_data().get("commercial_name")
+            audio_track["bitrate"] = (
+                int(track.to_data().get("bit_rate"))
+                if (
+                    track.to_data().get("bit_rate")
+                    and isinstance(track.to_data().get("bit_rate"), int)
+                )
+                else None
+            )
+            audio_track["bitrate_kbps"] = (
+                round(track.to_data().get("bit_rate") / 1000)
+                if (
+                    track.to_data().get("bit_rate")
+                    and isinstance(track.to_data().get("bit_rate"), int)
+                )
+                else None
+            )
+            audio_track["bit_depth"] = (
+                int(track.to_data().get("bit_depth"))
+                if track.to_data().get("bit_depth")
+                else None
+            )
+            audio_track["sampling_rate"] = (
+                int(track.to_data().get("sampling_rate"))
+                if track.to_data().get("sampling_rate")
+                else None
             )
             audio_tracks.append(audio_track)
 

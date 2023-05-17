@@ -193,6 +193,10 @@ class FileDeleteForm(FlaskForm):
     delete_submit = SubmitField("Delete and Purge File")
 
 
+class TrackMetadataScanForm(FlaskForm):
+    scan_submit = SubmitField("Rescan Track Metadata")
+
+
 class MovieShoppingExcludeForm(FlaskForm):
     movie_id = IntegerField("Movie ID", validators=[Optional()], widget=HiddenInput())
     add_submit = SubmitField("Add to List")
