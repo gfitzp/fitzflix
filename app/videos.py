@@ -1374,16 +1374,23 @@ def mkvpropedit_task(
         subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
         current_app.logger.info(f"{file.basename} file_id: {file_id}")
-        current_app.logger.info(f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}")
-        current_app.logger.info(f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}")
-        current_app.logger.info(f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}")
+        current_app.logger.info(
+            f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}"
+        )
+        current_app.logger.info(
+            f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}"
+        )
+        current_app.logger.info(
+            f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
+        )
 
         audio_track_arguments = []
         subtitle_track_arguments = []
+
         for track_id, track in enumerate(audio_tracks, 1):
             if int(track_id) == int(default_audio_track):
                 audio_track_arguments.append(
-                    f"--edit track:a{track_id} --set flag-default=1"
+                    f"--edit track:a{str(track_id)} --set flag-default=1"
                 )
 
             else:
@@ -1413,8 +1420,12 @@ def mkvpropedit_task(
                         f"--edit track:s{str(track_id)} --set flag-forced=0"
                     )
 
-        current_app.logger.info(f"{file.basename} audio_track_arguments: {audio_track_arguments}")
-        current_app.logger.info(f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}")
+        current_app.logger.info(
+            f"{file.basename} audio_track_arguments: {audio_track_arguments}"
+        )
+        current_app.logger.info(
+            f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}"
+        )
 
         # subprocess expects an array of arguments,
         # so we need to split the arguments on spaces
@@ -1425,7 +1436,9 @@ def mkvpropedit_task(
         for arg in subtitle_track_arguments:
             localization_arguments.extend(arg.split())
 
-        current_app.logger.info(f"{file.basename} localization_arguments: {localization_arguments}")
+        current_app.logger.info(
+            f"{file.basename} localization_arguments: {localization_arguments}"
+        )
 
         mkvpropedit_task = subprocess.Popen(
             [
@@ -1441,6 +1454,85 @@ def mkvpropedit_task(
         for line in mkvpropedit_task.stdout:
             line = line.replace("\n", "")
             current_app.logger.info(line)
+
+        # Create new file with default tracks prioritized so Plex selects them first
+
+        new_track_order = []
+        media_info = MediaInfo.parse(file_path)
+
+        # Default video tracks
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.default == "Yes":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        # Non-default video tracks
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.default == "No":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        # Default audio tracks
+        for track in media_info.tracks:
+            if track.track_type == "Audio" and track.default == "Yes":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        # Non-default audio tracks
+
+        for track in media_info.tracks:
+            if track.track_type == "Audio" and track.default == "No":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        # Default subtitle tracks
+
+        for track in media_info.tracks:
+            if track.track_type == "Text" and track.default == "Yes":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        # Non-default subtitle tracks
+
+        for track in media_info.tracks:
+            if track.track_type == "Text" and track.default == "No":
+                new_track_order.append(f"0:{track.streamorder}")
+
+        new_track_order = ",".join(new_track_order)
+
+        current_app.logger.info(f"{file.basename} new_track_order: {new_track_order}")
+
+        output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+        hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+
+        command = [
+            current_app.config["MKVMERGE_BIN"],
+            "--track-order",
+            new_track_order,
+            "-o",
+            hidden_output_file,
+            file_path,
+        ]
+
+        current_app.logger.info(command)
+
+        mkvmerge_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+
+        for line in mkvmerge_process.stdout:
+            progress_match = re.search("Progress\: \d+\%", line)
+            if progress_match:
+                progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                progress = int(progress_match.group("percent"))
+                current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
+                if job:
+                    job.meta["description"] = f"'{file.basename}' — Remuxing"
+                    job.meta["progress"] = progress
+                    job.save_meta()
+
+        # Move the new file into place
+
+        os.rename(hidden_output_file, file_path)
 
         # Rebuild the audio and subtitle track info now that we've made modifications
 
@@ -1483,6 +1575,8 @@ def mkvpropedit_task(
             file.subtitle_track = subtitle_track
             current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
             db.session.add(subtitle_track)
+
+        file.date_updated = datetime.utcnow()
 
     except Exception:
         current_app.logger.error(traceback.format_exc())
