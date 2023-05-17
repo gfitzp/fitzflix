@@ -1902,6 +1902,7 @@ def rename_task(file_id, new_key):
         if job:
             job.meta["description"] = f"Renaming AWS key '{old_key}' to '{new_key}'"
             job.meta["progress"] = -1
+            job.save_meta()
 
         file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_rename(
             old_key, new_key
@@ -2134,6 +2135,7 @@ def download_task(key, basename, sqs_receipt_handle=None):
     app.app_context().push()
     job = get_current_job()
     job.meta["description"] = f"'{basename}' — Downloading from AWS"
+    job.save_meta()
 
     try:
         current_app.logger.info(
@@ -2355,6 +2357,7 @@ def aws_rename(old_key, new_key):
     if job:
         job.meta["description"] = f"Renaming '{old_key}' at AWS to '{new_key}'"
         job.meta["progress"] = -1
+        job.save_meta()
 
     # There's no function to rename a file, so we have to make a copy of the object
     # with the new name and then delete the old object
