@@ -59,8 +59,9 @@
 				<th scope="col">Audio Track</th>
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
+				<th scope="col">Channels</th>
+				<th scope="col">Quality</th>
 				<th scope="col"></th>
-				<th scope="col">kbps</th>
 				<th scope="col">Notes</th>
 			</tr>
 		</thead>
@@ -68,10 +69,19 @@
 			{% for audio in audio_tracks %}
 			<tr>
 				<th scope="row">{{ audio.track }}</th>
-				<td>{{ audio.language }}</td>
-				<td>{{ audio.codec }}{% if audio.format and ( audio.codec|string() != audio.format|string() ) %} ({{ audio.format }}){% endif %}</td>
-				<td>{{ audio.channels }} channel{% if audio.channels|int > 1 %}s{% endif %}</td>
-				<td>{% if audio.bitrate_kbps %}{{ audio.bitrate_kbps }}{% else %}—{% endif %}</td>
+				<td>{{ audio.language_name }}</td>
+				<td>{{ audio.codec }}</td>
+				<td>{{ audio.channels }}</td>
+				<td>
+					{% if audio.compression_mode == "Lossless" and audio.bit_depth and audio.sampling_rate_khz %}
+						{{ audio.bit_depth }}-bit {{ audio.sampling_rate_khz }} kHz
+					{% elif audio.bitrate_kbps %}
+						{{ audio.bitrate_kbps }} kbps
+					{% else %}
+						—
+					{% endif %}
+				</td>
+				<td>{{ audio.compression_mode }}</td>
 				<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
 			</tr>
 			{% endfor %}
@@ -83,6 +93,7 @@
 				<th scope="col">Subtitle Track</th>
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
+				<th scope="col">Elements</th>
 				<th scope="col"></th>
 				<th scope="col"></th>
 				<th scope="col">Notes</th>
@@ -94,7 +105,8 @@
 				<th scope="row">{{ subtitle.track }}</th>
 				<td>{{ subtitle.language }}</td>
 				<td>{{ subtitle.format }}</td>
-				<td>{{ subtitle.elements }} elements</td>
+				<td>{{ subtitle.elements }}</td>
+				<td></td>
 				<td></td>
 				<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
 			</tr>

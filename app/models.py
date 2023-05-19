@@ -1686,12 +1686,15 @@ class FileAudioTrack(db.Model):
     format = db.Column(db.String(64))
     channels = db.Column(db.String(64))
     default = db.Column(db.Boolean)
-    streamorder = db.Column(db.Integer, nullable=False)
+    streamorder = db.Column(db.Integer)
     codec = db.Column(db.String(64))
     bitrate = db.Column(db.Integer)
     bitrate_kbps = db.Column(db.Integer)
     bit_depth = db.Column(db.Integer)
     sampling_rate = db.Column(db.Integer)
+    sampling_rate_khz = db.Column(db.Integer)
+    language_name = db.Column(db.String(64), nullable=False)
+    compression_mode = db.Column(db.String(64))
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 
@@ -1708,7 +1711,8 @@ class FileSubtitleTrack(db.Model):
     elements = db.Column(db.Integer, nullable=False)
     default = db.Column(db.Boolean)
     forced = db.Column(db.Boolean)
-    streamorder = db.Column(db.Integer, nullable=False)
+    streamorder = db.Column(db.Integer)
+    language_name = db.Column(db.String(64), nullable=False)
 
     __table_args__ = (db.UniqueConstraint("file_id", "track"),)
 

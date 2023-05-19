@@ -346,11 +346,17 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
                 # Determine which audio tracks to export
 
+                if audio_tracks[0].get("language"):
+                    first_audio_track_language = audio_tracks[0].get("language")
+
+                else:
+                    first_audio_track_language = 1
+
                 # If the first audio track is in our native language, remove all other languages
 
                 if (
                     len(audio_tracks) >= 1
-                    and audio_tracks[0].get("language") == native_language
+                    and first_audio_track_language == native_language
                 ):
                     current_app.logger.info(
                         f"'{basename}' First audio track matches native language "
@@ -359,7 +365,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     output_audio_langs = native_language
 
                 # If the first audio track isn't our native language, but our language is present,
-                # export the first audio track + all other native-language audio
+                # export tracks in the first language + all other native-language audio
                 # (it's probably a dub, or there are native-language commentary tracks, etc.)
 
                 elif native_language in [track["language"] for track in audio_tracks]:
@@ -367,16 +373,18 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                         f"'{basename}' First audio track is foreign, "
                         f"but '{native_language}' audio is present"
                     )
-                    output_audio_langs = f"1,{native_language}"
+                    output_audio_langs = (
+                        f"{first_audio_track_language},{native_language}"
+                    )
 
-                # If no native-language track is present, export only the first audio track
-                # (it's probably a subtitled movie with no commentary track)
+                # If no native-language track is present, export only tracks in the first
+                # language (it's probably a subtitled movie with no commentary track)
 
                 else:
                     current_app.logger.info(
                         f"'{basename}' No '{native_language}' audio track"
                     )
-                    output_audio_langs = "1"
+                    output_audio_langs = first_audio_track_language
 
                 # Determine which tracks to export and create the output file
 
@@ -386,7 +394,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
                 if (
                     len(audio_tracks) >= 1
-                    and audio_tracks[0].get("language") != native_language
+                    and first_audio_track_language != native_language
                     and native_language
                     in [track["language"] for track in subtitle_tracks]
                 ):
@@ -1216,8 +1224,32 @@ def manual_import_task():
         return True
 
 
+def track_metadata_scan_library():
+    """Add all files in the library to the metadata scan queue."""
+
+    app.app_context().push()
+
+    try:
+        job = get_current_job()
+
+        files = File.query.all()
+        for file in files:
+            current_app.sql_queue.enqueue(
+                "app.videos.track_metadata_scan_task",
+                args=(file.id,),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"{file.basename} – Scanning track metadata",
+            )
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        raise
+
+    return True
+
+
 def track_metadata_scan_task(file_id):
-    """Rescan a file's metadata as a background task."""
+    """Scan a file's metadata in the background."""
 
     app.app_context().push()
 
@@ -1226,12 +1258,7 @@ def track_metadata_scan_task(file_id):
 
         file = File.query.filter_by(id=file_id).first()
         file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-
         if os.path.isfile(file_path):
-            if job:
-                job.meta["description"] = f"{file.basename} – Scanning track metadata"
-                job.meta["progress"] = -1
-                job.save_meta()
             track_metadata_scan(file.id)
 
     except Exception:
@@ -1251,6 +1278,8 @@ def track_metadata_scan(file_id):
     try:
         file = File.query.filter_by(id=file_id).first()
         file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        if not os.path.isfile(file_path):
+            raise
 
         # Clear metadata for existing File record
 
@@ -1259,7 +1288,7 @@ def track_metadata_scan(file_id):
         FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
         media_info = MediaInfo.parse(file_path)
-        current_app.logger.debug(
+        current_app.logger.info(
             f"'{os.path.basename(file_path)}' -> {media_info.to_json()}"
         )
 
@@ -1388,36 +1417,40 @@ def mkvpropedit_task(
         subtitle_track_arguments = []
 
         for track_id, track in enumerate(audio_tracks, 1):
-            if int(track_id) == int(default_audio_track):
+            track_id = str(track_id)
+
+            if track_id == default_audio_track:
                 audio_track_arguments.append(
-                    f"--edit track:a{str(track_id)} --set flag-default=1"
+                    f"--edit track:a{track_id} --set flag-default=1"
                 )
 
             else:
                 audio_track_arguments.append(
-                    f"--edit track:a{str(track_id)} --set flag-default=0"
+                    f"--edit track:a{track_id} --set flag-default=0"
                 )
 
         if default_subtitle_track or forced_subtitle_tracks:
             for track_id, track in enumerate(subtitle_tracks, 1):
-                if int(track_id) == int(default_subtitle_track):
+                track_id = str(track_id)
+
+                if track_id == default_subtitle_track:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{str(track_id)} --set flag-default=1"
+                        f"--edit track:s{track_id} --set flag-default=1"
                     )
 
                 else:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{str(track_id)} --set flag-default=0"
+                        f"--edit track:s{track_id} --set flag-default=0"
                     )
 
                 if track_id in forced_subtitle_tracks:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{str(track_id)} --set flag-forced=1"
+                        f"--edit track:s{track_id} --set flag-forced=1"
                     )
 
                 else:
                     subtitle_track_arguments.append(
-                        f"--edit track:s{str(track_id)} --set flag-forced=0"
+                        f"--edit track:s{track_id} --set flag-forced=0"
                     )
 
         current_app.logger.info(
@@ -1455,84 +1488,87 @@ def mkvpropedit_task(
             line = line.replace("\n", "")
             current_app.logger.info(line)
 
-        # Create new file with default tracks prioritized so Plex selects them first
+        # If the default audio track isn't the first track, create a new file with the
+        # default audio track prioritized so Plex selects it first
 
-        new_track_order = []
-        media_info = MediaInfo.parse(file_path)
+        if default_audio_track != "1":
 
-        # Default video tracks
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.default == "Yes":
-                new_track_order.append(f"0:{track.streamorder}")
+            new_track_order = []
+            media_info = MediaInfo.parse(file_path)
 
-        # Non-default video tracks
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.default == "No":
-                new_track_order.append(f"0:{track.streamorder}")
+            # Default video tracks
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.default == "Yes":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        # Default audio tracks
-        for track in media_info.tracks:
-            if track.track_type == "Audio" and track.default == "Yes":
-                new_track_order.append(f"0:{track.streamorder}")
+            # Non-default video tracks
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.default == "No":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        # Non-default audio tracks
+            # Default audio tracks
+            for track in media_info.tracks:
+                if track.track_type == "Audio" and track.default == "Yes":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        for track in media_info.tracks:
-            if track.track_type == "Audio" and track.default == "No":
-                new_track_order.append(f"0:{track.streamorder}")
+            # Non-default audio tracks
 
-        # Default subtitle tracks
+            for track in media_info.tracks:
+                if track.track_type == "Audio" and track.default == "No":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        for track in media_info.tracks:
-            if track.track_type == "Text" and track.default == "Yes":
-                new_track_order.append(f"0:{track.streamorder}")
+            # Default subtitle tracks
 
-        # Non-default subtitle tracks
+            for track in media_info.tracks:
+                if track.track_type == "Text" and track.default == "Yes":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        for track in media_info.tracks:
-            if track.track_type == "Text" and track.default == "No":
-                new_track_order.append(f"0:{track.streamorder}")
+            # Non-default subtitle tracks
 
-        new_track_order = ",".join(new_track_order)
+            for track in media_info.tracks:
+                if track.track_type == "Text" and track.default == "No":
+                    new_track_order.append(f"0:{track.streamorder}")
 
-        current_app.logger.info(f"{file.basename} new_track_order: {new_track_order}")
+            new_track_order = ",".join(new_track_order)
 
-        output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
-        hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+            current_app.logger.info(f"{file.basename} new_track_order: {new_track_order}")
 
-        command = [
-            current_app.config["MKVMERGE_BIN"],
-            "--track-order",
-            new_track_order,
-            "-o",
-            hidden_output_file,
-            file_path,
-        ]
+            output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+            hidden_output_file = os.path.join(output_directory, f".{file.basename}")
 
-        current_app.logger.info(command)
+            command = [
+                current_app.config["MKVMERGE_BIN"],
+                "--track-order",
+                new_track_order,
+                "-o",
+                hidden_output_file,
+                file_path,
+            ]
 
-        mkvmerge_process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-        )
+            current_app.logger.info(command)
 
-        for line in mkvmerge_process.stdout:
-            progress_match = re.search("Progress\: \d+\%", line)
-            if progress_match:
-                progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
-                progress = int(progress_match.group("percent"))
-                current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
-                if job:
-                    job.meta["description"] = f"'{file.basename}' — Remuxing"
-                    job.meta["progress"] = progress
-                    job.save_meta()
+            mkvmerge_process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+            )
 
-        # Move the new file into place
+            for line in mkvmerge_process.stdout:
+                progress_match = re.search("Progress\: \d+\%", line)
+                if progress_match:
+                    progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                    progress = int(progress_match.group("percent"))
+                    current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
+                    if job:
+                        job.meta["description"] = f"'{file.basename}' — Remuxing"
+                        job.meta["progress"] = progress
+                        job.save_meta()
 
-        os.rename(hidden_output_file, file_path)
+            # Move the new file into place
+
+            os.rename(hidden_output_file, file_path)
 
         # Rebuild the audio and subtitle track info now that we've made modifications
 
@@ -2945,46 +2981,68 @@ def get_audio_tracks_from_file(file_path):
 
             if language == "und":
                 audio_track["language"] = "und"
+                audio_track["language_name"] = "Undetermined"
 
             elif "zxx" in language:
                 audio_track["language"] = "zxx"
+                audio_track["language_name"] = "Not applicable"
 
             else:
                 audio_track["language"] = language[3]
+                audio_track["language_name"] = language[0]
 
-            audio_track["streamorder"] = int(track.to_data().get("streamorder"))
+            audio_track["streamorder"] = (
+                int(track.to_data().get("streamorder"))
+                if str(track.to_data().get("streamorder", "")).isdigit()
+                else None
+            )
             audio_track["format"] = track.to_data().get("format")
-            audio_track["channels"] = int(track.to_data().get("channel_s"))
+
+            audio_track["channels"] = (
+                float(track.to_data().get("channel_s"))
+                if str(track.to_data().get("channel_s", "")).isdigit()
+                else None
+            )
+
+            # Change track channel layout to include LFE track if present
+            if audio_track["channels"] and "LFE" in track.to_data().get("channel_layout", ""):
+                audio_track["channels"] = str(audio_track["channels"] - 1 + 0.1)
+            else:
+                audio_track["channels"] = str(audio_track["channels"] * 1.0)
+
             audio_track["default"] = (
                 True if track.to_data().get("default") == "Yes" else False
             )
             audio_track["codec"] = track.to_data().get("commercial_name")
             audio_track["bitrate"] = (
                 int(track.to_data().get("bit_rate"))
-                if (
-                    track.to_data().get("bit_rate")
-                    and isinstance(track.to_data().get("bit_rate"), int)
-                )
+                if str(track.to_data().get("bit_rate", "")).isdigit()
                 else None
             )
             audio_track["bitrate_kbps"] = (
                 round(track.to_data().get("bit_rate") / 1000)
-                if (
-                    track.to_data().get("bit_rate")
-                    and isinstance(track.to_data().get("bit_rate"), int)
-                )
+                if str(track.to_data().get("bit_rate", "")).isdigit()
                 else None
             )
             audio_track["bit_depth"] = (
                 int(track.to_data().get("bit_depth"))
-                if track.to_data().get("bit_depth")
+                if str(track.to_data().get("bit_depth", "")).isdigit()
                 else None
             )
             audio_track["sampling_rate"] = (
                 int(track.to_data().get("sampling_rate"))
-                if track.to_data().get("sampling_rate")
+                if str(track.to_data().get("sampling_rate", "")).isdigit()
                 else None
             )
+            audio_track["sampling_rate_khz"] = (
+                int(track.to_data().get("sampling_rate") / 1000)
+                if str(track.to_data().get("sampling_rate", "")).isdigit()
+                else None
+            )
+            audio_track["compression_mode"] = track.to_data().get("compression_mode")
+            if audio_track["compression_mode"] is None and audio_track["codec"] == "PCM":
+                audio_track["compression_mode"] = "Lossless"
+
             audio_tracks.append(audio_track)
 
     current_app.logger.info(
@@ -3158,14 +3216,21 @@ def get_subtitle_tracks_from_file(file_path):
             language = track.to_data().get("other_language", "und")
             if language == "und":
                 subtitle_track["language"] = "und"
+                subtitle_track["language_name"] = "Undetermined"
 
             elif "zxx" in language:
                 subtitle_track["language"] = "zxx"
+                subtitle_track["language_name"] = "Not applicable"
 
             else:
                 subtitle_track["language"] = language[3]
+                subtitle_track["language_name"] = language[0]
 
-            subtitle_track["streamorder"] = int(track.to_data().get("streamorder"))
+            subtitle_track["streamorder"] = (
+                int(track.to_data().get("streamorder"))
+                if str(track.to_data().get("streamorder", "")).isdigit()
+                else None
+            )
             subtitle_track["elements"] = int(
                 track.to_data().get("count_of_elements", 0)
             )

@@ -1068,12 +1068,28 @@ def file(file_id):
     default_audio_choices = []
     default_audio_track_number = 1
     for audio_track in audio_tracks:
-        default_audio_choices.append(
-            (
-                audio_track.track,
-                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language} {audio_track.codec})",
+        if audio_track.compression_mode == "Lossless" and audio_track.bit_depth and audio_track.sampling_rate_khz:
+            default_audio_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
+                )
             )
-        )
+        elif audio_track.bitrate_kbps:
+            default_audio_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
+                )
+            )
+        else:
+            default_audio_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
+                )
+            )
+
         if audio_track.default == True:
             default_audio_track_number = audio_track.track
 
@@ -1090,7 +1106,7 @@ def file(file_id):
         default_subtitle_choices.append(
             (
                 subtitle_track.track,
-                f"Track {subtitle_track.track} ({subtitle_track.elements}-element {subtitle_track.language})",
+                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
         if subtitle_track.default == True:
@@ -1099,7 +1115,7 @@ def file(file_id):
         forced_subtitle_choices.append(
             (
                 subtitle_track.track,
-                f"Track {subtitle_track.track} ({subtitle_track.elements}-element {subtitle_track.language})",
+                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
         if subtitle_track.forced == True:
@@ -1162,19 +1178,34 @@ def file(file_id):
     default_subtitle_tracks = []
 
     for audio_track in audio_tracks:
-        audio_track_choices.append(
-            (
-                audio_track.track,
-                f"Track {audio_track.track} ({audio_track.channels}-channel {audio_track.language} {audio_track.codec})",
+        if audio_track.compression_mode == "Lossless" and audio_track.bit_depth and audio_track.sampling_rate_khz:
+            audio_track_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
+                )
             )
-        )
+        elif audio_track.bitrate_kbps:
+            audio_track_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
+                )
+            )
+        else:
+            audio_track_choices.append(
+                (
+                    audio_track.track,
+                    f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
+                )
+            )
         default_audio_tracks.append(audio_track.track)
 
     for subtitle_track in subtitle_tracks:
         subtitle_track_choices.append(
             (
                 subtitle_track.track,
-                f"Track {subtitle_track.track} ({subtitle_track.elements}-element {subtitle_track.language})",
+                f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
         default_subtitle_tracks.append(subtitle_track.track)
@@ -1547,24 +1578,18 @@ def admin():
 
         return redirect(url_for("main.admin"))
 
-    # Form to rescan the file's metadata
+    # Form to rescan metadata for all the files
 
     metadata_scan_form = TrackMetadataScanForm()
 
     if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
-        # Enqueue a scan task for this file
-
-        files = File.query.all()
-        for file in files:
-            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-            if os.path.isfile(file_path):
-                current_app.sql_queue.enqueue(
-                    "app.videos.track_metadata_scan_task",
-                    args=(file.id,),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=f"{file.basename} – Scanning track metadata",
-                )
-        flash(f"Rescanning track metadata", "info")
+        current_app.sql_queue.enqueue(
+            "app.videos.track_metadata_scan_library",
+            args=(),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"Scanning track metadata for all files in the library",
+        )
+        flash(f"Scanning track metadata for all files in the library", "info")
         return redirect(url_for("main.admin"))
 
     import_form = ImportForm()
