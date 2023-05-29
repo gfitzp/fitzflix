@@ -1068,7 +1068,11 @@ def file(file_id):
     default_audio_choices = []
     default_audio_track_number = 1
     for audio_track in audio_tracks:
-        if audio_track.compression_mode == "Lossless" and audio_track.bit_depth and audio_track.sampling_rate_khz:
+        if (
+            audio_track.compression_mode == "Lossless"
+            and audio_track.bit_depth
+            and audio_track.sampling_rate_khz
+        ):
             default_audio_choices.append(
                 (
                     audio_track.track,
@@ -1178,7 +1182,11 @@ def file(file_id):
     default_subtitle_tracks = []
 
     for audio_track in audio_tracks:
-        if audio_track.compression_mode == "Lossless" and audio_track.bit_depth and audio_track.sampling_rate_khz:
+        if (
+            audio_track.compression_mode == "Lossless"
+            and audio_track.bit_depth
+            and audio_track.sampling_rate_khz
+        ):
             audio_track_choices.append(
                 (
                     audio_track.track,
@@ -2564,17 +2572,13 @@ def files():
     )
 
     files_with_lossless = (
-        db.session.query(
-            FileAudioTrack.file_id
-        )
+        db.session.query(FileAudioTrack.file_id)
         .filter(FileAudioTrack.compression_mode == "Lossless")
         .subquery()
     )
 
     lossy_files = (
-        db.session.query(
-            FileAudioTrack.file_id
-        )
+        db.session.query(FileAudioTrack.file_id)
         .filter(FileAudioTrack.track == 1)
         .filter(FileAudioTrack.compression_mode != "Lossless")
         .subquery()
