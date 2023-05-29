@@ -1,0 +1,9 @@
+Hello,
+
+The file '{{ file.basename }}' was added with a lossy first audio track but has a lossless track available.
+
+Go here to remux if necessary:
+
+{{ url_for('main.file', file_id=file.id, _external=True) }}
+
+- Fitzflix
