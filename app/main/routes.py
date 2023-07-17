@@ -118,28 +118,21 @@ def index():
 
     page = request.args.get("page", 1, type=int)
 
-    last_week = (
+    # Show only files added in the last 7 days, as the AWS S3 lifecycle rule migrates
+    # older files that have been uploaded to S3 Deep Glacier storage; this way we only
+    # show files that are still in a Standard data storage class.
+
+    recently_added = (
         File.query.join(FileAudioTrack, (FileAudioTrack.file_id == File.id))
+        .distinct() # need .distinct() in order to get the result numbers per page correct
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
             db.func.coalesce(File.date_updated, File.date_added)
-            >= db.func.adddate(db.func.now(), -7)
+            >= db.func.adddate(db.func.current_date(), -7)
         )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-    )
-
-    last_ten = (
-        File.query.join(FileAudioTrack, (FileAudioTrack.file_id == File.id))
-        .outerjoin(Movie, (Movie.id == File.movie_id))
-        .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-        .limit(10)
-    )
-
-    recently_added = (
-        last_week.union(last_ten)
-        .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-        .paginate(page, 100, False)
+        .paginate(page, per_page=100, error_out=False)
     )
 
     next_url = (
@@ -226,7 +219,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .paginate(page, 120, False)
+            .paginate(page, per_page=120, error_out=False)
         )
 
     elif q:
@@ -257,7 +250,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .paginate(page, 120, False)
+            .paginate(page, per_page=120, error_out=False)
         )
 
     elif int(quality) > 0:
@@ -285,7 +278,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .paginate(page, 120, False)
+            .paginate(page, per_page=120, error_out=False)
         )
 
     else:
@@ -312,7 +305,7 @@ def movie_library():
                 ).asc(),
                 File.version.asc(),
             )
-            .paginate(page, 120, False)
+            .paginate(page, per_page=120, error_out=False)
         )
 
     next_url = (
@@ -1378,7 +1371,7 @@ def reviews():
             UserMovieReview.rating.desc(),
             Movie.title.asc(),
         )
-        .paginate(page, 50, False)
+        .paginate(page, per_page=50, error_out=False)
     )
     next_url = (
         url_for("main.reviews", page=reviews.next_num) if reviews.has_next else None
@@ -1935,7 +1928,7 @@ def movie_shopping():
                 RefQuality.preference.asc(),
                 File.date_added.asc(),
             )
-            .paginate(page, 100, False)
+            .paginate(page, per_page=100, error_out=False)
         )
 
     elif media == "digital":
@@ -2072,7 +2065,7 @@ def movie_shopping():
                 File.version.asc(),
                 File.date_added.asc(),
             )
-            .paginate(page, 100, False)
+            .paginate(page, per_page=100, error_out=False)
         )
 
     else:
@@ -2203,7 +2196,7 @@ def movie_shopping():
                 File.version.asc(),
                 File.date_added.asc(),
             )
-            .paginate(page, 100, False)
+            .paginate(page, per_page=100, error_out=False)
         )
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
@@ -2637,7 +2630,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, 1000, False)
+            .paginate(page, per_page=1000, error_out=False)
         )
 
     elif q:
@@ -2691,7 +2684,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, 1000, False)
+            .paginate(page, per_page=1000, error_out=False)
         )
 
     elif int(quality) > 0:
@@ -2745,7 +2738,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, 1000, False)
+            .paginate(page, per_page=1000, error_out=False)
         )
 
     elif audio == "lossy":
@@ -2799,7 +2792,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, 1000, False)
+            .paginate(page, per_page=1000, error_out=False)
         )
 
     else:
@@ -2851,7 +2844,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, 1000, False)
+            .paginate(page, per_page=1000, error_out=False)
         )
 
     next_url = (
