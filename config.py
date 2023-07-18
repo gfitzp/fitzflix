@@ -87,7 +87,7 @@ class Config(object):
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"
 
-    WIKIPEDIA_CRITERION_COLLECTION_URL  = "https://en.wikipedia.org/wiki/List_of_Criterion_Collection_releases"
+    WIKIPEDIA_CRITERION_COLLECTION_URL  = os.environ.get("WIKIPEDIA_CRITERION_COLLECTION_URL") or None
 
 
     # Task timeouts; if specifying in the .env file, set as number of seconds

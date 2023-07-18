@@ -3095,68 +3095,70 @@ def get_criterion_collection_from_wikipedia():
 
     url = current_app.config["WIKIPEDIA_CRITERION_COLLECTION_URL"]
     criterion_collection = []
-    r = requests.get(url)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.content, features="html.parser")
-    table = soup.find_all("table")[1]
-    headers = table.findAll("th")
 
-    # Column 2 = title
-    # Column 4 = original release year
-    # Column 0 = spine
-    # Column 7 = box set title
-    # Column 5 = blu-ray version
+    if url:
+        r = requests.get(url)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.content, features="html.parser")
+        table = soup.find_all("table")[1]
+        headers = table.findAll("th")
 
-    contents = table.findAll("tr")
-    for row in contents:
-        columns = row.findAll("td")
-        if not columns:
-            continue
+        # Column 2 = title
+        # Column 4 = original release year
+        # Column 0 = spine
+        # Column 7 = box set title
+        # Column 5 = blu-ray version
 
-        title = re.search(r"^([^\[]+)", columns[2].text.strip())
-        if not title:
-            continue
+        contents = table.findAll("tr")
+        for row in contents:
+            columns = row.findAll("td")
+            if not columns:
+                continue
 
-        title = title.group(1)
+            title = re.search(r"^([^\[]+)", columns[2].text.strip())
+            if not title:
+                continue
 
-        year = re.search(r"(\d{4})$", columns[4].text.strip())
-        if not year:
-            continue
+            title = title.group(1)
 
-        year = int(year.group())
+            year = re.search(r"(\d{4})$", columns[4].text.strip())
+            if not year:
+                continue
 
-        spine_number = re.search(r"^(\d+)", columns[0].text.strip())
-        spine_number = spine_number.group(1)
-        if columns[0].get("style") == "background:gray;":
-            in_print = False
+            year = int(year.group())
 
-        else:
-            in_print = True
+            spine_number = re.search(r"^(\d+)", columns[0].text.strip())
+            spine_number = spine_number.group(1)
+            if columns[0].get("style") == "background:gray;":
+                in_print = False
 
-        if columns[5].text.strip()[0:3] == "Yes":
-            bluray = True
+            else:
+                in_print = True
 
-        else:
-            bluray = False
+            if columns[5].text.strip()[0:3] == "Yes":
+                bluray = True
 
-        set = columns[7].get_text(separator=" ").strip()
-        if not set:
-            set = None
+            else:
+                bluray = False
 
-        else:
-            while "  " in set:
-                set = set.replace("  ", " ")
+            set = columns[7].get_text(separator=" ").strip()
+            if not set:
+                set = None
 
-        criterion_collection.append(
-            {
-                "title": title.upper(),
-                "year": year,
-                "spine_number": spine_number,
-                "set": set,
-                "in_print": in_print,
-                "bluray": bluray,
-            }
-        )
+            else:
+                while "  " in set:
+                    set = set.replace("  ", " ")
+
+            criterion_collection.append(
+                {
+                    "title": title.upper(),
+                    "year": year,
+                    "spine_number": spine_number,
+                    "set": set,
+                    "in_print": in_print,
+                    "bluray": bluray,
+                }
+            )
 
     return criterion_collection
 
