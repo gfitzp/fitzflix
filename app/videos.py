@@ -1085,7 +1085,7 @@ def finalize_localization(file_path, file_details, lock):
                 ),
             )
 
-        if possibly_foreign_language == True:
+        if possibly_foreign_language == True and len(output_audio_tracks) > 1:
             admin_user = User.query.filter(User.admin == True).first()
             send_email(
                 "Fitzflix - Foreign audio track added",
