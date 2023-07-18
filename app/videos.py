@@ -1881,7 +1881,10 @@ def sync_aws_s3_storage_task():
 
             file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
 
-            if (file.aws_untouched_key not in s3_keys or file.aws_untouched_date_uploaded == None) and os.path.isfile(file_path):
+            if (
+                file.aws_untouched_key not in s3_keys
+                or file.aws_untouched_date_uploaded == None
+            ) and os.path.isfile(file_path):
                 current_app.logger.info(
                     f"'{file.aws_untouched_key}' Queuing for upload to AWS"
                 )
