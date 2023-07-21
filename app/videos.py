@@ -110,14 +110,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
     - Pass the localized file to a separate process to add to the database.
     """
 
-    # app.app_context().push()
-
-    # Initalize the database
-    # https://stackoverflow.com/a/60438156
-
-    # db.init_app(app)
-
     with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
         db.init_app(app)
 
         try:
@@ -622,415 +617,393 @@ def finalize_localization(file_path, file_details, lock):
     - Changes are committed to the database.
     """
 
-    # app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    # Initalize the database
-    # https://stackoverflow.com/a/60438156
+        try:
+            job = get_current_job()
 
-    # db.init_app(app)
+            # Determine output directories and file to be created
 
-    #     with app.app_context():
-    #         db.init_app(app)
-
-    app.app_context().push()
-
-    try:
-        job = get_current_job()
-
-        # Determine output directories and file to be created
-
-        output_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-        )
-        hidden_output_file = os.path.join(
-            output_directory, f".{file_details.get('basename')}"
-        )
-        output_file = os.path.join(
-            current_app.config["LIBRARY_DIR"], file_details.get("file_path")
-        )
-
-        # See if this File record already exists in the database.
-        # If not, create a new one. Otherwise, update that existing record.
-
-        file = File.query.filter_by(file_path=file_details.get("file_path")).first()
-        if not file:
-            file = File(**file_details)
-            current_app.logger.debug(vars(file))
-            current_app.logger.info(f"{file} Creating File record")
-            db.session.add(file)
-
-        else:
-            current_app.logger.info(f"{file} Existing File record found")
-
-            # Clear metadata for existing File record
-
-            file.date_updated = datetime.utcnow()
-            file.date_transcoded = None
-            file.date_archived = None
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-        if file.media_library == "Movies":
-            # See if a Movie record already exists; if not, create one.
-
-            current_app.logger.info(
-                f"{file} Searching in Movies table using "
-                f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
+            output_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
             )
-            movie = Movie.query.filter_by(
-                title=file_details.get("title"), year=file_details.get("year")
-            ).first()
-            if not movie:
-                movie = Movie(
+            hidden_output_file = os.path.join(
+                output_directory, f".{file_details.get('basename')}"
+            )
+            output_file = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+            )
+
+            # See if this File record already exists in the database.
+            # If not, create a new one. Otherwise, update that existing record.
+
+            file = File.query.filter_by(file_path=file_details.get("file_path")).first()
+            if not file:
+                file = File(**file_details)
+                current_app.logger.debug(vars(file))
+                current_app.logger.info(f"{file} Creating File record")
+                db.session.add(file)
+
+            else:
+                current_app.logger.info(f"{file} Existing File record found")
+
+                # Clear metadata for existing File record
+
+                file.date_updated = datetime.utcnow()
+                file.date_transcoded = None
+                file.date_archived = None
+                FileAudioTrack.query.filter_by(file_id=file.id).delete()
+                FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+
+            if file.media_library == "Movies":
+                # See if a Movie record already exists; if not, create one.
+
+                current_app.logger.info(
+                    f"{file} Searching in Movies table using "
+                    f"title='{file_details.get('title')}', year='{file_details.get('year')}'"
+                )
+                movie = Movie.query.filter_by(
                     title=file_details.get("title"), year=file_details.get("year")
-                )
-                current_app.logger.info(f"{file} Creating {movie}")
-                criterion_collection = get_criterion_collection_from_wikipedia()
-                for release in criterion_collection:
-                    if (movie.title == release.get("title")) and (
-                        movie.year == release.get("year")
-                    ):
-                        movie.criterion_spine_number = release.get("spine_number")
-
-                        # Decided against automatically adding the box set title
-                        # movie.criterion_set_title = release.get("set")
-
-                        movie.criterion_in_print = release.get("in_print")
-                        movie.criterion_bluray = release.get("bluray")
-                        if movie.criterion_disc_owned == None:
-                            movie.criterion_disc_owned = False
-
-                        current_app.logger.info(
-                            f"{movie} Assigning Criterion Collection "
-                            f"spine #{movie.criterion_spine_number}"
-                        )
-
-                db.session.add(movie)
-
-            file.movie = movie
-            current_app.logger.info(f"{file} Associating with {movie}")
-
-            # Set the special feature type if the file is a special feature
-
-            if file_details.get("feature_type_name"):
-                feature_type = RefFeatureType.query.filter_by(
-                    feature_type=file_details.get("feature_type_name")
                 ).first()
-                file.feature_type = feature_type
-                current_app.logger.info(f"{file} Marking as {feature_type}")
+                if not movie:
+                    movie = Movie(
+                        title=file_details.get("title"), year=file_details.get("year")
+                    )
+                    current_app.logger.info(f"{file} Creating {movie}")
+                    criterion_collection = get_criterion_collection_from_wikipedia()
+                    for release in criterion_collection:
+                        if (movie.title == release.get("title")) and (
+                            movie.year == release.get("year")
+                        ):
+                            movie.criterion_spine_number = release.get("spine_number")
 
-        elif file.media_library == "TV Shows":
-            # See if a TVSeries record exists; if not, create one
+                            # Decided against automatically adding the box set title
+                            # movie.criterion_set_title = release.get("set")
 
-            current_app.logger.info(
-                f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
-            )
-            tv_series = TVSeries.query.filter_by(
-                title=file_details.get("title")
+                            movie.criterion_in_print = release.get("in_print")
+                            movie.criterion_bluray = release.get("bluray")
+                            if movie.criterion_disc_owned == None:
+                                movie.criterion_disc_owned = False
+
+                            current_app.logger.info(
+                                f"{movie} Assigning Criterion Collection "
+                                f"spine #{movie.criterion_spine_number}"
+                            )
+
+                    db.session.add(movie)
+
+                file.movie = movie
+                current_app.logger.info(f"{file} Associating with {movie}")
+
+                # Set the special feature type if the file is a special feature
+
+                if file_details.get("feature_type_name"):
+                    feature_type = RefFeatureType.query.filter_by(
+                        feature_type=file_details.get("feature_type_name")
+                    ).first()
+                    file.feature_type = feature_type
+                    current_app.logger.info(f"{file} Marking as {feature_type}")
+
+            elif file.media_library == "TV Shows":
+                # See if a TVSeries record exists; if not, create one
+
+                current_app.logger.info(
+                    f"{file} Searching in TVSeries table using title='{file_details.get('title')}"
+                )
+                tv_series = TVSeries.query.filter_by(
+                    title=file_details.get("title")
+                ).first()
+                if not tv_series:
+                    tv_series = TVSeries(title=file_details.get("title"))
+                    current_app.logger.info(f"{file} Creating {tv_series}")
+                    db.session.add(tv_series)
+
+                file.tv_series = tv_series
+                current_app.logger.info(f"{file} Associating with {tv_series}")
+
+            # Set file quality details
+
+            quality = RefQuality.query.filter_by(
+                quality_title=file_details.get("quality_title")
             ).first()
-            if not tv_series:
-                tv_series = TVSeries(title=file_details.get("title"))
-                current_app.logger.info(f"{file} Creating {tv_series}")
-                db.session.add(tv_series)
+            file.quality = quality
+            current_app.logger.info(f"{file} Setting file_quality {quality}")
 
-            file.tv_series = tv_series
-            current_app.logger.info(f"{file} Associating with {tv_series}")
+            # Parse the localized file and get its details with MediaInfo
 
-        # Set file quality details
-
-        quality = RefQuality.query.filter_by(
-            quality_title=file_details.get("quality_title")
-        ).first()
-        file.quality = quality
-        current_app.logger.info(f"{file} Setting file_quality {quality}")
-
-        # Parse the localized file and get its details with MediaInfo
-
-        media_info = MediaInfo.parse(hidden_output_file)
-        current_app.logger.debug(
-            f"'{os.path.basename(hidden_output_file)}' -> {media_info.to_json()}"
-        )
-        output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
-        output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
-
-        # Set file video track info
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.format:
-                file.format = track.format
-                break
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.codec_id:
-                file.codec = track.codec_id
-                break
-
-        for track in media_info.tracks:
-            if track.track_type == "Video" and track.bit_rate:
-                file.video_bitrate_kbps = track.bit_rate / 1000
-                break
-
-        # Put the final touches on the output file and move it into place
-
-        if file_details.get("container") == "Matroska":
-            # Set the first audio track as default
-            # TODO: set all other audio tracks as flag-default=0
-
-            if len(output_audio_tracks) >= 1:
-                current_app.logger.info(
-                    f"'{os.path.basename(hidden_output_file)}' "
-                    f"Setting the first audio track as default"
-                )
-                if output_audio_tracks[0].get("language") == "und":
-                    mkvpropedit_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVPROPEDIT_BIN"],
-                            hidden_output_file,
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "flag-default=1",
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "language=und",
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                else:
-                    mkvpropedit_process = subprocess.Popen(
-                        [
-                            current_app.config["MKVPROPEDIT_BIN"],
-                            hidden_output_file,
-                            "--edit",
-                            "track:a1",
-                            "--set",
-                            "flag-default=1",
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
-                    )
-
-                for line in mkvpropedit_process.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(
-                        f"'{os.path.basename(hidden_output_file)}' {line}"
-                    )
-
-            # Change from ISO-639-2 to ISO-639-3 language code
-            # if the file was written by MakeMKV
-
-            native_language = current_app.config["NATIVE_LANGUAGE"]
-
-            for track in media_info.tracks:
-                if (
-                    track.track_type == "General"
-                    and "MakeMKV" in track.writing_application
-                ):
-                    native_language = iso_639_3_native_language()
-                    current_app.logger.warning(
-                        f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                        f"code '{native_language}' instead of user-supplied "
-                        f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                        f"processing this file with mkvmerge"
-                    )
-
-            # Set the first subtitle track as default if the first audio is foreign
-            # and if there isn't already a default subtitle track
-
-            existing_default_subtitle_track = False
-            for track in output_subtitle_tracks:
-                if track["default"] == True:
-                    existing_default_subtitle_track = True
-
-            if (
-                len(output_subtitle_tracks) >= 1
-                and output_audio_tracks[0].get("language") != native_language
-                and output_audio_tracks[0].get("language") != "und"
-                and not existing_default_subtitle_track
-            ):
-                current_app.logger.info(
-                    f"'{os.path.basename(hidden_output_file)}' "
-                    f"Setting the first subtitle track as default"
-                )
-                mkvpropedit_process = subprocess.run(
-                    [
-                        current_app.config["MKVPROPEDIT_BIN"],
-                        hidden_output_file,
-                        "--edit",
-                        "track:s1",
-                        "--set",
-                        "flag-default=1",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    bufsize=1,
-                )
-                for line in mkvpropedit_process.stdout:
-                    line = line.replace("\n", "")
-                    current_app.logger.info(
-                        f"'{os.path.basename(hidden_output_file)}' {line}"
-                    )
-
-            # Rebuild the audio and subtitle track info
-            # now that we've possibly made modifications
-
+            media_info = MediaInfo.parse(hidden_output_file)
+            current_app.logger.debug(
+                f"'{os.path.basename(hidden_output_file)}' -> {media_info.to_json()}"
+            )
             output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
             output_subtitle_tracks = get_subtitle_tracks_from_file(hidden_output_file)
 
-        # Set file audio track info
+            # Set file video track info
 
-        possibly_foreign_language = False
-        first_audio_track_lossy = True
-        lossless_audio_track_present = False
-        for i, track in enumerate(output_audio_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            audio_track = FileAudioTrack(**track)
-            file.audio_track = audio_track
-            if track["track"] == 1 and audio_track.language not in [
-                current_app.config["NATIVE_LANGUAGE"],
-                "und",
-                "zxx",
-            ]:
-                possibly_foreign_language = True
-            if (
-                track["track"] == 1
-                and track.get("compression_mode", "Lossy") == "Lossless"
-            ):
-                first_audio_track_lossy = False
-                lossless_audio_track_present = True
-            elif track.get("compression_mode", "Lossy") == "Lossless":
-                lossless_audio_track_present = True
-            current_app.logger.info(f"{file} Adding audio track {audio_track}")
-            db.session.add(audio_track)
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.format:
+                    file.format = track.format
+                    break
 
-        # Set file subtitle track info
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.codec_id:
+                    file.codec = track.codec_id
+                    break
 
-        possibly_forced_subtitle = False
-        if len(output_subtitle_tracks) > 1:
-            main_subtitle_track = output_subtitle_tracks[0].get("elements")
-            for i, track in enumerate(output_subtitle_tracks[1:]):
-                track_length = track.get("elements")
-                forced_flag = track.get("forced")
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.bit_rate:
+                    file.video_bitrate_kbps = track.bit_rate / 1000
+                    break
 
-                # If a track is less than 1/3 the length of the first subtitle track,
-                # but it's not marked as forced, speculate that it might be a forced
-                # subtitle track
+            # Put the final touches on the output file and move it into place
+
+            if file_details.get("container") == "Matroska":
+                # Set the first audio track as default
+                # TODO: set all other audio tracks as flag-default=0
+
+                if len(output_audio_tracks) >= 1:
+                    current_app.logger.info(
+                        f"'{os.path.basename(hidden_output_file)}' "
+                        f"Setting the first audio track as default"
+                    )
+                    if output_audio_tracks[0].get("language") == "und":
+                        mkvpropedit_process = subprocess.Popen(
+                            [
+                                current_app.config["MKVPROPEDIT_BIN"],
+                                hidden_output_file,
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "flag-default=1",
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "language=und",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True,
+                            bufsize=1,
+                        )
+
+                    else:
+                        mkvpropedit_process = subprocess.Popen(
+                            [
+                                current_app.config["MKVPROPEDIT_BIN"],
+                                hidden_output_file,
+                                "--edit",
+                                "track:a1",
+                                "--set",
+                                "flag-default=1",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True,
+                            bufsize=1,
+                        )
+
+                    for line in mkvpropedit_process.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(
+                            f"'{os.path.basename(hidden_output_file)}' {line}"
+                        )
+
+                # Change from ISO-639-2 to ISO-639-3 language code
+                # if the file was written by MakeMKV
+
+                native_language = current_app.config["NATIVE_LANGUAGE"]
+
+                for track in media_info.tracks:
+                    if (
+                        track.track_type == "General"
+                        and "MakeMKV" in track.writing_application
+                    ):
+                        native_language = iso_639_3_native_language()
+                        current_app.logger.warning(
+                            f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                            f"code '{native_language}' instead of user-supplied "
+                            f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
+                            f"processing this file with mkvmerge"
+                        )
+
+                # Set the first subtitle track as default if the first audio is foreign
+                # and if there isn't already a default subtitle track
+
+                existing_default_subtitle_track = False
+                for track in output_subtitle_tracks:
+                    if track["default"] == True:
+                        existing_default_subtitle_track = True
 
                 if (
-                    track_length > 0
-                    and track_length <= (main_subtitle_track * 0.3)
-                    and not forced_flag
+                    len(output_subtitle_tracks) >= 1
+                    and output_audio_tracks[0].get("language") != native_language
+                    and output_audio_tracks[0].get("language") != "und"
+                    and not existing_default_subtitle_track
                 ):
-                    current_app.logger.warning(
-                        f"{file} Subtitle track {i+2} has {track_length} elements "
-                        f"and may be a forced subtitle track!"
+                    current_app.logger.info(
+                        f"'{os.path.basename(hidden_output_file)}' "
+                        f"Setting the first subtitle track as default"
                     )
-                    output_subtitle_tracks[i + 1]["forced"] = None
-                    possibly_forced_subtitle = True
-
-        for i, track in enumerate(output_subtitle_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            subtitle_track = FileSubtitleTrack(**track)
-            file.subtitle_track = subtitle_track
-            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
-            db.session.add(subtitle_track)
-
-        # Set the localized date
-
-        file.date_localized = datetime.utcnow()
-
-        # Set the AWS archived fields if the file was uploaded to AWS S3 storage
-
-        file.aws_untouched_key = file_details.get("aws_untouched_key")
-        file.aws_untouched_date_uploaded = file_details.get(
-            "aws_untouched_date_uploaded"
-        )
-
-        # Get or refresh movie or tv series details and download images
-
-        try:
-            # Establish a savepoint with db.session.begin_nested(), so if any of the
-            # queries to get show metadata fail, we can just roll back those changes to
-            # the savepoint and still commit the movie / tv show, file, and its tracks.
-
-            db.session.begin_nested()
-            if file.movie_id:
-                if movie.tmdb_id == None:
-                    movie.tmdb_movie_query()
-
-            elif file.series_id:
-                if tv_series.tmdb_id == None:
-                    tv_series.tmdb_tv_query()
-
-            db.session.commit()
-
-        except:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
-            pass
-
-        # Find and remove any worse-quality files before moving the new file into place
-        # so we don't delete any special features where old and new filenames are the same
-
-        worse_files = file.find_worse_files()
-        for worse in worse_files:
-            worse.delete_local_file()
-
-            # If the new file is from digital media, delete only worse digital-media files
-            # (we always want to keep the best physical-media file)
-            #
-            # Otherwise, if the new file is from physical media, delete all worse files
-            # regardless of media source
-
-            if (
-                worse.quality.physical_media == file.quality.physical_media
-                or file.quality.physical_media == True
-            ):
-                if worse.aws_untouched_date_uploaded:
-                    worse.aws_untouched_date_deleted = aws_delete(
-                        worse.aws_untouched_key
+                    mkvpropedit_process = subprocess.run(
+                        [
+                            current_app.config["MKVPROPEDIT_BIN"],
+                            hidden_output_file,
+                            "--edit",
+                            "track:s1",
+                            "--set",
+                            "flag-default=1",
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
                     )
-                    worse.aws_untouched_date_uploaded = None
-                db.session.delete(worse)
+                    for line in mkvpropedit_process.stdout:
+                        line = line.replace("\n", "")
+                        current_app.logger.info(
+                            f"'{os.path.basename(hidden_output_file)}' {line}"
+                        )
 
-            if (
-                worse.quality.physical_media == True
-                and file.quality.physical_media == True
-            ):
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Replaced a physical media file",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/replaced_physical_media.txt",
-                        user=admin_user.email,
-                        file=file,
-                        worse=worse,
-                    ),
-                    html_body=render_template(
-                        "email/replaced_physical_media.html",
-                        user=admin_user.email,
-                        file=file,
-                        worse=worse,
-                    ),
+                # Rebuild the audio and subtitle track info
+                # now that we've possibly made modifications
+
+                output_audio_tracks = get_audio_tracks_from_file(hidden_output_file)
+                output_subtitle_tracks = get_subtitle_tracks_from_file(
+                    hidden_output_file
                 )
 
-                if current_app.config["TODO_EMAIL"]:
+            # Set file audio track info
+
+            possibly_foreign_language = False
+            first_audio_track_lossy = True
+            lossless_audio_track_present = False
+            for i, track in enumerate(output_audio_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                audio_track = FileAudioTrack(**track)
+                file.audio_track = audio_track
+                if track["track"] == 1 and audio_track.language not in [
+                    current_app.config["NATIVE_LANGUAGE"],
+                    "und",
+                    "zxx",
+                ]:
+                    possibly_foreign_language = True
+                if (
+                    track["track"] == 1
+                    and track.get("compression_mode", "Lossy") == "Lossless"
+                ):
+                    first_audio_track_lossy = False
+                    lossless_audio_track_present = True
+                elif track.get("compression_mode", "Lossy") == "Lossless":
+                    lossless_audio_track_present = True
+                current_app.logger.info(f"{file} Adding audio track {audio_track}")
+                db.session.add(audio_track)
+
+            # Set file subtitle track info
+
+            possibly_forced_subtitle = False
+            if len(output_subtitle_tracks) > 1:
+                main_subtitle_track = output_subtitle_tracks[0].get("elements")
+                for i, track in enumerate(output_subtitle_tracks[1:]):
+                    track_length = track.get("elements")
+                    forced_flag = track.get("forced")
+
+                    # If a track is less than 1/3 the length of the first subtitle track,
+                    # but it's not marked as forced, speculate that it might be a forced
+                    # subtitle track
+
+                    if (
+                        track_length > 0
+                        and track_length <= (main_subtitle_track * 0.3)
+                        and not forced_flag
+                    ):
+                        current_app.logger.warning(
+                            f"{file} Subtitle track {i+2} has {track_length} elements "
+                            f"and may be a forced subtitle track!"
+                        )
+                        output_subtitle_tracks[i + 1]["forced"] = None
+                        possibly_forced_subtitle = True
+
+            for i, track in enumerate(output_subtitle_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                subtitle_track = FileSubtitleTrack(**track)
+                file.subtitle_track = subtitle_track
+                current_app.logger.info(
+                    f"{file} Adding subtitle track {subtitle_track}"
+                )
+                db.session.add(subtitle_track)
+
+            # Set the localized date
+
+            file.date_localized = datetime.utcnow()
+
+            # Set the AWS archived fields if the file was uploaded to AWS S3 storage
+
+            file.aws_untouched_key = file_details.get("aws_untouched_key")
+            file.aws_untouched_date_uploaded = file_details.get(
+                "aws_untouched_date_uploaded"
+            )
+
+            # Get or refresh movie or tv series details and download images
+
+            try:
+                # Establish a savepoint with db.session.begin_nested(), so if any of the
+                # queries to get show metadata fail, we can just roll back those changes to
+                # the savepoint and still commit the movie / tv show, file, and its tracks.
+
+                db.session.begin_nested()
+                if file.movie_id:
+                    if movie.tmdb_id == None:
+                        movie.tmdb_movie_query()
+
+                elif file.series_id:
+                    if tv_series.tmdb_id == None:
+                        tv_series.tmdb_tv_query()
+
+                db.session.commit()
+
+            except:
+                current_app.logger.error(traceback.format_exc())
+                db.session.rollback()
+                pass
+
+            # Find and remove any worse-quality files before moving the new file into place
+            # so we don't delete any special features where old and new filenames are the same
+
+            worse_files = file.find_worse_files()
+            for worse in worse_files:
+                worse.delete_local_file()
+
+                # If the new file is from digital media, delete only worse digital-media files
+                # (we always want to keep the best physical-media file)
+                #
+                # Otherwise, if the new file is from physical media, delete all worse files
+                # regardless of media source
+
+                if (
+                    worse.quality.physical_media == file.quality.physical_media
+                    or file.quality.physical_media == True
+                ):
+                    if worse.aws_untouched_date_uploaded:
+                        worse.aws_untouched_date_deleted = aws_delete(
+                            worse.aws_untouched_key
+                        )
+                        worse.aws_untouched_date_uploaded = None
+                    db.session.delete(worse)
+
+                if (
+                    worse.quality.physical_media == True
+                    and file.quality.physical_media == True
+                ):
+                    admin_user = User.query.filter(User.admin == True).first()
                     send_email(
-                        f"Find and dispose of the media for '{worse.untouched_basename}'",
+                        "Fitzflix - Replaced a physical media file",
                         sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                        recipients=[current_app.config["TODO_EMAIL"]],
+                        recipients=[admin_user.email],
                         text_body=render_template(
                             "email/replaced_physical_media.txt",
                             user=admin_user.email,
@@ -1045,259 +1018,294 @@ def finalize_localization(file_path, file_details, lock):
                         ),
                     )
 
-        # Move the new file into place
+                    if current_app.config["TODO_EMAIL"]:
+                        send_email(
+                            f"Find and dispose of the media for '{worse.untouched_basename}'",
+                            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                            recipients=[current_app.config["TODO_EMAIL"]],
+                            text_body=render_template(
+                                "email/replaced_physical_media.txt",
+                                user=admin_user.email,
+                                file=file,
+                                worse=worse,
+                            ),
+                            html_body=render_template(
+                                "email/replaced_physical_media.html",
+                                user=admin_user.email,
+                                file=file,
+                                worse=worse,
+                            ),
+                        )
 
-        os.rename(hidden_output_file, output_file)
+            # Move the new file into place
 
-        db.session.commit()
+            os.rename(hidden_output_file, output_file)
 
-        # Remove the file that was imported unless it was replaced by the localized file
-        # (we don't want to remove the file we just created!)
+            db.session.commit()
 
-        if file_path != output_file:
-            try:
-                os.remove(file_path)
+            # Remove the file that was imported unless it was replaced by the localized file
+            # (we don't want to remove the file we just created!)
 
-            except FileNotFoundError:
-                pass
+            if file_path != output_file:
+                try:
+                    os.remove(file_path)
 
-        # Pass the TV series title to Sonarr to refresh the series data
-        # (ignore any exceptions, since it's no big deal if Sonarr can't refresh)
+                except FileNotFoundError:
+                    pass
 
-        if file.series_id:
-            try:
-                file.refresh_sonarr()
+            # Pass the TV series title to Sonarr to refresh the series data
+            # (ignore any exceptions, since it's no big deal if Sonarr can't refresh)
 
-            except Exception:
-                pass
+            if file.series_id:
+                try:
+                    file.refresh_sonarr()
 
-        if file.media_library == "Movies" and movie.tmdb_id == None:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Added a movie without a TMDb ID",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
-                ),
-                html_body=render_template(
-                    "email/no_tmdb_id.html", user=admin_user.email, movie=movie
-                ),
-            )
+                except Exception:
+                    pass
 
-        if possibly_foreign_language == True and len(output_audio_tracks) > 1:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Foreign audio track added",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/possibly_foreign_audio.txt",
-                    user=admin_user.email,
-                    file=file,
-                ),
-                html_body=render_template(
-                    "email/possibly_foreign_audio.html",
-                    user=admin_user.email,
-                    file=file,
-                ),
-            )
+            if file.media_library == "Movies" and movie.tmdb_id == None:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Added a movie without a TMDb ID",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/no_tmdb_id.txt", user=admin_user.email, movie=movie
+                    ),
+                    html_body=render_template(
+                        "email/no_tmdb_id.html", user=admin_user.email, movie=movie
+                    ),
+                )
 
-        current_app.logger.info(f"{file} File ID {file.id}")
+            if possibly_foreign_language == True and len(output_audio_tracks) > 1:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Foreign audio track added",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/possibly_foreign_audio.txt",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                    html_body=render_template(
+                        "email/possibly_foreign_audio.html",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                )
 
-        if possibly_forced_subtitle == True:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Possibly forced subtitle track",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/possibly_forced_subtitle.txt",
-                    user=admin_user.email,
-                    file=file,
-                ),
-                html_body=render_template(
-                    "email/possibly_forced_subtitle.html",
-                    user=admin_user.email,
-                    file=file,
-                ),
-            )
+            current_app.logger.info(f"{file} File ID {file.id}")
 
-        if first_audio_track_lossy and lossless_audio_track_present:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Added a file that has a lossless audio track ",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/lossy_audio.txt",
-                    user=admin_user.email,
-                    file=file,
-                ),
-                html_body=render_template(
-                    "email/lossy_audio.html",
-                    user=admin_user.email,
-                    file=file,
-                ),
-            )
+            if possibly_forced_subtitle == True:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Possibly forced subtitle track",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/possibly_forced_subtitle.txt",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                    html_body=render_template(
+                        "email/possibly_forced_subtitle.html",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                )
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        move_to_rejects(file_path, "exception")
-        db.session.rollback()
+            if first_audio_track_lossy and lossless_audio_track_present:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Added a file that has a lossless audio track ",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/lossy_audio.txt",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                    html_body=render_template(
+                        "email/lossy_audio.html",
+                        user=admin_user.email,
+                        file=file,
+                    ),
+                )
 
-    else:
-        current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            move_to_rejects(file_path, "exception")
+            db.session.rollback()
 
-    finally:
-        current_app.lock_manager.unlock(lock)
-        current_app.logger.info(f"Removed lock {lock}")
+        else:
+            current_app.logger.info(f"'{file_path}' processed as '{output_file}'")
+
+        finally:
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
 
 
 def finalize_transcoding(file_id, lock):
     """Update a file with details about its transcoding and move it into position."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        file = File.query.filter_by(id=file_id).first()
-        ext = current_app.config["HANDBRAKE_EXTENSION"]
+            file = File.query.filter_by(id=file_id).first()
+            ext = current_app.config["HANDBRAKE_EXTENSION"]
 
-        # Determine output directories and file to be created
+            # Determine output directories and file to be created
 
-        output_directory = os.path.join(
-            current_app.config["TRANSCODES_DIR"], file.dirname
-        )
-        hidden_output_file = os.path.join(output_directory, f".{file.plex_title}.{ext}")
-        output_file = os.path.join(output_directory, f"{file.plex_title}.{ext}")
+            output_directory = os.path.join(
+                current_app.config["TRANSCODES_DIR"], file.dirname
+            )
+            hidden_output_file = os.path.join(
+                output_directory, f".{file.plex_title}.{ext}"
+            )
+            output_file = os.path.join(output_directory, f"{file.plex_title}.{ext}")
 
-        # Move the transcoded file into place
+            # Move the transcoded file into place
 
-        os.rename(hidden_output_file, output_file)
+            os.rename(hidden_output_file, output_file)
 
-        # Update the file record with the date it was transcoded
-        file.date_transcoded = datetime.utcnow()
+            # Update the file record with the date it was transcoded
+            file.date_transcoded = datetime.utcnow()
 
-        db.session.commit()
+            db.session.commit()
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
 
-    else:
-        current_app.logger.info(f"{file.plex_title}' Transcode complete")
+        else:
+            current_app.logger.info(f"{file.plex_title}' Transcode complete")
 
-    finally:
-        current_app.lock_manager.unlock(lock)
-        current_app.logger.info(f"Removed lock {lock}")
+        finally:
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
 
 
 def manual_import_task():
     """Scan the Import directory and import files that aren't already in the queue."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
-        import_directory_files.sort()
-        qualities = (
-            db.session.query(RefQuality.quality_title)
-            .order_by(RefQuality.preference.asc())
-            .all()
-        )
-        qualities = [quality_title for (quality_title,) in qualities]
-        for quality_title in qualities:
-            for file in import_directory_files:
-                if (
-                    (not os.path.basename(file).startswith("."))
-                    and f"[{quality_title}]" in file
-                    and os.path.isfile(
-                        os.path.join(current_app.config["IMPORT_DIR"], file)
-                    )
-                ):
-                    lock = current_app.lock_manager.lock(os.path.basename(file), 1000)
-                    if lock:
-                        job_queue = []
-                        localization_tasks_running = StartedJobRegistry(
-                            "fitzflix-import", connection=current_app.redis
+        try:
+            import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
+            import_directory_files.sort()
+            qualities = (
+                db.session.query(RefQuality.quality_title)
+                .order_by(RefQuality.preference.asc())
+                .all()
+            )
+            qualities = [quality_title for (quality_title,) in qualities]
+            for quality_title in qualities:
+                for file in import_directory_files:
+                    if (
+                        (not os.path.basename(file).startswith("."))
+                        and f"[{quality_title}]" in file
+                        and os.path.isfile(
+                            os.path.join(current_app.config["IMPORT_DIR"], file)
                         )
-                        job_queue.extend(localization_tasks_running.get_job_ids())
-                        job_queue.extend(current_app.import_queue.job_ids)
-                        if os.path.basename(file) not in job_queue:
-                            current_app.logger.info(
-                                f"'{os.path.basename(file)}' Found in import directory"
+                    ):
+                        lock = current_app.lock_manager.lock(
+                            os.path.basename(file), 1000
+                        )
+                        if lock:
+                            job_queue = []
+                            localization_tasks_running = StartedJobRegistry(
+                                "fitzflix-import", connection=current_app.redis
                             )
-                            job = current_app.import_queue.enqueue(
-                                "app.videos.localization_task",
-                                args=(
-                                    os.path.join(
-                                        current_app.config["IMPORT_DIR"], file
+                            job_queue.extend(localization_tasks_running.get_job_ids())
+                            job_queue.extend(current_app.import_queue.job_ids)
+                            if os.path.basename(file) not in job_queue:
+                                current_app.logger.info(
+                                    f"'{os.path.basename(file)}' Found in import directory"
+                                )
+                                job = current_app.import_queue.enqueue(
+                                    "app.videos.localization_task",
+                                    args=(
+                                        os.path.join(
+                                            current_app.config["IMPORT_DIR"], file
+                                        ),
                                     ),
-                                ),
-                                job_timeout=current_app.config[
-                                    "LOCALIZATION_TASK_TIMEOUT"
-                                ],
-                                description=f"'{os.path.basename(file)}'",
-                                job_id=os.path.basename(file),
-                            )
+                                    job_timeout=current_app.config[
+                                        "LOCALIZATION_TASK_TIMEOUT"
+                                    ],
+                                    description=f"'{os.path.basename(file)}'",
+                                    job_id=os.path.basename(file),
+                                )
 
-                        current_app.lock_manager.unlock(lock)
+                            current_app.lock_manager.unlock(lock)
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
 
-    else:
-        return True
+        else:
+            return True
 
 
 def track_metadata_scan_library():
     """Add all files in the library to the metadata scan queue."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        files = File.query.all()
-        for file in files:
-            current_app.sql_queue.enqueue(
-                "app.videos.track_metadata_scan_task",
-                args=(file.id,),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=f"{file.basename} – Scanning track metadata",
-            )
+            files = File.query.all()
+            for file in files:
+                current_app.sql_queue.enqueue(
+                    "app.videos.track_metadata_scan_task",
+                    args=(file.id,),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"{file.basename} – Scanning track metadata",
+                )
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        raise
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            raise
 
-    return True
+        return True
 
 
 def track_metadata_scan_task(file_id):
     """Scan a file's metadata in the background."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        if os.path.isfile(file_path):
-            track_metadata_scan(file.id)
+            file = File.query.filter_by(id=file_id).first()
+            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+            if os.path.isfile(file_path):
+                track_metadata_scan(file.id)
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-        raise
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            raise
 
-    else:
-        db.session.commit()
+        else:
+            db.session.commit()
 
-    return True
+        return True
 
 
 def track_metadata_scan(file_id):
@@ -1406,175 +1414,368 @@ def mkvpropedit_task(
 ):
     """Update a file's MKV properties."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        # TODO: Create lock (is one really necessary?)
+            # TODO: Create lock (is one really necessary?)
 
-        # Get the record of the file to modify
+            # Get the record of the file to modify
 
-        file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            file = File.query.filter_by(id=file_id).first()
+            file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-        if job:
-            job.meta["description"] = f"'{file.basename}' — Updating MKV properties"
-            job.meta["progress"] = -1
-            job.save_meta()
+            if job:
+                job.meta["description"] = f"'{file.basename}' — Updating MKV properties"
+                job.meta["progress"] = -1
+                job.save_meta()
 
-        FileAudioTrack.query.filter_by(file_id=file.id).delete()
-        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+            FileAudioTrack.query.filter_by(file_id=file.id).delete()
+            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
-        media_info = MediaInfo.parse(file_path)
-        audio_tracks = get_audio_tracks_from_file(file_path)
-        subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+            media_info = MediaInfo.parse(file_path)
+            audio_tracks = get_audio_tracks_from_file(file_path)
+            subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
-        current_app.logger.info(f"{file.basename} file_id: {file_id}")
-        current_app.logger.info(
-            f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}"
-        )
-        current_app.logger.info(
-            f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}"
-        )
-        current_app.logger.info(
-            f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
-        )
+            current_app.logger.info(f"{file.basename} file_id: {file_id}")
+            current_app.logger.info(
+                f"{file.basename} selected default_audio_track: {default_audio_track} {type(default_audio_track)}"
+            )
+            current_app.logger.info(
+                f"{file.basename} selected default_subtitle_track: {default_subtitle_track} {type(default_subtitle_track)}"
+            )
+            current_app.logger.info(
+                f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
+            )
 
-        audio_track_arguments = []
-        subtitle_track_arguments = []
+            audio_track_arguments = []
+            subtitle_track_arguments = []
 
-        for track_id, track in enumerate(audio_tracks, 1):
-            track_id = str(track_id)
-
-            if track_id == default_audio_track:
-                audio_track_arguments.append(
-                    f"--edit track:a{track_id} --set flag-default=1"
-                )
-
-            else:
-                audio_track_arguments.append(
-                    f"--edit track:a{track_id} --set flag-default=0"
-                )
-
-        if default_subtitle_track or forced_subtitle_tracks:
-            for track_id, track in enumerate(subtitle_tracks, 1):
+            for track_id, track in enumerate(audio_tracks, 1):
                 track_id = str(track_id)
 
-                if track_id == default_subtitle_track:
-                    subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-default=1"
+                if track_id == default_audio_track:
+                    audio_track_arguments.append(
+                        f"--edit track:a{track_id} --set flag-default=1"
                     )
 
                 else:
-                    subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-default=0"
+                    audio_track_arguments.append(
+                        f"--edit track:a{track_id} --set flag-default=0"
                     )
 
-                if track_id in forced_subtitle_tracks:
-                    subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-forced=1"
-                    )
+            if default_subtitle_track or forced_subtitle_tracks:
+                for track_id, track in enumerate(subtitle_tracks, 1):
+                    track_id = str(track_id)
 
-                else:
-                    subtitle_track_arguments.append(
-                        f"--edit track:s{track_id} --set flag-forced=0"
-                    )
+                    if track_id == default_subtitle_track:
+                        subtitle_track_arguments.append(
+                            f"--edit track:s{track_id} --set flag-default=1"
+                        )
 
-        current_app.logger.info(
-            f"{file.basename} audio_track_arguments: {audio_track_arguments}"
-        )
-        current_app.logger.info(
-            f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}"
-        )
+                    else:
+                        subtitle_track_arguments.append(
+                            f"--edit track:s{track_id} --set flag-default=0"
+                        )
 
-        # subprocess expects an array of arguments,
-        # so we need to split the arguments on spaces
-        localization_arguments = []
-        for arg in audio_track_arguments:
-            localization_arguments.extend(arg.split())
+                    if track_id in forced_subtitle_tracks:
+                        subtitle_track_arguments.append(
+                            f"--edit track:s{track_id} --set flag-forced=1"
+                        )
 
-        for arg in subtitle_track_arguments:
-            localization_arguments.extend(arg.split())
-
-        current_app.logger.info(
-            f"{file.basename} localization_arguments: {localization_arguments}"
-        )
-
-        mkvpropedit_task = subprocess.Popen(
-            [
-                current_app.config["MKVPROPEDIT_BIN"],
-                file_path,
-            ]
-            + localization_arguments,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-        )
-        for line in mkvpropedit_task.stdout:
-            line = line.replace("\n", "")
-            current_app.logger.info(line)
-
-        # If the default audio track isn't the first track, create a new file with the
-        # default audio track prioritized so Plex selects it first
-
-        if default_audio_track != "1":
-            new_track_order = []
-            media_info = MediaInfo.parse(file_path)
-
-            # Default video tracks
-            for track in media_info.tracks:
-                if track.track_type == "Video" and track.default == "Yes":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            # Non-default video tracks
-            for track in media_info.tracks:
-                if track.track_type == "Video" and track.default == "No":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            # Default audio tracks
-            for track in media_info.tracks:
-                if track.track_type == "Audio" and track.default == "Yes":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            # Non-default audio tracks
-
-            for track in media_info.tracks:
-                if track.track_type == "Audio" and track.default == "No":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            # Default subtitle tracks
-
-            for track in media_info.tracks:
-                if track.track_type == "Text" and track.default == "Yes":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            # Non-default subtitle tracks
-
-            for track in media_info.tracks:
-                if track.track_type == "Text" and track.default == "No":
-                    new_track_order.append(f"0:{track.streamorder}")
-
-            new_track_order = ",".join(new_track_order)
+                    else:
+                        subtitle_track_arguments.append(
+                            f"--edit track:s{track_id} --set flag-forced=0"
+                        )
 
             current_app.logger.info(
-                f"{file.basename} new_track_order: {new_track_order}"
+                f"{file.basename} audio_track_arguments: {audio_track_arguments}"
             )
+            current_app.logger.info(
+                f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}"
+            )
+
+            # subprocess expects an array of arguments,
+            # so we need to split the arguments on spaces
+            localization_arguments = []
+            for arg in audio_track_arguments:
+                localization_arguments.extend(arg.split())
+
+            for arg in subtitle_track_arguments:
+                localization_arguments.extend(arg.split())
+
+            current_app.logger.info(
+                f"{file.basename} localization_arguments: {localization_arguments}"
+            )
+
+            mkvpropedit_task = subprocess.Popen(
+                [
+                    current_app.config["MKVPROPEDIT_BIN"],
+                    file_path,
+                ]
+                + localization_arguments,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+            )
+            for line in mkvpropedit_task.stdout:
+                line = line.replace("\n", "")
+                current_app.logger.info(line)
+
+            # If the default audio track isn't the first track, create a new file with the
+            # default audio track prioritized so Plex selects it first
+
+            if default_audio_track != "1":
+                new_track_order = []
+                media_info = MediaInfo.parse(file_path)
+
+                # Default video tracks
+                for track in media_info.tracks:
+                    if track.track_type == "Video" and track.default == "Yes":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                # Non-default video tracks
+                for track in media_info.tracks:
+                    if track.track_type == "Video" and track.default == "No":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                # Default audio tracks
+                for track in media_info.tracks:
+                    if track.track_type == "Audio" and track.default == "Yes":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                # Non-default audio tracks
+
+                for track in media_info.tracks:
+                    if track.track_type == "Audio" and track.default == "No":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                # Default subtitle tracks
+
+                for track in media_info.tracks:
+                    if track.track_type == "Text" and track.default == "Yes":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                # Non-default subtitle tracks
+
+                for track in media_info.tracks:
+                    if track.track_type == "Text" and track.default == "No":
+                        new_track_order.append(f"0:{track.streamorder}")
+
+                new_track_order = ",".join(new_track_order)
+
+                current_app.logger.info(
+                    f"{file.basename} new_track_order: {new_track_order}"
+                )
+
+                output_directory = os.path.join(
+                    current_app.config["LIBRARY_DIR"], file.dirname
+                )
+                hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+
+                command = [
+                    current_app.config["MKVMERGE_BIN"],
+                    "--track-order",
+                    new_track_order,
+                    "-o",
+                    hidden_output_file,
+                    file_path,
+                ]
+
+                current_app.logger.info(command)
+
+                mkvmerge_process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    bufsize=1,
+                )
+
+                for line in mkvmerge_process.stdout:
+                    progress_match = re.search("Progress\: \d+\%", line)
+                    if progress_match:
+                        progress_match = re.match(
+                            "^Progress\: (?P<percent>\d+)\%", line
+                        )
+                        progress = int(progress_match.group("percent"))
+                        current_app.logger.info(
+                            f"'{file.basename}' Remuxing: {progress}%"
+                        )
+                        if job:
+                            job.meta["description"] = f"'{file.basename}' — Remuxing"
+                            job.meta["progress"] = progress
+                            job.save_meta()
+
+                # Move the new file into place
+
+                os.rename(hidden_output_file, file_path)
+
+            # Rebuild the audio and subtitle track info now that we've made modifications
+
+            output_audio_tracks = get_audio_tracks_from_file(file_path)
+            output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+
+            # Set file audio track info
+
+            for i, track in enumerate(output_audio_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                audio_track = FileAudioTrack(**track)
+                file.audio_track = audio_track
+                current_app.logger.info(f"{file} Adding audio track {audio_track}")
+                db.session.add(audio_track)
+
+            # Set file subtitle track info
+
+            if len(output_subtitle_tracks) > 1:
+                main_subtitle_track = output_subtitle_tracks[0].get("elements")
+                for i, track in enumerate(output_subtitle_tracks[1:]):
+                    track_length = track.get("elements")
+                    forced_flag = track.get("forced")
+
+                    # If a track is less than 1/3 the length of the first subtitle track,
+                    # but it's not marked as forced, speculate that it might be a forced
+                    # subtitle track
+
+                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
+                        current_app.logger.warning(
+                            f"{file} Subtitle track {i+2} has {track_length} elements "
+                            f"and may be a forced subtitle track!"
+                        )
+                        output_subtitle_tracks[i + 1]["forced"] = None
+
+            for i, track in enumerate(output_subtitle_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                subtitle_track = FileSubtitleTrack(**track)
+                file.subtitle_track = subtitle_track
+                current_app.logger.info(
+                    f"{file} Adding subtitle track {subtitle_track}"
+                )
+                db.session.add(subtitle_track)
+
+            file.date_updated = datetime.utcnow()
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            raise
+
+        else:
+            db.session.commit()
+
+        if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+            try:
+                (
+                    file.aws_untouched_key,
+                    file.aws_untouched_date_uploaded,
+                ) = aws_upload(
+                    file_path,
+                    current_app.config["AWS_UNTOUCHED_PREFIX"],
+                    force_upload=True,
+                    ignore_etag=True,
+                )
+
+            except Exception:
+                current_app.logger.error(traceback.format_exc())
+                db.session.rollback()
+                raise
+
+            else:
+                db.session.commit()
+
+        return True
+
+
+def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
+    """Remux a MKV file."""
+
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
+
+        try:
+            job = get_current_job()
+
+            file = File.query.filter_by(id=file_id).first()
+            file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+
+            if job:
+                job.meta["description"] = f"'{file.basename}' — Remuxing"
+                job.save_meta()
+
+            FileAudioTrack.query.filter_by(file_id=file.id).delete()
+            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
             output_directory = os.path.join(
                 current_app.config["LIBRARY_DIR"], file.dirname
             )
             hidden_output_file = os.path.join(output_directory, f".{file.basename}")
 
+            audio_start = None
+            subtitle_start = None
+
+            media_info = MediaInfo.parse(file_path)
+            tracks = [
+                track for track in media_info.tracks if track.track_id is not None
+            ]
+
+            current_app.logger.info("MediaInfo tracks: ", tracks)
+
+            for i, track in enumerate(tracks):
+                if track.track_type == "Audio" and audio_start == None:
+                    audio_start = i
+                if track.track_type == "Text" and subtitle_start == None:
+                    subtitle_start = i
+
+            current_app.logger.info(f"Audio tracks: ")
+            current_app.logger.info(audio_tracks)
+            current_app.logger.info("Subtitle tracks: ")
+            current_app.logger.info(subtitle_tracks)
+
+            current_app.logger.info(f"First audio track: {str(audio_start)}")
+            current_app.logger.info(f"First subtitle track: {str(subtitle_start)}")
+
+            audio_tracks = [audio_start + int(track) - 1 for track in audio_tracks]
+            subtitle_tracks = [
+                subtitle_start + int(track) - 1 for track in subtitle_tracks
+            ]
+
+            current_app.logger.info("Modified audio tracks: ")
+            current_app.logger.info(audio_tracks)
+            current_app.logger.info("Modified subtitle tracks: ")
+            current_app.logger.info(subtitle_tracks)
+
             command = [
                 current_app.config["MKVMERGE_BIN"],
-                "--track-order",
-                new_track_order,
                 "-o",
                 hidden_output_file,
-                file_path,
+                "--title",
+                "",
+                "--track-name",
+                "-1:",
             ]
+
+            if len(audio_tracks) >= 1:
+                output_audio_tracks = ",".join(map(str, audio_tracks))
+                command.extend(["-a", output_audio_tracks])
+            else:
+                command.append("--no-audio")
+
+            if len(subtitle_tracks) >= 1:
+                output_subtitle_tracks = ",".join(map(str, subtitle_tracks))
+                command.extend(["-s", output_subtitle_tracks])
+            else:
+                command.append("--no-subtitles")
+
+            command.append(file_path)
 
             current_app.logger.info(command)
 
@@ -1601,69 +1802,49 @@ def mkvpropedit_task(
 
             os.rename(hidden_output_file, file_path)
 
-        # Rebuild the audio and subtitle track info now that we've made modifications
+            # Rebuild the audio and subtitle track info now that we've made modifications
 
-        output_audio_tracks = get_audio_tracks_from_file(file_path)
-        output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
+            output_audio_tracks = get_audio_tracks_from_file(file_path)
+            output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
-        # Set file audio track info
+            # Set file audio track info
 
-        for i, track in enumerate(output_audio_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            audio_track = FileAudioTrack(**track)
-            file.audio_track = audio_track
-            current_app.logger.info(f"{file} Adding audio track {audio_track}")
-            db.session.add(audio_track)
+            for i, track in enumerate(output_audio_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                audio_track = FileAudioTrack(**track)
+                file.audio_track = audio_track
+                current_app.logger.info(f"{file} Adding audio track {audio_track}")
+                db.session.add(audio_track)
 
-        # Set file subtitle track info
+            # Set file subtitle track info
 
-        if len(output_subtitle_tracks) > 1:
-            main_subtitle_track = output_subtitle_tracks[0].get("elements")
-            for i, track in enumerate(output_subtitle_tracks[1:]):
-                track_length = track.get("elements")
-                forced_flag = track.get("forced")
+            if len(output_subtitle_tracks) > 1:
+                main_subtitle_track = output_subtitle_tracks[0].get("elements")
+                for i, track in enumerate(output_subtitle_tracks[1:]):
+                    track_length = track.get("elements")
+                    forced_flag = track.get("forced")
 
-                # If a track is less than 1/3 the length of the first subtitle track,
-                # but it's not marked as forced, speculate that it might be a forced
-                # subtitle track
+                    # If a track is less than 1/3 the length of the first subtitle track,
+                    # but it's not marked as forced, speculate that it might be a forced
+                    # subtitle track
 
-                if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
-                    current_app.logger.warning(
-                        f"{file} Subtitle track {i+2} has {track_length} elements "
-                        f"and may be a forced subtitle track!"
-                    )
-                    output_subtitle_tracks[i + 1]["forced"] = None
+                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
+                        current_app.logger.warning(
+                            f"{file} Subtitle track {i+2} has {track_length} elements "
+                            f"and may be a forced subtitle track!"
+                        )
+                        output_subtitle_tracks[i + 1]["forced"] = None
 
-        for i, track in enumerate(output_subtitle_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            subtitle_track = FileSubtitleTrack(**track)
-            file.subtitle_track = subtitle_track
-            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
-            db.session.add(subtitle_track)
-
-        file.date_updated = datetime.utcnow()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-        raise
-
-    else:
-        db.session.commit()
-
-    if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
-        try:
-            (
-                file.aws_untouched_key,
-                file.aws_untouched_date_uploaded,
-            ) = aws_upload(
-                file_path,
-                current_app.config["AWS_UNTOUCHED_PREFIX"],
-                force_upload=True,
-                ignore_etag=True,
-            )
+            for i, track in enumerate(output_subtitle_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                subtitle_track = FileSubtitleTrack(**track)
+                file.subtitle_track = subtitle_track
+                current_app.logger.info(
+                    f"{file} Adding subtitle track {subtitle_track}"
+                )
+                db.session.add(subtitle_track)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1672,598 +1853,455 @@ def mkvpropedit_task(
 
         else:
             db.session.commit()
-
-    return True
-
-
-def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
-    """Remux a MKV file."""
-
-    app.app_context().push()
-
-    try:
-        job = get_current_job()
-
-        file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-
-        if job:
-            job.meta["description"] = f"'{file.basename}' — Remuxing"
-            job.save_meta()
-
-        FileAudioTrack.query.filter_by(file_id=file.id).delete()
-        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
-
-        output_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
-        hidden_output_file = os.path.join(output_directory, f".{file.basename}")
-
-        audio_start = None
-        subtitle_start = None
-
-        media_info = MediaInfo.parse(file_path)
-        tracks = [track for track in media_info.tracks if track.track_id is not None]
-
-        current_app.logger.info("MediaInfo tracks: ", tracks)
-
-        for i, track in enumerate(tracks):
-            if track.track_type == "Audio" and audio_start == None:
-                audio_start = i
-            if track.track_type == "Text" and subtitle_start == None:
-                subtitle_start = i
-
-        current_app.logger.info(f"Audio tracks: ")
-        current_app.logger.info(audio_tracks)
-        current_app.logger.info("Subtitle tracks: ")
-        current_app.logger.info(subtitle_tracks)
-
-        current_app.logger.info(f"First audio track: {str(audio_start)}")
-        current_app.logger.info(f"First subtitle track: {str(subtitle_start)}")
-
-        audio_tracks = [audio_start + int(track) - 1 for track in audio_tracks]
-        subtitle_tracks = [subtitle_start + int(track) - 1 for track in subtitle_tracks]
-
-        current_app.logger.info("Modified audio tracks: ")
-        current_app.logger.info(audio_tracks)
-        current_app.logger.info("Modified subtitle tracks: ")
-        current_app.logger.info(subtitle_tracks)
-
-        command = [
-            current_app.config["MKVMERGE_BIN"],
-            "-o",
-            hidden_output_file,
-            "--title",
-            "",
-            "--track-name",
-            "-1:",
-        ]
-
-        if len(audio_tracks) >= 1:
-            output_audio_tracks = ",".join(map(str, audio_tracks))
-            command.extend(["-a", output_audio_tracks])
-        else:
-            command.append("--no-audio")
-
-        if len(subtitle_tracks) >= 1:
-            output_subtitle_tracks = ",".join(map(str, subtitle_tracks))
-            command.extend(["-s", output_subtitle_tracks])
-        else:
-            command.append("--no-subtitles")
-
-        command.append(file_path)
-
-        current_app.logger.info(command)
-
-        mkvmerge_process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-        )
-
-        for line in mkvmerge_process.stdout:
-            progress_match = re.search("Progress\: \d+\%", line)
-            if progress_match:
-                progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
-                progress = int(progress_match.group("percent"))
-                current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
-                if job:
-                    job.meta["description"] = f"'{file.basename}' — Remuxing"
-                    job.meta["progress"] = progress
-                    job.save_meta()
-
-        # Move the new file into place
-
-        os.rename(hidden_output_file, file_path)
-
-        # Rebuild the audio and subtitle track info now that we've made modifications
-
-        output_audio_tracks = get_audio_tracks_from_file(file_path)
-        output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
-
-        # Set file audio track info
-
-        for i, track in enumerate(output_audio_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            audio_track = FileAudioTrack(**track)
-            file.audio_track = audio_track
-            current_app.logger.info(f"{file} Adding audio track {audio_track}")
-            db.session.add(audio_track)
-
-        # Set file subtitle track info
-
-        if len(output_subtitle_tracks) > 1:
-            main_subtitle_track = output_subtitle_tracks[0].get("elements")
-            for i, track in enumerate(output_subtitle_tracks[1:]):
-                track_length = track.get("elements")
-                forced_flag = track.get("forced")
-
-                # If a track is less than 1/3 the length of the first subtitle track,
-                # but it's not marked as forced, speculate that it might be a forced
-                # subtitle track
-
-                if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
-                    current_app.logger.warning(
-                        f"{file} Subtitle track {i+2} has {track_length} elements "
-                        f"and may be a forced subtitle track!"
-                    )
-                    output_subtitle_tracks[i + 1]["forced"] = None
-
-        for i, track in enumerate(output_subtitle_tracks):
-            track["file_id"] = file.id
-            track["track"] = i + 1
-            subtitle_track = FileSubtitleTrack(**track)
-            file.subtitle_track = subtitle_track
-            current_app.logger.info(f"{file} Adding subtitle track {subtitle_track}")
-            db.session.add(subtitle_track)
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-        raise
-
-    else:
-        db.session.commit()
-        mkvpropedit_task(file.id, 1, None, None)
-        return True
+            mkvpropedit_task(file.id, 1, None, None)
+            return True
 
 
 def sync_aws_s3_storage_task():
     """Add files to AWS, and remove files that aren't in the library."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    localizations = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
-    localization_tasks_running = localizations.get_job_ids()
-    transcodes = StartedJobRegistry("fitzflix-transcode", connection=current_app.redis)
-    transcodes_running = transcodes.get_job_ids()
-
-    if (
-        len(current_app.import_queue.job_ids)
-        + len(localization_tasks_running)
-        + len(current_app.transcode_queue.job_ids)
-        + len(transcodes_running)
-    ) > 0:
-        current_app.request_scheduler.enqueue_in(
-            timedelta(minutes=5),
-            "app.videos.sync_aws_s3_storage_task",
-            args=None,
-            job_timeout="24h",
-            description=f"Syncing files with AWS S3 storage",
-            at_front=True,
+        localizations = StartedJobRegistry(
+            "fitzflix-import", connection=current_app.redis
         )
-        current_app.logger.info(
-            "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to sync"
+        localization_tasks_running = localizations.get_job_ids()
+        transcodes = StartedJobRegistry(
+            "fitzflix-transcode", connection=current_app.redis
         )
-        return True
+        transcodes_running = transcodes.get_job_ids()
 
-    unreferenced_files = []
-
-    try:
-        job = get_current_job()
-
-        s3_keys = [
-            key
-            for key in get_matching_s3_keys(
-                app.config["AWS_BUCKET"],
-                prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
+        if (
+            len(current_app.import_queue.job_ids)
+            + len(localization_tasks_running)
+            + len(current_app.transcode_queue.job_ids)
+            + len(transcodes_running)
+        ) > 0:
+            current_app.request_scheduler.enqueue_in(
+                timedelta(minutes=5),
+                "app.videos.sync_aws_s3_storage_task",
+                args=None,
+                job_timeout="24h",
+                description=f"Syncing files with AWS S3 storage",
+                at_front=True,
             )
-        ]
+            current_app.logger.info(
+                "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to sync"
+            )
+            return True
 
-        files = File.query.all()
+        unreferenced_files = []
 
-        for i, file in enumerate(files):
-            if job:
-                job.meta["description"] = "Queuing local files for S3 upload"
-                job.meta["progress"] = int((i / len(files)) * 100)
-                job.save_meta()
+        try:
+            job = get_current_job()
 
-            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-
-            if (
-                file.aws_untouched_key not in s3_keys
-                or file.aws_untouched_date_uploaded == None
-            ) and os.path.isfile(file_path):
-                current_app.logger.info(
-                    f"'{file.aws_untouched_key}' Queuing for upload to AWS"
+            s3_keys = [
+                key
+                for key in get_matching_s3_keys(
+                    app.config["AWS_BUCKET"],
+                    prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
                 )
-                current_app.file_queue.enqueue(
-                    "app.videos.upload_task",
-                    args=(
-                        file.id,
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        True,
+            ]
+
+            files = File.query.all()
+
+            for i, file in enumerate(files):
+                if job:
+                    job.meta["description"] = "Queuing local files for S3 upload"
+                    job.meta["progress"] = int((i / len(files)) * 100)
+                    job.save_meta()
+
+                file_path = os.path.join(
+                    current_app.config["LIBRARY_DIR"], file.file_path
+                )
+
+                if (
+                    file.aws_untouched_key not in s3_keys
+                    or file.aws_untouched_date_uploaded == None
+                ) and os.path.isfile(file_path):
+                    current_app.logger.info(
+                        f"'{file.aws_untouched_key}' Queuing for upload to AWS"
+                    )
+                    current_app.file_queue.enqueue(
+                        "app.videos.upload_task",
+                        args=(
+                            file.id,
+                            current_app.config["AWS_UNTOUCHED_PREFIX"],
+                            True,
+                        ),
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{file.basename}'",
+                    )
+                elif file.aws_untouched_key in s3_keys:
+                    current_app.logger.info(
+                        f"'{file.aws_untouched_key}' Exists in AWS S3"
+                    )
+
+            aws_untouched_keys = [
+                aws_untouched_key
+                for (aws_untouched_key,) in db.session.query(
+                    File.aws_untouched_key
+                ).all()
+            ]
+
+            for i, remote_key in enumerate(s3_keys):
+                if job:
+                    job.meta["description"] = "Pruning extra files from AWS S3 storage"
+                    job.meta["progress"] = int((i / len(s3_keys)) * 100)
+                    job.save_meta()
+
+                if (
+                    remote_key not in aws_untouched_keys
+                    and remote_key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
+                ):
+                    unreferenced_files.append(remote_key)
+                    aws_delete(remote_key)
+
+            if unreferenced_files:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Deleted unreferenced AWS files",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/unreferenced_files.txt",
+                        user=admin_user.email,
+                        unreferenced_files=unreferenced_files,
                     ),
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    description=f"'{file.basename}'",
+                    html_body=render_template(
+                        "email/unreferenced_files.html",
+                        user=admin_user.email,
+                        unreferenced_files=unreferenced_files,
+                    ),
                 )
-            elif file.aws_untouched_key in s3_keys:
-                current_app.logger.info(f"'{file.aws_untouched_key}' Exists in AWS S3")
 
-        aws_untouched_keys = [
-            aws_untouched_key
-            for (aws_untouched_key,) in db.session.query(File.aws_untouched_key).all()
-        ]
+            else:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - No unreferenced AWS files to delete",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/no_unreferenced_files.txt",
+                        user=admin_user.email,
+                    ),
+                    html_body=render_template(
+                        "email/no_unreferenced_files.html",
+                        user=admin_user.email,
+                    ),
+                )
 
-        for i, remote_key in enumerate(s3_keys):
-            if job:
-                job.meta["description"] = "Pruning extra files from AWS S3 storage"
-                job.meta["progress"] = int((i / len(s3_keys)) * 100)
-                job.save_meta()
-
-            if (
-                remote_key not in aws_untouched_keys
-                and remote_key != f"{app.config['AWS_UNTOUCHED_PREFIX']}/"
-            ):
-                unreferenced_files.append(remote_key)
-                aws_delete(remote_key)
-
-        if unreferenced_files:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - Deleted unreferenced AWS files",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/unreferenced_files.txt",
-                    user=admin_user.email,
-                    unreferenced_files=unreferenced_files,
-                ),
-                html_body=render_template(
-                    "email/unreferenced_files.html",
-                    user=admin_user.email,
-                    unreferenced_files=unreferenced_files,
-                ),
-            )
+        except Exception:
+            app.logger.error(traceback.format_exc())
 
         else:
-            admin_user = User.query.filter(User.admin == True).first()
-            send_email(
-                "Fitzflix - No unreferenced AWS files to delete",
-                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                recipients=[admin_user.email],
-                text_body=render_template(
-                    "email/no_unreferenced_files.txt",
-                    user=admin_user.email,
-                ),
-                html_body=render_template(
-                    "email/no_unreferenced_files.html",
-                    user=admin_user.email,
-                ),
-            )
-
-    except Exception:
-        app.logger.error(traceback.format_exc())
-
-    else:
-        return True
+            return True
 
 
 def rename_task(file_id, new_key):
     """Rename an object already uploaded to AWS S3 storage."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        # TODO: Create lock (is one really necessary?)
+            # TODO: Create lock (is one really necessary?)
 
-        file = File.query.filter_by(id=file_id).first()
-        old_key = file.aws_untouched_key
-        if job:
-            job.meta["description"] = f"Renaming AWS key '{old_key}' to '{new_key}'"
-            job.meta["progress"] = -1
-            job.save_meta()
+            file = File.query.filter_by(id=file_id).first()
+            old_key = file.aws_untouched_key
+            if job:
+                job.meta["description"] = f"Renaming AWS key '{old_key}' to '{new_key}'"
+                job.meta["progress"] = -1
+                job.save_meta()
 
-        file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_rename(
-            old_key, new_key
-        )
-        db.session.commit()
+            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_rename(
+                old_key, new_key
+            )
+            db.session.commit()
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
 
-    else:
-        return True
+        else:
+            return True
 
 
 def review_task(user_id, title, rating):
     """Import movie reviews from a Netflix export."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        movie = Movie.query.filter_by(title=title).first()
+        try:
+            movie = Movie.query.filter_by(title=title).first()
 
-        if not movie:
-            tmdb_info = {}
-            if not current_app.config["TMDB_API_KEY"]:
-                return False
-            tmdb_api_key = current_app.config["TMDB_API_KEY"]
-            tmdb_api_url = current_app.config["TMDB_API_URL"]
-            requested_info = "credits,external_ids,images,keywords,release_dates,videos"
-            current_app.logger.info(f"'{title}' not in database, searching in TMDB")
-            r = requests.get(
-                tmdb_api_url + "/search/movie",
-                params={
-                    "api_key": tmdb_api_key,
-                    "query": title,
-                },
-            )
-            r.raise_for_status()
-            current_app.logger.debug(f"{r.url}: {r.json()}")
-            if len(r.json().get("results")) > 0:
-                first_result = r.json().get("results")[0]
-                tmdb_id = first_result.get("id")
+            if not movie:
+                tmdb_info = {}
+                if not current_app.config["TMDB_API_KEY"]:
+                    return False
+                tmdb_api_key = current_app.config["TMDB_API_KEY"]
+                tmdb_api_url = current_app.config["TMDB_API_URL"]
+                requested_info = (
+                    "credits,external_ids,images,keywords,release_dates,videos"
+                )
+                current_app.logger.info(f"'{title}' not in database, searching in TMDB")
+                r = requests.get(
+                    tmdb_api_url + "/search/movie",
+                    params={
+                        "api_key": tmdb_api_key,
+                        "query": title,
+                    },
+                )
+                r.raise_for_status()
+                current_app.logger.debug(f"{r.url}: {r.json()}")
+                if len(r.json().get("results")) > 0:
+                    first_result = r.json().get("results")[0]
+                    tmdb_id = first_result.get("id")
 
-                if tmdb_id and title == first_result.get("title"):
-                    current_app.logger.info(f"'{title}' Getting details from TMDB")
-                    r = requests.get(
-                        tmdb_api_url + "/movie/" + str(tmdb_id),
-                        params={
-                            "api_key": tmdb_api_key,
-                            "append_to_response": requested_info,
-                        },
-                    )
-                    r.raise_for_status()
-                    current_app.logger.debug(f"{r.url}: {r.json()}")
-                    tmdb_info = r.json()
-
-                    tmdb_title = tmdb_info.get("title")
-                    if tmdb_info.get("release_date"):
-                        tmdb_release_date = datetime.strptime(
-                            tmdb_info.get("release_date"), "%Y-%m-%d"
+                    if tmdb_id and title == first_result.get("title"):
+                        current_app.logger.info(f"'{title}' Getting details from TMDB")
+                        r = requests.get(
+                            tmdb_api_url + "/movie/" + str(tmdb_id),
+                            params={
+                                "api_key": tmdb_api_key,
+                                "append_to_response": requested_info,
+                            },
                         )
-                        tmdb_year = tmdb_release_date.year
+                        r.raise_for_status()
+                        current_app.logger.debug(f"{r.url}: {r.json()}")
+                        tmdb_info = r.json()
 
-                    if tmdb_title and tmdb_year:
-                        movie = Movie(title=tmdb_title, year=tmdb_year)
-                        db.session.add(movie)
+                        tmdb_title = tmdb_info.get("title")
+                        if tmdb_info.get("release_date"):
+                            tmdb_release_date = datetime.strptime(
+                                tmdb_info.get("release_date"), "%Y-%m-%d"
+                            )
+                            tmdb_year = tmdb_release_date.year
 
-                        try:
-                            # Establish a savepoint with db.session.begin_nested(), so if any of the
-                            # queries to get show metadata fail, we can just roll back those changes to
-                            # the savepoint and still commit the movie / tv show, file, and its tracks.
+                        if tmdb_title and tmdb_year:
+                            movie = Movie(title=tmdb_title, year=tmdb_year)
+                            db.session.add(movie)
 
-                            db.session.begin_nested()
-                            movie.tmdb_movie_query()
-                            db.session.commit()
+                            try:
+                                # Establish a savepoint with db.session.begin_nested(), so if any of the
+                                # queries to get show metadata fail, we can just roll back those changes to
+                                # the savepoint and still commit the movie / tv show, file, and its tracks.
 
-                        except:
-                            current_app.logger.error(traceback.format_exc())
-                            db.session.rollback()
-                            pass
+                                db.session.begin_nested()
+                                movie.tmdb_movie_query()
+                                db.session.commit()
 
-        if movie:
-            modified_rating = round(rating * 2) / 2
-            whole_stars = math.floor(modified_rating)
-            if modified_rating % 1 == 0:
-                half_stars = 0
-            else:
-                half_stars = 1
+                            except:
+                                current_app.logger.error(traceback.format_exc())
+                                db.session.rollback()
+                                pass
 
-            review = UserMovieReview(
-                user_id=user_id,
-                movie_id=movie.id,
-                rating=rating,
-                modified_rating=modified_rating,
-                whole_stars=whole_stars,
-                half_stars=half_stars,
-                review="",
-                date_watched=None,
-                date_reviewed=None,
-            )
-            db.session.add(review)
-            db.session.commit()
-            current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
+            if movie:
+                modified_rating = round(rating * 2) / 2
+                whole_stars = math.floor(modified_rating)
+                if modified_rating % 1 == 0:
+                    half_stars = 0
+                else:
+                    half_stars = 1
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
+                review = UserMovieReview(
+                    user_id=user_id,
+                    movie_id=movie.id,
+                    rating=rating,
+                    modified_rating=modified_rating,
+                    whole_stars=whole_stars,
+                    half_stars=half_stars,
+                    review="",
+                    date_watched=None,
+                    date_reviewed=None,
+                )
+                db.session.add(review)
+                db.session.commit()
+                current_app.logger.info(f"Rated '{title}' {rating} out of 5 stars")
 
-    else:
-        return True
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+
+        else:
+            return True
 
 
 def transcode_task(file_id):
     """Transcode a file with Handbrake."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        # Find the file that will be transcoded
+            # Find the file that will be transcoded
 
-        file = File.query.filter_by(id=file_id).first()
+            file = File.query.filter_by(id=file_id).first()
 
-        # Create the file identifier so we can create a lock on processing this file
+            # Create the file identifier so we can create a lock on processing this file
 
-        file_identifier = file.file_identifier()
-        current_app.logger.debug(
-            f"'{file.plex_title}' Lock identifier: {file_identifier}"
-        )
-        lock = current_app.lock_manager.lock(
-            file.file_identifier(), current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000
-        )
-        current_app.logger.info(f"Created lock {lock}")
-
-        # If we didn't get a lock, return this task to the transcoding queue after
-        # 45 to 75 minutes to be processed once the lock becomes available
-
-        if not lock:
-            sleep_duration = random.randint(45, 75)
-            current_app.logger.warning(
-                f"'{file.plex_title}' Lock exists, "
-                f"returning to queue after {sleep_duration} minutes"
+            file_identifier = file.file_identifier()
+            current_app.logger.debug(
+                f"'{file.plex_title}' Lock identifier: {file_identifier}"
             )
-            current_app.transcode_scheduler.enqueue_in(
-                timedelta(minutes=sleep_duration),
-                "app.videos.transcode_task",
-                file_id=file_id,
-                timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+            lock = current_app.lock_manager.lock(
+                file.file_identifier(),
+                current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
+            )
+            current_app.logger.info(f"Created lock {lock}")
+
+            # If we didn't get a lock, return this task to the transcoding queue after
+            # 45 to 75 minutes to be processed once the lock becomes available
+
+            if not lock:
+                sleep_duration = random.randint(45, 75)
+                current_app.logger.warning(
+                    f"'{file.plex_title}' Lock exists, "
+                    f"returning to queue after {sleep_duration} minutes"
+                )
+                current_app.transcode_scheduler.enqueue_in(
+                    timedelta(minutes=sleep_duration),
+                    "app.videos.transcode_task",
+                    file_id=file_id,
+                    timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    description=f"'{file.plex_title}'",
+                )
+                return False
+
+            # Start transcoding process
+
+            current_app.logger.info(f"'{file.plex_title}' Starting transcoding process")
+            handbrake_preset = current_app.config["HANDBRAKE_PRESET"]
+            ext = current_app.config["HANDBRAKE_EXTENSION"]
+
+            # Determine output directories and files to be created
+
+            input_file = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+            output_directory = os.path.join(
+                current_app.config["TRANSCODES_DIR"], file.dirname
+            )
+            hidden_output_file = os.path.join(
+                output_directory, f".{file.plex_title}.{ext}"
+            )
+            os.makedirs(output_directory, exist_ok=True)
+
+            # Transcode the file with Handbrake
+
+            transcode_process = subprocess.Popen(
+                [
+                    current_app.config["HANDBRAKE_BIN"],
+                    "--preset",
+                    f"""{handbrake_preset}""",
+                    "--native-language",
+                    current_app.config["NATIVE_LANGUAGE"],
+                    "-i",
+                    input_file,
+                    "-o",
+                    hidden_output_file,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+            )
+            for line in transcode_process.stdout:
+                progress_match = re.search(
+                    "Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
+                )
+                if progress_match:
+                    progress_match = re.match(
+                        "^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
+                        line,
+                    )
+                    progress = int(progress_match.group("percent"))
+                    current_app.logger.info(
+                        f"'{file.plex_title}' Transcoding: {progress}%"
+                    )
+                    if job:
+                        job.meta[
+                            "description"
+                        ] = f"'{file.plex_title}' — Transcoding to .{current_app.config['HANDBRAKE_EXTENSION']} file"
+                        if progress_match.group("this_task") == progress_match.group(
+                            "total_tasks"
+                        ):
+                            job.meta["progress"] = progress
+
+                        else:
+                            job.meta["progress"] = -1
+
+                        job.save_meta()
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            current_app.lock_manager.unlock(lock)
+            current_app.logger.info(f"Removed lock {lock}")
+
+        else:
+            current_app.sql_queue.enqueue(
+                "app.videos.finalize_transcoding",
+                args=(file_id, lock),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"'{file.plex_title}'",
             )
-            return False
 
-        # Start transcoding process
-
-        current_app.logger.info(f"'{file.plex_title}' Starting transcoding process")
-        handbrake_preset = current_app.config["HANDBRAKE_PRESET"]
-        ext = current_app.config["HANDBRAKE_EXTENSION"]
-
-        # Determine output directories and files to be created
-
-        input_file = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        output_directory = os.path.join(
-            current_app.config["TRANSCODES_DIR"], file.dirname
-        )
-        hidden_output_file = os.path.join(output_directory, f".{file.plex_title}.{ext}")
-        os.makedirs(output_directory, exist_ok=True)
-
-        # Transcode the file with Handbrake
-
-        transcode_process = subprocess.Popen(
-            [
-                current_app.config["HANDBRAKE_BIN"],
-                "--preset",
-                f"""{handbrake_preset}""",
-                "--native-language",
-                current_app.config["NATIVE_LANGUAGE"],
-                "-i",
-                input_file,
-                "-o",
-                hidden_output_file,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1,
-        )
-        for line in transcode_process.stdout:
-            progress_match = re.search("Encoding\: task \d+ of \d+, \d+\.\d+ \%", line)
-            if progress_match:
-                progress_match = re.match(
-                    "^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
-                    line,
-                )
-                progress = int(progress_match.group("percent"))
-                current_app.logger.info(f"'{file.plex_title}' Transcoding: {progress}%")
-                if job:
-                    job.meta[
-                        "description"
-                    ] = f"'{file.plex_title}' — Transcoding to .{current_app.config['HANDBRAKE_EXTENSION']} file"
-                    if progress_match.group("this_task") == progress_match.group(
-                        "total_tasks"
-                    ):
-                        job.meta["progress"] = progress
-
-                    else:
-                        job.meta["progress"] = -1
-
-                    job.save_meta()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        current_app.lock_manager.unlock(lock)
-        current_app.logger.info(f"Removed lock {lock}")
-
-    else:
-        current_app.sql_queue.enqueue(
-            "app.videos.finalize_transcoding",
-            args=(file_id, lock),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=f"'{file.plex_title}'",
-        )
-
-    return True
+        return True
 
 
 def download_task(key, basename, sqs_receipt_handle=None):
     """Download a file from AWS S3 storage."""
 
-    app.app_context().push()
-    job = get_current_job()
-    job.meta["description"] = f"'{basename}' — Downloading from AWS"
-    job.save_meta()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        current_app.logger.info(
-            f"Starting download of '{basename}' from AWS S3 storage"
-        )
-        aws_download(key, basename, sqs_receipt_handle)
+        job = get_current_job()
+        job.meta["description"] = f"'{basename}' — Downloading from AWS"
+        job.save_meta()
 
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
+        try:
+            current_app.logger.info(
+                f"Starting download of '{basename}' from AWS S3 storage"
+            )
+            aws_download(key, basename, sqs_receipt_handle)
 
-    else:
-        return True
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+
+        else:
+            return True
 
 
 def sqs_retrieve_task():
     """Poll AWS SQS for possible files ready to download."""
 
-    app.app_context().push()
-    current_app.logger.info("Checking AWS SQS...")
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    sqs_client = boto3.client(
-        "sqs",
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-        region_name="us-east-1",
-    )
-    response = sqs_client.receive_message(
-        QueueUrl=current_app.config["AWS_SQS_URL"],
-        AttributeNames=["SentTimestamp"],
-        MaxNumberOfMessages=1,
-        MessageAttributeNames=["All"],
-        VisibilityTimeout=43200,
-        WaitTimeSeconds=0,
-    )
+        current_app.logger.info("Checking AWS SQS...")
 
-    current_app.logger.info(response)
-
-    while response.get("Messages"):
-        response_body = json.loads(response["Messages"][0]["Body"])
-
-        receipt_handle = response["Messages"][0]["ReceiptHandle"]
-        key = urllib.parse.unquote_plus(
-            response_body["Records"][0]["s3"]["object"]["key"]
+        sqs_client = boto3.client(
+            "sqs",
+            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+            region_name="us-east-1",
         )
-
-        current_app.logger.info(receipt_handle)
-        current_app.logger.info(key)
-
-        current_app.file_queue.enqueue(
-            "app.videos.download_task",
-            args=(key, os.path.basename(key), receipt_handle),
-            job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-            description=f"'{os.path.basename(key)}' — Downloading from AWS",
-        )
-
         response = sqs_client.receive_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
             AttributeNames=["SentTimestamp"],
@@ -2275,49 +2313,81 @@ def sqs_retrieve_task():
 
         current_app.logger.info(response)
 
-    return True
+        while response.get("Messages"):
+            response_body = json.loads(response["Messages"][0]["Body"])
+
+            receipt_handle = response["Messages"][0]["ReceiptHandle"]
+            key = urllib.parse.unquote_plus(
+                response_body["Records"][0]["s3"]["object"]["key"]
+            )
+
+            current_app.logger.info(receipt_handle)
+            current_app.logger.info(key)
+
+            current_app.file_queue.enqueue(
+                "app.videos.download_task",
+                args=(key, os.path.basename(key), receipt_handle),
+                job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                description=f"'{os.path.basename(key)}' — Downloading from AWS",
+            )
+
+            response = sqs_client.receive_message(
+                QueueUrl=current_app.config["AWS_SQS_URL"],
+                AttributeNames=["SentTimestamp"],
+                MaxNumberOfMessages=1,
+                MessageAttributeNames=["All"],
+                VisibilityTimeout=43200,
+                WaitTimeSeconds=0,
+            )
+
+            current_app.logger.info(response)
+
+        return True
 
 
 def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
     """Upload a file to AWS S3 storage."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        # TODO: Create lock (is one really necessary?)
+        try:
+            # TODO: Create lock (is one really necessary?)
 
-        # Get the record of the file to be uploaded to AWS S3 storage
+            # Get the record of the file to be uploaded to AWS S3 storage
 
-        file = File.query.filter_by(id=file_id).first()
-        file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            file = File.query.filter_by(id=file_id).first()
+            file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-        # Pass to the aws_upload() function for uploading.
-        # Update the File record with the remote key and date it was uploaded.
+            # Pass to the aws_upload() function for uploading.
+            # Update the File record with the remote key and date it was uploaded.
 
-        if file.aws_untouched_key:
-            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
-                file_path=file_path,
-                key_name=file.aws_untouched_key,
-                force_upload=force_upload,
-                ignore_etag=ignore_etag,
-            )
+            if file.aws_untouched_key:
+                file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                    file_path=file_path,
+                    key_name=file.aws_untouched_key,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                )
+
+            else:
+                file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                    file_path=file_path,
+                    key_prefix=key_prefix,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                )
+
+            db.session.commit()
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
 
         else:
-            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
-                file_path=file_path,
-                key_prefix=key_prefix,
-                force_upload=force_upload,
-                ignore_etag=ignore_etag,
-            )
-
-        db.session.commit()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-
-    else:
-        return True
+            return True
 
 
 # Supporting functions
@@ -2449,67 +2519,72 @@ def aws_rename(old_key, new_key):
 def aws_restore(key, days=1, tier="Standard"):
     """Request a file at AWS to be restored from Glacier status for download."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        config = Config(
-            connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
-        )
-        s3_client = boto3.client(
-            "s3",
-            config=config,
-            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-        )
+        try:
+            config = Config(
+                connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+            )
+            s3_client = boto3.client(
+                "s3",
+                config=config,
+                aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+            )
 
-        # Make sure the key exists in the AWS bucket
+            # Make sure the key exists in the AWS bucket
 
-        response = s3_client.list_objects(
-            Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
-        )
+            response = s3_client.list_objects(
+                Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
+            )
 
-        current_app.logger.info(response["Contents"])
+            current_app.logger.info(response["Contents"])
 
-        # If the key exists, restore it
+            # If the key exists, restore it
 
-        if response["Contents"][0]["Key"]:
-            if response["Contents"][0]["StorageClass"] == "STANDARD":
+            if response["Contents"][0]["Key"]:
+                if response["Contents"][0]["StorageClass"] == "STANDARD":
+                    current_app.logger.info(
+                        f"'{key}' doesn't need to be restored; attempting to download"
+                    )
+                    current_app.file_queue.enqueue(
+                        "app.videos.download_task",
+                        args=(key, os.path.basename(key)),
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{os.path.basename(key)}'",
+                        atfront=True,
+                    )
+                    return
+
+                else:
+                    response = s3_client.restore_object(
+                        Bucket=current_app.config["AWS_BUCKET"],
+                        Key=key,
+                        RestoreRequest={
+                            "Days": 1,
+                            "GlacierJobParameters": {"Tier": "Standard"},
+                        },
+                    )
+                    current_app.logger.info(response)
+
+        except Exception as e:
+            if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
                 current_app.logger.info(
-                    f"'{key}' doesn't need to be restored; attempting to download"
+                    f"'{key}' is already in process of being restored"
                 )
-                current_app.file_queue.enqueue(
-                    "app.videos.download_task",
-                    args=(key, os.path.basename(key)),
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    description=f"'{os.path.basename(key)}'",
-                    atfront=True,
-                )
-                return
 
             else:
-                response = s3_client.restore_object(
-                    Bucket=current_app.config["AWS_BUCKET"],
-                    Key=key,
-                    RestoreRequest={
-                        "Days": 1,
-                        "GlacierJobParameters": {"Tier": "Standard"},
-                    },
-                )
-                current_app.logger.info(response)
-
-    except Exception as e:
-        if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
-            current_app.logger.info(f"'{key}' is already in process of being restored")
+                current_app.logger.error(e)
+                raise
 
         else:
-            current_app.logger.error(e)
-            raise
-
-    else:
-        current_app.logger.info(
-            f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
-        )
-        return
+            current_app.logger.info(
+                f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
+            )
+            return
 
 
 def aws_upload(
@@ -3359,344 +3434,309 @@ def move_to_rejects(file_path, reason=""):
 def refresh_criterion_collection_info(movie_id=None):
     """Refresh Criterion Collection information from Wikipedia."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        # If the user specified a particular movie to be updated, update the
-        # Criterion Collection info for just that one movie. Otherwise, update all.
+            # If the user specified a particular movie to be updated, update the
+            # Criterion Collection info for just that one movie. Otherwise, update all.
 
-        if movie_id:
-            movies = Movie.query.filter_by(id=movie_id).first()
+            if movie_id:
+                movies = Movie.query.filter_by(id=movie_id).first()
+
+            else:
+                movies = Movie.query.all()
+
+            criterion_collection = get_criterion_collection_from_wikipedia()
+
+            for movie in movies:
+                for release in criterion_collection:
+                    # See if the title and year for movies in our library match what we
+                    # scraped from Wikipedia. If so, update it with Criterion release info.
+
+                    if (movie.title.upper() == release.get("title")) and (
+                        movie.year == release.get("year")
+                    ):
+                        movie.criterion_spine_number = release.get("spine_number")
+
+                        # Decided against automatically adding the set title
+                        # movie.criterion_set_title = release.get("set")
+
+                        movie.criterion_in_print = release.get("in_print")
+                        movie.criterion_bluray = release.get("bluray")
+                        if movie.criterion_disc_owned == None:
+                            movie.criterion_disc_owned = False
+
+                        current_app.logger.info(
+                            f"{movie} Assigning Criterion Collection "
+                            f"spine #{movie.criterion_spine_number}"
+                        )
+
+            db.session.commit()
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
 
         else:
-            movies = Movie.query.all()
-
-        criterion_collection = get_criterion_collection_from_wikipedia()
-
-        for movie in movies:
-            for release in criterion_collection:
-                # See if the title and year for movies in our library match what we
-                # scraped from Wikipedia. If so, update it with Criterion release info.
-
-                if (movie.title.upper() == release.get("title")) and (
-                    movie.year == release.get("year")
-                ):
-                    movie.criterion_spine_number = release.get("spine_number")
-
-                    # Decided against automatically adding the set title
-                    # movie.criterion_set_title = release.get("set")
-
-                    movie.criterion_in_print = release.get("in_print")
-                    movie.criterion_bluray = release.get("bluray")
-                    if movie.criterion_disc_owned == None:
-                        movie.criterion_disc_owned = False
-
-                    current_app.logger.info(
-                        f"{movie} Assigning Criterion Collection "
-                        f"spine #{movie.criterion_spine_number}"
-                    )
-
-        db.session.commit()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-
-    else:
-        return True
+            return True
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None):
     """Refresh movie or TV show information from TMDB."""
 
-    app.app_context().push()
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
 
-    try:
-        job = get_current_job()
+        try:
+            job = get_current_job()
 
-        if library == "Movies":
-            # Get the Movie record to be updated
+            if library == "Movies":
+                # Get the Movie record to be updated
 
-            movie = Movie.query.filter_by(id=id).first()
+                movie = Movie.query.filter_by(id=id).first()
 
-            # Make a note of the original movie_id, title, year, and tmdb_id fields.
+                # Make a note of the original movie_id, title, year, and tmdb_id fields.
 
-            original_movie_id = movie.id
-            original_title = movie.title
-            original_year = movie.year
-            original_tmdb_id = movie.tmdb_id
+                original_movie_id = movie.id
+                original_title = movie.title
+                original_year = movie.year
+                original_tmdb_id = movie.tmdb_id
 
-            # See if the requested tmdb_id already exists in the Movie table.
-            # If so, we'll use that existing Movie record.
-            # If the user specified a tmdb_id, get the info for that tmdb_id.
-            # If not, try to find a movie from TMDB based on the movie's title and year.
+                # See if the requested tmdb_id already exists in the Movie table.
+                # If so, we'll use that existing Movie record.
+                # If the user specified a tmdb_id, get the info for that tmdb_id.
+                # If not, try to find a movie from TMDB based on the movie's title and year.
 
-            current_app.logger.info(f"tmdb_id: {tmdb_id}")
-            if tmdb_id != None:
-                existing_movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
-                if existing_movie:
-                    movie = existing_movie
-                    current_app.logger.info(f"Existing movie: {movie}")
+                current_app.logger.info(f"tmdb_id: {tmdb_id}")
+                if tmdb_id != None:
+                    existing_movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+                    if existing_movie:
+                        movie = existing_movie
+                        current_app.logger.info(f"Existing movie: {movie}")
+                    else:
+                        movie.tmdb_movie_query(tmdb_id)
                 else:
-                    movie.tmdb_movie_query(tmdb_id)
-            else:
-                movie.tmdb_movie_query()
+                    movie.tmdb_movie_query()
 
-            # Make a note of the updated movie_id, title, year, and tmdb_id fields.
+                # Make a note of the updated movie_id, title, year, and tmdb_id fields.
 
-            updated_movie_id = movie.id
-            updated_title = movie.title
-            updated_year = movie.year
-            updated_tmdb_id = movie.tmdb_id
+                updated_movie_id = movie.id
+                updated_title = movie.title
+                updated_year = movie.year
+                updated_tmdb_id = movie.tmdb_id
 
-            # See if any of the movie_id, title, year, or tmdb_id fields changed.
-            # If any changed, then we need to migrate files from the old Movie to the
-            # new Movie record.
+                # See if any of the movie_id, title, year, or tmdb_id fields changed.
+                # If any changed, then we need to migrate files from the old Movie to the
+                # new Movie record.
 
-            if (
-                (updated_movie_id != original_movie_id)
-                or (updated_title != original_title)
-                or (updated_year != original_year)
-                or (updated_tmdb_id != original_tmdb_id)
-            ):
-                # Get a list of files that were associated with the old Movie record
+                if (
+                    (updated_movie_id != original_movie_id)
+                    or (updated_title != original_title)
+                    or (updated_year != original_year)
+                    or (updated_tmdb_id != original_tmdb_id)
+                ):
+                    # Get a list of files that were associated with the old Movie record
 
-                old_files = File.query.filter_by(movie_id=original_movie_id).all()
+                    old_files = File.query.filter_by(movie_id=original_movie_id).all()
 
-                for old_record in old_files:
-                    # Reconstruct the original filename but with the new movie title/year
+                    for old_record in old_files:
+                        # Reconstruct the original filename but with the new movie title/year
 
-                    basename, extension = os.path.splitext(old_record.basename)
-                    updated_title = sanitize_filename(updated_title)
+                        basename, extension = os.path.splitext(old_record.basename)
+                        updated_title = sanitize_filename(updated_title)
 
-                    # Reconstruct the original filename used when importing,
-                    # but using the new movie title and year
+                        # Reconstruct the original filename used when importing,
+                        # but using the new movie title and year
 
-                    reconstructed_filename = f"{updated_title} ({updated_year}) -"
+                        reconstructed_filename = f"{updated_title} ({updated_year}) -"
 
-                    if old_record.feature_type:
-                        reconstructed_filename = f"{reconstructed_filename} {old_record.feature_type.feature_type} - {old_record.plex_title}"
+                        if old_record.feature_type:
+                            reconstructed_filename = f"{reconstructed_filename} {old_record.feature_type.feature_type} - {old_record.plex_title}"
 
-                    elif old_record.version:
-                        reconstructed_filename = (
-                            f"{reconstructed_filename} {old_record.version}"
-                        )
-
-                    if old_record.fullscreen:
-                        reconstructed_filename = (
-                            f"{reconstructed_filename} - Full Screen"
-                        )
-
-                    reconstructed_filename = f"{reconstructed_filename} [{old_record.quality.quality_title}]{extension}"
-                    current_app.logger.info(
-                        f"Reconstructed filename: {reconstructed_filename}"
-                    )
-                    old_record.untouched_basename = reconstructed_filename
-
-                    # Get the file details for the reconstructed filename
-
-                    file_details = evaluate_filename(reconstructed_filename)
-                    current_app.logger.info(file_details)
-
-                    # Update the file with the updated_movie_id and plex_title to reflect
-                    # the new movie, so we can get the file's ranking.
-                    # (We need movie_id, feature_type_id, plex_title, and version to rank)
-
-                    old_record.movie_id = updated_movie_id
-                    old_record.plex_title = file_details.get("plex_title")
-
-                    # With the file's movie_id and plex_title updated, we now have
-                    # everything we need to get the file's new ranking
-
-                    ranking = (
-                        db.session.query(
-                            File.id,
-                            File.movie_id,
-                            File.feature_type_id,
-                            File.plex_title,
-                            File.version,
-                            File.fullscreen,
-                            RefQuality.preference,
-                            RefQuality.quality_title,
-                            RefQuality.physical_media,
-                            db.func.row_number()
-                            .over(
-                                partition_by=(
-                                    File.movie_id,
-                                    File.feature_type_id,
-                                    File.plex_title,
-                                    File.version,
-                                ),
-                                order_by=(
-                                    RefQuality.preference.desc(),
-                                    File.fullscreen,
-                                    File.date_added.asc(),
-                                ),
+                        elif old_record.version:
+                            reconstructed_filename = (
+                                f"{reconstructed_filename} {old_record.version}"
                             )
-                            .label("rank"),
+
+                        if old_record.fullscreen:
+                            reconstructed_filename = (
+                                f"{reconstructed_filename} - Full Screen"
+                            )
+
+                        reconstructed_filename = f"{reconstructed_filename} [{old_record.quality.quality_title}]{extension}"
+                        current_app.logger.info(
+                            f"Reconstructed filename: {reconstructed_filename}"
                         )
-                        .join(RefQuality, (RefQuality.id == File.quality_id))
-                        .subquery()
-                    )
+                        old_record.untouched_basename = reconstructed_filename
 
-                    # Find the best files across old and new movie records
+                        # Get the file details for the reconstructed filename
 
-                    best_files = (
-                        File.query.join(ranking, (ranking.c.id == File.id))
-                        .filter(File.movie_id == movie.id)
-                        .filter(ranking.c.rank == 1)
-                        .all()
-                    )
+                        file_details = evaluate_filename(reconstructed_filename)
+                        current_app.logger.info(file_details)
 
-                    for each_best_file in best_files:
-                        # Look at each best file, and identify all of their worse ones
+                        # Update the file with the updated_movie_id and plex_title to reflect
+                        # the new movie, so we can get the file's ranking.
+                        # (We need movie_id, feature_type_id, plex_title, and version to rank)
 
-                        worse_files = each_best_file.find_worse_files()
+                        old_record.movie_id = updated_movie_id
+                        old_record.plex_title = file_details.get("plex_title")
 
-                        # If there are any worse files, delete the worse local file, and
-                        # delete the archived version from AWS S3 storage if applicable
+                        # With the file's movie_id and plex_title updated, we now have
+                        # everything we need to get the file's new ranking
 
-                        for worse in worse_files:
-                            worse.delete_local_file()
-
-                            # We only delete from AWS S3 storage if both archived and new
-                            # files are from digital media, or if the new file is from
-                            # digital media
-
-                            if (
-                                worse.quality.physical_media
-                                == each_best_file.quality.physical_media
-                                or each_best_file.quality.physical_media == True
-                            ) and worse.id != each_best_file.id:
-                                if worse.aws_untouched_date_uploaded:
-                                    worse.aws_untouched_date_deleted = aws_delete(
-                                        worse.aws_untouched_key
-                                    )
-                                    worse.aws_untouched_date_uploaded = None
-
-                                db.session.delete(worse)
-
-                    # Start building the rest of the filename fields
-                    old_record.dirname = file_details.get("dirname")
-                    old_record.basename = file_details.get("basename")
-
-                    # Create the destination directory if necessary and move the file
-                    # to the new location
-
-                    os.makedirs(
-                        os.path.join(
-                            current_app.config["LIBRARY_DIR"],
-                            file_details.get("dirname"),
-                        ),
-                        exist_ok=True,
-                    )
-                    current_app.logger.info(
-                        f"Renaming {os.path.join(current_app.config['LIBRARY_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LIBRARY_DIR'], file_details.get('file_path'))}'"
-                    )
-
-                    try:
-                        os.rename(
-                            os.path.join(
-                                current_app.config["LIBRARY_DIR"],
-                                old_record.file_path,
-                            ),
-                            os.path.join(
-                                current_app.config["LIBRARY_DIR"],
-                                file_details.get("file_path"),
-                            ),
+                        ranking = (
+                            db.session.query(
+                                File.id,
+                                File.movie_id,
+                                File.feature_type_id,
+                                File.plex_title,
+                                File.version,
+                                File.fullscreen,
+                                RefQuality.preference,
+                                RefQuality.quality_title,
+                                RefQuality.physical_media,
+                                db.func.row_number()
+                                .over(
+                                    partition_by=(
+                                        File.movie_id,
+                                        File.feature_type_id,
+                                        File.plex_title,
+                                        File.version,
+                                    ),
+                                    order_by=(
+                                        RefQuality.preference.desc(),
+                                        File.fullscreen,
+                                        File.date_added.asc(),
+                                    ),
+                                )
+                                .label("rank"),
+                            )
+                            .join(RefQuality, (RefQuality.id == File.quality_id))
+                            .subquery()
                         )
 
-                    except FileNotFoundError:
-                        pass
+                        # Find the best files across old and new movie records
 
-                    # Delete the old directory tree if it's empty
-                    # TODO: figure out a way to not accidentally delete any hidden files
+                        best_files = (
+                            File.query.join(ranking, (ranking.c.id == File.id))
+                            .filter(File.movie_id == movie.id)
+                            .filter(ranking.c.rank == 1)
+                            .all()
+                        )
 
-                    try:
-                        os.removedirs(
-                            os.path.dirname(
+                        for each_best_file in best_files:
+                            # Look at each best file, and identify all of their worse ones
+
+                            worse_files = each_best_file.find_worse_files()
+
+                            # If there are any worse files, delete the worse local file, and
+                            # delete the archived version from AWS S3 storage if applicable
+
+                            for worse in worse_files:
+                                worse.delete_local_file()
+
+                                # We only delete from AWS S3 storage if both archived and new
+                                # files are from digital media, or if the new file is from
+                                # digital media
+
+                                if (
+                                    worse.quality.physical_media
+                                    == each_best_file.quality.physical_media
+                                    or each_best_file.quality.physical_media == True
+                                ) and worse.id != each_best_file.id:
+                                    if worse.aws_untouched_date_uploaded:
+                                        worse.aws_untouched_date_deleted = aws_delete(
+                                            worse.aws_untouched_key
+                                        )
+                                        worse.aws_untouched_date_uploaded = None
+
+                                    db.session.delete(worse)
+
+                        # Start building the rest of the filename fields
+                        old_record.dirname = file_details.get("dirname")
+                        old_record.basename = file_details.get("basename")
+
+                        # Create the destination directory if necessary and move the file
+                        # to the new location
+
+                        os.makedirs(
+                            os.path.join(
+                                current_app.config["LIBRARY_DIR"],
+                                file_details.get("dirname"),
+                            ),
+                            exist_ok=True,
+                        )
+                        current_app.logger.info(
+                            f"Renaming {os.path.join(current_app.config['LIBRARY_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LIBRARY_DIR'], file_details.get('file_path'))}'"
+                        )
+
+                        try:
+                            os.rename(
                                 os.path.join(
                                     current_app.config["LIBRARY_DIR"],
                                     old_record.file_path,
+                                ),
+                                os.path.join(
+                                    current_app.config["LIBRARY_DIR"],
+                                    file_details.get("file_path"),
+                                ),
+                            )
+
+                        except FileNotFoundError:
+                            pass
+
+                        # Delete the old directory tree if it's empty
+                        # TODO: figure out a way to not accidentally delete any hidden files
+
+                        try:
+                            os.removedirs(
+                                os.path.dirname(
+                                    os.path.join(
+                                        current_app.config["LIBRARY_DIR"],
+                                        old_record.file_path,
+                                    )
                                 )
                             )
+
+                        except OSError:
+                            pass
+
+                        # Now that we don't need the old file's file_path anymore,
+                        # set the file_path column to the new location, unless the renamed
+                        # file already exists, in which case just delete the old file record
+
+                        same_file_exists = (
+                            File.query.filter(File.file_path == old_record.file_path)
+                            .filter(File.id != old_record.id)
+                            .first()
                         )
-
-                    except OSError:
-                        pass
-
-                    # Now that we don't need the old file's file_path anymore,
-                    # set the file_path column to the new location, unless the renamed
-                    # file already exists, in which case just delete the old file record
-
-                    same_file_exists = (
-                        File.query.filter(File.file_path == old_record.file_path)
-                        .filter(File.id != old_record.id)
-                        .first()
-                    )
-                    if same_file_exists:
-                        current_app.logger.info(f"Deleting {old_record} from database")
-                        db.session.delete(old_record)
-
-                    else:
-                        old_record.file_path = file_details.get("file_path")
-
-                        if (
-                            old_record.aws_untouched_key
-                            and old_record.aws_untouched_date_uploaded
-                        ):
-                            config = Config(
-                                connect_timeout=20,
-                                retries={"mode": "standard", "max_attempts": 10},
+                        if same_file_exists:
+                            current_app.logger.info(
+                                f"Deleting {old_record} from database"
                             )
-                            s3_client = boto3.client(
-                                "s3",
-                                config=config,
-                                aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                                aws_secret_access_key=current_app.config[
-                                    "AWS_SECRET_KEY"
-                                ],
-                            )
-                            response = s3_client.list_objects(
-                                Bucket=current_app.config["AWS_BUCKET"],
-                                Prefix=old_record.aws_untouched_key,
-                                MaxKeys=1,
-                            )
+                            db.session.delete(old_record)
 
-                            # Get the storage class of the existing uploaded file
+                        else:
+                            old_record.file_path = file_details.get("file_path")
 
-                            storage_class = None
-                            if response.get("Contents"):
-                                for object in response.get("Contents"):
-                                    if (
-                                        object.get("Key")
-                                        == old_record.aws_untouched_key
-                                    ):
-                                        storage_class = object.get("StorageClass")
-
-                            if storage_class == "STANDARD":
-                                current_app.request_queue.enqueue(
-                                    "app.videos.rename_task",
-                                    args=(
-                                        old_record.id,
-                                        os.path.join(
-                                            current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                            reconstructed_filename,
-                                        ),
-                                    ),
-                                    job_timeout=current_app.config[
-                                        "LOCALIZATION_TASK_TIMEOUT"
-                                    ],
-                                    description=f"'{file_details.get('basename')}'",
+                            if (
+                                old_record.aws_untouched_key
+                                and old_record.aws_untouched_date_uploaded
+                            ):
+                                config = Config(
+                                    connect_timeout=20,
+                                    retries={"mode": "standard", "max_attempts": 10},
                                 )
-
-                            else:
-                                # Request the old object to be restored at AWS
-
                                 s3_client = boto3.client(
                                     "s3",
+                                    config=config,
                                     aws_access_key_id=current_app.config[
                                         "AWS_ACCESS_KEY"
                                     ],
@@ -3704,85 +3744,132 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                         "AWS_SECRET_KEY"
                                     ],
                                 )
-                                response = s3_client.restore_object(
+                                response = s3_client.list_objects(
                                     Bucket=current_app.config["AWS_BUCKET"],
-                                    Key=old_record.aws_untouched_key,
-                                    RestoreRequest={
-                                        "Days": 1,
-                                        "GlacierJobParameters": {
-                                            "Tier": "Standard",
+                                    Prefix=old_record.aws_untouched_key,
+                                    MaxKeys=1,
+                                )
+
+                                # Get the storage class of the existing uploaded file
+
+                                storage_class = None
+                                if response.get("Contents"):
+                                    for object in response.get("Contents"):
+                                        if (
+                                            object.get("Key")
+                                            == old_record.aws_untouched_key
+                                        ):
+                                            storage_class = object.get("StorageClass")
+
+                                if storage_class == "STANDARD":
+                                    current_app.request_queue.enqueue(
+                                        "app.videos.rename_task",
+                                        args=(
+                                            old_record.id,
+                                            os.path.join(
+                                                current_app.config[
+                                                    "AWS_UNTOUCHED_PREFIX"
+                                                ],
+                                                reconstructed_filename,
+                                            ),
+                                        ),
+                                        job_timeout=current_app.config[
+                                            "LOCALIZATION_TASK_TIMEOUT"
+                                        ],
+                                        description=f"'{file_details.get('basename')}'",
+                                    )
+
+                                else:
+                                    # Request the old object to be restored at AWS
+
+                                    s3_client = boto3.client(
+                                        "s3",
+                                        aws_access_key_id=current_app.config[
+                                            "AWS_ACCESS_KEY"
+                                        ],
+                                        aws_secret_access_key=current_app.config[
+                                            "AWS_SECRET_KEY"
+                                        ],
+                                    )
+                                    response = s3_client.restore_object(
+                                        Bucket=current_app.config["AWS_BUCKET"],
+                                        Key=old_record.aws_untouched_key,
+                                        RestoreRequest={
+                                            "Days": 1,
+                                            "GlacierJobParameters": {
+                                                "Tier": "Standard",
+                                            },
                                         },
-                                    },
-                                )
+                                    )
 
-                                # Standard restoration takes up to 12 hours,
-                                # so schedule the restoration to take place in 13 hours
+                                    # Standard restoration takes up to 12 hours,
+                                    # so schedule the restoration to take place in 13 hours
 
-                                current_app.request_scheduler.enqueue_in(
-                                    timedelta(hours=13),
-                                    "app.videos.rename_task",
-                                    file_id=old_record.id,
-                                    new_key=os.path.join(
-                                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                        reconstructed_filename,
-                                    ),
-                                    timeout=current_app.config[
-                                        "LOCALIZATION_TASK_TIMEOUT"
-                                    ],
-                                    job_description=f"'{file_details.get('basename')}'",
-                                )
+                                    current_app.request_scheduler.enqueue_in(
+                                        timedelta(hours=13),
+                                        "app.videos.rename_task",
+                                        file_id=old_record.id,
+                                        new_key=os.path.join(
+                                            current_app.config["AWS_UNTOUCHED_PREFIX"],
+                                            reconstructed_filename,
+                                        ),
+                                        timeout=current_app.config[
+                                            "LOCALIZATION_TASK_TIMEOUT"
+                                        ],
+                                        job_description=f"'{file_details.get('basename')}'",
+                                    )
 
-                db.session.commit()
+                    db.session.commit()
 
-                if updated_movie_id != original_movie_id:
-                    # Migrate reviews to the new movie if the movie_id changed
+                    if updated_movie_id != original_movie_id:
+                        # Migrate reviews to the new movie if the movie_id changed
 
-                    reviews = UserMovieReview.query.filter_by(
-                        movie_id=original_movie_id
-                    ).all()
-                    for review in reviews:
-                        review.movie_id = movie.id
+                        reviews = UserMovieReview.query.filter_by(
+                            movie_id=original_movie_id
+                        ).all()
+                        for review in reviews:
+                            review.movie_id = movie.id
 
-                    # Delete the old movie record from the database
+                        # Delete the old movie record from the database
 
-                    original_movie_record = Movie.query.filter_by(
-                        id=original_movie_id
+                        original_movie_record = Movie.query.filter_by(
+                            id=original_movie_id
+                        ).first()
+                        db.session.delete(original_movie_record)
+
+            elif library == "TV Shows":
+                # Get the TVSeries record to be updated
+
+                tv_show = TVSeries.query.filter_by(id=id).first()
+
+                # See if the requested tmdb_id already exists in the TVSeries table.
+                # If so, we'll use that existing TVSeries record.
+
+                if tv_show.tmdb_id != None:
+                    existing_series = TVSeries.query.filter_by(
+                        tmdb_id=tv_show.tmdb_id
                     ).first()
-                    db.session.delete(original_movie_record)
+                    current_app.logger.info(f"Existing TV Series: {existing_series}")
+                    if existing_series:
+                        tv_show = existing_series
 
-        elif library == "TV Shows":
-            # Get the TVSeries record to be updated
+                # If the user specified a tmdb_id, get the info for that tmdb_id.
+                # If not, try to find a tv show from TMDB based on the show's title.
 
-            tv_show = TVSeries.query.filter_by(id=id).first()
+                if tmdb_id:
+                    tv_show.tmdb_tv_query(tmdb_id)
 
-            # See if the requested tmdb_id already exists in the TVSeries table.
-            # If so, we'll use that existing TVSeries record.
+                else:
+                    tv_show.tmdb_tv_query()
 
-            if tv_show.tmdb_id != None:
-                existing_series = TVSeries.query.filter_by(
-                    tmdb_id=tv_show.tmdb_id
-                ).first()
-                current_app.logger.info(f"Existing TV Series: {existing_series}")
-                if existing_series:
-                    tv_show = existing_series
+            db.session.commit()
 
-            # If the user specified a tmdb_id, get the info for that tmdb_id.
-            # If not, try to find a tv show from TMDB based on the show's title.
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
 
-            if tmdb_id:
-                tv_show.tmdb_tv_query(tmdb_id)
-
-            else:
-                tv_show.tmdb_tv_query()
-
-        db.session.commit()
-
-    except Exception:
-        current_app.logger.error(traceback.format_exc())
-        db.session.rollback()
-
-    else:
-        return True
+        else:
+            return True
 
 
 def sanitize_s3_key(key):
