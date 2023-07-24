@@ -341,7 +341,14 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
                 # Determine which audio tracks to export
 
-                if audio_tracks[0].get("language"):
+                # If there are no audio tracks, then technically we could use the
+                # --no-audio flag with mkvmerge. Defaulting to the first audio track we
+                # find is good enough, however, as none will exist.
+
+                if len(audio_tracks) == 0:
+                    first_audio_track_language = "1"
+
+                elif audio_tracks[0].get("language"):
                     first_audio_track_language = audio_tracks[0].get("language")
 
                 else:

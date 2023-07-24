@@ -123,7 +123,7 @@ def index():
     # show files that are still in a Standard data storage class.
 
     recently_added = (
-        File.query.join(FileAudioTrack, (FileAudioTrack.file_id == File.id))
+        File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
         .distinct()  # need .distinct() in order to get the result numbers per page correct
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
