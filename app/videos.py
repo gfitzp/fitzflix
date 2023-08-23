@@ -2403,14 +2403,16 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
 def aws_delete(key):
     """Delete an object from AWS S3 storage."""
 
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    )
-    response = s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
-    current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
-    return datetime.utcnow()
+    with app.app_context():
+        current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        )
+        response = s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
+        current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
+        return datetime.utcnow()
 
 
 def aws_download(key, basename, sqs_receipt_handle=None):

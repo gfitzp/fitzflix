@@ -1305,14 +1305,11 @@ def file(file_id):
     delete_form = FileDeleteForm()
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
         try:
-            # TODO: Delete the archived version from S3
-            # (For some reason, I can call the function in app.videos, but it silently fails)
-            # For now, we just delete the local file and remove from the database;
-            # the AWS file can be removed later as an unreferenced file
-            # in the Admin page with the "Sync AWS Storage" button.
-
-            # file.aws_untouched_date_deleted = aws_delete(file.aws_untouched_key)
-
+            current_app.request_queue.enqueue(
+                "app.videos.aws_delete",
+                args=(file.aws_untouched_key,),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            )
             file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
 
