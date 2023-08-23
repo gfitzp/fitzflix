@@ -962,7 +962,7 @@ def finalize_localization(file_path, file_details, lock):
                 # queries to get show metadata fail, we can just roll back those changes to
                 # the savepoint and still commit the movie / tv show, file, and its tracks.
 
-                db.session.begin_nested()
+                savepoint = db.session.begin_nested()
                 if file.movie_id:
                     if movie.tmdb_id == None:
                         movie.tmdb_movie_query()
@@ -971,17 +971,19 @@ def finalize_localization(file_path, file_details, lock):
                     if tv_series.tmdb_id == None:
                         tv_series.tmdb_tv_query()
 
-                db.session.commit()
+                savepoint.commit()
 
             except:
                 current_app.logger.error(traceback.format_exc())
-                db.session.rollback()
+                savepoint.rollback()
                 pass
 
             # Find and remove any worse-quality files before moving the new file into place
             # so we don't delete any special features where old and new filenames are the same
 
             worse_files = file.find_worse_files()
+            current_app.logger.info(f"{file} worse files: {worse_files}")
+
             for worse in worse_files:
                 worse.delete_local_file()
 
@@ -2410,7 +2412,9 @@ def aws_delete(key):
             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
         )
-        response = s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
+        response = s3_client.delete_object(
+            Bucket=current_app.config["AWS_BUCKET"], Key=key
+        )
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
         return datetime.utcnow()
 

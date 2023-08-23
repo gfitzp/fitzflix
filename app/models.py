@@ -20,6 +20,7 @@ from unidecode import unidecode
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import current_app, jsonify
 from flask_login import UserMixin
+from sqlalchemy.orm import joinedload
 
 from app import db, login
 
@@ -1599,6 +1600,7 @@ class File(db.Model, LibraryMixin):
         if self.media_library == "Movies":
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
+                .options(joinedload(File.quality, innerjoin=True))
                 .filter(
                     File.movie_id == self.movie_id,
                     File.feature_type_id == self.feature_type_id,
@@ -1614,6 +1616,7 @@ class File(db.Model, LibraryMixin):
         elif self.media_library == "TV Shows":
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
+                .options(joinedload(File.quality, innerjoin=True))
                 .filter(
                     File.series_id == self.series_id,
                     File.season == self.season,
