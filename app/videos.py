@@ -327,17 +327,18 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 native_language = current_app.config["NATIVE_LANGUAGE"]
 
                 for track in media_info.tracks:
-                    if (
-                        track.track_type == "General"
-                        and "MakeMKV" in track.writing_application
-                    ):
-                        native_language = iso_639_3_native_language()
-                        current_app.logger.warning(
-                            f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
-                            f"code '{native_language}' instead of user-supplied "
-                            f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
-                            f"processing this file with mkvmerge"
-                        )
+                    if track.writing_application:
+                        if (
+                            track.track_type == "General"
+                            and "MakeMKV" in track.writing_application
+                        ):
+                            native_language = iso_639_3_native_language()
+                            current_app.logger.warning(
+                                f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                                f"code '{native_language}' instead of user-supplied "
+                                f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
+                                f"processing this file with mkvmerge"
+                            )
 
                 # Determine which audio tracks to export
 
