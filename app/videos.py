@@ -999,10 +999,17 @@ def finalize_localization(file_path, file_details, lock):
                     or file.quality.physical_media == True
                 ):
                     if worse.aws_untouched_date_uploaded:
-                        worse.aws_untouched_date_deleted = aws_delete(
-                            worse.aws_untouched_key
+
+                        # S3 delete logic needs to be placed in here directly, since it
+                        # won't work if called with app.app_context() (like in aws_delete())
+                        s3_client = boto3.client(
+                            "s3",
+                            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
                         )
-                        worse.aws_untouched_date_uploaded = None
+                        response = s3_client.delete_object(
+                            Bucket=current_app.config["AWS_BUCKET"], Key=worse.aws_untouched_key
+                        )
                     db.session.delete(worse)
 
                 if (
@@ -2406,6 +2413,7 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
 def aws_delete(key):
     """Delete an object from AWS S3 storage."""
 
+    # Needs app.app_context() in order for user to call directly from web application
     with app.app_context():
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
         s3_client = boto3.client(
