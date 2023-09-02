@@ -999,7 +999,6 @@ def finalize_localization(file_path, file_details, lock):
                     or file.quality.physical_media == True
                 ):
                     if worse.aws_untouched_date_uploaded:
-
                         # S3 delete logic needs to be placed in here directly, since it
                         # won't work if called with app.app_context() (like in aws_delete())
                         s3_client = boto3.client(
@@ -1008,7 +1007,8 @@ def finalize_localization(file_path, file_details, lock):
                             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
                         )
                         response = s3_client.delete_object(
-                            Bucket=current_app.config["AWS_BUCKET"], Key=worse.aws_untouched_key
+                            Bucket=current_app.config["AWS_BUCKET"],
+                            Key=worse.aws_untouched_key,
                         )
                     db.session.delete(worse)
 
