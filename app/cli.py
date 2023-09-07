@@ -1,3 +1,5 @@
+import click
+
 from app.models import Movie, TVSeries
 
 
@@ -51,6 +53,19 @@ def register(app):
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
             app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
+
+    @refresh.command()
+    @click.argument("file_id")
+    def file(file_id):
+        """Refresh metadata for file having specified file ID."""
+
+        refresh_job = app.sql_queue.enqueue(
+            "app.videos.track_metadata_scan_task",
+            args=(int(file_id),),
+            job_timeout=app.config["SQL_TASK_TIMEOUT"],
+            description=f"Refreshing metadata for file ID {file_id}",
+        )
+        app.logger.info(f"Refreshing metadata for file ID {file_id}")
 
     @app.cli.command()
     def sync():
