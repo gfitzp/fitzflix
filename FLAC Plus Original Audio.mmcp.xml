@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<profile>
+    <!-- profile name - Default -->
+    <name lang="eng">FLAC + Original Audio</name>
+
+    <!-- Common MKV flags -->
+    <mkvSettings
+        ignoreForcedSubtitlesFlag="true"
+        useISO639Type2T="false"
+        setFirstAudioTrackAsDefault="true"
+        setFirstSubtitleTrackAsDefault="false"
+        setFirstForcedSubtitleTrackAsDefault="true"
+        insertFirstChapter00IfMissing="true"
+    />
+
+    <!-- Settings overridable in preferences -->
+    <profileSettings
+        app_DefaultSelectionString="-sel:all,+sel:(favlang|nolang|single),+sel:lossless,-sel:(havemulti|havelossless),-sel:mvcvideo,=100:all,-10:favlang"
+    />
+
+    <!-- Output formats currently supported by MakeMKV -->
+    <outputSettings name="copy" outputFormat="directCopy">
+        <description lang="eng">Copy track as-is</description>
+    </outputSettings>
+
+    <outputSettings name="lpcm" outputFormat="LPCM-raw">
+        <description lang="eng">Save as raw LPCM</description>
+    </outputSettings>
+
+    <outputSettings name="wavex" outputFormat="LPCM-wavex">
+        <description lang="eng">Save as LPCM in WAV container</description>
+    </outputSettings>
+
+    <outputSettings name="flac-best" outputFormat="FLAC">
+        <description lang="eng">Save as FLAC (best compression)</description>
+        <extraArgs>-compression_level 12</extraArgs>
+    </outputSettings>
+
+    <outputSettings name="flac-fast" outputFormat="FLAC">
+        <description lang="eng">Save as FLAC (fast compression)</description>
+        <extraArgs>-compression_level 5</extraArgs>
+    </outputSettings>
+
+    <!-- Default rule - copy as is -->
+    <trackSettings input="default">
+        <output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+    </trackSettings>
+
+
+	<!-- The AppleTV can handle LPCM and FLAC natively. -->
+	<!-- For all other lossless audio formats, convert the track to FLAC but also include the original audio track as well. -->
+
+	<!-- DTS-HD Master Audio -->
+    <trackSettings input="DTSHDMA-stereo">
+    	<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+	<trackSettings input="DTSHDMA-multi">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+
+	<!-- Dolby TrueHD -->
+	<trackSettings input="TRUEHD-stereo">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+	<trackSettings input="TRUEHD-multi">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+
+    <!-- Meridian Lossless Packing -->
+	<trackSettings input="MLP-stereo">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+	<trackSettings input="MLP-multi">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+
+	<!-- DTS-HD Low Bit Rate -->
+	<trackSettings input="DTSHDLBR-stereo">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+	<trackSettings input="DTSHDLBR-multi">
+		<output outputSettingsName="flac-fast" defaultSelection="$app_DefaultSelectionString,+sel:true"></output>
+		<output outputSettingsName="copy" defaultSelection="$app_DefaultSelectionString"></output>
+	</trackSettings>
+
+</profile>
