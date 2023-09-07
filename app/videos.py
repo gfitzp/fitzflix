@@ -3352,13 +3352,30 @@ def get_subtitle_tracks_from_file(file_path):
         if track.track_type == "Text":
             subtitle_track = {}
             language = track.to_data().get("other_language", "und")
-            if language == "und":
+
+            if language == "und" or len(language) == 0:
                 subtitle_track["language"] = "und"
                 subtitle_track["language_name"] = "Undetermined"
 
             elif "zxx" in language:
                 subtitle_track["language"] = "zxx"
                 subtitle_track["language_name"] = "Not applicable"
+
+            elif len(language) <= 3:
+                # The 3-character language code is usually in the 4th position in the
+                # other_language variable, but sometimes the other_language variable only
+                # has 3 elements. If other_language doesn't have a 4th element, default
+                # to "Undetermined" / "und", check to see if any values are 3 characters
+                # long, and use it if it exists.
+
+                subtitle_track["language"] = "und"
+                subtitle_track["language_name"] = "Undetermined"
+
+                for l in language:
+                    if len(l) == 3:
+                        subtitle_track["language"] = l
+                        subtitle_track["language_name"] = language[0]
+                        break
 
             else:
                 subtitle_track["language"] = language[3]
