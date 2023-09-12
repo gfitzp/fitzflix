@@ -715,7 +715,7 @@ def tv_library():
     )
 
     tv = []
-    for series in TVSeries.query.order_by(
+    for series in TVSeries.query.join(File, (File.series_id == TVSeries.id)).order_by(
         db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc()
     ).all():
         seasons = []
