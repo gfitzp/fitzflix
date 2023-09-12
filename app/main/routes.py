@@ -120,7 +120,8 @@ def index():
 
     # Show only files added in the last 7 days, as the AWS S3 lifecycle rule migrates
     # older files that have been uploaded to S3 Deep Glacier storage; this way we only
-    # show files that are still in a Standard data storage class.
+    # show files that are still in a Standard data storage class and can be re-downloaded
+    # without needing to unfreeze from S3 Glacier.
 
     recently_added = (
         File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
@@ -128,7 +129,7 @@ def index():
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
-            db.func.coalesce(File.date_updated, File.date_added)
+            db.func.coalesce(File.aws_untouched_date_uploaded, File.date_added)
             >= db.func.adddate(db.func.current_date(), -7)
         )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
