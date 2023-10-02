@@ -132,7 +132,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 return False
 
             file_details = evaluate_filename(file_path)
-            current_app.logger.debug(file_details)
+            current_app.logger.info(file_details)
             if not file_details:
                 current_app.logger.error(
                     f"'{basename}' doesn't match expected naming formats!"
@@ -269,10 +269,109 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     )
                     file_details["container"] = track.format
 
+                    # Convert the file duration from milliseconds to seconds
+                    file_duration = int(track.duration) / 1000
+                    current_app.logger.info(file_duration)
+
             # Export a localized version of the incoming file
 
             if file_details.get("container") == "Matroska":
                 current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
+
+                quality = RefQuality.query.filter(
+                    RefQuality.quality_title == file_details.get("quality_title")
+                ).first()
+                audio_tracks = get_audio_tracks_from_file(file_path)
+
+                if len(audio_tracks) > 0:
+                    if (
+                        quality.physical_media == False
+                        and audio_tracks[0].get("compression_mode") == "Lossless"
+                        and audio_tracks[0].get("format") != "FLAC"
+                    ):
+                        # If the file is not from physical media, and the first track
+                        # is lossless but isn't FLAC, convert the first track to FLAC
+
+                        current_app.logger.info(
+                            f"'{basename}' Converting the first audio track to FLAC"
+                        )
+                        if job:
+                            job.meta[
+                                "description"
+                            ] = f"'{basename}' — Converting the first audio track to FLAC"
+                            job.save_meta()
+                        temp_flac_file = f"{os.path.dirname(file_path)}/.{os.path.basename(file_path)}"
+                        flac_track_process = subprocess.Popen(
+                            [
+                                current_app.config["FFMPEG_BIN"],
+                                "-y",
+                                "-i",
+                                file_path,
+                                "-map",
+                                "0:v",
+                                "-map",
+                                "0:a:0",
+                                "-map",
+                                "0:s:?",
+                                "-c",
+                                "copy",
+                                "-c:a",
+                                "flac",
+                                "-disposition:a:0",
+                                "default",
+                                temp_flac_file,
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            universal_newlines=True,
+                            bufsize=1,
+                        )
+                        progress = 0
+                        for line in flac_track_process.stdout:
+                            progress_match = re.search(
+                                "time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
+                                line,
+                            )
+                            if progress_match:
+                                hour = int(progress_match.group("hour"))
+                                minutes = int(progress_match.group("minute"))
+                                seconds = int(progress_match.group("seconds"))
+                                progress = int(
+                                    (
+                                        ((hour * 3600) + (minutes * 60) + seconds)
+                                        / file_duration
+                                    )
+                                    * 100
+                                )
+                            current_app.logger.info(
+                                f"'{basename}' Converting the first audio track to FLAC: {progress}%"
+                            )
+                            if job:
+                                job.meta["progress"] = progress
+                                job.save_meta()
+
+                        current_app.logger.info(
+                            f"'{basename}' Converted the first audio track to FLAC"
+                        )
+                        current_app.logger.info(
+                            f"Moving '{temp_flac_file}' to '{file_path}'"
+                        )
+                        shutil.move(temp_flac_file, file_path)
+
+                    elif quality.physical_media == True:
+                        # If the file is from physical media, make sure that each lossless
+                        # track is preceded with a FLAC version, and add tracks if
+                        # necessary
+
+                        lossless_tracks = []
+                        for i, track in enumerate(audio_tracks):
+                            if track.compression_mode == "Lossless":
+                                lossless_tracks.append(track)
+                        current_app.logger.info(f"Lossless tracks: {lossless_tracks}")
+
+                # TODO: check to see if the first audio track is lossless but not flac
+                # TODO: if the file is from physical media, add a FLAC version before every lossless track
+                # TODO: if the file is not from physical media, replace the first track with a FLAC version
 
                 # Sometimes the input mkv file is missing track details, such as the number
                 # of subtitle elements in a subtitle track, which we need for us to tell

@@ -50,6 +50,7 @@ class Config(object):
     HANDBRAKE_BIN                       = os.environ.get("HANDBRAKE_BIN") or "/opt/homebrew/bin/HandBrakeCLI"
     MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/opt/homebrew/bin/mkvmerge"
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/opt/homebrew/bin/mkvpropedit"
+    FFMPEG_BIN                          = os.environ.get("FFMPEG_BIN") or "/opt/homebrew/bin/ffmpeg"
 
     # AWS configuration
     ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
