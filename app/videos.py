@@ -278,29 +278,54 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             if file_details.get("container") == "Matroska":
                 current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
 
+                # If the file isn't from physical media, replace any lossless audio tracks
+                # with ones in FLAC so the AppleTV can play them natively.
+
+                # If the file was from physical media, it should already have a FLAC
+                # version of any lossless tracks included because we would have ripped it
+                # using the FLAC Plus Original Audio.mmcp.xml MakeMKV profile. (We kept
+                # the original format around, just in case.)
+
                 quality = RefQuality.query.filter(
                     RefQuality.quality_title == file_details.get("quality_title")
                 ).first()
                 audio_tracks = get_audio_tracks_from_file(file_path)
 
-                if len(audio_tracks) > 0:
-                    if (
-                        quality.physical_media == False
-                        and audio_tracks[0].get("compression_mode") == "Lossless"
-                        and audio_tracks[0].get("format") != "FLAC"
-                    ):
-                        # If the file is not from physical media, and the first track
-                        # is lossless but isn't FLAC, convert the first track to FLAC
+                if len(audio_tracks) > 0 and quality.physical_media == False:
+                    audio_map = []
+                    for track_num, track in enumerate(audio_tracks):
+                        if track.get("compression_mode") == "Lossless" and track.get(
+                            "format"
+                        ) not in ["FLAC", "PCM"]:
+                            audio_map.extend(
+                                [
+                                    "-map",
+                                    f"0:a:{track_num}",
+                                    f"-c:a:{track_num}",
+                                    "flac",
+                                ]
+                            )
+                        else:
+                            audio_map.extend(
+                                [
+                                    "-map",
+                                    f"0:a:{track_num}",
+                                    f"-c:a:{track_num}",
+                                    "copy",
+                                ]
+                            )
 
+                    if "flac" in audio_map:
                         current_app.logger.info(
-                            f"'{basename}' Converting the first audio track to FLAC"
+                            f"'{basename}' Converting lossless tracks to FLAC"
                         )
                         if job:
                             job.meta[
                                 "description"
-                            ] = f"'{basename}' — Converting the first audio track to FLAC"
+                            ] = f"'{basename}' — Converting lossless tracks to FLAC"
                             job.save_meta()
                         temp_flac_file = f"{os.path.dirname(file_path)}/.{os.path.basename(file_path)}"
+
                         flac_track_process = subprocess.Popen(
                             [
                                 current_app.config["FFMPEG_BIN"],
@@ -308,17 +333,20 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                                 "-i",
                                 file_path,
                                 "-map",
-                                "0:v",
-                                "-map",
-                                "0:a:0",
+                                "0:v:0",
+                                "-c:v:0",
+                                "copy",
+                            ]
+                            + audio_map
+                            + [
                                 "-map",
                                 "0:s:?",
-                                "-c",
+                                "-c:s",
                                 "copy",
-                                "-c:a",
-                                "flac",
                                 "-disposition:a:0",
                                 "default",
+                                "-disposition:a:1",
+                                "none",
                                 temp_flac_file,
                             ],
                             stdout=subprocess.PIPE,
@@ -344,34 +372,19 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                                     * 100
                                 )
                             current_app.logger.info(
-                                f"'{basename}' Converting the first audio track to FLAC: {progress}%"
+                                f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
                             )
                             if job:
                                 job.meta["progress"] = progress
                                 job.save_meta()
 
                         current_app.logger.info(
-                            f"'{basename}' Converted the first audio track to FLAC"
+                            f"'{basename}' Converted lossless tracks to FLAC"
                         )
                         current_app.logger.info(
                             f"Moving '{temp_flac_file}' to '{file_path}'"
                         )
                         shutil.move(temp_flac_file, file_path)
-
-                    elif quality.physical_media == True:
-                        # If the file is from physical media, make sure that each lossless
-                        # track is preceded with a FLAC version, and add tracks if
-                        # necessary
-
-                        lossless_tracks = []
-                        for i, track in enumerate(audio_tracks):
-                            if track.compression_mode == "Lossless":
-                                lossless_tracks.append(track)
-                        current_app.logger.info(f"Lossless tracks: {lossless_tracks}")
-
-                # TODO: check to see if the first audio track is lossless but not flac
-                # TODO: if the file is from physical media, add a FLAC version before every lossless track
-                # TODO: if the file is not from physical media, replace the first track with a FLAC version
 
                 # Sometimes the input mkv file is missing track details, such as the number
                 # of subtitle elements in a subtitle track, which we need for us to tell
