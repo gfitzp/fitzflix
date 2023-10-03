@@ -319,11 +319,6 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                         current_app.logger.info(
                             f"'{basename}' Converting lossless tracks to FLAC"
                         )
-                        if job:
-                            job.meta[
-                                "description"
-                            ] = f"'{basename}' — Converting lossless tracks to FLAC"
-                            job.save_meta()
                         temp_flac_file = f"{os.path.dirname(file_path)}/.{os.path.basename(file_path)}"
 
                         flac_track_process = subprocess.Popen(
@@ -375,6 +370,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                                 f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
                             )
                             if job:
+                                job.meta[
+                                    "description"
+                                ] = f"'{basename}' — Converting lossless tracks to FLAC"
                                 job.meta["progress"] = progress
                                 job.save_meta()
 
@@ -392,11 +390,6 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 # adds those details to the file if they are missing.
 
                 current_app.logger.info(f"'{basename}' Adding track statistics tags")
-                if job:
-                    job.meta[
-                        "description"
-                    ] = f"'{basename}' — Adding track statistics tags"
-                    job.save_meta()
 
                 statistics_tags_process = subprocess.Popen(
                     [
@@ -420,6 +413,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             f"'{basename}' Adding track statistics tags: {progress}%"
                         )
                         if job:
+                            job.meta[
+                                "description"
+                            ] = f"'{basename}' — Adding track statistics tags"
                             job.meta["progress"] = progress
                             job.save_meta()
 
@@ -1834,10 +1830,6 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            if job:
-                job.meta["description"] = f"'{file.basename}' — Remuxing"
-                job.save_meta()
-
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
@@ -2148,10 +2140,9 @@ def sync_aws_s3_storage_task():
                         description=f"'{os.path.basename(library_file)}'",
                         job_id=os.path.basename(library_file),
                     )
-                    if job:
-                        current_app.logger.info(
-                            f"'{library_file}' isn't in library; added to import queue"
-                        )
+                    current_app.logger.info(
+                        f"'{library_file}' isn't in library; added to import queue"
+                    )
 
         except Exception:
             app.logger.error(traceback.format_exc())
@@ -2876,9 +2867,6 @@ def calculate_etag(file_path):
     basename = os.path.basename(file_path)
     current_app.logger.info(f"'{basename}' Calculating ETag")
     job = get_current_job()
-    if job:
-        job.meta["description"] = f"'{basename}' — Calculating ETag"
-        job.save_meta()
 
     file_size = os.path.getsize(file_path)
     if file_size < EIGHT_MEGABYTES:
@@ -2901,6 +2889,7 @@ def calculate_etag(file_path):
                 progress = int((f.tell() / file_size) * 100)
                 current_app.logger.info(f"'{basename}' Calculating ETag: {progress}%")
                 if job:
+                    job.meta["description"] = f"'{basename}' — Calculating ETag"
                     job.meta["progress"] = progress
                     job.save_meta()
 
