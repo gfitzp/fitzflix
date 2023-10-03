@@ -1551,8 +1551,6 @@ def mkvpropedit_task(
         try:
             job = get_current_job()
 
-            # TODO: Create lock (is one really necessary?)
-
             # Get the record of the file to modify
 
             file = File.query.filter_by(id=file_id).first()
@@ -2141,8 +2139,6 @@ def rename_task(file_id, new_key):
         try:
             job = get_current_job()
 
-            # TODO: Create lock (is one really necessary?)
-
             file = File.query.filter_by(id=file_id).first()
             old_key = file.aws_untouched_key
             if job:
@@ -2483,8 +2479,6 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
         db.init_app(app)
 
         try:
-            # TODO: Create lock (is one really necessary?)
-
             # Get the record of the file to be uploaded to AWS S3 storage
 
             file = File.query.filter_by(id=file_id).first()

@@ -39,7 +39,11 @@ def register(app):
         for movie in movies:
             refresh_job = app.sql_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, movie.tmdb_id),
+                args=(
+                    "Movies",
+                    movie.id,
+                    movie.tmdb_id,
+                ),
                 job_timeout=app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
             )
@@ -48,7 +52,11 @@ def register(app):
         for tv in tv_shows:
             refresh_job = app.sql_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
-                args=("TV Shows", tv.id, tv.tmdb_id),
+                args=(
+                    "TV Shows",
+                    tv.id,
+                    tv.tmdb_id,
+                ),
                 job_timeout=app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
