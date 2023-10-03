@@ -2035,6 +2035,8 @@ def sync_aws_s3_storage_task():
 
             files = File.query.all()
 
+            # Upload local files that don't exist remotely to S3
+
             for i, file in enumerate(files):
                 if job:
                     job.meta["description"] = "Queuing local files for S3 upload"
@@ -2066,6 +2068,8 @@ def sync_aws_s3_storage_task():
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' Exists in AWS S3"
                     )
+
+            # Delete remote S3 files that aren't in Fitzflix
 
             aws_untouched_keys = [
                 aws_untouched_key
@@ -2120,6 +2124,34 @@ def sync_aws_s3_storage_task():
                         user=admin_user.email,
                     ),
                 )
+
+            # Queue local files in the library folder but aren't in Fitzflix for importing
+
+            library = []
+            for path, subdirs, local_files in os.walk(
+                current_app.config["LIBRARY_DIR"]
+            ):
+                for name in local_files:
+                    if not name.startswith(".") and "@eaDir" not in path:
+                        library_file = os.path.join(path, name)
+                        file_path = library_file.removeprefix(
+                            f"{current_app.config['LIBRARY_DIR']}/"
+                        )
+                        library.append((library_file, file_path))
+
+            for library_file, file_path in library:
+                if not File.query.filter_by(file_path=file_path).first():
+                    job = current_app.import_queue.enqueue(
+                        "app.videos.localization_task",
+                        args=(library_file,),
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{os.path.basename(library_file)}'",
+                        job_id=os.path.basename(library_file),
+                    )
+                    if job:
+                        current_app.logger.info(
+                            f"'{library_file}' isn't in library; added to import queue"
+                        )
 
         except Exception:
             app.logger.error(traceback.format_exc())
