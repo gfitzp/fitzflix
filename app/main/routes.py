@@ -47,6 +47,7 @@ from app.main.forms import (
     ReviewUploadForm,
     S3DownloadForm,
     S3UploadForm,
+    SeriesDeleteForm,
     TMDBLookupForm,
     TMDBRefreshForm,
     TrackMetadataScanForm,
@@ -815,6 +816,43 @@ def tv(series_id):
         flash(f"Added all files for '{title}' to transcoding queue", "success")
         return redirect(url_for("main.tv", series_id=tv.id))
 
+    # Delete the TV series from the database
+
+    series_delete_form = SeriesDeleteForm()
+    if (
+        series_delete_form.delete_submit.data
+        and series_delete_form.validate_on_submit()
+    ):
+        try:
+            files = File.query.filter(File.series_id == int(series_id)).all()
+            for file in files:
+                current_app.request_queue.enqueue(
+                    "app.videos.aws_delete",
+                    args=(file.aws_untouched_key,),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                )
+                file.delete_local_file(delete_directory_tree=True)
+                db.session.delete(file)
+
+        except:
+            db.session.rollback()
+            flash(f"Unable to delete '{file.basename}'!", "danger")
+            return redirect(url_for("main.tv", series_id=int(series_id)))
+
+        try:
+            db.session.delete(tv)
+
+        except:
+            db.session.rollback()
+            flash(f"Unable to delete TV series '{title}'")
+            return redirect(url_for("main.tv", series_id=int(series_id)))
+
+        db.session.commit()
+        flash(
+            f"Deleted TV series '{title}' and its files from the database.", "success"
+        )
+        return redirect(url_for("main.tv_library"))
+
     # Form to update a TV series' information with the latest TMDb data
 
     tmdb_lookup_form = TMDBLookupForm()
@@ -872,6 +910,7 @@ def tv(series_id):
         seasons=seasons,
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
+        series_delete_form=series_delete_form,
     )
 
 

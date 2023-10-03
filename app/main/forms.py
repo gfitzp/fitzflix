@@ -193,6 +193,10 @@ class FileDeleteForm(FlaskForm):
     delete_submit = SubmitField("Delete and Purge File")
 
 
+class SeriesDeleteForm(FlaskForm):
+    delete_submit = SubmitField("Delete Series")
+
+
 class TrackMetadataScanForm(FlaskForm):
     scan_submit = SubmitField("Rescan Track Metadata")
 
