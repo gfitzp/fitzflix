@@ -1086,13 +1086,6 @@ def file(file_id):
 
     if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
         track_metadata_scan(file.id)
-        # Enqueue a scan task for this file
-
-        #         current_app.file_queue.enqueue(
-        #             "app.videos.track_metadata_scan_task",
-        #             args=(file.id,),
-        #             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-        #         )
         flash(f"Rescanned track metadata for '{file.basename}'", "info")
         return redirect(url_for("main.file", file_id=file.id))
 
@@ -1319,6 +1312,8 @@ def file(file_id):
                 file.id,
                 current_app.config["AWS_UNTOUCHED_PREFIX"],
                 True,
+                True,
+                "DEEP_ARCHIVE",
             ),
             job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
             description=f"'{file.basename}'",

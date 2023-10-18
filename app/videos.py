@@ -2392,7 +2392,13 @@ def sqs_retrieve_task():
         return True
 
 
-def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
+def upload_task(
+    file_id,
+    key_prefix="",
+    force_upload=False,
+    ignore_etag=False,
+    storage_class="STANDARD",
+):
     """Upload a file to AWS S3 storage."""
 
     with app.app_context():
@@ -2415,6 +2421,7 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
                     key_name=file.aws_untouched_key,
                     force_upload=force_upload,
                     ignore_etag=ignore_etag,
+                    storage_class=storage_class,
                 )
 
             else:
@@ -2423,6 +2430,7 @@ def upload_task(file_id, key_prefix="", force_upload=False, ignore_etag=False):
                     key_prefix=key_prefix,
                     force_upload=force_upload,
                     ignore_etag=ignore_etag,
+                    storage_class=storage_class,
                 )
 
             db.session.commit()
@@ -2638,7 +2646,12 @@ def aws_restore(key, days=1, tier="Standard"):
 
 
 def aws_upload(
-    file_path, key_prefix="", key_name=None, force_upload=False, ignore_etag=False
+    file_path,
+    key_prefix="",
+    key_name=None,
+    force_upload=False,
+    ignore_etag=False,
+    storage_class="STANDARD",
 ):
     """Search for a file in AWS S3, and upload if it doesn't exist or if it differs."""
 
@@ -2730,6 +2743,7 @@ def aws_upload(
                 file_path,
                 current_app.config["AWS_BUCKET"],
                 key,
+                ExtraArgs={"StorageClass": storage_class},
                 Callback=UploadProgressPercentage(file_path),
             )
             retry = 0
