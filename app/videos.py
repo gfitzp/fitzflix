@@ -281,108 +281,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 # If the file isn't from physical media, replace any lossless audio tracks
                 # with ones in FLAC so the AppleTV can play them natively.
 
-                # If the file was from physical media, it should already have a FLAC
-                # version of any lossless tracks included because we would have ripped it
-                # using the FLAC Plus Original Audio.mmcp.xml MakeMKV profile. (We kept
-                # the original format around, just in case.)
-
-                quality = RefQuality.query.filter(
-                    RefQuality.quality_title == file_details.get("quality_title")
-                ).first()
-                audio_tracks = get_audio_tracks_from_file(file_path)
-
-                if len(audio_tracks) > 0 and quality.physical_media == False:
-                    audio_map = []
-                    for track_num, track in enumerate(audio_tracks):
-                        if track.get("compression_mode") == "Lossless" and track.get(
-                            "format"
-                        ) not in ["FLAC", "PCM"]:
-                            audio_map.extend(
-                                [
-                                    "-map",
-                                    f"0:a:{track_num}",
-                                    f"-c:a:{track_num}",
-                                    "flac",
-                                ]
-                            )
-                        else:
-                            audio_map.extend(
-                                [
-                                    "-map",
-                                    f"0:a:{track_num}",
-                                    f"-c:a:{track_num}",
-                                    "copy",
-                                ]
-                            )
-
-                    if "flac" in audio_map:
-                        current_app.logger.info(
-                            f"'{basename}' Converting lossless tracks to FLAC"
-                        )
-                        temp_flac_file = f"{os.path.dirname(file_path)}/.{os.path.basename(file_path)}"
-
-                        flac_track_process = subprocess.Popen(
-                            [
-                                current_app.config["FFMPEG_BIN"],
-                                "-y",
-                                "-i",
-                                file_path,
-                                "-map",
-                                "0:v:0",
-                                "-c:v:0",
-                                "copy",
-                            ]
-                            + audio_map
-                            + [
-                                "-map",
-                                "0:s:?",
-                                "-c:s",
-                                "copy",
-                                "-disposition:a:0",
-                                "default",
-                                "-disposition:a:1",
-                                "none",
-                                temp_flac_file,
-                            ],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            universal_newlines=True,
-                            bufsize=1,
-                        )
-                        progress = 0
-                        for line in flac_track_process.stdout:
-                            progress_match = re.search(
-                                "time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
-                                line,
-                            )
-                            if progress_match:
-                                hour = int(progress_match.group("hour"))
-                                minutes = int(progress_match.group("minute"))
-                                seconds = int(progress_match.group("seconds"))
-                                progress = int(
-                                    (
-                                        ((hour * 3600) + (minutes * 60) + seconds)
-                                        / file_duration
-                                    )
-                                    * 100
-                                )
-                            current_app.logger.info(
-                                f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
-                            )
-                            if job:
-                                job.meta[
-                                    "description"
-                                ] = f"'{basename}' — Converting lossless tracks to FLAC"
-                                job.meta["progress"] = progress
-                                job.save_meta()
-
-                        current_app.logger.info(
-                            f"'{basename}' Converted lossless tracks to FLAC"
-                        )
-                        current_app.logger.info(
-                            f"Moving '{temp_flac_file}' to '{file_path}'"
-                        )
-                        shutil.move(temp_flac_file, file_path)
+                lossless_to_flac(file_path)
 
                 # Sometimes the input mkv file is missing track details, such as the number
                 # of subtitle elements in a subtitle track, which we need for us to tell
@@ -4107,6 +4006,141 @@ def sanitize_string(
         string = string[1:]
 
     return string
+
+
+def lossless_to_flac(file_path, file_id=None):
+    """Convert any lossless tracks to FLAC if the file isn't from physical media."""
+
+    # If the file was from physical media, it should already have a FLAC
+    # version of any lossless tracks included because we would have ripped it
+    # using the FLAC Plus Original Audio.mmcp.xml MakeMKV profile. (We kept
+    # the original format around, just in case.)
+
+    with app.app_context():
+        # Initalize the database
+        # https://stackoverflow.com/a/60438156
+        db.init_app(app)
+
+        try:
+            job = get_current_job()
+
+            dirname = os.path.dirname(file_path)
+            basename = os.path.basename(file_path)
+            file_details = evaluate_filename(file_path)
+
+            quality = RefQuality.query.filter(
+                RefQuality.quality_title == file_details.get("quality_title")
+            ).first()
+            audio_tracks = get_audio_tracks_from_file(file_path)
+
+            if len(audio_tracks) > 0 and quality.physical_media == False:
+                audio_map = []
+                for track_num, track in enumerate(audio_tracks):
+                    if track.get("compression_mode") == "Lossless" and track.get(
+                        "format"
+                    ) not in ["FLAC", "PCM"]:
+                        audio_map.extend(
+                            [
+                                "-map",
+                                f"0:a:{track_num}",
+                                f"-c:a:{track_num}",
+                                "flac",
+                            ]
+                        )
+                    else:
+                        audio_map.extend(
+                            [
+                                "-map",
+                                f"0:a:{track_num}",
+                                f"-c:a:{track_num}",
+                                "copy",
+                            ]
+                        )
+
+                if "flac" in audio_map and file_details.get("container") == "Matroska":
+                    current_app.logger.info(
+                        f"'{basename}' Converting lossless tracks to FLAC"
+                    )
+                    temp_flac_file = f"{dirname}/.{basename}"
+
+                    flac_track_process = subprocess.Popen(
+                        [
+                            current_app.config["FFMPEG_BIN"],
+                            "-y",
+                            "-i",
+                            file_path,
+                            "-map",
+                            "0:v:0",
+                            "-c:v:0",
+                            "copy",
+                        ]
+                        + audio_map
+                        + [
+                            "-map",
+                            "0:s:?",
+                            "-c:s",
+                            "copy",
+                            "-disposition:a:0",
+                            "default",
+                            "-disposition:a:1",
+                            "none",
+                            temp_flac_file,
+                        ],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
+                    progress = 0
+                    for line in flac_track_process.stdout:
+                        progress_match = re.search(
+                            "time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
+                            line,
+                        )
+                        if progress_match:
+                            hour = int(progress_match.group("hour"))
+                            minutes = int(progress_match.group("minute"))
+                            seconds = int(progress_match.group("seconds"))
+                            progress = int(
+                                (
+                                    ((hour * 3600) + (minutes * 60) + seconds)
+                                    / file_duration
+                                )
+                                * 100
+                            )
+                        current_app.logger.info(
+                            f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
+                        )
+                        if job:
+                            job.meta[
+                                "description"
+                            ] = f"'{basename}' — Converting lossless tracks to FLAC"
+                            job.meta["progress"] = progress
+                            job.save_meta()
+
+                    current_app.logger.info(
+                        f"'{basename}' Converted lossless tracks to FLAC"
+                    )
+                    current_app.logger.info(
+                        f"Moving '{temp_flac_file}' to '{file_path}'"
+                    )
+                    shutil.move(temp_flac_file, file_path)
+
+                    if file_id:
+                        track_metadata_scan_task(file_id)
+
+                elif file_details.get("container") != "Matroska":
+                    current_app.logger.warn(
+                        f"'{basename}' Unable to convert lossless tracks as is not a MKV file!"
+                    )
+                    return False
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            raise
+
+        else:
+            return True
 
 
 app = create_app()
