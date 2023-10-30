@@ -13,7 +13,7 @@ dominate==2.6.0
 email-validator==1.1.2
 Flask==2.3.2
 Flask-Bootstrap==3.3.7.1
-git+https://github.com/maxcountryman/flask-login.git@7d98a49#egg=flask-login
+flask-login==0.6.3
 Flask-Mail==0.9.1
 Flask-Migrate==3.0.1
 Flask-Moment==1.0.5
