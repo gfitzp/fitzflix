@@ -5,7 +5,7 @@ import math
 import os
 import secrets
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import boto3
 import botocore
@@ -539,7 +539,7 @@ def movie(movie_id):
             half_stars=half_stars,
             review=movie_review_form.review.data,
             date_watched=movie_review_form.date_watched.data,
-            date_reviewed=datetime.utcnow(),
+            date_reviewed=datetime.now(timezone.utc),
         )
         db.session.add(review)
         db.session.commit()

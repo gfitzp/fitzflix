@@ -3,7 +3,7 @@ import os
 import re
 import traceback
 
-from datetime import datetime
+from datetime import datetime, timezone
 from time import time
 from urllib.parse import urlparse
 
@@ -293,7 +293,7 @@ class TMDBMixin(object):
             self.tmdb_vote_average = tmdb_info.get("vote_average")
             self.tmdb_vote_count = tmdb_info.get("vote_count")
             if tmdb_info.get("id"):
-                self.tmdb_data_as_of = datetime.utcnow()
+                self.tmdb_data_as_of = datetime.now(timezone.utc)
 
             release_dates = tmdb_info.get("release_dates")
             if release_dates:
@@ -615,7 +615,7 @@ class TMDBMixin(object):
             self.tmdb_vote_average = tmdb_info.get("vote_average")
             self.tmdb_vote_count = tmdb_info.get("vote_count")
             if tmdb_info.get("id"):
-                self.tmdb_data_as_of = datetime.utcnow()
+                self.tmdb_data_as_of = datetime.now(timezone.utc)
 
             if tmdb_info.get("genres"):
                 tmdb_genres = tmdb_info.get("genres")
@@ -1082,7 +1082,7 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     title = db.Column(db.String(220), nullable=False, index=True)
     year = db.Column(db.Integer, nullable=False, index=True)
     date_created = db.Column(
-        db.DateTime, nullable=False, index=True, default=datetime.utcnow
+        db.DateTime, nullable=False, index=True, default=db.func.utc_timestamp()
     )
     date_updated = db.Column(db.DateTime, index=True)
 
@@ -1199,7 +1199,7 @@ class TVSeries(db.Model, LibraryMixin, TMDBMixin):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, unique=True, index=True)
     date_created = db.Column(
-        db.DateTime, nullable=False, index=True, default=datetime.utcnow
+        db.DateTime, nullable=False, index=True, default=db.func.utc_timestamp()
     )
     date_updated = db.Column(db.DateTime, index=True)
 
@@ -1300,7 +1300,7 @@ class File(db.Model, LibraryMixin):
     codec = db.Column(db.String(64))
     video_bitrate_kbps = db.Column(db.Integer)
     date_added = db.Column(
-        db.DateTime, nullable=False, index=True, default=datetime.utcnow
+        db.DateTime, nullable=False, index=True, default=db.func.utc_timestamp()
     )
     date_updated = db.Column(db.DateTime, index=True)
     date_localized = db.Column(db.DateTime, index=True)
@@ -1337,7 +1337,7 @@ class File(db.Model, LibraryMixin):
             current_app.logger.info(f"Deleted local file '{file_to_delete}'")
 
             if self.aws_untouched_date_uploaded:
-                self.date_archived = datetime.utcnow()
+                self.date_archived = datetime.now(timezone.utc)
 
             # Optionally delete the directory tree
 

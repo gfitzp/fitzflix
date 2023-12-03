@@ -11,8 +11,7 @@ import time
 import traceback
 import urllib.parse
 
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import botocore
@@ -663,7 +662,7 @@ def finalize_localization(file_path, file_details, lock):
 
                 # Clear metadata for existing File record
 
-                file.date_updated = datetime.utcnow()
+                file.date_updated = datetime.now(timezone.utc)
                 file.date_transcoded = None
                 file.date_archived = None
                 FileAudioTrack.query.filter_by(file_id=file.id).delete()
@@ -950,7 +949,7 @@ def finalize_localization(file_path, file_details, lock):
 
             # Set the localized date
 
-            file.date_localized = datetime.utcnow()
+            file.date_localized = datetime.now(timezone.utc)
 
             # Set the AWS archived fields if the file was uploaded to AWS S3 storage
 
@@ -1195,7 +1194,7 @@ def finalize_transcoding(file_id, lock):
             os.rename(hidden_output_file, output_file)
 
             # Update the file record with the date it was transcoded
-            file.date_transcoded = datetime.utcnow()
+            file.date_transcoded = datetime.now(timezone.utc)
 
             db.session.commit()
 
@@ -1339,7 +1338,7 @@ def track_metadata_scan(file_id):
 
         # Clear metadata for existing File record
 
-        file.date_updated = datetime.utcnow()
+        file.date_updated = datetime.now(timezone.utc)
         FileAudioTrack.query.filter_by(file_id=file.id).delete()
         FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
@@ -1678,7 +1677,7 @@ def mkvpropedit_task(
                 )
                 db.session.add(subtitle_track)
 
-            file.date_updated = datetime.utcnow()
+            file.date_updated = datetime.now(timezone.utc)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -2457,7 +2456,7 @@ def aws_delete(key):
             Bucket=current_app.config["AWS_BUCKET"], Key=key
         )
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
 
 
 def aws_download(key, basename, sqs_receipt_handle=None):
@@ -2542,7 +2541,7 @@ def aws_rename(old_key, new_key):
 
     # If the keys are the same after sanitizing, just pretend we renamed one to the other
     if old_key == new_key:
-        return new_key, datetime.utcnow()
+        return new_key, datetime.now(timezone.utc)
 
     session = boto3.Session(
         aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
@@ -2567,7 +2566,7 @@ def aws_rename(old_key, new_key):
         new_key,
     )
     s3.meta.client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=old_key)
-    return new_key, datetime.utcnow()
+    return new_key, datetime.now(timezone.utc)
 
 
 def aws_restore(key, days=1, tier="Standard"):
@@ -2762,7 +2761,7 @@ def aws_upload(
 
         else:
             current_app.logger.info(f"Uploaded '{file_path}' to AWS")
-            return key, datetime.utcnow()
+            return key, datetime.now(timezone.utc)
 
     current_app.logger.error(
         f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
