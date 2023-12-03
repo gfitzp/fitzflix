@@ -269,10 +269,6 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     )
                     file_details["container"] = track.format
 
-                    # Convert the file duration from milliseconds to seconds
-                    file_duration = int(track.duration) / 1000
-                    current_app.logger.info(file_duration)
-
             # Export a localized version of the incoming file
 
             if file_details.get("container") == "Matroska":
@@ -4047,6 +4043,21 @@ def lossless_to_flac(file_path, file_id=None):
             ).first()
             audio_tracks = get_audio_tracks_from_file(file_path)
 
+            current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
+            media_info = MediaInfo.parse(file_path)
+            current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
+
+            for track in media_info.tracks:
+                if track.track_type == "General" and track.format:
+                    current_app.logger.info(
+                        f"'{basename}' File container {track.format}"
+                    )
+                    file_details["container"] = track.format
+
+                    # Convert the file duration from milliseconds to seconds
+                    file_duration = int(track.duration) / 1000
+                    current_app.logger.info(file_duration)
+
             if len(audio_tracks) > 0 and quality.physical_media == False:
                 audio_map = []
                 for track_num, track in enumerate(audio_tracks):
@@ -4070,6 +4081,8 @@ def lossless_to_flac(file_path, file_id=None):
                                 "copy",
                             ]
                         )
+
+                current_app.logger.info(f"Audio map: {audio_map}")
 
                 if "flac" in audio_map and file_details.get("container") == "Matroska":
                     current_app.logger.info(
