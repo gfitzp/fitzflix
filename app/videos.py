@@ -958,6 +958,18 @@ def finalize_localization(file_path, file_details, lock):
                 "aws_untouched_date_uploaded"
             )
 
+            bytes = os.path.getsize(hidden_output_file)
+            kilobytes = bytes / 1024
+            megabytes = (bytes / 1024) / 1024
+            gigabytes = ((bytes / 1024) / 1024) / 1024
+
+            file.filesize_bytes = bytes
+            file.filesize_megabytes = round(megabytes, 1)
+            file.filesize_gigabytes = round(gigabytes, 1)
+            current_app.logger.info(
+                f"'{os.path.basename(hidden_output_file)}' {file.filesize_bytes} bytes"
+            )
+
             # Get or refresh movie or tv series details and download images
 
             try:
@@ -1345,6 +1357,18 @@ def track_metadata_scan(file_id):
         media_info = MediaInfo.parse(file_path)
         current_app.logger.info(
             f"'{os.path.basename(file_path)}' -> {media_info.to_json()}"
+        )
+
+        bytes = os.path.getsize(file_path)
+        kilobytes = bytes / 1024
+        megabytes = (bytes / 1024) / 1024
+        gigabytes = ((bytes / 1024) / 1024) / 1024
+
+        file.filesize_bytes = bytes
+        file.filesize_megabytes = round(megabytes, 1)
+        file.filesize_gigabytes = round(gigabytes, 1)
+        current_app.logger.info(
+            f"'{os.path.basename(file_path)}' {file.filesize_bytes} bytes"
         )
 
         # Set file video track info
