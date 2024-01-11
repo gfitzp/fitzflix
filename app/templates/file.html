@@ -37,6 +37,13 @@
 	{% if file.video_bitrate_kbps %}
 		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
 	{% endif %}
+	{% if file.filesize_bytes %}
+		{% if file.filesize_megabytes >= 1024 %}
+			<br>Size: {{ file.filesize_gigabytes }} GB
+		{% else %}
+			<br>Size: {{ file.filesize_megabytes }} MB
+		{% endif %}
+	{% endif %}
 </p>
 {% if audio_tracks or subtitle_tracks %}
 <hr>
