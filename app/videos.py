@@ -1945,9 +1945,51 @@ def sync_aws_s3_storage_task():
 
             files = File.query.all()
 
+            movie_rank = (
+                db.session.query(
+                    File.id,
+                    db.func.row_number()
+                    .over(
+                        partition_by=(Movie.id, File.plex_title, File.version),
+                        order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                    )
+                    .label("rank"),
+                )
+                .join(Movie, (Movie.id == File.movie_id))
+                .join(RefQuality, (RefQuality.id == File.quality_id))
+                .subquery()
+            )
+
+            tv_rank = (
+                db.session.query(
+                    File.id,
+                    db.func.row_number()
+                    .over(
+                        partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                        order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                    )
+                    .label("rank"),
+                )
+                .join(TVSeries, (TVSeries.id == File.series_id))
+                .join(RefQuality, (RefQuality.id == File.quality_id))
+                .subquery()
+            )
+
+            files = (
+                db.session.query(
+                    File,
+                    db.case(
+                        [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    ).label("rank")
+                )
+                .outerjoin(movie_rank, (movie_rank.c.id == File.id))
+                .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+                .all()
+            )
+
             # Upload local files that don't exist remotely to S3
 
-            for i, file in enumerate(files):
+            for i, (file, rank) in enumerate(files):
                 if job:
                     job.meta["description"] = "Queuing local files for S3 upload"
                     job.meta["progress"] = int((i / len(files)) * 100)
@@ -1974,9 +2016,14 @@ def sync_aws_s3_storage_task():
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{file.basename}'",
                     )
+                elif file.aws_untouched_key in s3_keys and rank == 1 and not os.path.isfile(file_path):
+                    current_app.logger.info(
+                        f"'{file.aws_untouched_key}' does not exist in the local library"
+                    )
+                    aws_restore(file.aws_untouched_key)
                 elif file.aws_untouched_key in s3_keys:
                     current_app.logger.info(
-                        f"'{file.aws_untouched_key}' Exists in AWS S3"
+                        f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
                     )
 
             # Delete remote S3 files that aren't in Fitzflix
