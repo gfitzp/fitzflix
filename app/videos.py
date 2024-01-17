@@ -2020,7 +2020,7 @@ def sync_aws_s3_storage_task():
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' does not exist in the local library"
                     )
-                    aws_restore(file.aws_untouched_key)
+                    aws_restore(file.aws_untouched_key, tier="Bulk")
                 elif file.aws_untouched_key in s3_keys:
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
@@ -2688,8 +2688,8 @@ def aws_restore(key, days=1, tier="Standard"):
                         Bucket=current_app.config["AWS_BUCKET"],
                         Key=key,
                         RestoreRequest={
-                            "Days": 1,
-                            "GlacierJobParameters": {"Tier": "Standard"},
+                            "Days": days,
+                            "GlacierJobParameters": {"Tier": tier},
                         },
                     )
                     current_app.logger.info(response)
