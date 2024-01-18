@@ -2407,24 +2407,54 @@ def sqs_retrieve_task():
         # https://stackoverflow.com/a/60438156
         db.init_app(app)
 
-        current_app.logger.info("Checking AWS SQS...")
-
         sqs_client = boto3.client(
             "sqs",
             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
             region_name="us-east-1",
         )
+
+        # Extend timeout for messages in download queue
+
+        file_operations = StartedJobRegistry(
+            "fitzflix-file-operation", connection=current_app.redis
+        )
+        file_operations_running = file_operations.get_job_ids()
+        for job_id in file_operations_running:
+            job = current_app.file_queue.fetch_job(job_id)
+            if job:
+                if job.meta.get("sqs_receipt_handle"):
+                    response = sqs_client.change_message_visibility(
+                    QueueUrl=current_app.config["AWS_SQS_URL"],
+                    ReceiptHandle=job.meta.get("sqs_receipt_handle"),
+                    VisibilityTimeout=600,
+                )
+                job_description = job.meta.get("description", job.description)
+                current_app.logger.info(
+                    f"'{job_description}' Extending timeout by 600 seconds"
+                )
+        for job_id in current_app.file_queue.job_ids:
+            job = current_app.file_queue.fetch_job(job_id)
+            if job:
+                if job.meta.get("sqs_receipt_handle"):
+                    response = sqs_client.change_message_visibility(
+                    QueueUrl=current_app.config["AWS_SQS_URL"],
+                    ReceiptHandle=job.meta.get("sqs_receipt_handle"),
+                    VisibilityTimeout=600,
+                )
+                job_description = job.meta.get("description", job.description)
+                current_app.logger.info(
+                    f"'{job_description}' Extending timeout by 600 seconds"
+                )
+
         response = sqs_client.receive_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
             AttributeNames=["SentTimestamp"],
             MaxNumberOfMessages=1,
             MessageAttributeNames=["All"],
-            VisibilityTimeout=43200,
+            VisibilityTimeout=600,
             WaitTimeSeconds=0,
         )
-
-        current_app.logger.info(response)
 
         while response.get("Messages"):
             response_body = json.loads(response["Messages"][0]["Body"])
@@ -2434,14 +2464,12 @@ def sqs_retrieve_task():
                 response_body["Records"][0]["s3"]["object"]["key"]
             )
 
-            current_app.logger.info(receipt_handle)
-            current_app.logger.info(key)
-
             current_app.file_queue.enqueue(
                 "app.videos.download_task",
                 args=(key, os.path.basename(key), receipt_handle),
                 job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                 description=f"'{os.path.basename(key)}' — Downloading from AWS",
+                meta={"sqs_receipt_handle": receipt_handle},
             )
 
             response = sqs_client.receive_message(
@@ -2449,11 +2477,9 @@ def sqs_retrieve_task():
                 AttributeNames=["SentTimestamp"],
                 MaxNumberOfMessages=1,
                 MessageAttributeNames=["All"],
-                VisibilityTimeout=43200,
+                VisibilityTimeout=600,
                 WaitTimeSeconds=0,
             )
-
-            current_app.logger.info(response)
 
         return True
 
@@ -2665,12 +2691,19 @@ def aws_restore(key, days=1, tier="Standard"):
                 Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
             )
 
-            current_app.logger.info(response["Contents"])
+            # current_app.logger.info(response["Contents"])
 
-            # If the key exists, restore it
+            # If the key exists
 
             if response["Contents"][0]["Key"]:
-                if response["Contents"][0]["StorageClass"] == "STANDARD":
+
+                head_response = s3_client.head_object(
+                    Bucket=current_app.config["AWS_BUCKET"], Key=key
+                )
+
+                # current_app.logger.info(head_response)
+
+                if response["Contents"][0]["StorageClass"] == "STANDARD" or 'ongoing-request="false"' in head_response.get("Restore", 'ongoing-request="true"'):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
                     )
@@ -2692,7 +2725,10 @@ def aws_restore(key, days=1, tier="Standard"):
                             "GlacierJobParameters": {"Tier": tier},
                         },
                     )
-                    current_app.logger.info(response)
+                    current_app.logger.info(
+                        f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
+                    )
+                    # current_app.logger.info(response)
 
         except Exception as e:
             if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
@@ -2705,9 +2741,6 @@ def aws_restore(key, days=1, tier="Standard"):
                 raise
 
         else:
-            current_app.logger.info(
-                f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
-            )
             return
 
 
