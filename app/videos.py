@@ -1965,7 +1965,12 @@ def sync_aws_s3_storage_task():
                     File.id,
                     db.func.row_number()
                     .over(
-                        partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                        partition_by=(
+                            TVSeries.id,
+                            File.season,
+                            File.episode,
+                            File.version,
+                        ),
                         order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
                     )
                     .label("rank"),
@@ -1980,7 +1985,7 @@ def sync_aws_s3_storage_task():
                     File,
                     db.case(
                         [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
-                    ).label("rank")
+                    ).label("rank"),
                 )
                 .outerjoin(movie_rank, (movie_rank.c.id == File.id))
                 .outerjoin(tv_rank, (tv_rank.c.id == File.id))
@@ -2016,7 +2021,11 @@ def sync_aws_s3_storage_task():
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{file.basename}'",
                     )
-                elif file.aws_untouched_key in s3_keys and rank == 1 and not os.path.isfile(file_path):
+                elif (
+                    file.aws_untouched_key in s3_keys
+                    and rank == 1
+                    and not os.path.isfile(file_path)
+                ):
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' does not exist in the local library"
                     )
@@ -2425,10 +2434,10 @@ def sqs_retrieve_task():
             if job:
                 if job.meta.get("sqs_receipt_handle"):
                     response = sqs_client.change_message_visibility(
-                    QueueUrl=current_app.config["AWS_SQS_URL"],
-                    ReceiptHandle=job.meta.get("sqs_receipt_handle"),
-                    VisibilityTimeout=600,
-                )
+                        QueueUrl=current_app.config["AWS_SQS_URL"],
+                        ReceiptHandle=job.meta.get("sqs_receipt_handle"),
+                        VisibilityTimeout=600,
+                    )
                 job_description = job.meta.get("description", job.description)
                 current_app.logger.info(
                     f"'{job_description}' Extending timeout by 600 seconds"
@@ -2438,10 +2447,10 @@ def sqs_retrieve_task():
             if job:
                 if job.meta.get("sqs_receipt_handle"):
                     response = sqs_client.change_message_visibility(
-                    QueueUrl=current_app.config["AWS_SQS_URL"],
-                    ReceiptHandle=job.meta.get("sqs_receipt_handle"),
-                    VisibilityTimeout=600,
-                )
+                        QueueUrl=current_app.config["AWS_SQS_URL"],
+                        ReceiptHandle=job.meta.get("sqs_receipt_handle"),
+                        VisibilityTimeout=600,
+                    )
                 job_description = job.meta.get("description", job.description)
                 current_app.logger.info(
                     f"'{job_description}' Extending timeout by 600 seconds"
@@ -2696,14 +2705,17 @@ def aws_restore(key, days=1, tier="Standard"):
             # If the key exists
 
             if response["Contents"][0]["Key"]:
-
                 head_response = s3_client.head_object(
                     Bucket=current_app.config["AWS_BUCKET"], Key=key
                 )
 
                 # current_app.logger.info(head_response)
 
-                if response["Contents"][0]["StorageClass"] == "STANDARD" or 'ongoing-request="false"' in head_response.get("Restore", 'ongoing-request="true"'):
+                if response["Contents"][0][
+                    "StorageClass"
+                ] == "STANDARD" or 'ongoing-request="false"' in head_response.get(
+                    "Restore", 'ongoing-request="true"'
+                ):
                     current_app.logger.info(
                         f"'{key}' doesn't need to be restored; attempting to download"
                     )
