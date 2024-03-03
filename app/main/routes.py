@@ -242,7 +242,7 @@ def movie_library():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -270,7 +270,7 @@ def movie_library():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -297,7 +297,7 @@ def movie_library():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -437,7 +437,7 @@ def criterion_collection():
                 db.case(
                     [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
                 ),
-                "^(The|A|An)\s",
+                "^(The|A|An) ",
                 "",
             ).asc(),
             File.version.asc(),
@@ -717,7 +717,7 @@ def tv_library():
     tv = []
     for series in (
         TVSeries.query.join(File, (File.series_id == TVSeries.id))
-        .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc())
+        .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc())
         .all()
     ):
         seasons = []
@@ -1955,7 +1955,7 @@ def movie_shopping():
                 )
             )
             .order_by(
-                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 RefQuality.preference.asc(),
@@ -2093,7 +2093,7 @@ def movie_shopping():
                     [(rating.c.whole_stars >= 3, rating.c.rating)],
                     else_=0,
                 ).desc(),
-                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 File.date_added.asc(),
@@ -2224,7 +2224,7 @@ def movie_shopping():
                     ],
                     else_=1,
                 ).asc(),
-                db.func.regexp_replace(Movie.title, "^(The|A|An)\s", "").asc(),
+                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
                 File.version.asc(),
                 File.date_added.asc(),
@@ -2457,13 +2457,13 @@ def tv_shopping():
                     TVSeries.title.ilike(f"%{q}%"), TVSeries.tmdb_name.ilike(f"%{q}%")
                 )
             )
-            .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc())
+            .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc())
             .all()
         )
 
     else:
         t = TVSeries.query.order_by(
-            db.func.regexp_replace(TVSeries.title, "^(The|A|An)\s", "").asc()
+            db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc()
         ).all()
         title = f"TV Shows to upgrade"
 
@@ -2640,7 +2640,7 @@ def files():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -2654,7 +2654,7 @@ def files():
                         [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
                         else_=TVSeries.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 File.season.asc(),
@@ -2694,7 +2694,7 @@ def files():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -2708,7 +2708,7 @@ def files():
                         [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
                         else_=TVSeries.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 File.season.asc(),
@@ -2748,7 +2748,7 @@ def files():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -2762,7 +2762,7 @@ def files():
                         [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
                         else_=TVSeries.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 File.season.asc(),
@@ -2802,7 +2802,7 @@ def files():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -2816,7 +2816,7 @@ def files():
                         [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
                         else_=TVSeries.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 File.season.asc(),
@@ -2854,7 +2854,7 @@ def files():
                         [(Movie.tmdb_title != None, Movie.tmdb_title)],
                         else_=Movie.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
@@ -2868,7 +2868,7 @@ def files():
                         [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
                         else_=TVSeries.title,
                     ),
-                    "^(The|A|An)\s",
+                    "^(The|A|An) ",
                     "",
                 ).asc(),
                 File.season.asc(),
