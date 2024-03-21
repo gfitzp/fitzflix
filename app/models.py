@@ -691,11 +691,11 @@ class TMDBMixin(object):
                     if not s:
                         s = TMDBSeason(
                             id=season.get("id"),
-                            air_date=datetime.strptime(
-                                season.get("air_date"), "%Y-%m-%d"
-                            )
-                            if season.get("air_date")
-                            else None,
+                            air_date=(
+                                datetime.strptime(season.get("air_date"), "%Y-%m-%d")
+                                if season.get("air_date")
+                                else None
+                            ),
                             episode_count=season.get("episode_count"),
                             name=season.get("name"),
                             overview=season.get("overview"),
@@ -1369,9 +1369,9 @@ class File(db.Model, LibraryMixin):
             file_identifier = {
                 "title": file.movie.title,
                 "year": file.movie.year,
-                "feature_type": file.feature_type.feature_type
-                if file.feature_type
-                else None,
+                "feature_type": (
+                    file.feature_type.feature_type if file.feature_type else None
+                ),
                 "plex_title": file.plex_title,
                 "version": file.version,
             }

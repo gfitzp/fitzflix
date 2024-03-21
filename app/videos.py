@@ -64,9 +64,9 @@ class UploadProgressPercentage(object):
                 f"'{os.path.basename(self._file_path)}' Uploading to AWS: {progress}%"
             )
             if self._job:
-                self._job.meta[
-                    "description"
-                ] = f"'{os.path.basename(self._file_path)}' — Uploading to AWS"
+                self._job.meta["description"] = (
+                    f"'{os.path.basename(self._file_path)}' — Uploading to AWS"
+                )
                 self._job.meta["progress"] = progress
                 self._job.save_meta()
 
@@ -90,9 +90,9 @@ class DownloadProgressPercentage(object):
                 f"'{os.path.basename(self._file_path)}' Downloading from AWS: {progress}%"
             )
             if self._job:
-                self._job.meta[
-                    "description"
-                ] = f"'{os.path.basename(self._file_path)}' — Downloading from AWS"
+                self._job.meta["description"] = (
+                    f"'{os.path.basename(self._file_path)}' — Downloading from AWS"
+                )
                 self._job.meta["progress"] = progress
                 self._job.save_meta()
 
@@ -307,9 +307,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             f"'{basename}' Adding track statistics tags: {progress}%"
                         )
                         if job:
-                            job.meta[
-                                "description"
-                            ] = f"'{basename}' — Adding track statistics tags"
+                            job.meta["description"] = (
+                                f"'{basename}' — Adding track statistics tags"
+                            )
                             job.meta["progress"] = progress
                             job.save_meta()
 
@@ -576,9 +576,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             f"'{os.path.basename(file_path)}' {line}"
                         )
                         if job:
-                            job.meta[
-                                "description"
-                            ] = f"'{os.path.basename(file_path)}' — Removing MPEG-4 metadata"
+                            job.meta["description"] = (
+                                f"'{os.path.basename(file_path)}' — Removing MPEG-4 metadata"
+                            )
                             job.meta["progress"] = -1
                             job.save_meta()
 
@@ -2354,9 +2354,9 @@ def transcode_task(file_id):
                         f"'{file.plex_title}' Transcoding: {progress}%"
                     )
                     if job:
-                        job.meta[
-                            "description"
-                        ] = f"'{file.plex_title}' — Transcoding to .{current_app.config['HANDBRAKE_EXTENSION']} file"
+                        job.meta["description"] = (
+                            f"'{file.plex_title}' — Transcoding to .{current_app.config['HANDBRAKE_EXTENSION']} file"
+                        )
                         if progress_match.group("this_task") == progress_match.group(
                             "total_tasks"
                         ):
@@ -4254,9 +4254,9 @@ def lossless_to_flac(file_path, file_id=None):
                             f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
                         )
                         if job:
-                            job.meta[
-                                "description"
-                            ] = f"'{basename}' — Converting lossless tracks to FLAC"
+                            job.meta["description"] = (
+                                f"'{basename}' — Converting lossless tracks to FLAC"
+                            )
                             job.meta["progress"] = progress
                             job.save_meta()
 
