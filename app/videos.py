@@ -2077,7 +2077,7 @@ def sync_aws_s3_storage_task():
                 response = client.put_object(
                     Body=inventory_file,
                     Bucket=current_app.config["AWS_BUCKET"],
-                    Key="inventory/best.csv",
+                    Key="inventory/rank_1.csv",
                 )
 
             # Delete remote S3 files that aren't in Fitzflix
