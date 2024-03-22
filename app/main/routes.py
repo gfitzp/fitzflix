@@ -188,7 +188,12 @@ def movie_library():
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(Movie.id, File.plex_title, File.version),
+                partition_by=(
+                    Movie.id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
             .label("rank"),
@@ -400,7 +405,12 @@ def criterion_collection():
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(Movie.id, File.plex_title, File.version),
+                partition_by=(
+                    Movie.id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
             .label("rank"),
@@ -666,7 +676,12 @@ def movie_files(movie_id):
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(Movie.id, File.plex_title, File.version),
+                partition_by=(
+                    Movie.id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
             .label("rank"),
@@ -782,7 +797,11 @@ def tv(series_id):
                 db.func.row_number()
                 .over(
                     partition_by=(TVSeries.id, File.season, File.episode, File.version),
-                    order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                    order_by=(
+                        File.fullscreen.asc(),
+                        RefQuality.preference.desc(),
+                        File.last_episode.desc(),
+                    ),
                 )
                 .label("rank"),
             )
@@ -938,7 +957,11 @@ def season(series_id, season):
             db.func.row_number()
             .over(
                 partition_by=(TVSeries.id, File.season, File.episode, File.version),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                order_by=(
+                    File.fullscreen.asc(),
+                    RefQuality.preference.desc(),
+                    File.last_episode.desc(),
+                ),
             )
             .label("rank"),
         )
@@ -1026,7 +1049,12 @@ def file(file_id):
                 File.id,
                 db.func.row_number()
                 .over(
-                    partition_by=(Movie.id, File.plex_title, File.version),
+                    partition_by=(
+                        Movie.id,
+                        File.feature_type_id,
+                        File.plex_title,
+                        File.version,
+                    ),
                     order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
                 )
                 .label("rank"),
@@ -1055,7 +1083,11 @@ def file(file_id):
                 db.func.row_number()
                 .over(
                     partition_by=(TVSeries.id, File.season, File.episode, File.version),
-                    order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                    order_by=(
+                        File.fullscreen.asc(),
+                        RefQuality.preference.desc(),
+                        File.last_episode.desc(),
+                    ),
                 )
                 .label("rank"),
             )
@@ -1802,7 +1834,12 @@ def movie_shopping():
             RefQuality.quality_title,
             db.func.row_number()
             .over(
-                partition_by=(Movie.id, File.plex_title, File.version),
+                partition_by=(
+                    Movie.id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
             .label("rank"),
@@ -2572,7 +2609,12 @@ def files():
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(Movie.id, File.plex_title, File.version),
+                partition_by=(
+                    Movie.id,
+                    File.feature_type_id,
+                    File.plex_title,
+                    File.version,
+                ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
             .label("rank"),
@@ -2588,7 +2630,11 @@ def files():
             db.func.row_number()
             .over(
                 partition_by=(TVSeries.id, File.season, File.episode, File.version),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                order_by=(
+                    File.fullscreen.asc(),
+                    RefQuality.preference.desc(),
+                    File.last_episode.desc(),
+                ),
             )
             .label("rank"),
         )

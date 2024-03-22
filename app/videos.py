@@ -1950,7 +1950,12 @@ def sync_aws_s3_storage_task():
                     File.id,
                     db.func.row_number()
                     .over(
-                        partition_by=(Movie.id, File.plex_title, File.version),
+                        partition_by=(
+                            Movie.id,
+                            File.feature_type_id,
+                            File.plex_title,
+                            File.version,
+                        ),
                         order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
                     )
                     .label("rank"),
@@ -1969,9 +1974,12 @@ def sync_aws_s3_storage_task():
                             TVSeries.id,
                             File.season,
                             File.episode,
-                            File.version,
                         ),
-                        order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+                        order_by=(
+                            File.fullscreen.asc(),
+                            RefQuality.preference.desc(),
+                            File.last_episode.desc(),
+                        ),
                     )
                     .label("rank"),
                 )
