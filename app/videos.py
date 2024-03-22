@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import io
 import json
 import math
 import os
@@ -2002,6 +2004,8 @@ def sync_aws_s3_storage_task():
 
             # Upload local files that don't exist remotely to S3
 
+            inventory_export = []
+
             for i, (file, rank) in enumerate(files):
                 if job:
                     job.meta["description"] = "Queuing local files for S3 upload"
@@ -2011,6 +2015,15 @@ def sync_aws_s3_storage_task():
                 file_path = os.path.join(
                     current_app.config["LIBRARY_DIR"], file.file_path
                 )
+
+                if file.aws_untouched_key in s3_keys:
+                    current_app.logger.info(
+                        f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
+                    )
+                    if rank == 1:
+                        inventory_export.append(
+                            [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
+                        )
 
                 if (
                     file.aws_untouched_key not in s3_keys
@@ -2029,19 +2042,43 @@ def sync_aws_s3_storage_task():
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{file.basename}'",
                     )
+
                 elif (
                     file.aws_untouched_key in s3_keys
-                    and rank == 1
                     and not os.path.isfile(file_path)
+                    and rank == 1
                 ):
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' does not exist in the local library"
                     )
                     aws_restore(file.aws_untouched_key, tier="Bulk")
-                elif file.aws_untouched_key in s3_keys:
-                    current_app.logger.info(
-                        f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
-                    )
+
+            # Create a CSV of the best files and upload to the S3 bucket;
+            # if we should ever need to do a bulk restoration of our library, we can
+            # use this file to perform a restore of all our best files via
+            # S3 Bulk Operation
+
+            if inventory_export:
+                f = io.StringIO()
+                inventory_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+                for file_object in inventory_export:
+                    inventory_writer.writerow(file_object)
+                inventory_file = bytes(f.getvalue(), encoding="utf-8")
+                f.close()
+                client = boto3.client(
+                    "s3",
+                    config=Config(
+                        connect_timeout=20,
+                        retries={"mode": "standard", "max_attempts": 10},
+                    ),
+                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                    aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+                )
+                response = client.put_object(
+                    Body=inventory_file,
+                    Bucket=current_app.config["AWS_BUCKET"],
+                    Key="inventory/best.csv",
+                )
 
             # Delete remote S3 files that aren't in Fitzflix
 
