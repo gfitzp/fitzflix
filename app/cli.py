@@ -22,45 +22,69 @@ def register(app):
         app.logger.info("Refreshing Criterion Collection information from Wikipedia")
 
     @refresh.command()
-    def tmdb():
+    @click.argument("library", required=False)
+    @click.argument("tmdb_id", required=False)
+    def tmdb(library=None, tmdb_id=None):
         """Refresh library information from TMDB."""
 
-        movies = (
-            Movie.query.filter(Movie.tmdb_id != None)
-            .order_by(Movie.title.asc(), Movie.year.asc())
-            .all()
-        )
-        tv_shows = (
-            TVSeries.query.filter(TVSeries.tmdb_id != None)
-            .order_by(TVSeries.title.asc())
-            .all()
-        )
+        movies = []
+        tv_shows = []
 
-        for movie in movies:
-            refresh_job = app.sql_queue.enqueue(
-                "app.videos.refresh_tmdb_info",
-                args=(
-                    "Movies",
-                    movie.id,
-                    movie.tmdb_id,
-                ),
-                job_timeout=app.config["SQL_TASK_TIMEOUT"],
-                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-            )
-            app.logger.info(f"Queueing TMDB refresh for '{movie.title} ({movie.year})'")
+        if library in ["movie", "tv"] and tmdb_id:
 
-        for tv in tv_shows:
-            refresh_job = app.sql_queue.enqueue(
-                "app.videos.refresh_tmdb_info",
-                args=(
-                    "TV Shows",
-                    tv.id,
-                    tv.tmdb_id,
-                ),
-                job_timeout=app.config["SQL_TASK_TIMEOUT"],
-                description=f"Refreshing TMDB data for '{tv.title}'",
+            if library == "movie":
+                movies = (
+                    Movie.query.filter(Movie.tmdb_id == tmdb_id)
+                    .order_by(Movie.title.asc(), Movie.year.asc())
+                    .all()
+                )
+
+            elif library == "tv":
+                tv_shows = (
+                    TVSeries.query.filter(TVSeries.tmdb_id == tmdb_id)
+                    .order_by(TVSeries.title.asc())
+                    .all()
+                )
+
+        else:
+            movies = (
+                Movie.query.filter(Movie.tmdb_id != None)
+                .order_by(Movie.title.asc(), Movie.year.asc())
+                .all()
             )
-            app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
+            tv_shows = (
+                TVSeries.query.filter(TVSeries.tmdb_id != None)
+                .order_by(TVSeries.title.asc())
+                .all()
+            )
+
+        if movies:
+            for movie in movies:
+                refresh_job = app.sql_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=(
+                        "Movies",
+                        movie.id,
+                        movie.tmdb_id,
+                    ),
+                    job_timeout=app.config["SQL_TASK_TIMEOUT"],
+                    description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+                )
+                app.logger.info(f"Queueing TMDB refresh for '{movie.title} ({movie.year})'")
+
+        if tv_shows:
+            for tv in tv_shows:
+                refresh_job = app.sql_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=(
+                        "TV Shows",
+                        tv.id,
+                        tv.tmdb_id,
+                    ),
+                    job_timeout=app.config["SQL_TASK_TIMEOUT"],
+                    description=f"Refreshing TMDB data for '{tv.title}'",
+                )
+                app.logger.info(f"Queueing TMDB refresh for '{tv.title}'")
 
     @refresh.command()
     @click.argument("file_id")
