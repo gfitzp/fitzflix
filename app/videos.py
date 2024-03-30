@@ -4330,4 +4330,51 @@ def lossless_to_flac(file_path, file_id=None):
             return True
 
 
+def reconstruct_filename(file_id):
+    """Reconstruct and save untouched filenames using the current details."""
+
+    # TODO: currently only reconstructs movie filenames
+
+    f = File.query.filter_by(id=file_id).first()
+    if not f:
+        return False
+    if f.media_library != "Movies":
+        return f.untouched_basename
+
+    file = (
+        db.session.query(File, Movie, RefQuality, RefFeatureType)
+        .join(Movie, (Movie.id == File.movie_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
+        .filter(File.id == file_id)
+        .first()
+    )
+
+    if not file:
+        return False
+
+    (f, m, q, ft) = file
+
+    _, ext = os.path.splitext(f.untouched_basename)
+
+    if m.tmdb_title == None and f.version != None:
+        beginning = f"{m.title} ({m.year}) {{edition-{f.version}}} - "
+    elif m.tmdb_title != None and f.version != None:
+        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.version}}} - "
+    elif m.tmdb_title == None:
+        beginning = f"{m.title} ({m.year}) - "
+    else:
+        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year}) - "
+
+    if f.fullscreen == True:
+        ending = f"Full Screen [{q.quality_title}]{ext}"
+    elif f.feature_type_id != None:
+        ending = f"{ft.feature_type} - {f.plex_title} [{q.quality_title}]{ext}"
+    else:
+        ending = f"[{q.quality_title}]{ext}"
+
+    reconstructed_filename = sanitize_filename(f"{beginning}{ending}")
+
+    return reconstructed_filename
+
 app = create_app()
