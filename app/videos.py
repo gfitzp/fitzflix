@@ -4072,6 +4072,64 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         ).first()
                         db.session.delete(original_movie_record)
 
+                movie_poster = (
+                    db.session.query(
+                        Movie.tmdb_id, File.dirname, Movie.tmdb_poster_path
+                    )
+                    .join(Movie, (Movie.id == File.movie_id))
+                    .filter(File.feature_type_id == None)
+                    .filter(Movie.tmdb_id != None)
+                    .filter(Movie.tmdb_poster_path != None)
+                    .filter(Movie.id == updated_movie_id)
+                    .first()
+                )
+
+                if movie_poster:
+                    tmdb_id, dirname, tmdb_poster_path = movie_poster
+
+                    source_file = os.path.join(
+                        os.path.abspath(os.path.dirname(__file__)),
+                        "static",
+                        "tmdb",
+                        "movie",
+                        str(tmdb_id),
+                        "poster",
+                        "original",
+                        os.path.basename(tmdb_poster_path),
+                    )
+
+                    destination_file = os.path.join(
+                        current_app.config["LIBRARY_DIR"],
+                        dirname,
+                        f"poster{pathlib.Path(tmdb_poster_path).suffix}",
+                    )
+
+                    shutil.copy(source_file, destination_file)
+
+                    current_app.logger.info(
+                        f"Copied '{source_file}' to '{destination_file}'"
+                    )
+
+                files = File.query.filter_by(movie_id=updated_movie_id).all()
+
+                for (f) in files:
+                    untouched_basename = reconstruct_filename(f.id)
+                    aws_untouched_key = os.path.join(
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        sanitize_s3_key(untouched_basename)
+                    )
+                    f.untouched_basename = untouched_basename
+                    f.aws_untouched_key = aws_untouched_key
+                    current_app.logger.info(f"New untouched basename: '{untouched_basename}'")
+                    current_app.logger.info(f"New untouched key:      '{aws_untouched_key}'")
+
+                    try:
+                        db.session.commit()
+
+                    except Exception:
+                        current_app.logger.error(traceback.format_exc())
+                        db.session.rollback()
+
             elif library == "TV Shows":
                 # Get the TVSeries record to be updated
 
