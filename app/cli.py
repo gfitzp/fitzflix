@@ -70,7 +70,9 @@ def register(app):
                     job_timeout=app.config["SQL_TASK_TIMEOUT"],
                     description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
                 )
-                app.logger.info(f"Queueing TMDB refresh for '{movie.title} ({movie.year})'")
+                app.logger.info(
+                    f"Queueing TMDB refresh for '{movie.title} ({movie.year})'"
+                )
 
         if tv_shows:
             for tv in tv_shows:
