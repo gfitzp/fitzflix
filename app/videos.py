@@ -1933,8 +1933,6 @@ def sync_aws_s3_storage_task():
             )
             return True
 
-        unreferenced_files = []
-
         try:
             job = get_current_job()
 
@@ -2003,9 +2001,9 @@ def sync_aws_s3_storage_task():
                 .all()
             )
 
-            # Upload local files that don't exist remotely to S3
-
             inventory_export = []
+            orphaned_files = []
+            unreferenced_files = []
 
             for i, (file, rank) in enumerate(files):
                 if job:
@@ -2017,22 +2015,20 @@ def sync_aws_s3_storage_task():
                     current_app.config["LIBRARY_DIR"], file.file_path
                 )
 
-                if file.aws_untouched_key in s3_keys:
-                    current_app.logger.info(
-                        f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
-                    )
-                    if rank == 1:
-                        inventory_export.append(
-                            [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
-                        )
+                # If the file...
 
+                # ...is not in S3 but exists in the filesystem...
                 if (
                     file.aws_untouched_key not in s3_keys
                     or file.aws_untouched_date_uploaded == None
                 ) and os.path.isfile(file_path):
+
+                    # ...then queue for upload to S3
+
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' Queuing for upload to AWS"
                     )
+
                     current_app.file_queue.enqueue(
                         "app.videos.upload_task",
                         args=(
@@ -2044,15 +2040,41 @@ def sync_aws_s3_storage_task():
                         description=f"'{file.basename}'",
                     )
 
-                elif (
-                    file.aws_untouched_key in s3_keys
-                    and not os.path.isfile(file_path)
-                    and rank == 1
-                ):
+                # ...exists in s3...
+                elif file.aws_untouched_key in s3_keys:
+
+                    # ...then add it to the inventory...
+
                     current_app.logger.info(
-                        f"'{file.aws_untouched_key}' does not exist in the local library"
+                        f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
                     )
-                    aws_restore(file.aws_untouched_key, tier="Bulk")
+
+                    if rank == 1:
+                        inventory_export.append(
+                            [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
+                        )
+
+                        # ...and queue for restore if it doesn't exist locally
+
+                        if not os.path.isfile(file_path):
+                            current_app.logger.info(
+                                f"'{file.aws_untouched_key}' does not exist in the local library"
+                            )
+                            aws_restore(file.aws_untouched_key, tier="Bulk")
+
+                # ...is not in S3 and does not exist in the filesystem...
+                elif file.aws_untouched_key not in s3_keys and not os.path.isfile(
+                    file_path
+                ):
+
+                    # ...then flag as orphaned file
+
+                    current_app.logger.info(
+                        f"'{file.aws_untouched_key}' has no associated files"
+                    )
+                    orphaned_files.append([file.id, file.untouched_basename])
+
+            current_app.logger.info(f"Orphaned files: {orphaned_files}")
 
             # Create a CSV of the best files and upload to the S3 bucket;
             # if we should ever need to do a bulk restoration of our library, we can
@@ -2118,22 +2140,6 @@ def sync_aws_s3_storage_task():
                         "email/unreferenced_files.html",
                         user=admin_user.email,
                         unreferenced_files=unreferenced_files,
-                    ),
-                )
-
-            else:
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - No unreferenced AWS files to delete",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/no_unreferenced_files.txt",
-                        user=admin_user.email,
-                    ),
-                    html_body=render_template(
-                        "email/no_unreferenced_files.html",
-                        user=admin_user.email,
                     ),
                 )
 
