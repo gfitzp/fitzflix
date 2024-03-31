@@ -2150,6 +2150,11 @@ def sync_aws_s3_storage_task():
                 current_app.config["LIBRARY_DIR"]
             ):
                 for name in local_files:
+                    if name.startswith(
+                        ("cover", "default", "folder", "movie", "poster")
+                    ) and name.endswith(("jpg", "jpeg", "png", "tbn")):
+                        continue
+
                     if not name.startswith(".") and "@eaDir" not in path:
                         library_file = os.path.join(path, name)
                         file_path = library_file.removeprefix(
@@ -2158,7 +2163,9 @@ def sync_aws_s3_storage_task():
                         library.append((library_file, file_path))
 
             for library_file, file_path in library:
-                if not File.query.filter_by(file_path=file_path).first():
+                if not File.query.filter_by(
+                    file_path=file_path
+                ).first() and os.path.isfile(library_file):
                     job = current_app.import_queue.enqueue(
                         "app.videos.localization_task",
                         args=(library_file,),
@@ -3149,6 +3156,7 @@ def evaluate_filename(file_path):
 
         if tmdb_result:
             tmdb_results = tmdb_result.get("results")
+            current_app.logger.info(tmdb_results)
             if tmdb_results:
                 tmdb_film = tmdb_results[0]
 
@@ -3159,6 +3167,8 @@ def evaluate_filename(file_path):
                     .order_by(Movie.date_created.asc())
                     .first()
                 )
+
+                current_app.logger.info(m)
 
                 # If so, use the existing film title and year instead of what we parsed
 
@@ -3798,6 +3808,8 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     if existing_movie:
                         movie = existing_movie
                         current_app.logger.info(f"Existing movie: {movie}")
+                        existing_movie.tmdb_movie_query(tmdb_id)
+                        db.session.commit()
                     else:
                         movie.tmdb_movie_query(tmdb_id)
                 else:
@@ -3810,310 +3822,140 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 updated_year = movie.year
                 updated_tmdb_id = movie.tmdb_id
 
-                # See if any of the movie_id, title, year, or tmdb_id fields changed.
-                # If any changed, then we need to migrate files from the old Movie to the
-                # new Movie record.
+                # update files to the new movie record
 
-                if (
-                    (updated_movie_id != original_movie_id)
-                    or (updated_title != original_title)
-                    or (updated_year != original_year)
-                    or (updated_tmdb_id != original_tmdb_id)
-                ):
-                    # Get a list of files that were associated with the old Movie record
+                old_files = File.query.filter_by(movie_id=original_movie_id).all()
 
-                    old_files = File.query.filter_by(movie_id=original_movie_id).all()
+                for old_record in old_files:
+                    old_record.movie_id = updated_movie_id
 
-                    for old_record in old_files:
-                        # Reconstruct the original filename but with the new movie title/year
+                try:
+                    db.session.commit()
 
-                        basename, extension = os.path.splitext(old_record.basename)
-                        updated_title = sanitize_filename(updated_title)
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
 
-                        # Reconstruct the original filename used when importing,
-                        # but using the new movie title and year
+                # Reconstruct untouched filenames using the new movie details
 
-                        reconstructed_filename = f"{updated_title} ({updated_year}) -"
+                files = File.query.filter_by(movie_id=updated_movie_id).all()
 
-                        if old_record.feature_type:
-                            reconstructed_filename = f"{reconstructed_filename} {old_record.feature_type.feature_type} - {old_record.plex_title}"
+                for f in files:
+                    untouched_basename = reconstruct_filename(f.id)
+                    f.untouched_basename = untouched_basename
+                    current_app.logger.info(
+                        f"New untouched basename: '{untouched_basename}'"
+                    )
 
-                        elif old_record.version:
-                            reconstructed_filename = (
-                                f"{reconstructed_filename} {old_record.version}"
-                            )
-
-                        if old_record.fullscreen:
-                            reconstructed_filename = (
-                                f"{reconstructed_filename} - Full Screen"
-                            )
-
-                        reconstructed_filename = f"{reconstructed_filename} [{old_record.quality.quality_title}]{extension}"
+                    aws_untouched_key = os.path.join(
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        sanitize_s3_key(untouched_basename),
+                    )
+                    if f.aws_untouched_key != aws_untouched_key and os.path.exists(
+                        os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
+                    ):
+                        f.aws_untouched_key = aws_untouched_key
                         current_app.logger.info(
-                            f"Reconstructed filename: {reconstructed_filename}"
-                        )
-                        old_record.untouched_basename = reconstructed_filename
-
-                        # Get the file details for the reconstructed filename
-
-                        file_details = evaluate_filename(reconstructed_filename)
-                        current_app.logger.info(file_details)
-
-                        # Update the file with the updated_movie_id and plex_title to reflect
-                        # the new movie, so we can get the file's ranking.
-                        # (We need movie_id, feature_type_id, plex_title, and version to rank)
-
-                        old_record.movie_id = updated_movie_id
-                        old_record.plex_title = file_details.get("plex_title")
-
-                        # With the file's movie_id and plex_title updated, we now have
-                        # everything we need to get the file's new ranking
-
-                        ranking = (
-                            db.session.query(
-                                File.id,
-                                File.movie_id,
-                                File.feature_type_id,
-                                File.plex_title,
-                                File.version,
-                                File.fullscreen,
-                                RefQuality.preference,
-                                RefQuality.quality_title,
-                                RefQuality.physical_media,
-                                db.func.row_number()
-                                .over(
-                                    partition_by=(
-                                        File.movie_id,
-                                        File.feature_type_id,
-                                        File.plex_title,
-                                        File.version,
-                                    ),
-                                    order_by=(
-                                        RefQuality.preference.desc(),
-                                        File.fullscreen,
-                                        File.date_added.asc(),
-                                    ),
-                                )
-                                .label("rank"),
-                            )
-                            .join(RefQuality, (RefQuality.id == File.quality_id))
-                            .subquery()
+                            f"New untouched key:      '{aws_untouched_key}'"
                         )
 
-                        # Find the best files across old and new movie records
+                try:
+                    db.session.commit()
 
-                        best_files = (
-                            File.query.join(ranking, (ranking.c.id == File.id))
-                            .filter(File.movie_id == movie.id)
-                            .filter(ranking.c.rank == 1)
-                            .all()
-                        )
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
 
-                        for each_best_file in best_files:
-                            # Look at each best file, and identify all of their worse ones
+                # Create new directories and move files if necessary
 
-                            worse_files = each_best_file.find_worse_files()
+                files = File.query.filter_by(movie_id=updated_movie_id).all()
 
-                            # If there are any worse files, delete the worse local file, and
-                            # delete the archived version from AWS S3 storage if applicable
+                for f in files:
+                    file_details = evaluate_filename(f.untouched_basename)
+                    # current_app.logger.info(file_details)
 
-                            for worse in worse_files:
-                                worse.delete_local_file()
-
-                                # We only delete from AWS S3 storage if both archived and new
-                                # files are from digital media, or if the new file is from
-                                # digital media
-
-                                if (
-                                    worse.quality.physical_media
-                                    == each_best_file.quality.physical_media
-                                    or each_best_file.quality.physical_media == True
-                                ) and worse.id != each_best_file.id:
-                                    if worse.aws_untouched_date_uploaded:
-                                        worse.aws_untouched_date_deleted = aws_delete(
-                                            worse.aws_untouched_key
-                                        )
-                                        worse.aws_untouched_date_uploaded = None
-
-                                    db.session.delete(worse)
-
-                        # Start building the rest of the filename fields
-                        old_record.dirname = file_details.get("dirname")
-                        old_record.basename = file_details.get("basename")
-
-                        # Create the destination directory if necessary and move the file
-                        # to the new location
-
-                        os.makedirs(
-                            os.path.join(
-                                current_app.config["LIBRARY_DIR"],
-                                file_details.get("dirname"),
-                            ),
-                            exist_ok=True,
-                        )
+                    os.makedirs(
+                        os.path.join(
+                            current_app.config["LIBRARY_DIR"],
+                            file_details.get("dirname"),
+                        ),
+                        exist_ok=True,
+                    )
+                    old_file = os.path.join(
+                        current_app.config["LIBRARY_DIR"], f.file_path
+                    )
+                    old_directory = os.path.dirname(old_file)
+                    new_file = os.path.join(
+                        current_app.config["LIBRARY_DIR"], file_details.get("file_path")
+                    )
+                    if old_file != new_file and os.path.exists(old_file):
                         current_app.logger.info(
-                            f"Renaming {os.path.join(current_app.config['LIBRARY_DIR'], old_record.file_path)}' to '{os.path.join(current_app.config['LIBRARY_DIR'], file_details.get('file_path'))}'"
+                            f"Renaming '{old_file}' to '{new_file}'"
                         )
-
                         try:
-                            os.rename(
-                                os.path.join(
-                                    current_app.config["LIBRARY_DIR"],
-                                    old_record.file_path,
-                                ),
-                                os.path.join(
-                                    current_app.config["LIBRARY_DIR"],
-                                    file_details.get("file_path"),
-                                ),
-                            )
-
+                            os.rename(old_file, new_file)
                         except FileNotFoundError:
                             pass
 
-                        # Delete the old directory tree if it's empty
-                        # TODO: figure out a way to not accidentally delete any hidden files
-
-                        try:
-                            os.removedirs(
-                                os.path.dirname(
-                                    os.path.join(
-                                        current_app.config["LIBRARY_DIR"],
-                                        old_record.file_path,
-                                    )
+                    # delete any old local assets
+                    try:
+                        old_assets = os.listdir(old_directory)
+                        for old_asset in old_assets:
+                            if old_asset.startswith(
+                                ("cover", "default", "movie", "poster")
+                            ) and old_asset.endswith(("jpg", "jpeg", "png", "tbn")):
+                                current_app.logger.info(
+                                    f"Deleting '{os.path.join(old_directory, old_asset)}'"
                                 )
-                            )
+                                os.remove(os.path.join(old_directory, old_asset))
 
-                        except OSError:
-                            pass
-
-                        # Now that we don't need the old file's file_path anymore,
-                        # set the file_path column to the new location, unless the renamed
-                        # file already exists, in which case just delete the old file record
-
-                        same_file_exists = (
-                            File.query.filter(File.file_path == old_record.file_path)
-                            .filter(File.id != old_record.id)
-                            .first()
-                        )
-                        if same_file_exists:
-                            current_app.logger.info(
-                                f"Deleting {old_record} from database"
-                            )
-                            db.session.delete(old_record)
-
-                        else:
-                            old_record.file_path = file_details.get("file_path")
-
-                            if (
-                                old_record.aws_untouched_key
-                                and old_record.aws_untouched_date_uploaded
-                            ):
-                                config = Config(
-                                    connect_timeout=20,
-                                    retries={"mode": "standard", "max_attempts": 10},
+                            elif old_asset == "@eaDir":
+                                current_app.logger.info(
+                                    f"Deleting '{os.path.join(old_directory, old_asset)}'"
                                 )
-                                s3_client = boto3.client(
-                                    "s3",
-                                    config=config,
-                                    aws_access_key_id=current_app.config[
-                                        "AWS_ACCESS_KEY"
-                                    ],
-                                    aws_secret_access_key=current_app.config[
-                                        "AWS_SECRET_KEY"
-                                    ],
-                                )
-                                response = s3_client.list_objects(
-                                    Bucket=current_app.config["AWS_BUCKET"],
-                                    Prefix=old_record.aws_untouched_key,
-                                    MaxKeys=1,
+                                shutil.rmtree(
+                                    os.path.join(old_directory, old_asset),
+                                    ignore_errors=True,
                                 )
 
-                                # Get the storage class of the existing uploaded file
+                    except FileNotFoundError:
+                        pass
 
-                                storage_class = None
-                                if response.get("Contents"):
-                                    for object in response.get("Contents"):
-                                        if (
-                                            object.get("Key")
-                                            == old_record.aws_untouched_key
-                                        ):
-                                            storage_class = object.get("StorageClass")
+                    try:
+                        # delete the old directory tree if it's empty
+                        os.removedirs(old_directory)
 
-                                if storage_class == "STANDARD":
-                                    current_app.request_queue.enqueue(
-                                        "app.videos.rename_task",
-                                        args=(
-                                            old_record.id,
-                                            os.path.join(
-                                                current_app.config[
-                                                    "AWS_UNTOUCHED_PREFIX"
-                                                ],
-                                                reconstructed_filename,
-                                            ),
-                                        ),
-                                        job_timeout=current_app.config[
-                                            "LOCALIZATION_TASK_TIMEOUT"
-                                        ],
-                                        description=f"'{file_details.get('basename')}'",
-                                    )
+                    except OSError:
+                        pass
 
-                                else:
-                                    # Request the old object to be restored at AWS
+                    f.file_path = file_details.get("file_path")
+                    f.dirname = file_details.get("dirname")
+                    f.basename = file_details.get("basename")
+                    f.plex_title = file_details.get("plex_title")
 
-                                    s3_client = boto3.client(
-                                        "s3",
-                                        aws_access_key_id=current_app.config[
-                                            "AWS_ACCESS_KEY"
-                                        ],
-                                        aws_secret_access_key=current_app.config[
-                                            "AWS_SECRET_KEY"
-                                        ],
-                                    )
-                                    response = s3_client.restore_object(
-                                        Bucket=current_app.config["AWS_BUCKET"],
-                                        Key=old_record.aws_untouched_key,
-                                        RestoreRequest={
-                                            "Days": 1,
-                                            "GlacierJobParameters": {
-                                                "Tier": "Standard",
-                                            },
-                                        },
-                                    )
+                    try:
+                        db.session.commit()
 
-                                    # Standard restoration takes up to 12 hours,
-                                    # so schedule the restoration to take place in 13 hours
+                    except Exception:
+                        current_app.logger.error(traceback.format_exc())
+                        db.session.rollback()
 
-                                    current_app.request_scheduler.enqueue_in(
-                                        timedelta(hours=13),
-                                        "app.videos.rename_task",
-                                        file_id=old_record.id,
-                                        new_key=os.path.join(
-                                            current_app.config["AWS_UNTOUCHED_PREFIX"],
-                                            reconstructed_filename,
-                                        ),
-                                        timeout=current_app.config[
-                                            "LOCALIZATION_TASK_TIMEOUT"
-                                        ],
-                                        job_description=f"'{file_details.get('basename')}'",
-                                    )
+                if updated_movie_id != original_movie_id:
 
-                    db.session.commit()
+                    # Migrate reviews to the new movie if the movie_id changed
 
-                    if updated_movie_id != original_movie_id:
-                        # Migrate reviews to the new movie if the movie_id changed
+                    reviews = UserMovieReview.query.filter_by(
+                        movie_id=original_movie_id
+                    ).all()
+                    for review in reviews:
+                        review.movie_id = movie.id
 
-                        reviews = UserMovieReview.query.filter_by(
-                            movie_id=original_movie_id
-                        ).all()
-                        for review in reviews:
-                            review.movie_id = movie.id
+                    # Delete the old movie record from the database
 
-                        # Delete the old movie record from the database
-
-                        original_movie_record = Movie.query.filter_by(
-                            id=original_movie_id
-                        ).first()
-                        db.session.delete(original_movie_record)
+                    original_movie_record = Movie.query.filter_by(
+                        id=original_movie_id
+                    ).first()
+                    db.session.delete(original_movie_record)
 
                 movie_poster = (
                     db.session.query(
@@ -4141,7 +3983,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         os.path.basename(tmdb_poster_path),
                     )
 
-                    destination_file = os.path.join(
+                    destination_poster = os.path.join(
                         current_app.config["LIBRARY_DIR"],
                         dirname,
                         f"poster{pathlib.Path(tmdb_poster_path).suffix}",
