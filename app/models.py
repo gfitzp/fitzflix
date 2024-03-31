@@ -183,7 +183,7 @@ class TMDBMixin(object):
                 params={
                     "api_key": tmdb_api_key,
                     "query": self.title,
-                    "year": self.year,
+                    "primary_release_year": self.year,
                 },
             )
             r.raise_for_status()

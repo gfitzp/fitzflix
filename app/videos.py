@@ -3107,7 +3107,7 @@ def evaluate_filename(file_path):
             params = {
                 "api_key": current_app.config["TMDB_API_KEY"],
                 "query": title,
-                "year": year,
+                "primary_release_year": year,
             }
             r = requests.get(
                 current_app.config["TMDB_API_URL"] + "/search/movie", params=params
