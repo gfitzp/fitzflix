@@ -4130,7 +4130,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 if movie_poster:
                     tmdb_id, dirname, tmdb_poster_path = movie_poster
 
-                    source_file = os.path.join(
+                    source_poster = os.path.join(
                         os.path.abspath(os.path.dirname(__file__)),
                         "static",
                         "tmdb",
@@ -4147,31 +4147,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         f"poster{pathlib.Path(tmdb_poster_path).suffix}",
                     )
 
-                    shutil.copy(source_file, destination_file)
+                    shutil.copy(source_poster, destination_poster)
 
                     current_app.logger.info(
-                        f"Copied '{source_file}' to '{destination_file}'"
+                        f"Copied '{source_poster}' to '{destination_poster}'"
                     )
-
-                files = File.query.filter_by(movie_id=updated_movie_id).all()
-
-                for (f) in files:
-                    untouched_basename = reconstruct_filename(f.id)
-                    aws_untouched_key = os.path.join(
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        sanitize_s3_key(untouched_basename)
-                    )
-                    f.untouched_basename = untouched_basename
-                    f.aws_untouched_key = aws_untouched_key
-                    current_app.logger.info(f"New untouched basename: '{untouched_basename}'")
-                    current_app.logger.info(f"New untouched key:      '{aws_untouched_key}'")
-
-                    try:
-                        db.session.commit()
-
-                    except Exception:
-                        current_app.logger.error(traceback.format_exc())
-                        db.session.rollback()
 
             elif library == "TV Shows":
                 # Get the TVSeries record to be updated
@@ -4461,7 +4441,9 @@ def reconstruct_filename(file_id):
     if m.tmdb_title == None and f.version != None:
         beginning = f"{m.title} ({m.year}) {{edition-{f.version}}} - "
     elif m.tmdb_title != None and f.version != None:
-        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.version}}} - "
+        beginning = (
+            f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.version}}} - "
+        )
     elif m.tmdb_title == None:
         beginning = f"{m.title} ({m.year}) - "
     else:
@@ -4475,7 +4457,9 @@ def reconstruct_filename(file_id):
         ending = f"[{q.quality_title}]{ext}"
 
     reconstructed_filename = sanitize_filename(f"{beginning}{ending}")
+    reconstructed_filename = " ".join(reconstructed_filename.split()).strip()
 
     return reconstructed_filename
+
 
 app = create_app()
