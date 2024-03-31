@@ -3072,19 +3072,35 @@ def evaluate_filename(file_path):
             plex_title = f"{title} - {season_episode}"
             basename = f"{plex_title} - [{quality_title}].{extension}"
 
-        file_details["media_library"] = media_library
-        file_details["file_path"] = os.path.join(dirname, basename)
-        file_details["dirname"] = dirname
-        file_details["basename"] = basename
-        file_details["plex_title"] = plex_title
-        file_details["title"] = title
+        file_details["media_library"] = (
+            " ".join(media_library.split()).strip() if media_library else None
+        )
+        file_details["file_path"] = (
+            " ".join(os.path.join(dirname, basename).split()).strip()
+            if os.path.join(dirname, basename)
+            else None
+        )
+        file_details["dirname"] = " ".join(dirname.split()).strip() if dirname else None
+        file_details["basename"] = (
+            " ".join(basename.split()).strip() if basename else None
+        )
+        file_details["plex_title"] = (
+            " ".join(plex_title.split()).strip() if plex_title else None
+        )
+        file_details["title"] = " ".join(title.split()).strip() if title else None
         file_details["season"] = season
         file_details["episode"] = episode
         file_details["last_episode"] = last_episode
-        file_details["version"] = version
-        file_details["quality_title"] = quality_title
-        file_details["fullscreen"] = fullscreen
-        file_details["extension"] = extension
+        file_details["version"] = " ".join(version.split()).strip() if version else None
+        file_details["quality_title"] = (
+            " ".join(quality_title.split()).strip() if quality_title else None
+        )
+        file_details["fullscreen"] = (
+            " ".join(fullscreen.split()).strip() if fullscreen else None
+        )
+        file_details["extension"] = (
+            " ".join(extension.split()).strip() if extension else None
+        )
 
     elif movie_match:
         movie = re.match(
@@ -3171,11 +3187,13 @@ def evaluate_filename(file_path):
             version = edition
             dirname = os.path.join(
                 media_library,
-                sanitize_string(f"{title} ({year}) {{edition-{edition}}}"),
+                sanitize_filename(f"{title} ({year}) {{edition-{edition}}}"),
             )
 
         else:
-            dirname = os.path.join(media_library, sanitize_string(f"{title} ({year})"))
+            dirname = os.path.join(
+                media_library, sanitize_filename(f"{title} ({year})")
+            )
 
         if movie.group("version"):
             version = movie.group("version")
@@ -3235,7 +3253,7 @@ def evaluate_filename(file_path):
                     ].index(type.upper()) + 1
                     feature_type = type
                     special_feature = " - ".join(version_strings[type_position:])
-                    dirname = os.path.join(dirname, sanitize_string(feature_type))
+                    dirname = os.path.join(dirname, sanitize_filename(feature_type))
                     break
 
             # Special features have only the special feature as their file name,
@@ -3280,20 +3298,38 @@ def evaluate_filename(file_path):
                 plex_title = f"{title} ({year})"
             basename = f"{plex_title} - [{quality_title}].{extension}"
 
-        basename = sanitize_string(basename)
+        basename = sanitize_filename(basename)
 
-        file_details["media_library"] = media_library
-        file_details["file_path"] = os.path.join(dirname, basename)
-        file_details["dirname"] = dirname
-        file_details["basename"] = basename
-        file_details["plex_title"] = plex_title
-        file_details["title"] = title
+        file_details["media_library"] = (
+            " ".join(media_library.split()).strip() if media_library else None
+        )
+        file_details["file_path"] = (
+            " ".join(os.path.join(dirname, basename).split()).strip()
+            if os.path.join(dirname, basename)
+            else None
+        )
+        file_details["dirname"] = " ".join(dirname.split()).strip() if dirname else None
+        file_details["basename"] = (
+            " ".join(basename.split()).strip() if basename else None
+        )
+        file_details["plex_title"] = (
+            " ".join(plex_title.split()).strip() if plex_title else None
+        )
+        file_details["title"] = " ".join(title.split()).strip() if title else None
         file_details["year"] = year
-        file_details["feature_type_name"] = feature_type
-        file_details["version"] = version
-        file_details["quality_title"] = quality_title
-        file_details["fullscreen"] = fullscreen
-        file_details["extension"] = extension
+        file_details["feature_type_name"] = (
+            " ".join(feature_type.split()).strip() if feature_type else None
+        )
+        file_details["version"] = " ".join(version.split()).strip() if version else None
+        file_details["quality_title"] = (
+            " ".join(quality_title.split()).strip() if quality_title else None
+        )
+        file_details["fullscreen"] = (
+            " ".join(fullscreen.split()).strip() if fullscreen else None
+        )
+        file_details["extension"] = (
+            " ".join(extension.split()).strip() if extension else None
+        )
 
     else:
         return False
