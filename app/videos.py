@@ -77,8 +77,8 @@ class UploadProgressPercentage(object):
 class DownloadProgressPercentage(object):
     """Return the download progress as a callback when downloading a file from AWS S3."""
 
-    def __init__(self, client, bucket, key):
-        self._file_path = key
+    def __init__(self, client, bucket, key, basename):
+        self._file_path = basename
         app.logger.info(client.head_object(Bucket=bucket, Key=key).get("ContentLength"))
         self._size = client.head_object(Bucket=bucket, Key=key).get("ContentLength", 0)
         self._seen_so_far = 0
@@ -2451,6 +2451,11 @@ def download_task(key, basename, sqs_receipt_handle=None):
         db.init_app(app)
 
         job = get_current_job()
+
+        file = File.query.filter_by(aws_untouched_key=key).first()
+        if file:
+            basename = file.untouched_basename
+
         job.meta["description"] = f"'{basename}' — Downloading from AWS"
         job.save_meta()
 
@@ -2654,6 +2659,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                     s3_client,
                     current_app.config["AWS_BUCKET"],
                     key,
+                    basename,
                 ),
             )
 
