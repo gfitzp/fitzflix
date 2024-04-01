@@ -1,0 +1,13 @@
+<p>Hello,</p>
+<p/>
+<p>These file records have no local or archived files:</p>
+<p/>
+{% if orphaned_files %}
+<ul>
+	{% for id, untouched_basename in orphaned_files %}
+	<li>{{ id }}: <a href="{{ url_for("main.file", file_id=id, _external=True }}">{{ untouched_basename }}</a></li>
+	{% endfor %}
+</ul>
+{% endif %}
+<p/>
+<p>- Fitzflix</p>

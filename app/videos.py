@@ -2143,6 +2143,24 @@ def sync_aws_s3_storage_task():
                     ),
                 )
 
+            if orphaned_files:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Orphaned file records found!",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/orphaned_files.txt",
+                        user=admin_user.email,
+                        orphaned_files=orphaned_files,
+                    ),
+                    html_body=render_template(
+                        "email/orphaned_files.html",
+                        user=admin_user.email,
+                        orphaned_files=orphaned_files,
+                    ),
+                )
+
             # Queue local files in the library folder but aren't in Fitzflix for importing
 
             library = []
