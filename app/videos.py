@@ -3197,12 +3197,12 @@ def evaluate_filename(file_path):
             version = edition
             dirname = os.path.join(
                 media_library,
-                sanitize_filename(f"{title} ({year}) {{edition-{edition}}}"),
+                sanitize_filename(unidecode(f"{title} ({year}) {{edition-{edition}}}")),
             )
 
         else:
             dirname = os.path.join(
-                media_library, sanitize_filename(f"{title} ({year})")
+                media_library, sanitize_filename(unidecode(f"{title} ({year})"))
             )
 
         if movie.group("version"):
@@ -3263,7 +3263,9 @@ def evaluate_filename(file_path):
                     ].index(type.upper()) + 1
                     feature_type = type
                     special_feature = " - ".join(version_strings[type_position:])
-                    dirname = os.path.join(dirname, sanitize_filename(feature_type))
+                    dirname = os.path.join(
+                        dirname, sanitize_filename(unidecode(feature_type))
+                    )
                     break
 
             # Special features have only the special feature as their file name,
@@ -3308,7 +3310,7 @@ def evaluate_filename(file_path):
                 plex_title = f"{title} ({year})"
             basename = f"{plex_title} - [{quality_title}].{extension}"
 
-        basename = sanitize_filename(basename)
+        basename = sanitize_filename(unidecode(basename))
 
         file_details["media_library"] = (
             " ".join(media_library.split()).strip() if media_library else None
