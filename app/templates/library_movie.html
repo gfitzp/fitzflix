@@ -60,7 +60,7 @@
 		</a>
 		<p class="text-center">
 			<strong><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></strong><br>
-			<span class="text-muted">{% if file.version %}{{ file.version }}&nbsp;–&nbsp;{% endif %}{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
+			<span class="text-muted">{% if file.edition %}{{ file.edition }}&nbsp;–&nbsp;{% endif %}{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
 		</p>
 	</div>
 	{% endfor %}
@@ -122,7 +122,7 @@
 				{% include "_movie_poster_small.html" %}
 				<h6><span class="text-body">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
 				<p class="mt-n2">
-					<span class="text-muted">{% if file.version %}<span class="text-body">{{ file.version }}</span>&nbsp;–&nbsp;{% endif %}{{ quality.quality_title }}</span>
+					<span class="text-muted">{% if file.edition %}<span class="text-body">{{ file.edition }}</span>&nbsp;–&nbsp;{% endif %}{{ quality.quality_title }}</span>
 				</p>
 			</div>
 		</a>

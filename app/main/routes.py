@@ -192,7 +192,7 @@ def movie_library():
                     Movie.id,
                     File.feature_type_id,
                     File.plex_title,
-                    File.version,
+                    File.edition,
                 ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
@@ -223,7 +223,7 @@ def movie_library():
                 db.case(
                     [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
             )
             .paginate(page, per_page=120, error_out=False)
         )
@@ -254,7 +254,7 @@ def movie_library():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
             )
             .paginate(page, per_page=120, error_out=False)
         )
@@ -282,7 +282,7 @@ def movie_library():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
             )
             .paginate(page, per_page=120, error_out=False)
         )
@@ -309,7 +309,7 @@ def movie_library():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
             )
             .paginate(page, per_page=120, error_out=False)
         )
@@ -409,7 +409,7 @@ def criterion_collection():
                     Movie.id,
                     File.feature_type_id,
                     File.plex_title,
-                    File.version,
+                    File.edition,
                 ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
@@ -450,7 +450,7 @@ def criterion_collection():
                 "^(The|A|An) ",
                 "",
             ).asc(),
-            File.version.asc(),
+            File.edition.asc(),
         )
         .all()
     )
@@ -492,7 +492,7 @@ def movie(movie_id):
         .filter(File.movie_id == int(movie_id))
         .filter(File.feature_type_id == None)
         .order_by(
-            File.fullscreen.asc(), File.version.asc(), RefQuality.preference.desc()
+            File.fullscreen.asc(), File.edition.asc(), RefQuality.preference.desc()
         )
         .all()
     )
@@ -680,7 +680,7 @@ def movie_files(movie_id):
                     Movie.id,
                     File.feature_type_id,
                     File.plex_title,
-                    File.version,
+                    File.edition,
                 ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
@@ -796,7 +796,7 @@ def tv(series_id):
                 File.id,
                 db.func.row_number()
                 .over(
-                    partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                    partition_by=(TVSeries.id, File.season, File.episode, File.edition),
                     order_by=(
                         File.fullscreen.asc(),
                         RefQuality.preference.desc(),
@@ -956,7 +956,7 @@ def season(series_id, season):
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
                 order_by=(
                     File.fullscreen.asc(),
                     RefQuality.preference.desc(),
@@ -1006,7 +1006,7 @@ def season(series_id, season):
                         "quality_title": file.RefQuality.quality_title,
                         "quality_preference": file.RefQuality.preference,
                         "last_episode": file.File.last_episode,
-                        "version": file.File.version,
+                        "edition": file.File.edition,
                         "rank": file.rank,
                     }
                 )
@@ -1053,7 +1053,7 @@ def file(file_id):
                         Movie.id,
                         File.feature_type_id,
                         File.plex_title,
-                        File.version,
+                        File.edition,
                     ),
                     order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
                 )
@@ -1082,7 +1082,7 @@ def file(file_id):
                 File.id,
                 db.func.row_number()
                 .over(
-                    partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                    partition_by=(TVSeries.id, File.season, File.episode, File.edition),
                     order_by=(
                         File.fullscreen.asc(),
                         RefQuality.preference.desc(),
@@ -1830,7 +1830,7 @@ def movie_shopping():
             File.id.label("file_id"),
             Movie.id.label("movie_id"),
             Movie.title,
-            File.version,
+            File.edition,
             RefQuality.quality_title,
             db.func.row_number()
             .over(
@@ -1838,7 +1838,7 @@ def movie_shopping():
                     Movie.id,
                     File.feature_type_id,
                     File.plex_title,
-                    File.version,
+                    File.edition,
                 ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
@@ -1863,14 +1863,14 @@ def movie_shopping():
     file_count = (
         db.session.query(
             Movie.id,
-            File.version,
+            File.edition,
             db.func.min(RefQuality.preference).label("min_preference"),
             db.func.count(File.id).label("file_count"),
         )
         .join(File, (File.movie_id == Movie.id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .filter(File.feature_type_id == None)
-        .group_by(Movie.id, File.version)
+        .group_by(Movie.id, File.edition)
         .subquery()
     )
 
@@ -1994,7 +1994,7 @@ def movie_shopping():
             .order_by(
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefQuality.preference.asc(),
                 File.date_added.asc(),
             )
@@ -2132,7 +2132,7 @@ def movie_shopping():
                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 File.date_added.asc(),
             )
             .paginate(page, per_page=100, error_out=False)
@@ -2263,7 +2263,7 @@ def movie_shopping():
                 ).asc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 File.date_added.asc(),
             )
             .paginate(page, per_page=100, error_out=False)
@@ -2613,7 +2613,7 @@ def files():
                     Movie.id,
                     File.feature_type_id,
                     File.plex_title,
-                    File.version,
+                    File.edition,
                 ),
                 order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
             )
@@ -2629,7 +2629,7 @@ def files():
             File.id,
             db.func.row_number()
             .over(
-                partition_by=(TVSeries.id, File.season, File.episode, File.version),
+                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
                 order_by=(
                     File.fullscreen.asc(),
                     RefQuality.preference.desc(),
@@ -2693,7 +2693,7 @@ def files():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
@@ -2747,7 +2747,7 @@ def files():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
@@ -2801,7 +2801,7 @@ def files():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
@@ -2855,7 +2855,7 @@ def files():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
@@ -2907,7 +2907,7 @@ def files():
                     [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
                     else_=Movie.year,
                 ).asc(),
-                File.version.asc(),
+                File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(

@@ -140,7 +140,7 @@ class LibraryMixin(object):
                 File.movie_id,
                 File.feature_type_id,
                 File.plex_title,
-                File.version,
+                File.edition,
                 File.fullscreen,
                 RefQuality.preference,
                 RefQuality.quality_title,
@@ -151,7 +151,7 @@ class LibraryMixin(object):
                         File.movie_id,
                         File.feature_type_id,
                         File.plex_title,
-                        File.version,
+                        File.edition,
                     ),
                     order_by=(
                         RefQuality.preference.desc(),
@@ -1291,7 +1291,7 @@ class File(db.Model, LibraryMixin):
     season = db.Column(db.Integer)
     episode = db.Column(db.Integer)
     last_episode = db.Column(db.Integer)
-    version = db.Column(db.String(219), index=True)
+    edition = db.Column(db.String(219), index=True)
     quality_id = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
     fullscreen = db.Column(db.Boolean, nullable=False, index=True, default=False)
     crop = db.Column(db.String(19))
@@ -1373,7 +1373,7 @@ class File(db.Model, LibraryMixin):
                     file.feature_type.feature_type if file.feature_type else None
                 ),
                 "plex_title": file.plex_title,
-                "version": file.version,
+                "edition": file.edition,
             }
 
         elif self.media_library == "TV Shows":
@@ -1467,7 +1467,7 @@ class File(db.Model, LibraryMixin):
                         db.or_(
                             db.and_(
                                 File.plex_title == self.plex_title,
-                                File.version == self.version,
+                                File.edition == self.edition,
                                 File.fullscreen == True,
                                 RefQuality.preference > source_quality.preference,
                             ).self_group(),
@@ -1475,9 +1475,9 @@ class File(db.Model, LibraryMixin):
                                 db.func.concat(File.plex_title, " - Full Screen")
                                 == self.plex_title,
                                 db.or_(
-                                    db.func.concat("Full Screen") == self.version,
-                                    db.func.concat(File.version, " - Full Screen")
-                                    == self.version,
+                                    db.func.concat("Full Screen") == self.edition,
+                                    db.func.concat(File.edition, " - Full Screen")
+                                    == self.edition,
                                 ).self_group(),
                                 File.fullscreen == False,
                                 # RefQuality.preference >= source_quality.preference
@@ -1501,7 +1501,7 @@ class File(db.Model, LibraryMixin):
                         Movie.title == self.title,
                         Movie.year == self.year,
                         File.plex_title == self.plex_title,
-                        File.version == self.version,
+                        File.edition == self.edition,
                         File.fullscreen == False,
                         RefQuality.preference > source_quality.preference,
                     )
@@ -1530,22 +1530,22 @@ class File(db.Model, LibraryMixin):
                             db.and_(
                                 File.last_episode == self.last_episode,
                                 File.fullscreen == True,
-                                File.version == self.version,
+                                File.edition == self.edition,
                                 RefQuality.preference == source_quality.preference,
                             ).self_group(),
                             db.and_(
                                 File.last_episode > self.last_episode,
                                 File.fullscreen == True,
-                                File.version == self.version,
+                                File.edition == self.edition,
                                 RefQuality.preference >= source_quality.preference,
                             ).self_group(),
                             db.and_(
                                 File.last_episode == self.last_episode,
                                 File.fullscreen == False,
                                 db.or_(
-                                    db.func.concat("Full Screen") == self.version,
-                                    db.func.concat(File.version, " - Full Screen")
-                                    == self.version,
+                                    db.func.concat("Full Screen") == self.edition,
+                                    db.func.concat(File.edition, " - Full Screen")
+                                    == self.edition,
                                 ).self_group(),
                                 RefQuality.preference == source_quality.preference,
                             ).self_group(),
@@ -1553,9 +1553,9 @@ class File(db.Model, LibraryMixin):
                                 File.last_episode > self.last_episode,
                                 File.fullscreen == False,
                                 db.or_(
-                                    db.func.concat("Full Screen") == self.version,
-                                    db.func.concat(File.version, " - Full Screen")
-                                    == self.version,
+                                    db.func.concat("Full Screen") == self.edition,
+                                    db.func.concat(File.edition, " - Full Screen")
+                                    == self.edition,
                                 ).self_group(),
                                 RefQuality.preference >= source_quality.preference,
                             ).self_group(),
@@ -1590,7 +1590,7 @@ class File(db.Model, LibraryMixin):
                             ).self_group(),
                         ).self_group(),
                         File.fullscreen == False,
-                        File.version == self.version,
+                        File.edition == self.edition,
                     )
                     .all()
                 )
@@ -1608,7 +1608,7 @@ class File(db.Model, LibraryMixin):
                     File.movie_id == self.movie_id,
                     File.feature_type_id == self.feature_type_id,
                     File.plex_title == self.plex_title,
-                    File.version == self.version,
+                    File.edition == self.edition,
                     RefQuality.preference <= self.quality.preference,
                     db.or_(File.fullscreen == self.fullscreen, File.fullscreen == True),
                     File.id != self.id,
@@ -1624,7 +1624,7 @@ class File(db.Model, LibraryMixin):
                     File.series_id == self.series_id,
                     File.season == self.season,
                     File.episode == self.episode,
-                    File.version == self.version,
+                    File.edition == self.edition,
                     db.or_(
                         File.last_episode < self.last_episode,
                         db.and_(

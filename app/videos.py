@@ -1955,7 +1955,7 @@ def sync_aws_s3_storage_task():
                             Movie.id,
                             File.feature_type_id,
                             File.plex_title,
-                            File.version,
+                            File.edition,
                         ),
                         order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
                     )
@@ -3122,7 +3122,7 @@ def evaluate_filename(file_path):
         file_details["season"] = season
         file_details["episode"] = episode
         file_details["last_episode"] = last_episode
-        file_details["version"] = " ".join(version.split()).strip() if version else None
+        file_details["edition"] = " ".join(version.split()).strip() if version else None
         file_details["quality_title"] = (
             " ".join(quality_title.split()).strip() if quality_title else None
         )
@@ -3356,7 +3356,7 @@ def evaluate_filename(file_path):
         file_details["feature_type_name"] = (
             " ".join(feature_type.split()).strip() if feature_type else None
         )
-        file_details["version"] = " ".join(version.split()).strip() if version else None
+        file_details["edition"] = " ".join(version.split()).strip() if version else None
         file_details["quality_title"] = (
             " ".join(quality_title.split()).strip() if quality_title else None
         )
@@ -4306,11 +4306,11 @@ def reconstruct_filename(file_id):
 
     _, ext = os.path.splitext(f.untouched_basename)
 
-    if m.tmdb_title == None and f.version != None:
-        beginning = f"{m.title} ({m.year}) {{edition-{f.version}}} - "
-    elif m.tmdb_title != None and f.version != None:
+    if m.tmdb_title == None and f.edition != None:
+        beginning = f"{m.title} ({m.year}) {{edition-{f.edition}}} - "
+    elif m.tmdb_title != None and f.edition != None:
         beginning = (
-            f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.version}}} - "
+            f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.edition}}} - "
         )
     elif m.tmdb_title == None:
         beginning = f"{m.title} ({m.year}) - "
