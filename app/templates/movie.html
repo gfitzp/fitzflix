@@ -131,13 +131,13 @@
 	<div class="col-md mt-1 mb-1 ml-n3">
 		<hr class="d-block d-md-none">
 		{% if movie.imdb_id %}
-		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
+		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
 		{% endif %}
 		{% if movie.tmdb_id %}
-		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDb" style="height: 30px;"></a>
-		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
+		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDb" style="height: 30px;"></a>
+		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 		{% else %}
-		<a href="https://letterboxd.com/search/{{ movie.title|urlencode }} {{ movie.year }}/" rel="noreferrer" class="px-3"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
+		<a href="https://letterboxd.com/search/{{ movie.title|urlencode }} {{ movie.year }}/" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 		{% endif %}
 	</div>
 </div>
