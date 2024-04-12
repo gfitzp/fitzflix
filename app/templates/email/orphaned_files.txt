@@ -3,7 +3,7 @@ Hello,
 These file records have no local or archived files:
 
 {% for id, untouched_basename in orphaned_files %}
-  - {{ id }}: {{ url_for("main.file", file_id=id, _external=True }}
+  - {{ id }}: {{ url_for("main.file", file_id=id, _external=True) }}
 {% endfor %}
 
 - Fitzflix

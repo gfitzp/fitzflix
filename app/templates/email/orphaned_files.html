@@ -5,7 +5,7 @@
 {% if orphaned_files %}
 <ul>
 	{% for id, untouched_basename in orphaned_files %}
-	<li>{{ id }}: <a href="{{ url_for("main.file", file_id=id, _external=True }}">{{ untouched_basename }}</a></li>
+	<li>{{ id }}: <a href="{{ url_for("main.file", file_id=id, _external=True) }}">{{ untouched_basename }}</a></li>
 	{% endfor %}
 </ul>
 {% endif %}
