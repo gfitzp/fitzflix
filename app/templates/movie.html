@@ -188,8 +188,27 @@
 			</div>
 			{{ criterion_form.criterion_submit(class_="btn btn-sm btn-warning") }}
 		</form>
+		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
+		<form method="post" enctype="multipart/form-data">
+			{{ custom_poster_form.hidden_tag() }}
+			<div class="form-group">
+				{{ custom_poster_form.custom_poster.label }}
+				<div class="custom-file">
+					{{ custom_poster_form.custom_poster(type="file", class_="form-control-sm custom-file-input", id="custom-poster", accept="image/*") }}
+					<label class="form-control-sm custom-file-label" for="custom-poster">Choose poster image</label>
+				</div>
+			</div>
+			{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		<script>
+			document.querySelector('.custom-file-input').addEventListener('change',function(e){
+				var fileName = document.getElementById("custom-poster").files[0].name;
+				var nextSibling = e.target.nextElementSibling;
+				nextSibling.innerText = fileName;
+			})
+		</script>
 	</div>
 </div>
 {% endblock %}

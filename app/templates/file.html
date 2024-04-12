@@ -45,6 +45,7 @@
 		{% endif %}
 	{% endif %}
 </p>
+</p>
 {% if audio_tracks or subtitle_tracks %}
 <hr>
 <div class="row mt-n2 mb-n3 d-flex">
@@ -196,6 +197,30 @@
 	</div>
 </div>
 {% endif %}
+<hr>
+<p>
+<div class="row">
+	<div class="col-lg-4 col-md-6 col-sm-8">
+		<form method="post" enctype="multipart/form-data">
+			{{ custom_poster_form.hidden_tag() }}
+			<div class="form-group">
+				{{ custom_poster_form.custom_poster.label }}
+				<div class="custom-file">
+					{{ custom_poster_form.custom_poster(type="file", class_="form-control-sm custom-file-input", id="custom-poster", accept="image/*") }}
+					<label class="form-control-sm custom-file-label" for="custom-poster">Choose poster image</label>
+				</div>
+			</div>
+			{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		<script>
+			document.querySelector('.custom-file-input').addEventListener('change',function(e){
+				var fileName = document.getElementById("custom-poster").files[0].name;
+				var nextSibling = e.target.nextElementSibling;
+				nextSibling.innerText = fileName;
+			})
+		</script>
+	</div>
+</div>
 <hr>
 <div class="row">
 	<div class="col-sm-4">

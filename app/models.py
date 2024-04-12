@@ -1117,6 +1117,8 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
 
     shopping_list_exclude = db.Column(db.Boolean)
 
+    custom_poster = db.Column(db.String(64))
+
     files = db.relationship(
         "File", backref="movie", lazy="dynamic", cascade="all,delete,delete-orphan"
     )
@@ -1318,6 +1320,7 @@ class File(db.Model, LibraryMixin):
     audiotrack = db.relationship(
         "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
+    custom_poster = db.Column(db.String(64))
 
     def __repr__(self):
         return f"<File '{self.plex_title}'>"

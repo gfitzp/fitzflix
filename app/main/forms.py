@@ -1,11 +1,11 @@
 from datetime import datetime
 
 from flask_wtf import FlaskForm
+from flask_wtf.file import FileField, FileRequired
 from wtforms import (
     BooleanField,
     DateField,
     DecimalField,
-    FileField,
     IntegerField,
     PasswordField,
     RadioField,
@@ -205,3 +205,8 @@ class MovieShoppingExcludeForm(FlaskForm):
     movie_id = IntegerField("Movie ID", validators=[Optional()], widget=HiddenInput())
     add_submit = SubmitField("Add to List")
     exclude_submit = SubmitField("Remove from List")
+
+
+class CustomPosterUploadForm(FlaskForm):
+    custom_poster = FileField("Poster Image File", validators=[FileRequired()])
+    poster_submit = SubmitField("Upload")

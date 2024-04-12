@@ -4,8 +4,10 @@ import json
 import math
 import os
 import secrets
+import shutil
 
 from datetime import datetime, timezone
+from PIL import Image, ImageOps
 
 import boto3
 import botocore
@@ -25,12 +27,14 @@ from flask import (
     Markup,
 )
 from flask_login import current_user, login_user, logout_user, login_required
+from werkzeug.utils import secure_filename
 
 from app import db
 from app.main.forms import (
     CriterionFilterForm,
     CriterionForm,
     CriterionRefreshForm,
+    CustomPosterUploadForm,
     EditProfileForm,
     FileDeleteForm,
     ImportForm,
@@ -643,6 +647,87 @@ def movie(movie_id):
         flash(f"Updated Criterion Collection details for '{title}'")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
+    custom_poster_form = CustomPosterUploadForm()
+    valid_poster_extensions = [".jpg", ".jpeg", ".png", ".tbn"]
+    if custom_poster_form.validate_on_submit():
+        uploaded_data = custom_poster_form.custom_poster.data
+        file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
+        poster_filename = f"poster{file_ext}"
+
+        movie_files = File.query.filter(File.movie_id == movie.id).filter(File.feature_type_id == None).all()
+
+        if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
+            flash(f"'{poster_filename}' is an invalid movie poster file type!", "danger")
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        try:
+            try:
+                Image.open(uploaded_data).verify()
+            except:
+                flash(f"'{uploaded_data.filename}' is corrupted!", "danger")
+                return redirect(url_for("main.movie", movie_id=movie.id))
+
+            with Image.open(uploaded_data) as f:
+                current_app.logger.info(f.format)
+                if f.format not in ["JPEG", "PNG"]:
+                    flash(f"'{f.format}' is not an appropriate file type!", "danger")
+                    return redirect(url_for("main.movie", movie_id=movie.id))
+
+                custom_file_poster_dir = os.path.join("app", "static", "custom", "movie", str(movie.id))
+                os.makedirs(os.path.join(custom_file_poster_dir, "original"), exist_ok=True)
+
+                original_file = os.path.join(custom_file_poster_dir, "original", poster_filename)
+                f.save(original_file)
+
+                original_width = f.size[0]
+                original_height = f.size[1]
+
+                # with Image.open(original_file) as original_image:
+                thumbnail_widths = ["92", "154", "185", "342", "500", "780"]
+
+                for width in thumbnail_widths:
+                    current_app.logger.info(f"'{original_file}' Creating w{width} thumbnail")
+
+                    percent = int(width) / float(original_width)
+                    height = int(original_height * float(percent))
+                    size = (int(width), int(height))
+
+                    subdir_path = os.path.join(custom_file_poster_dir, f"w{width}")
+                    os.makedirs(subdir_path, exist_ok=True)
+
+                    poster_thumbnail = f.copy()
+                    poster_thumbnail.thumbnail(size)
+                    if f.format == "JPEG":
+                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename), quality=95)
+                    else:
+                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename))
+
+            # if file.feature_type_id == None:
+
+            for file in movie_files:
+                library_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+                library_files = os.listdir(library_directory)
+                destination_file = os.path.join(library_directory, poster_filename)
+                for f in library_files:
+                    if f.lower().startswith(("cover", "default", "movie", "poster")) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
+                        current_app.logger.info(f"Deleting {os.path.join(library_directory, f)}")
+                        os.remove(os.path.join(library_directory, f))
+
+                shutil.copy(original_file, destination_file)
+                current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+
+            movie.custom_poster = poster_filename
+            db.session.commit()
+
+        except:
+            raise
+            db.session.rollback()
+            flash(f"Unable to assign a custom poster to '{title}'!", "danger")
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        flash(f"Uploaded a custom poster for '{title}'", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     return render_template(
         "movie.html",
         title=title,
@@ -657,6 +742,7 @@ def movie(movie_id):
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
         criterion_form=criterion_form,
+        custom_poster_form=custom_poster_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
@@ -1401,6 +1487,86 @@ def file(file_id):
         else:
             return redirect(url_for("main.index"))
 
+    custom_poster_form = CustomPosterUploadForm()
+    valid_poster_extensions = [".jpg", ".jpeg", ".png", ".tbn"]
+    if custom_poster_form.validate_on_submit():
+        uploaded_data = custom_poster_form.custom_poster.data
+        file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
+        poster_filename = f"poster{file_ext}"
+
+        library_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+
+        if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
+            flash(f"'{poster_filename}' is an invalid movie poster file type!", "danger")
+            return redirect(url_for("main.file", file_id=file.id))
+
+        try:
+            try:
+                Image.open(uploaded_data).verify()
+            except:
+                flash(f"'{uploaded_data.filename}' is corrupted!", "danger")
+                return redirect(url_for("main.file", file_id=file.id))
+
+            with Image.open(uploaded_data) as f:
+                current_app.logger.info(f.format)
+                if f.format not in ["JPEG", "PNG"]:
+                    flash(f"'{f.format}' is not an appropriate file type!", "danger")
+                    return redirect(url_for("main.file", file_id=file.id))
+
+                custom_file_poster_dir = os.path.join("app", "static", "custom", "file", str(file.id))
+                os.makedirs(os.path.join(custom_file_poster_dir, "original"), exist_ok=True)
+
+                original_file = os.path.join(custom_file_poster_dir, "original", poster_filename)
+                destination_file = os.path.join(library_directory, poster_filename)
+
+                f.save(original_file)
+
+                original_width = f.size[0]
+                original_height = f.size[1]
+
+                # with Image.open(original_file) as original_image:
+                thumbnail_widths = ["92", "154", "185", "342", "500", "780"]
+
+                for width in thumbnail_widths:
+                    current_app.logger.info(f"'{original_file}' Creating w{width} thumbnail")
+
+                    percent = int(width) / float(original_width)
+                    height = int(original_height * float(percent))
+                    size = (int(width), int(height))
+
+                    subdir_path = os.path.join(custom_file_poster_dir, f"w{width}")
+                    os.makedirs(subdir_path, exist_ok=True)
+
+                    poster_thumbnail = f.copy()
+                    poster_thumbnail.thumbnail(size)
+                    if f.format == "JPEG":
+                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename), quality=95)
+                    else:
+                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename))
+
+            if file.feature_type_id == None:
+
+                library_files = os.listdir(library_directory)
+                for f in library_files:
+                    if f.lower().startswith(("cover", "default", "movie", "poster")) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
+                        current_app.logger.info(f"Deleting {os.path.join(library_directory, f)}")
+                        os.remove(os.path.join(library_directory, f))
+
+                shutil.copy(original_file, destination_file)
+                current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+
+            file.custom_poster = poster_filename
+            db.session.commit()
+
+        except:
+            raise
+            db.session.rollback()
+            flash(f"Unable to assign a custom poster to '{file.basename}'!", "danger")
+            return redirect(url_for("main.file", file_id=file.id))
+
+        flash(f"Uploaded a custom poster for '{file.basename}'", "success")
+        return redirect(url_for("main.file", file_id=file.id))
+
     return render_template(
         "file.html",
         file=file,
@@ -1416,6 +1582,7 @@ def file(file_id):
         upload_form=upload_form,
         download_form=download_form,
         delete_form=delete_form,
+        custom_poster_form=custom_poster_form,
         best_file=best_file,
     )
 
@@ -1640,7 +1807,7 @@ def admin():
             flash(f"Syncing files with AWS S3 storage", "info")
 
         else:
-            flash(f"Incorrect password provided", "danger")
+            flash(f"Incorrect password provided!", "danger")
 
         return redirect(url_for("main.admin"))
 

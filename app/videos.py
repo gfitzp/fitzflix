@@ -4015,11 +4015,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         f"poster{pathlib.Path(tmdb_poster_path).suffix}",
                     )
 
-                    shutil.copy(source_poster, destination_poster)
+                    # shutil.copy(source_poster, destination_poster)
 
-                    current_app.logger.info(
-                        f"Copied '{source_poster}' to '{destination_poster}'"
-                    )
+                    # current_app.logger.info(
+                    #    f"Copied '{source_poster}' to '{destination_poster}'"
+                    # )
 
             elif library == "TV Shows":
                 # Get the TVSeries record to be updated

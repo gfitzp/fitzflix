@@ -90,12 +90,14 @@ class Config(object):
 
     WIKIPEDIA_CRITERION_COLLECTION_URL  = os.environ.get("WIKIPEDIA_CRITERION_COLLECTION_URL") or None
 
-
     # Task timeouts; if specifying in the .env file, set as number of seconds
     LOCALIZATION_TASK_TIMEOUT           = os.environ.get("LOCALIZATION_TASK_TIMEOUT") or ONE_DAY
     SQL_TASK_TIMEOUT                    = os.environ.get("SQL_TASK_TIMEOUT") or TEN_MINUTES
     UPLOAD_TASK_TIMEOUT                 = os.environ.get("UPLOAD_TASK_TIMEOUT") or SIX_HOURS
     TRANSCODE_TASK_TIMEOUT              = os.environ.get("TRANSCODE_TASK_TIMEOUT") or TWO_DAYS
     MKVPROPEDIT_TASK_TIMEOUT            = os.environ.get("MKVPROPEDIT_TASK_TIMEOUT") or SIX_HOURS
+
+    # File upload settings
+    MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # ten megabytes
 
     # fmt: on

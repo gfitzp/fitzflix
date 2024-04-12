@@ -1,4 +1,8 @@
-{% if movie.tmdb_poster_path %}
+{% if file is defined and file.custom_poster %}
+	<img src="{{ url_for('static', filename='custom/file/' + file.id|string + '/w500/' + file.custom_poster )}}" loading="lazy" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
+{% elif movie.custom_poster %}
+	<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w500/' + movie.custom_poster )}}" loading="lazy" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
+{% elif movie.tmdb_poster_path %}
 	<img src="{{ url_for('static', filename='tmdb/movie/' + movie.tmdb_id|string + '/poster/w500' + movie.tmdb_poster_path )}}" loading="lazy" class="mx-auto d-block border" alt="{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})" style="width: 250px;">
 {% else %}
 	<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
