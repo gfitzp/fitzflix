@@ -2695,6 +2695,35 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 ),
             )
 
+        # Don't resume if the file doesn't exist in AWS!
+        # TODO: this code may need additional testing...
+        except botocore.exceptions.ClientError as error:
+            if error.response['ResponseMetadata']['HTTPStatusCode'] == 404:
+                current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
+                if sqs_receipt_handle:
+                    try:
+                        response = sqs_client.delete_message(
+                            QueueUrl=current_app.config["AWS_SQS_URL"],
+                            ReceiptHandle=sqs_receipt_handle,
+                        )
+                        current_app.logger.info(response)
+
+                    except:
+                        current_app.logger.warn(
+                            f"Unable to delete message '{sqs_receipt_handle}' from SQS"
+                        )
+                        return False
+
+                    else:
+                        current_app.logger.info(
+                            f"Deleted message '{sqs_receipt_handle}' from SQS"
+                        )
+                return True
+
+            else:
+                current_app.logger.error(traceback.format_exc())
+                retry = retry - 1
+
         except Exception:
             current_app.logger.error(traceback.format_exc())
             retry = retry - 1
