@@ -133,7 +133,7 @@ def index():
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .filter(
-            db.func.coalesce(File.aws_untouched_date_uploaded, File.date_added)
+            db.func.coalesce(File.date_updated, File.date_added)
             >= db.func.adddate(db.func.current_date(), -7)
         )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())

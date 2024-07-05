@@ -2616,6 +2616,8 @@ def upload_task(
                     storage_class=storage_class,
                 )
 
+            file.date_updated = file.aws_untouched_date_uploaded
+
             db.session.commit()
 
         except Exception:
