@@ -2161,11 +2161,11 @@ def sync_aws_s3_storage_task():
                     ),
                 )
 
-            # Queue local files in the library folder but aren't in Fitzflix for importing
+            # Queue local files in the library folders but aren't in Fitzflix for importing
 
             library = []
             for path, subdirs, local_files in os.walk(
-                current_app.config["LIBRARY_DIR"]
+                current_app.config["MOVIE_LIBRARY"]
             ):
                 for name in local_files:
                     if name.startswith(
@@ -2175,9 +2175,21 @@ def sync_aws_s3_storage_task():
 
                     if not name.startswith(".") and "@eaDir" not in path:
                         library_file = os.path.join(path, name)
-                        file_path = library_file.removeprefix(
-                            f"{current_app.config['LIBRARY_DIR']}/"
-                        )
+                        file_path = os.path.relpath(library_file, current_app.config['LIBRARY_DIR'])
+                        library.append((library_file, file_path))
+
+            for path, subdirs, local_files in os.walk(
+                current_app.config["TV_LIBRARY"]
+            ):
+                for name in local_files:
+                    if name.startswith(
+                        ("cover", "default", "folder", "movie", "poster")
+                    ) and name.endswith(("jpg", "jpeg", "png", "tbn")):
+                        continue
+
+                    if not name.startswith(".") and "@eaDir" not in path:
+                        library_file = os.path.join(path, name)
+                        file_path = os.path.relpath(library_file, current_app.config['LIBRARY_DIR'])
                         library.append((library_file, file_path))
 
             for library_file, file_path in library:
