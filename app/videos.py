@@ -2175,12 +2175,12 @@ def sync_aws_s3_storage_task():
 
                     if not name.startswith(".") and "@eaDir" not in path:
                         library_file = os.path.join(path, name)
-                        file_path = os.path.relpath(library_file, current_app.config['LIBRARY_DIR'])
+                        file_path = os.path.relpath(
+                            library_file, current_app.config["LIBRARY_DIR"]
+                        )
                         library.append((library_file, file_path))
 
-            for path, subdirs, local_files in os.walk(
-                current_app.config["TV_LIBRARY"]
-            ):
+            for path, subdirs, local_files in os.walk(current_app.config["TV_LIBRARY"]):
                 for name in local_files:
                     if name.startswith(
                         ("cover", "default", "folder", "movie", "poster")
@@ -2189,7 +2189,9 @@ def sync_aws_s3_storage_task():
 
                     if not name.startswith(".") and "@eaDir" not in path:
                         library_file = os.path.join(path, name)
-                        file_path = os.path.relpath(library_file, current_app.config['LIBRARY_DIR'])
+                        file_path = os.path.relpath(
+                            library_file, current_app.config["LIBRARY_DIR"]
+                        )
                         library.append((library_file, file_path))
 
             for library_file, file_path in library:
@@ -2698,7 +2700,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         # Don't resume if the file doesn't exist in AWS!
         # TODO: this code may need additional testing...
         except botocore.exceptions.ClientError as error:
-            if error.response['ResponseMetadata']['HTTPStatusCode'] == 404:
+            if error.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
                 current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
                 if sqs_receipt_handle:
                     try:

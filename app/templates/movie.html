@@ -178,11 +178,11 @@
 				{{ criterion_form.in_print(class_="form-check-input", checked=(movie.criterion_in_print|default(false, true))) }}
 				{{ criterion_form.in_print.label }}
 			</div>
-			<div class="form-check">
-				{{ criterion_form.bluray_release(class_="form-check-input", checked=(movie.criterion_bluray|default(false, true))) }}
-				{{ criterion_form.bluray_release.label }}
+			<div class="form-group form-inline">
+				{{ criterion_form.quality.label(class_="mr-2") }}
+				{{ criterion_form.quality(class_="form-control form-control-sm") }}
 			</div>
-			<div class="form-check">
+			<div class="form-check mt-n1">
 				{{ criterion_form.owned(class_="form-check-input", checked=(movie.criterion_disc_owned|default(false, true))) }}
 				{{ criterion_form.owned.label }}
 			</div>

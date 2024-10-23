@@ -1114,6 +1114,7 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     criterion_in_print = db.Column(db.Boolean)
     criterion_disc_owned = db.Column(db.Boolean)
     criterion_bluray = db.Column(db.Boolean)
+    criterion_quality = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
 
     shopping_list_exclude = db.Column(db.Boolean)
 
@@ -1748,6 +1749,9 @@ class RefQuality(db.Model):
     date_updated = db.Column(db.DateTime)
     files = db.relationship(
         "File", backref="quality", lazy="dynamic", cascade="all,delete"
+    )
+    movies = db.relationship(
+        "Movie", backref="format", lazy="dynamic", cascade="all,delete"
     )
 
     def __repr__(self):

@@ -84,6 +84,7 @@ class CriterionForm(FlaskForm):
     set_title = StringField("Collector's Set Title", validators=[Optional()])
     in_print = BooleanField("In Print", validators=[Optional()])
     bluray_release = BooleanField("Blu-ray Release", validators=[Optional()])
+    quality = SelectField("Released as")
     owned = BooleanField("Owned", validators=[Optional()])
     criterion_submit = SubmitField("Update Criterion Info")
 

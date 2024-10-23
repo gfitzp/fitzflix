@@ -629,8 +629,27 @@ def movie(movie_id):
         return redirect(url_for("main.movie", movie_id=movie_id))
 
     # Form to manually update a movie's Criterion Collection information
-
     criterion_form = CriterionForm()
+    qualities = (
+        db.session.query(RefQuality.id, RefQuality.quality_title)
+        .filter(
+            db.or_(
+                RefQuality.id == 1,
+                db.and_(
+                    RefQuality.physical_media == 1,
+                    db.or_(
+                        RefQuality.quality_title == "DVD",
+                        RefQuality.quality_title.like("%1080p"),
+                        RefQuality.quality_title.like("%2160p"),
+                    ),
+                ),
+            )
+        )
+        .order_by(RefQuality.preference.asc())
+        .all()
+    )
+    criterion_form.quality.choices = [(str(id), title) for (id, title) in qualities]
+    criterion_form.quality.default = movie.criterion_quality
     if criterion_form.criterion_submit.data and criterion_form.validate_on_submit():
         movie.criterion_spine_number = criterion_form.spine_number.data
         if criterion_form.set_title.data:
@@ -642,10 +661,12 @@ def movie(movie_id):
         movie.criterion_in_print = criterion_form.in_print.data
         movie.criterion_bluray = criterion_form.bluray_release.data
         movie.criterion_disc_owned = criterion_form.owned.data
+        movie.criterion_quality = criterion_form.quality.data
 
         db.session.commit()
         flash(f"Updated Criterion Collection details for '{title}'")
         return redirect(url_for("main.movie", movie_id=movie.id))
+    criterion_form.process()
 
     custom_poster_form = CustomPosterUploadForm()
     valid_poster_extensions = [".jpg", ".jpeg", ".png", ".tbn"]
@@ -654,10 +675,16 @@ def movie(movie_id):
         file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
         poster_filename = f"poster{file_ext}"
 
-        movie_files = File.query.filter(File.movie_id == movie.id).filter(File.feature_type_id == None).all()
+        movie_files = (
+            File.query.filter(File.movie_id == movie.id)
+            .filter(File.feature_type_id == None)
+            .all()
+        )
 
         if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-            flash(f"'{poster_filename}' is an invalid movie poster file type!", "danger")
+            flash(
+                f"'{poster_filename}' is an invalid movie poster file type!", "danger"
+            )
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         try:
@@ -673,10 +700,16 @@ def movie(movie_id):
                     flash(f"'{f.format}' is not an appropriate file type!", "danger")
                     return redirect(url_for("main.movie", movie_id=movie.id))
 
-                custom_file_poster_dir = os.path.join("app", "static", "custom", "movie", str(movie.id))
-                os.makedirs(os.path.join(custom_file_poster_dir, "original"), exist_ok=True)
+                custom_file_poster_dir = os.path.join(
+                    "app", "static", "custom", "movie", str(movie.id)
+                )
+                os.makedirs(
+                    os.path.join(custom_file_poster_dir, "original"), exist_ok=True
+                )
 
-                original_file = os.path.join(custom_file_poster_dir, "original", poster_filename)
+                original_file = os.path.join(
+                    custom_file_poster_dir, "original", poster_filename
+                )
                 f.save(original_file)
 
                 original_width = f.size[0]
@@ -686,7 +719,9 @@ def movie(movie_id):
                 thumbnail_widths = ["92", "154", "185", "342", "500", "780"]
 
                 for width in thumbnail_widths:
-                    current_app.logger.info(f"'{original_file}' Creating w{width} thumbnail")
+                    current_app.logger.info(
+                        f"'{original_file}' Creating w{width} thumbnail"
+                    )
 
                     percent = int(width) / float(original_width)
                     height = int(original_height * float(percent))
@@ -698,23 +733,35 @@ def movie(movie_id):
                     poster_thumbnail = f.copy()
                     poster_thumbnail.thumbnail(size)
                     if f.format == "JPEG":
-                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename), quality=95)
+                        poster_thumbnail.save(
+                            os.path.join(subdir_path, poster_filename), quality=95
+                        )
                     else:
-                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename))
+                        poster_thumbnail.save(
+                            os.path.join(subdir_path, poster_filename)
+                        )
 
             # if file.feature_type_id == None:
 
             for file in movie_files:
-                library_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+                library_directory = os.path.join(
+                    current_app.config["LIBRARY_DIR"], file.dirname
+                )
                 library_files = os.listdir(library_directory)
                 destination_file = os.path.join(library_directory, poster_filename)
                 for f in library_files:
-                    if f.lower().startswith(("cover", "default", "movie", "poster")) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
-                        current_app.logger.info(f"Deleting {os.path.join(library_directory, f)}")
+                    if f.lower().startswith(
+                        ("cover", "default", "movie", "poster")
+                    ) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
+                        current_app.logger.info(
+                            f"Deleting {os.path.join(library_directory, f)}"
+                        )
                         os.remove(os.path.join(library_directory, f))
 
                 shutil.copy(original_file, destination_file)
-                current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+                current_app.logger.info(
+                    f"'{original_file}' Copied to '{destination_file}'"
+                )
 
             movie.custom_poster = poster_filename
             db.session.commit()
@@ -1494,10 +1541,14 @@ def file(file_id):
         file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
         poster_filename = f"poster{file_ext}"
 
-        library_directory = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+        library_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"], file.dirname
+        )
 
         if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-            flash(f"'{poster_filename}' is an invalid movie poster file type!", "danger")
+            flash(
+                f"'{poster_filename}' is an invalid movie poster file type!", "danger"
+            )
             return redirect(url_for("main.file", file_id=file.id))
 
         try:
@@ -1513,10 +1564,16 @@ def file(file_id):
                     flash(f"'{f.format}' is not an appropriate file type!", "danger")
                     return redirect(url_for("main.file", file_id=file.id))
 
-                custom_file_poster_dir = os.path.join("app", "static", "custom", "file", str(file.id))
-                os.makedirs(os.path.join(custom_file_poster_dir, "original"), exist_ok=True)
+                custom_file_poster_dir = os.path.join(
+                    "app", "static", "custom", "file", str(file.id)
+                )
+                os.makedirs(
+                    os.path.join(custom_file_poster_dir, "original"), exist_ok=True
+                )
 
-                original_file = os.path.join(custom_file_poster_dir, "original", poster_filename)
+                original_file = os.path.join(
+                    custom_file_poster_dir, "original", poster_filename
+                )
                 destination_file = os.path.join(library_directory, poster_filename)
 
                 f.save(original_file)
@@ -1528,7 +1585,9 @@ def file(file_id):
                 thumbnail_widths = ["92", "154", "185", "342", "500", "780"]
 
                 for width in thumbnail_widths:
-                    current_app.logger.info(f"'{original_file}' Creating w{width} thumbnail")
+                    current_app.logger.info(
+                        f"'{original_file}' Creating w{width} thumbnail"
+                    )
 
                     percent = int(width) / float(original_width)
                     height = int(original_height * float(percent))
@@ -1540,20 +1599,30 @@ def file(file_id):
                     poster_thumbnail = f.copy()
                     poster_thumbnail.thumbnail(size)
                     if f.format == "JPEG":
-                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename), quality=95)
+                        poster_thumbnail.save(
+                            os.path.join(subdir_path, poster_filename), quality=95
+                        )
                     else:
-                        poster_thumbnail.save(os.path.join(subdir_path, poster_filename))
+                        poster_thumbnail.save(
+                            os.path.join(subdir_path, poster_filename)
+                        )
 
             if file.feature_type_id == None:
 
                 library_files = os.listdir(library_directory)
                 for f in library_files:
-                    if f.lower().startswith(("cover", "default", "movie", "poster")) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
-                        current_app.logger.info(f"Deleting {os.path.join(library_directory, f)}")
+                    if f.lower().startswith(
+                        ("cover", "default", "movie", "poster")
+                    ) and f.lower().endswith(("jpg", "jpeg", "png", "tbn")):
+                        current_app.logger.info(
+                            f"Deleting {os.path.join(library_directory, f)}"
+                        )
                         os.remove(os.path.join(library_directory, f))
 
                 shutil.copy(original_file, destination_file)
-                current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
+                current_app.logger.info(
+                    f"'{original_file}' Copied to '{destination_file}'"
+                )
 
             file.custom_poster = poster_filename
             db.session.commit()
@@ -2258,6 +2327,7 @@ def movie_shopping():
                 )
             )
             .order_by(
+                db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case(
                     [
                         (
@@ -2266,7 +2336,7 @@ def movie_shopping():
                                 Movie.criterion_disc_owned == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            1,
+                            99,
                         ),
                         (
                             db.and_(
@@ -2275,7 +2345,7 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            0,
+                            RefQuality.preference,
                         ),
                         (
                             db.and_(
@@ -2284,19 +2354,19 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 1,
                             ),
-                            0,
+                            RefQuality.preference,
                         ),
-                        (File.fullscreen == True, 0),
-                        (RefQuality.preference < dvd_quality, 0),
-                        (RefQuality.preference < bluray_quality, 0),
+                        (File.fullscreen == True, RefQuality.preference),
+                        (RefQuality.preference < dvd_quality, RefQuality.preference),
+                        (RefQuality.preference < bluray_quality, RefQuality.preference),
                     ],
-                    else_=1,
+                    else_=99,
                 ).asc(),
-                db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                db.case(
-                    [(rating.c.whole_stars >= 3, rating.c.rating)],
-                    else_=0,
-                ).desc(),
+                # db.case([(File.fullscreen == True, 0)], else_=1).asc(),
+                #                 db.case(
+                #                     [(rating.c.whole_stars >= 3, rating.c.rating)],
+                #                     else_=0,
+                #                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
                 File.edition.asc(),
@@ -2378,6 +2448,7 @@ def movie_shopping():
                 )
             )
             .order_by(
+                db.case([(File.fullscreen == True, 0)], else_=1).asc(),
                 db.case(
                     [
                         (
@@ -2386,7 +2457,7 @@ def movie_shopping():
                                 Movie.criterion_disc_owned == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            1,
+                            99,
                         ),
                         (
                             db.and_(
@@ -2395,7 +2466,7 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 0,
                             ),
-                            0,
+                            RefQuality.preference,
                         ),
                         (
                             db.and_(
@@ -2404,30 +2475,31 @@ def movie_shopping():
                                 Movie.criterion_in_print == 1,
                                 Movie.criterion_bluray == 1,
                             ),
-                            0,
+                            RefQuality.preference,
                         ),
-                        (File.fullscreen == True, 0),
-                        (RefQuality.preference < dvd_quality, 0),
-                        (RefQuality.preference < bluray_quality, 0),
+                        (File.fullscreen == True, RefQuality.preference),
+                        (RefQuality.preference < dvd_quality, RefQuality.preference),
+                        (RefQuality.preference < bluray_quality, RefQuality.preference),
                     ],
-                    else_=1,
+                    else_=99,
                 ).asc(),
-                db.case([(File.fullscreen == True, 0)], else_=1).asc(),
-                db.case(
-                    [(rating.c.whole_stars >= 3, rating.c.rating)],
-                    else_=0,
-                ).desc(),
-                db.case(
-                    [
-                        (
-                            (RefQuality.physical_media == 0)
-                            & (RefQuality.quality_title != "SDTV")
-                            & (RefQuality.quality_title.notlike("HDTV-%")),
-                            0,
-                        ),
-                    ],
-                    else_=1,
-                ).asc(),
+                #                 RefQuality.preference,
+                #                 db.case([(File.fullscreen == True, 0)], else_=1).asc(),
+                #                 db.case(
+                #                     [(rating.c.whole_stars >= 3, rating.c.rating)],
+                #                     else_=0,
+                #                 ).desc(),
+                #                 db.case(
+                #                     [
+                #                         (
+                #                             (RefQuality.physical_media == 0)
+                #                             & (RefQuality.quality_title != "SDTV")
+                #                             & (RefQuality.quality_title.notlike("HDTV-%")),
+                #                             0,
+                #                         ),
+                #                     ],
+                #                     else_=1,
+                #                 ).asc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                 Movie.year.asc(),
                 File.edition.asc(),
