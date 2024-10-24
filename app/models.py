@@ -1113,8 +1113,7 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     criterion_set_title = db.Column(db.String(512))
     criterion_in_print = db.Column(db.Boolean)
     criterion_disc_owned = db.Column(db.Boolean)
-    criterion_bluray = db.Column(db.Boolean)
-    criterion_quality = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
+    criterion_quality_id = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
 
     shopping_list_exclude = db.Column(db.Boolean)
 
