@@ -431,11 +431,8 @@ def criterion_collection():
         .join(ranked_files, (ranked_files.c.id == File.id))
         .filter(File.feature_type_id == None)
         .filter(ranked_files.c.rank == 1)
-        .filter(
-            db.or_(
-                Movie.criterion_spine_number != None, Movie.criterion_set_title != None
-            )
-        )
+        .filter(Movie.criterion_spine_number != None)
+        .filter(File.edition == None)
         .filter(
             db.or_(
                 Movie.criterion_disc_owned == True, Movie.criterion_disc_owned == owned
