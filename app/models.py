@@ -1300,6 +1300,7 @@ class File(db.Model, LibraryMixin):
     container = db.Column(db.String(64))
     format = db.Column(db.String(64))
     codec = db.Column(db.String(64))
+    hdr_format = db.Column(db.String(255))
     video_bitrate_kbps = db.Column(db.Integer)
     filesize_bytes = db.Column(db.BigInteger)
     filesize_megabytes = db.Column(db.Numeric(precision=8, scale=1))

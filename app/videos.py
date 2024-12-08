@@ -771,6 +771,12 @@ def finalize_localization(file_path, file_details, lock):
                     file.video_bitrate_kbps = track.bit_rate / 1000
                     break
 
+            for track in media_info.tracks:
+                if track.track_type == "Video" and track.other_hdr_format:
+                    if track.other_hdr_format[0]:
+                        file.hdr_format = track.other_hdr_format[0]
+                        break
+
             # Put the final touches on the output file and move it into place
 
             if file_details.get("container") == "Matroska":
@@ -1390,6 +1396,12 @@ def track_metadata_scan(file_id):
             if track.track_type == "Video" and track.bit_rate:
                 file.video_bitrate_kbps = track.bit_rate / 1000
                 break
+
+        for track in media_info.tracks:
+            if track.track_type == "Video" and track.other_hdr_format:
+                if track.other_hdr_format[0]:
+                    file.hdr_format = track.other_hdr_format[0]
+                    break
 
         output_audio_tracks = get_audio_tracks_from_file(file_path)
         output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
