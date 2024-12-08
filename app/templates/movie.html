@@ -96,8 +96,10 @@
 	</div>
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
 		<div class="btn-group show btn-block">
-			{% if movie.criterion_spine_number or movie.criterion_set_title %}
+			{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
 				<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.criterion.com/search#stq={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}" rel="noreferrer">Find</a>
+			{% elif movie.criterion_spine_number or movie.criterion_set_title %}
+				<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }} {{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }} Criterion Collection" rel="noreferrer">Find</a>
 			{% else %}
 				<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&submit=Search&action=search" rel="noreferrer">Find</a>
 			{% endif %}
