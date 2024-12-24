@@ -1399,9 +1399,8 @@ def track_metadata_scan(file_id):
 
         for track in media_info.tracks:
             if track.track_type == "Video" and track.other_hdr_format:
-                if track.other_hdr_format[0]:
-                    file.hdr_format = track.other_hdr_format[0]
-                    break
+                file.hdr_format = track.other_hdr_format[0]
+                break
 
         output_audio_tracks = get_audio_tracks_from_file(file_path)
         output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
