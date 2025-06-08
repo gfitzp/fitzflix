@@ -2007,10 +2007,14 @@ def sync_aws_s3_storage_task():
                         [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
                     ).label("rank"),
                 )
+                .join(RefQuality, (RefQuality.id == File.quality_id))
                 .outerjoin(movie_rank, (movie_rank.c.id == File.id))
                 .outerjoin(tv_rank, (tv_rank.c.id == File.id))
+                .order_by(RefQuality.preference.asc(), File.aws_untouched_key.asc())
                 .all()
             )
+
+            current_app.logger.info(files)
 
             inventory_export = []
             orphaned_files = []
@@ -3983,13 +3987,21 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     try:
                         old_assets = os.listdir(old_directory)
                         for old_asset in old_assets:
-                            if old_asset.startswith(
-                                ("cover", "default", "movie", "poster")
-                            ) and old_asset.endswith(("jpg", "jpeg", "png", "tbn")):
-                                current_app.logger.info(
-                                    f"Deleting '{os.path.join(old_directory, old_asset)}'"
+                            if (
+                                old_asset.startswith(
+                                    ("cover", "default", "movie", "poster")
                                 )
-                                os.remove(os.path.join(old_directory, old_asset))
+                                and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
+                                and f.feature_type_id is None
+                            ):
+                                new_directory = file_details.get("dirname")
+                                current_app.logger.info(
+                                    f"Renaming '{os.path.join(old_directory, old_asset)}' to '{os.path.join(new_directory, old_asset)}'"
+                                )
+                                os.rename(
+                                    os.path.join(old_directory, old_asset),
+                                    os.path.join(new_directory, old_asset),
+                                )
 
                             elif old_asset == "@eaDir":
                                 current_app.logger.info(
