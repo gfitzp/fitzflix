@@ -22,8 +22,9 @@
 {% endif %}
 <h2 class="mt-n2">{{ file.basename }}</h2>
 <p>
-	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em><br>
-	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
+	<em>Originally imported as '{{ file.untouched_basename }}'</em><br>
+	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }} as '{{ file.aws_untouched_key }}'{% else %}Not uploaded to AWS.{% endif %}</em><br>
+	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em>
 </p>
 {% if file.media_library == "Movies" %}
 	<p>{% if file.feature_type_id %}Special feature{% else %}File{% endif %} for movie <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></p>
