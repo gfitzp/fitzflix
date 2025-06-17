@@ -2572,7 +2572,7 @@ def sqs_retrieve_task():
                         },
                     )
                     current_app.logger.info(
-                        f"Extending '{job.args[0]}' restoration period by 1 day"
+                        f"'{job.args[0]}' Extending restoration period by 1 day"
                     )
         for job_id in current_app.file_queue.job_ids:
             job = current_app.file_queue.fetch_job(job_id)
@@ -2596,7 +2596,7 @@ def sqs_retrieve_task():
                         },
                     )
                     current_app.logger.info(
-                        f"Extending '{job.args[0]}' restoration period by 1 day"
+                        f"'{job.args[0]}' Extending restoration period by 1 day"
                     )
 
         response = sqs_client.receive_message(
