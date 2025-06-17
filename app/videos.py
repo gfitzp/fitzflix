@@ -3192,9 +3192,7 @@ def evaluate_filename(file_path):
         file_details["quality_title"] = (
             " ".join(quality_title.split()).strip() if quality_title else None
         )
-        file_details["fullscreen"] = (
-            True if fullscreen else None
-        )
+        file_details["fullscreen"] = True if fullscreen else None
         file_details["extension"] = (
             " ".join(extension.split()).strip() if extension else None
         )
@@ -3426,9 +3424,7 @@ def evaluate_filename(file_path):
         file_details["quality_title"] = (
             " ".join(quality_title.split()).strip() if quality_title else None
         )
-        file_details["fullscreen"] = (
-            True if fullscreen else None
-        )
+        file_details["fullscreen"] = True if fullscreen else None
         file_details["extension"] = (
             " ".join(extension.split()).strip() if extension else None
         )
