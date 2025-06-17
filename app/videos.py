@@ -2534,7 +2534,17 @@ def sqs_retrieve_task():
             region_name="us-east-1",
         )
 
-        # Extend timeout for messages in download queue
+        config = Config(
+            connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+        )
+        s3_client = boto3.client(
+            "s3",
+            config=config,
+            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        )
+
+        # Extend timeout and restoration period for messages in download queue
 
         file_operations = StartedJobRegistry(
             "fitzflix-file-operation", connection=current_app.redis
@@ -2549,10 +2559,21 @@ def sqs_retrieve_task():
                         ReceiptHandle=job.meta.get("sqs_receipt_handle"),
                         VisibilityTimeout=600,
                     )
-                job_description = job.meta.get("description", job.description)
-                current_app.logger.info(
-                    f"'{job_description}' Extending timeout by 600 seconds"
-                )
+                    job_description = job.meta.get("description", job.description)
+                    current_app.logger.info(
+                        f"'{job_description}' Extending SQS message timeout by 600 seconds"
+                    )
+                    response = s3_client.restore_object(
+                        Bucket=current_app.config["AWS_BUCKET"],
+                        Key=job.args[0],
+                        RestoreRequest={
+                            "Days": 1,
+                            "GlacierJobParameters": {"Tier": "Standard"},
+                        },
+                    )
+                    current_app.logger.info(
+                        f"Extending '{job.args[0]}' restoration period by 1 day"
+                    )
         for job_id in current_app.file_queue.job_ids:
             job = current_app.file_queue.fetch_job(job_id)
             if job:
@@ -2562,10 +2583,21 @@ def sqs_retrieve_task():
                         ReceiptHandle=job.meta.get("sqs_receipt_handle"),
                         VisibilityTimeout=600,
                     )
-                job_description = job.meta.get("description", job.description)
-                current_app.logger.info(
-                    f"'{job_description}' Extending timeout by 600 seconds"
-                )
+                    job_description = job.meta.get("description", job.description)
+                    current_app.logger.info(
+                        f"'{job_description}' Extending SQS message timeout by 600 seconds"
+                    )
+                    response = s3_client.restore_object(
+                        Bucket=current_app.config["AWS_BUCKET"],
+                        Key=job.args[0],
+                        RestoreRequest={
+                            "Days": 1,
+                            "GlacierJobParameters": {"Tier": "Standard"},
+                        },
+                    )
+                    current_app.logger.info(
+                        f"Extending '{job.args[0]}' restoration period by 1 day"
+                    )
 
         response = sqs_client.receive_message(
             QueueUrl=current_app.config["AWS_SQS_URL"],
