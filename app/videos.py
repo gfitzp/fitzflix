@@ -2686,7 +2686,9 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
     # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}"
     if "(edition-" in basename:
-        basename = re.sub(r"\(edition\-(?P<edition>.+)\)", "{edition-\\g<edition>}", basename)
+        basename = re.sub(
+            r"\(edition\-(?P<edition>.+)\)", "{edition-\\g<edition>}", basename
+        )
 
     current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
 
