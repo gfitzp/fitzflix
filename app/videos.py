@@ -2684,6 +2684,10 @@ def aws_download(key, basename, sqs_receipt_handle=None):
     MAX_RETRY_COUNT = 10
     retry = MAX_RETRY_COUNT
 
+    # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}"
+    if "(edition-" in basename:
+        basename = re.sub(r"\(edition\-(?P<edition>.+)\)", "{edition-\\g<edition>}", basename)
+
     current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
 
     s3_client = boto3.client(
