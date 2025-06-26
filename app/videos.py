@@ -3487,9 +3487,13 @@ def get_audio_tracks_from_file(file_path):
                 audio_track["language"] = "zxx"
                 audio_track["language_name"] = "Not applicable"
 
-            else:
+            elif len(language) >= 4:
                 audio_track["language"] = language[3]
                 audio_track["language_name"] = language[0]
+
+            else:
+                audio_track["language"] = "und"
+                audio_track["language_name"] = "Undetermined"
 
             audio_track["streamorder"] = (
                 int(track.to_data().get("streamorder"))
