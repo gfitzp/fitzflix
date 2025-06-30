@@ -1942,12 +1942,10 @@ def movie_shopping():
                    (defaults to "Unknown")
     - max_quality: show all movies where the best quality is *below* this threshold
                    (defaults to "Bluray-2160p Remux")
-    - tmdb       : filter the movie list for the film having this TMDB ID
     """
 
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
-    tmdb = request.args.get("tmdb", None, type=int)
     library = request.args.get("library", None, type=str)
     media = request.args.get("media", None, type=str)
     min_quality = request.args.get("min_quality", 0, type=str)
@@ -2176,9 +2174,13 @@ def movie_shopping():
 
     CriterionQuality = db.aliased(RefQuality)
 
-    if tmdb:
-        movie = Movie.query.filter_by(tmdb_id=int(tmdb)).first()
-        title = f"Upgrade details for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
+    if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
+        tmdb_id = re.match(r"tmdb:(?P<tmdb_id>\d+)", q).group(1)
+        movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
+        if not movie:
+            title = f"Upgrade details for TMDB ID {tmdb_id}"
+        else:
+            title = f"Upgrade details for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
         movies = (
             db.session.query(
                 File,
@@ -2270,7 +2272,7 @@ def movie_shopping():
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
             .filter(RefQuality.preference <= max_preference)
-            .filter(Movie.tmdb_id == tmdb)
+            .filter(Movie.tmdb_id == tmdb_id)
             .filter(
                 db.or_(
                     Movie.shopping_list_exclude == None,
