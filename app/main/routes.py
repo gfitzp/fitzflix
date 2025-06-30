@@ -1942,10 +1942,12 @@ def movie_shopping():
                    (defaults to "Unknown")
     - max_quality: show all movies where the best quality is *below* this threshold
                    (defaults to "Bluray-2160p Remux")
+    - tmdb       : filter the movie list for the film having this TMDB ID
     """
 
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
+    tmdb = request.args.get("tmdb", None, type=int)
     library = request.args.get("library", None, type=str)
     media = request.args.get("media", None, type=str)
     min_quality = request.args.get("min_quality", 0, type=str)
@@ -2174,7 +2176,118 @@ def movie_shopping():
 
     CriterionQuality = db.aliased(RefQuality)
 
-    if q:
+    if tmdb:
+        movie = Movie.query.filter_by(tmdb_id=int(tmdb)).first()
+        title = f"Upgrade details for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
+        movies = (
+            db.session.query(
+                File,
+                Movie,
+                RefQuality,
+                rating.c.rating,
+                rating.c.modified_rating,
+                rating.c.whole_stars,
+                rating.c.half_stars,
+                db.case(
+                    [
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == True,
+#                                 db.and_(
+#                                     db.or_(
+#                                         db.and_(
+#                                             CriterionQuality.preference == dvd_quality,
+#                                             RefQuality.preference >= dvd_quality,
+#                                         ),
+#                                         db.and_(
+#                                             CriterionQuality.preference
+#                                             >= bluray_quality,
+#                                             RefQuality.preference >= bluray_quality,
+#                                         ),
+#                                     ),
+#                                 ),
+                            ),
+                            "Already owned",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == uhd_quality,
+                                # RefQuality.preference <= uhd_quality,
+                            ),
+                            "Buy Criterion edition on 4K UHD Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == bluray_quality,
+                                # RefQuality.preference <= bluray_quality,
+                            ),
+                            "Buy Criterion edition on Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == dvd_quality,
+                                # RefQuality.preference <= dvd_quality,
+                            ),
+                            "Buy Criterion edition on DVD",
+                        ),
+                        (File.fullscreen == True, "Buy any non-fullscreen release"),
+                        (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
+                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                    ],
+                    else_=("Already owned"),
+                ).label("instruction"),
+            )
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .outerjoin(
+                CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
+            )
+            .outerjoin(
+                rating,
+                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
+            )
+            .join(ranked_files, (ranked_files.c.file_id == File.id))
+            .filter(File.feature_type_id == None)
+            .filter(ranked_files.c.rank == 1)
+            .filter(RefQuality.preference >= min_preference)
+            .filter(RefQuality.preference <= max_preference)
+            .filter(Movie.tmdb_id == tmdb)
+            .filter(
+                db.or_(
+                    Movie.shopping_list_exclude == None,
+                    Movie.shopping_list_exclude == False,
+                )
+            )
+            .order_by(
+                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+                Movie.year.asc(),
+                File.edition.asc(),
+                RefQuality.preference.asc(),
+                File.date_added.asc(),
+            )
+            .paginate(page, per_page=100, error_out=False)
+        )
+
+    elif q:
         title = f"Movies to upgrade matching '{q}'"
         movies = (
             db.session.query(
