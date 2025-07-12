@@ -4035,6 +4035,10 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                     # delete any old local assets
                     try:
                         old_assets = os.listdir(old_directory)
+                        new_directory = os.path.join(
+                            current_app.config["LIBRARY_DIR"],
+                            file_details.get("dirname"),
+                        )
                         for old_asset in old_assets:
                             if (
                                 old_asset.startswith(
@@ -4042,8 +4046,12 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                                 )
                                 and old_asset.endswith(("jpg", "jpeg", "png", "tbn"))
                                 and f.feature_type_id is None
+                                and os.path.join(old_directory, old_asset)
+                                != os.path.join(new_directory, old_asset)
+                                and os.path.isfile(
+                                    os.path.join(old_directory, old_asset)
+                                )
                             ):
-                                new_directory = file_details.get("dirname")
                                 current_app.logger.info(
                                     f"Renaming '{os.path.join(old_directory, old_asset)}' to '{os.path.join(new_directory, old_asset)}'"
                                 )
