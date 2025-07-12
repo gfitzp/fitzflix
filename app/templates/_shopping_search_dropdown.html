@@ -1,23 +1,30 @@
 {% if movie %}
 	{% set title = movie.tmdb_title if movie.tmdb_title else movie.title %}
 	{% set year = movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year %}
-	{% set format = '' %}
+	{% set title_year = title ~ ' ' ~ year %}
+
+	{% set criterion = '' %}
 	{% if (movie.criterion_spine_number or movie.criterion_set_title) %}
-		{% set format = ' Criterion Collection' %}
+		{% set criterion = ' Criterion Collection' %}
 	{% endif %}
+
+	{% set ebay_format = '&Format=DVD%7CBlu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
 	{% if instruction %}
-		{% if instruction.endswith('on Blu-Ray') or instruction.endswith('on 4K UHD Blu-Ray') %}
-			{% set format = format ~ ' Blu-Ray' %}
+		{% if instruction.endswith('on Blu-Ray') %}
+			{% set ebay_format = '&Format=Blu%252Dray%7C4K%2520UHD%2520Blu%252Dray' %}
+		{% elif instruction.endswith('4K UHD Blu-Ray') %}
+			{% set ebay_format = '&Format=4K%2520UHD%2520Blu%252Dray' %}
 		{% endif %}
 	{% endif %}
+
 	<div class="dropdown-menu" aria-labelledby="dropdownMenuLink">
-		<a class="dropdown-item" target="_blank" href="https://www.amazon.com/s?k={{ title|urlencode }}{{ format|urlencode }}&i=movies-tv" rel="noreferrer">Amazon</a>
+		<a class="dropdown-item" target="_blank" href="https://www.amazon.com/s?k={{ title|urlencode }}{{ criterion|urlencode }}&i=movies-tv" rel="noreferrer">Amazon</a>
 		<a class="dropdown-item" target="_blank" href="https://www.barnesandnoble.com/s/{{ title|urlencode }}/_/N-8qh" rel="noreferrer">Barnes & Noble</a>
 		<a class="dropdown-item" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ title|urlencode }}&yearfrom={{ year }}&yearto={{ year }}&submit=Search&action=search" rel="noreferrer">Blu-ray.com</a>
 		{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
 			<a class="dropdown-item" target="_blank" href="https://www.criterion.com/search#stq={{ title|urlencode }}" rel="noreferrer">Criterion.com</a>
 		{% endif %}
-		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title|urlencode }}%20{{ year }}{{ format|urlencode }}&_sop=15" rel="noreferrer">eBay</a>
+		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
 		{% if radarr_proxy_url %}
 			<a class="dropdown-item" target="_blank" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}">Radarr</a>
 		{% endif %}
