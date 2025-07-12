@@ -3108,7 +3108,7 @@ def calculate_etag(file_path):
         )
 
 
-def evaluate_filename(file_path):
+def evaluate_filename(file_path, tmdb_id=None):
     """Review a file name string and return info about what movie or TV show it is."""
 
     file_details = {}
@@ -3253,14 +3253,20 @@ def evaluate_filename(file_path):
         # etc.
 
         try:
-            params = {
-                "api_key": current_app.config["TMDB_API_KEY"],
-                "query": title,
-                "primary_release_year": year,
-            }
-            r = requests.get(
-                current_app.config["TMDB_API_URL"] + "/search/movie", params=params
-            )
+            if tmdb_id:
+                params = {
+                    "api_key": current_app.config["TMDB_API_KEY"],
+                    "append_to_response": "credits,external_ids,images,keywords,release_dates,videos",
+                }
+                url = "/movie/" + str(tmdb_id)
+            else:
+                params = {
+                    "api_key": current_app.config["TMDB_API_KEY"],
+                    "query": title,
+                    "primary_release_year": year,
+                }
+                url = "/search/movie"
+            r = requests.get(current_app.config["TMDB_API_URL"] + url, params=params)
             current_app.logger.debug(r.json())
             r.raise_for_status()
 
@@ -3276,8 +3282,8 @@ def evaluate_filename(file_path):
 
         if tmdb_result:
             tmdb_results = tmdb_result.get("results")
-            current_app.logger.info(tmdb_results)
             if tmdb_results:
+                current_app.logger.info(tmdb_results)
                 tmdb_film = tmdb_results[0]
 
                 # See if we already have this tmdb_id in the database
@@ -3995,7 +4001,12 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 files = File.query.filter_by(movie_id=updated_movie_id).all()
 
                 for f in files:
-                    file_details = evaluate_filename(f.untouched_basename)
+                    if tmdb_id != None:
+                        file_details = evaluate_filename(
+                            f.untouched_basename, tmdb_id=tmdb_id
+                        )
+                    else:
+                        file_details = evaluate_filename(f.untouched_basename)
                     # current_app.logger.info(file_details)
 
                     os.makedirs(
