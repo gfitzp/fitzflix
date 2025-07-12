@@ -1,0 +1,9 @@
+<p>Hello,</p>
+<p/>
+<p>TMDB ID {{ tmdb_id }} for "{{ tv.title }}" does not exist.</p>
+<p/>
+<p>Go <a href="{{ url_for("main.tv", series_id=tv.id, _external=True) }}">here</a> to fix it:</p>
+<p/>
+<p>{{ url_for("main.tv", series_id=tv.id, _external=True) }}</p>
+<p/>
+<p>- Fitzflix</p>

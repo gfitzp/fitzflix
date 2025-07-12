@@ -1,0 +1,9 @@
+Hello,
+
+TMDB ID {{ tmdb_id }} ('{{ movie.title }} ({{ movie.year }})') does not exist.
+
+Go here to fix it:
+
+{{ url_for("main.movie", movie_id=movie.id, _external=True) }}
+
+- Fitzflix

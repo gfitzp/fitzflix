@@ -18,11 +18,12 @@ from rq.registry import StartedJobRegistry
 from unidecode import unidecode
 
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import current_app, jsonify
+from flask import current_app, jsonify, render_template
 from flask_login import UserMixin
 from sqlalchemy.orm import joinedload
 
 from app import db, login
+from app.email import task_send_email as send_email
 
 
 movie_collections = db.Table(
@@ -193,14 +194,35 @@ class TMDBMixin(object):
                 tmdb_id = first_result.get("id")
 
         if tmdb_id:
-            r = requests.get(
-                tmdb_api_url + "/movie/" + str(tmdb_id),
-                params={
-                    "api_key": tmdb_api_key,
-                    "append_to_response": requested_info,
-                },
-            )
-            r.raise_for_status()
+            try:
+                r = requests.get(
+                    tmdb_api_url + "/movie/" + str(tmdb_id),
+                    params={
+                        "api_key": tmdb_api_key,
+                        "append_to_response": requested_info,
+                    },
+                )
+                r.raise_for_status()
+            except requests.exceptions.HTTPError:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - TMDb ID not found",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/nonexistent_tmdb_id_movie.txt",
+                        user=admin_user.email,
+                        movie=self,
+                        tmdb_id=tmdb_id,
+                    ),
+                    html_body=render_template(
+                        "email/nonexistent_tmdb_id_movie.html",
+                        user=admin_user.email,
+                        movie=self,
+                        tmdb_id=tmdb_id,
+                    ),
+                )
+                return self
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
             r = requests.get(
@@ -523,14 +545,35 @@ class TMDBMixin(object):
                 tmdb_id = first_result.get("id")
 
         if tmdb_id:
-            r = requests.get(
-                tmdb_api_url + "/tv/" + str(tmdb_id),
-                params={
-                    "api_key": tmdb_api_key,
-                    "append_to_response": requested_info,
-                },
-            )
-            r.raise_for_status()
+            try:
+                r = requests.get(
+                    tmdb_api_url + "/tv/" + str(tmdb_id),
+                    params={
+                        "api_key": tmdb_api_key,
+                        "append_to_response": requested_info,
+                    },
+                )
+                r.raise_for_status()
+            except requests.exceptions.HTTPError:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - TMDb ID not found",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/nonexistent_tmdb_id_tv.txt",
+                        user=admin_user.email,
+                        tv=self,
+                        tmdb_id=tmdb_id,
+                    ),
+                    html_body=render_template(
+                        "email/nonexistent_tmdb_id_tv.html",
+                        user=admin_user.email,
+                        tv=self,
+                        tmdb_id=tmdb_id,
+                    ),
+                )
+                return self
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
             r = requests.get(

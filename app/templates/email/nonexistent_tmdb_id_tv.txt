@@ -1,0 +1,9 @@
+Hello,
+
+TMDB ID {{ tmdb_id }} for "{{ tv.title }}" does not exist.
+
+Go here to fix it:
+
+{{ url_for("main.tv", series_id=tv.id, _external=True) }}
+
+- Fitzflix
