@@ -1159,6 +1159,8 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     criterion_quality_id = db.Column(db.Integer, db.ForeignKey("ref_quality.id"))
 
     shopping_list_exclude = db.Column(db.Boolean)
+    shopping_cart_add_date = db.Column(db.DateTime)
+    shopping_cart_priority = db.Column(db.Integer)
 
     custom_poster = db.Column(db.String(64))
 

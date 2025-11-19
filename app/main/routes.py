@@ -2528,6 +2528,12 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
+                    [(Movie.shopping_cart_priority == None, -1),],
+                    else_=(Movie.shopping_cart_priority),
+                ).desc(),
+                Movie.shopping_cart_priority.desc(),
+                Movie.shopping_cart_add_date.asc(),
+                db.case(
                     [
                         (Movie.shopping_list_exclude == True, -1),
                         (
@@ -2690,6 +2696,12 @@ def movie_shopping():
                 ),
             )
             .order_by(
+                db.case(
+                    [(Movie.shopping_cart_priority == None, -1),],
+                    else_=(Movie.shopping_cart_priority),
+                ).desc(),
+                Movie.shopping_cart_priority.desc(),
+                Movie.shopping_cart_add_date.asc(),
                 db.case(
                     [
                         (Movie.shopping_list_exclude == True, -1),
