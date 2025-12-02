@@ -22,7 +22,7 @@
 		<a class="dropdown-item" target="_blank" href="https://www.barnesandnoble.com/s/{{ title|urlencode }}/_/N-8qh" rel="noreferrer">Barnes & Noble</a>
 		<a class="dropdown-item" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ title|urlencode }}&yearfrom={{ year }}&yearto={{ year }}&submit=Search&action=search" rel="noreferrer">Blu-ray.com</a>
 		{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-			<a class="dropdown-item" target="_blank" href="https://www.criterion.com/search#stq={{ title|urlencode }}" rel="noreferrer">Criterion.com</a>
+			<a class="dropdown-item" target="_blank" href="https://www.criterion.com/search?q={{ title|urlencode }}" rel="noreferrer">Criterion.com</a>
 		{% endif %}
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
 		{% if radarr_proxy_url %}
