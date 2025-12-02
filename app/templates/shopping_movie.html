@@ -107,7 +107,7 @@
 				{% elif movie.criterion_spine_number or movie.criterion_set_title %}
 					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }} {{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }} Criterion Collection" rel="noreferrer">Find</a>
 				{% else %}
-					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&submit=Search&action=search" rel="noreferrer">Find</a>
+					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
 				{% endif %}
 				<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-toggle="dropdown" aria-expanded="false">
 					<span class="sr-only">Toggle dropdown</span>
@@ -219,7 +219,7 @@
 							{% if movie.criterion_spine_number or movie.criterion_set_title %}
 								<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.criterion.com/search?q={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}" rel="noreferrer">Find</a>
 							{% else %}
-								<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&submit=Search&action=search" rel="noreferrer">Find</a>
+								<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
 							{% endif %}
 							<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-toggle="dropdown" aria-expanded="false">
 								<span class="sr-only">Toggle dropdown</span>
