@@ -35,10 +35,15 @@ def add_to_cart():
     """Endpoint for adding movies to the shopping cart."""
 
     current_app.logger.info(
-        f"Authorization: {request.authorization}, Request: {request.get_json()}"
+        f"Authorization: *redacted*, Request: {request.get_json()}"
     )
     payload = request.get_json()
     response = jsonify({})
+
+    if not request.authorization:
+        response.status_code = 401
+        return response
+
     if request.authorization.get("username") and request.authorization.get("password"):
         # Check the user email and password to confirm if they're a valid user
 

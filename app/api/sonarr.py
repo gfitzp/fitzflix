@@ -19,10 +19,15 @@ def sonarr_add():
     """Endpoint for Sonarr to notify Fitzflix when a new video file is added."""
 
     current_app.logger.info(
-        f"Authorization: {request.authorization}, Request: {request.get_json()}"
+        f"Authorization: *redacted*, Request: {request.get_json()}"
     )
     payload = request.get_json()
     response = jsonify({})
+
+    if not request.authorization:
+        response.status_code = 401
+        return response
+
     if request.authorization.get("username") and request.authorization.get("password"):
         # Check the user email and password to confirm if they're a valid user
 
