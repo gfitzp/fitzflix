@@ -2528,17 +2528,10 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    [(Movie.shopping_cart_priority == None, -1),],
-                    else_=(Movie.shopping_cart_priority),
-                ).desc(),
-                Movie.shopping_cart_priority.desc(),
-                Movie.shopping_cart_add_date.asc(),
-                db.case(
                     [
                         (Movie.shopping_list_exclude == True, -1),
                         (
                             db.and_(
-                                criterion_release == True,
                                 db.or_(
                                     Movie.criterion_spine_number != None,
                                     Movie.criterion_set_title != None,
@@ -2549,23 +2542,51 @@ def movie_shopping():
                         ),
                         (
                             db.and_(
-                                criterion_release == True,
                                 db.or_(
                                     Movie.criterion_spine_number != None,
                                     Movie.criterion_set_title != None,
                                 ),
                                 Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == uhd_quality,
                             ),
-                            CriterionQuality.preference,
+                            1,
                         ),
-                        (File.fullscreen == True, -1),
-                        (RefQuality.preference < dvd_quality, -1),
-                        (RefQuality.preference < bluray_quality, -1),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == bluray_quality,
+                            ),
+                            1,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == dvd_quality,
+                            ),
+                            1,
+                        ),
+                        (File.fullscreen == True, 1),
+                        (RefQuality.preference < dvd_quality, 1),
+                        (RefQuality.preference < bluray_quality, 1),
                     ],
                     else_=(-1),
                 ).desc(),
                 db.case(
+                    [(Movie.shopping_cart_priority == None, -1),],
+                    else_=(Movie.shopping_cart_priority),
+                ).desc(),
+                Movie.shopping_cart_add_date.asc(),
+                db.case(
                     [
+                        (Movie.shopping_list_exclude == True, bluray_quality),
                         (
                             db.and_(
                                 criterion_release == True,
@@ -2576,7 +2597,7 @@ def movie_shopping():
                                 Movie.criterion_disc_owned == True,
                             ),
                             99,
-                        )
+                        ),
                     ],
                     else_=(RefQuality.preference),
                 ).asc(),
@@ -2697,17 +2718,10 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    [(Movie.shopping_cart_priority == None, -1),],
-                    else_=(Movie.shopping_cart_priority),
-                ).desc(),
-                Movie.shopping_cart_priority.desc(),
-                Movie.shopping_cart_add_date.asc(),
-                db.case(
                     [
                         (Movie.shopping_list_exclude == True, -1),
                         (
                             db.and_(
-                                criterion_release == True,
                                 db.or_(
                                     Movie.criterion_spine_number != None,
                                     Movie.criterion_set_title != None,
@@ -2718,21 +2732,48 @@ def movie_shopping():
                         ),
                         (
                             db.and_(
-                                criterion_release == True,
                                 db.or_(
                                     Movie.criterion_spine_number != None,
                                     Movie.criterion_set_title != None,
                                 ),
                                 Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == uhd_quality,
                             ),
-                            CriterionQuality.preference,
+                            1,
                         ),
-                        (File.fullscreen == True, -1),
-                        (RefQuality.preference < dvd_quality, -1),
-                        (RefQuality.preference < bluray_quality, -1),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == bluray_quality,
+                            ),
+                            1,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == dvd_quality,
+                            ),
+                            1,
+                        ),
+                        (File.fullscreen == True, 1),
+                        (RefQuality.preference < dvd_quality, 1),
+                        (RefQuality.preference < bluray_quality, 1),
                     ],
                     else_=(-1),
                 ).desc(),
+                db.case(
+                    [(Movie.shopping_cart_priority == None, -1),],
+                    else_=(Movie.shopping_cart_priority),
+                ).desc(),
+                Movie.shopping_cart_add_date.asc(),
                 db.case(
                     [
                         (Movie.shopping_list_exclude == True, bluray_quality),

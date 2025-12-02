@@ -55,20 +55,25 @@ def add_to_cart():
             return response
 
         response.status_code = 202
-    response = jsonify(request.get_json())
-    current_app.logger.info(f"Request: {request.get_json() or {}}")
+        response = jsonify(request.get_json())
+        current_app.logger.info(f"Request: {request.get_json() or {}}")
 
-    cart_item = Movie.query.filter_by(tmdb_id=int(payload["tmdb_id"])).first()
-    if not cart_item:
-        response.status_code = 500
+        cart_item = Movie.query.filter_by(tmdb_id=int(payload["tmdb_id"])).first()
+        if not cart_item:
+            response.status_code = 500
 
-    current_app.logger.info(cart_item)
+        current_app.logger.info(cart_item)
 
-    cart_item.shopping_cart_add_date = datetime.now(timezone.utc)
-    if cart_item.shopping_cart_priority is None:
-        cart_item.shopping_cart_priority = 1
+        cart_item.shopping_cart_add_date = datetime.now(timezone.utc)
+        if cart_item.shopping_cart_priority is None:
+            cart_item.shopping_cart_priority = 1
+        else:
+            cart_item.shopping_cart_priority = cart_item.shopping_cart_priority + 1
+        db.session.commit()
+
+        return response
+
     else:
-        cart_item.shopping_cart_priority = cart_item.shopping_cart_priority + 1
-    db.session.commit()
+        response.status_code = 401
 
     return response
