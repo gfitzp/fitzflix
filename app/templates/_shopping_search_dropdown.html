@@ -24,6 +24,7 @@
 		{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
 			<a class="dropdown-item" target="_blank" href="https://www.criterion.com/search?q={{ title|urlencode }}" rel="noreferrer">Criterion.com</a>
 		{% endif %}
+        <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
 		{% if radarr_proxy_url %}
 			<a class="dropdown-item" target="_blank" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}">Radarr</a>
@@ -34,6 +35,7 @@
 	<div class="dropdown-menu" aria-labelledby="dropdownMenuLink">
 		<a class="dropdown-item" target="_blank" href="https://www.amazon.com/s?k={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}{% if season %}{% if season.season and season.season > 0 %} Season {{ season.season }}{% endif %}{% endif %}&i=movies-tv" rel="noreferrer">Amazon</a>
 		<a class="dropdown-item" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on" rel="noreferrer">Blu-ray.com</a>
+        <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}{% if season %}{% if season.season and season.season > 0 %} Season {{ season.season }}{% endif %}{% endif %}{{ format|urlencode }}&_sop=15" rel="noreferrer">eBay</a>
 	</div>
 {% endif %}
