@@ -1379,10 +1379,22 @@ class File(db.Model, LibraryMixin):
 
     def delete_local_file(self, delete_directory_tree=False):
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
+        transcoded_file = os.path.join(current_app.config["TRANSCODES_DIR"], self.dirname, f"{self.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}")
         try:
             os.remove(file_to_delete)
 
         except FileNotFoundError:
+            pass
+
+        # Delete transcoded file if exists
+        try:
+            os.remove(transcoded_file)
+        except FileNotFoundError:
+            pass
+
+        try:
+            os.removedirs(os.path.dirname(transcoded_file))
+        except OSError:
             pass
 
         else:

@@ -75,7 +75,8 @@ class Config(object):
 
     # Transcoding configuration
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
-    HANDBRAKE_EXTENSION                 = os.environ.get("HANDBRAKE_EXTENSION") or "m4v"
+    HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or None
+    HANDBRAKE_EXTENSION                 = os.environ.get("HANDBRAKE_EXTENSION") or "mp4"
 
     # Sonarr configuration
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None

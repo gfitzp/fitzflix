@@ -2413,8 +2413,6 @@ def transcode_task(file_id):
             # Start transcoding process
 
             current_app.logger.info(f"'{file.plex_title}' Starting transcoding process")
-            handbrake_preset = current_app.config["HANDBRAKE_PRESET"]
-            ext = current_app.config["HANDBRAKE_EXTENSION"]
 
             # Determine output directories and files to be created
 
@@ -2423,19 +2421,37 @@ def transcode_task(file_id):
                 current_app.config["TRANSCODES_DIR"], file.dirname
             )
             hidden_output_file = os.path.join(
-                output_directory, f".{file.plex_title}.{ext}"
+                output_directory, f".{file.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}"
             )
             os.makedirs(output_directory, exist_ok=True)
 
+            if current_app.config["HANDBRAKE_PRESET_FILE"]:
+                preset_file = [
+                    "--preset-import-file",
+                    current_app.config["HANDBRAKE_PRESET_FILE"]
+                ]
+            else:
+                preset_file = []
+
             # Transcode the file with Handbrake
+
+            current_app.logger.info([
+                    current_app.config["HANDBRAKE_BIN"],
+                    ] + preset_file + [
+                    "--preset",
+                    current_app.config["HANDBRAKE_PRESET"],
+                    "-i",
+                    input_file,
+                    "-o",
+                    hidden_output_file,
+                ])
 
             transcode_process = subprocess.Popen(
                 [
                     current_app.config["HANDBRAKE_BIN"],
+                    ] + preset_file + [
                     "--preset",
-                    f"""{handbrake_preset}""",
-                    "--native-language",
-                    current_app.config["NATIVE_LANGUAGE"],
+                    current_app.config["HANDBRAKE_PRESET"],
                     "-i",
                     input_file,
                     "-o",
@@ -2461,7 +2477,7 @@ def transcode_task(file_id):
                     )
                     if job:
                         job.meta["description"] = (
-                            f"'{file.plex_title}' — Transcoding to .{current_app.config['HANDBRAKE_EXTENSION']} file"
+                            f"'{file.plex_title}' — Transcoding file"
                         )
                         if progress_match.group("this_task") == progress_match.group(
                             "total_tasks"
