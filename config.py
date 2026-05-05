@@ -39,7 +39,7 @@ class Config(object):
     SQLALCHEMY_TRACK_MODIFICATIONS      = os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS") is not None
 
     # Fitzflix directories
-    MEDIA_LOCATION                      = os.environ.get("MEDIA_LOCATION") or os.path.join(basedir, "..", "videos")
+    MEDIA_LOCATION                      = os.environ.get("MEDIA_LOCATION") or os.path.join(basedir, "..", "fitzflix")
     IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(MEDIA_LOCATION, "import")
     LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
     MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
