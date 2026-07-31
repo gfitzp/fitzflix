@@ -113,18 +113,32 @@ def sonarr_add():
             # No idea why, because the same code works perfectly fine on my local machine.
             # Using the urllib3 code below to make the API call instead.
 
-            http = urllib3.PoolManager()
-            http.request(
-                "POST",
-                current_app.config["SONARR_URL"] + "/api/command",
-                headers={
-                    "X-Api-Key": current_app.config["SONARR_API_KEY"],
-                    "Content-Type": "application/json",
-                },
-                body=json.dumps({"name": "RescanSeries", "seriesId": int(id)}).encode(
-                    "utf-8"
-                ),
-            )
+            # Don't let a failed rescan command prevent the import below; log
+            # the failure so a rejected command is no longer invisible
+
+            try:
+                http = urllib3.PoolManager()
+                r = http.request(
+                    "POST",
+                    current_app.config["SONARR_URL"] + "/api/command",
+                    headers={
+                        "X-Api-Key": current_app.config["SONARR_API_KEY"],
+                        "Content-Type": "application/json",
+                    },
+                    body=json.dumps(
+                        {"name": "RescanSeries", "seriesId": int(id)}
+                    ).encode("utf-8"),
+                )
+                if not 200 <= r.status < 300:
+                    current_app.logger.warning(
+                        f"Sonarr RescanSeries command returned HTTP {r.status}: "
+                        f"{r.data.decode('utf-8', 'replace')[:200]}"
+                    )
+
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Unable to send RescanSeries command to Sonarr: {e}"
+                )
 
         # Pass the file to Fitzflix for processing; tried copying the file to the import
         # directory for processing but if another file came in while it was copying
