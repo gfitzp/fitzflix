@@ -938,7 +938,7 @@ class User(UserMixin, db.Model):
             )["reset_password"]
         except:
             return
-        return User.query.get(id)
+        return db.session.get(User, id)
 
     def get_queue_details(self):
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
@@ -2018,4 +2018,4 @@ class TMDBSeason(db.Model, TMDBMixin):
 
 @login.user_loader
 def load_user(id):
-    return User.query.get(int(id))
+    return db.session.get(User, int(id))

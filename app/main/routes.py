@@ -134,7 +134,7 @@ def index():
             >= db.func.adddate(db.func.current_date(), -7)
         )
         .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-        .paginate(page, per_page=100, error_out=False)
+        .paginate(page=page, per_page=100, error_out=False)
     )
 
     next_url = (
@@ -224,15 +224,15 @@ def movie_library():
             .filter(MovieCast.credit_id == int(credit))
             .order_by(
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    (Movie.tmdb_title != None, Movie.tmdb_title), else_=Movie.title
                 ).asc(),
                 File.edition.asc(),
             )
-            .paginate(page, per_page=120, error_out=False)
+            .paginate(page=page, per_page=120, error_out=False)
         )
 
     elif q:
@@ -251,19 +251,19 @@ def movie_library():
             .order_by(
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
             )
-            .paginate(page, per_page=120, error_out=False)
+            .paginate(page=page, per_page=120, error_out=False)
         )
 
     elif int(quality) > 0:
@@ -279,19 +279,19 @@ def movie_library():
             .order_by(
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
             )
-            .paginate(page, per_page=120, error_out=False)
+            .paginate(page=page, per_page=120, error_out=False)
         )
 
     else:
@@ -306,19 +306,19 @@ def movie_library():
             .order_by(
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
             )
-            .paginate(page, per_page=120, error_out=False)
+            .paginate(page=page, per_page=120, error_out=False)
         )
 
     next_url = (
@@ -447,15 +447,15 @@ def criterion_collection():
             )
         )
         .order_by(
-            db.case([(Movie.criterion_spine_number != None, 1)], else_=0).desc(),
+            db.case((Movie.criterion_spine_number != None, 1), else_=0).desc(),
             Movie.criterion_spine_number.asc(),
             Movie.criterion_set_title.asc(),
             db.case(
-                [(Movie.tmdb_title != None, Movie.tmdb_release_date)], else_=Movie.year
+                (Movie.tmdb_title != None, Movie.tmdb_release_date), else_=Movie.year
             ).asc(),
             db.func.regexp_replace(
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_title)], else_=Movie.title
+                    (Movie.tmdb_title != None, Movie.tmdb_title), else_=Movie.title
                 ),
                 "^(The|A|An) ",
                 "",
@@ -897,7 +897,7 @@ def tv_library():
             .join(RefQuality, (RefQuality.preference == subquery.c.preference))
             .filter(subquery.c.series_id == series.id)
             .order_by(
-                db.case([(subquery.c.season == 0, 1)], else_=0).asc(),
+                db.case((subquery.c.season == 0, 1), else_=0).asc(),
                 subquery.c.season.asc(),
             )
             .all()
@@ -1199,7 +1199,7 @@ def file(file_id):
         best_file = (
             db.session.query(
                 File,
-                db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
+                db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
             )
             .join(file_rank, (file_rank.c.id == File.id))
             .filter(File.id == file_id)
@@ -1231,7 +1231,7 @@ def file(file_id):
         best_file = (
             db.session.query(
                 File,
-                db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
+                db.case((file_rank.c.rank == 1, 1), else_=0).label("rank"),
             )
             .join(file_rank, (file_rank.c.id == File.id))
             .filter(File.id == file_id)
@@ -1696,7 +1696,7 @@ def reviews():
             UserMovieReview.rating.desc(),
             Movie.title.asc(),
         )
-        .paginate(page, per_page=50, error_out=False)
+        .paginate(page=page, per_page=50, error_out=False)
     )
     next_url = (
         url_for("main.reviews", page=reviews.next_num) if reviews.has_next else None
@@ -2135,7 +2135,7 @@ def movie_shopping():
                 db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2
             ).label("whole_stars"),
             db.case(
-                [
+                
                     (
                         db.func.mod(
                             (
@@ -2147,7 +2147,6 @@ def movie_shopping():
                         == 0,
                         0,
                     ),
-                ],
                 else_=(1),
             ).label("half_stars"),
         )
@@ -2195,7 +2194,7 @@ def movie_shopping():
                     rating.c.whole_stars,
                     rating.c.half_stars,
                     db.case(
-                        [
+                        
                             (Movie.shopping_list_exclude == True, "Already owned"),
                             (
                                 db.and_(
@@ -2262,7 +2261,6 @@ def movie_shopping():
                                 "Buy on DVD or Blu-Ray",
                             ),
                             (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                        ],
                         else_=("Already owned"),
                     ).label("instruction"),
                 )
@@ -2290,7 +2288,7 @@ def movie_shopping():
                     RefQuality.preference.asc(),
                     File.date_added.asc(),
                 )
-                .paginate(page, per_page=100, error_out=False)
+                .paginate(page=page, per_page=100, error_out=False)
             )
 
         else:
@@ -2305,7 +2303,7 @@ def movie_shopping():
                     rating.c.whole_stars,
                     rating.c.half_stars,
                     db.case(
-                        [
+                        
                             (Movie.shopping_list_exclude == True, "Already owned"),
                             (
                                 db.and_(
@@ -2372,7 +2370,6 @@ def movie_shopping():
                                 "Buy on DVD or Blu-Ray",
                             ),
                             (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                        ],
                         else_=("Already owned"),
                     ).label("instruction"),
                 )
@@ -2404,7 +2401,7 @@ def movie_shopping():
                     RefQuality.preference.asc(),
                     File.date_added.asc(),
                 )
-                .paginate(page, per_page=100, error_out=False)
+                .paginate(page=page, per_page=100, error_out=False)
             )
 
     elif media == "digital":
@@ -2434,7 +2431,7 @@ def movie_shopping():
                 rating.c.whole_stars,
                 rating.c.half_stars,
                 db.case(
-                    [
+                    
                         (Movie.shopping_list_exclude == True, "Already owned"),
                         (
                             db.and_(
@@ -2498,7 +2495,6 @@ def movie_shopping():
                         (File.fullscreen == True, "Buy any non-fullscreen release"),
                         (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
                         (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                    ],
                     else_=("Already owned"),
                 ).label("instruction"),
             )
@@ -2533,7 +2529,7 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, -1),
                         (Movie.shopping_list_exclude == True, -1),
                         (RefQuality.preference < bluray_quality, 1),
@@ -2550,11 +2546,10 @@ def movie_shopping():
                             ),
                             1,
                         ),
-                    ],
                     else_=(-1),
                 ).desc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 0),
                         (
                             db.and_(
@@ -2579,11 +2574,10 @@ def movie_shopping():
                             ),
                             Movie.shopping_cart_priority,
                         ),
-                    ],
                     else_=(0),
                 ).desc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 99),
                         (
                             db.and_(
@@ -2608,11 +2602,10 @@ def movie_shopping():
                             ),
                             RefQuality.preference,
                         ),
-                    ],
                     else_=(99),
                 ).asc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 0),
                         (
                             db.and_(
@@ -2637,7 +2630,6 @@ def movie_shopping():
                             ),
                             Movie.shopping_cart_add_date,
                         ),
-                    ],
                     else_=(0),
                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
@@ -2645,7 +2637,7 @@ def movie_shopping():
                 File.edition.asc(),
                 File.date_added.asc(),
             )
-            .paginate(page, per_page=100, error_out=False)
+            .paginate(page=page, per_page=100, error_out=False)
         )
 
     else:
@@ -2659,7 +2651,7 @@ def movie_shopping():
                 rating.c.whole_stars,
                 rating.c.half_stars,
                 db.case(
-                    [
+                    
                         (Movie.shopping_list_exclude == True, "Already owned"),
                         (
                             db.and_(
@@ -2723,7 +2715,6 @@ def movie_shopping():
                         (File.fullscreen == True, "Buy any non-fullscreen release"),
                         (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
                         (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                    ],
                     else_=("Already owned"),
                 ).label("instruction"),
             )
@@ -2757,7 +2748,7 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, -1),
                         (Movie.shopping_list_exclude == True, -1),
                         (RefQuality.preference < bluray_quality, 1),
@@ -2774,11 +2765,10 @@ def movie_shopping():
                             ),
                             1,
                         ),
-                    ],
                     else_=(-1),
                 ).desc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 0),
                         (
                             db.and_(
@@ -2803,11 +2793,10 @@ def movie_shopping():
                             ),
                             Movie.shopping_cart_priority,
                         ),
-                    ],
                     else_=(0),
                 ).desc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 99),
                         (
                             db.and_(
@@ -2832,11 +2821,10 @@ def movie_shopping():
                             ),
                             RefQuality.preference,
                         ),
-                    ],
                     else_=(99),
                 ).asc(),
                 db.case(
-                    [
+                    
                         (Movie.criterion_disc_owned == True, 0),
                         (
                             db.and_(
@@ -2861,7 +2849,6 @@ def movie_shopping():
                             ),
                             Movie.shopping_cart_add_date,
                         ),
-                    ],
                     else_=(0),
                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
@@ -2869,7 +2856,7 @@ def movie_shopping():
                 File.edition.asc(),
                 File.date_added.asc(),
             )
-            .paginate(page, per_page=100, error_out=False)
+            .paginate(page=page, per_page=100, error_out=False)
         )
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
@@ -3115,10 +3102,9 @@ def tv_shopping():
                 subquery.c.episodes,
                 RefQuality.quality_title,
                 db.case(
-                    [
+                    
                         (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
                         (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                    ],
                     else_="Already owned",
                 ).label("instruction"),
             )
@@ -3127,7 +3113,7 @@ def tv_shopping():
             .filter(RefQuality.preference >= min_preference)
             .filter(RefQuality.preference <= max_preference)
             .order_by(
-                db.case([(subquery.c.season == 0, 1)], else_=0).asc(),
+                db.case((subquery.c.season == 0, 1), else_=0).asc(),
                 subquery.c.season.asc(),
             )
             .all()
@@ -3271,7 +3257,7 @@ def files():
                 Movie,
                 TVSeries,
                 db.case(
-                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                 ).label("rank"),
             )
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -3286,21 +3272,21 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
-                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        (TVSeries.tmdb_name != None, TVSeries.tmdb_name),
                         else_=TVSeries.title,
                     ),
                     "^(The|A|An) ",
@@ -3312,7 +3298,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, per_page=1000, error_out=False)
+            .paginate(page=page, per_page=1000, error_out=False)
         )
 
     elif q:
@@ -3326,7 +3312,7 @@ def files():
                 Movie,
                 TVSeries,
                 db.case(
-                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                 ).label("rank"),
             )
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -3340,21 +3326,21 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
-                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        (TVSeries.tmdb_name != None, TVSeries.tmdb_name),
                         else_=TVSeries.title,
                     ),
                     "^(The|A|An) ",
@@ -3366,7 +3352,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, per_page=1000, error_out=False)
+            .paginate(page=page, per_page=1000, error_out=False)
         )
 
     elif int(quality) > 0:
@@ -3380,7 +3366,7 @@ def files():
                 Movie,
                 TVSeries,
                 db.case(
-                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                 ).label("rank"),
             )
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -3394,21 +3380,21 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
-                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        (TVSeries.tmdb_name != None, TVSeries.tmdb_name),
                         else_=TVSeries.title,
                     ),
                     "^(The|A|An) ",
@@ -3420,7 +3406,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, per_page=1000, error_out=False)
+            .paginate(page=page, per_page=1000, error_out=False)
         )
 
     elif audio == "lossy":
@@ -3433,7 +3419,7 @@ def files():
                 Movie,
                 TVSeries,
                 db.case(
-                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                 ).label("rank"),
             )
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -3448,21 +3434,21 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
-                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        (TVSeries.tmdb_name != None, TVSeries.tmdb_name),
                         else_=TVSeries.title,
                     ),
                     "^(The|A|An) ",
@@ -3474,7 +3460,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, per_page=1000, error_out=False)
+            .paginate(page=page, per_page=1000, error_out=False)
         )
 
     else:
@@ -3487,7 +3473,7 @@ def files():
                 Movie,
                 TVSeries,
                 db.case(
-                    [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                    (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                 ).label("rank"),
             )
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -3500,21 +3486,21 @@ def files():
                 File.media_library,
                 db.func.regexp_replace(
                     db.case(
-                        [(Movie.tmdb_title != None, Movie.tmdb_title)],
+                        (Movie.tmdb_title != None, Movie.tmdb_title),
                         else_=Movie.title,
                     ),
                     "^(The|A|An) ",
                     "",
                 ).asc(),
                 db.case(
-                    [(Movie.tmdb_title != None, Movie.tmdb_release_date)],
+                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
                     else_=Movie.year,
                 ).asc(),
                 File.edition.asc(),
                 RefFeatureType.feature_type.asc(),
                 db.func.regexp_replace(
                     db.case(
-                        [(TVSeries.tmdb_name != None, TVSeries.tmdb_name)],
+                        (TVSeries.tmdb_name != None, TVSeries.tmdb_name),
                         else_=TVSeries.title,
                     ),
                     "^(The|A|An) ",
@@ -3526,7 +3512,7 @@ def files():
                 RefQuality.preference.asc(),
                 File.basename.asc(),
             )
-            .paginate(page, per_page=1000, error_out=False)
+            .paginate(page=page, per_page=1000, error_out=False)
         )
 
     next_url = (

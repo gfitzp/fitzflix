@@ -2034,7 +2034,7 @@ def sync_aws_s3_storage_task():
                 db.session.query(
                     File,
                     db.case(
-                        [(movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1)], else_=0
+                        (movie_rank.c.rank == 1, 1), (tv_rank.c.rank == 1, 1), else_=0
                     ).label("rank"),
                 )
                 .join(RefQuality, (RefQuality.id == File.quality_id))
