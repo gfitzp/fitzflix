@@ -819,49 +819,50 @@ def finalize_localization(file_path, file_details, lock):
             # Put the final touches on the output file and move it into place
 
             if file_details.get("container") == "Matroska":
-                # Set the first audio track as default
-                # TODO: set all other audio tracks as flag-default=0
+                # Set the first audio track as the only default audio track
 
                 if len(output_audio_tracks) >= 1:
                     current_app.logger.info(
                         f"'{os.path.basename(hidden_output_file)}' "
-                        f"Setting the first audio track as default"
+                        f"Setting the first audio track as the only default"
                     )
+
+                    audio_flag_args = [
+                        "--edit",
+                        "track:a1",
+                        "--set",
+                        "flag-default=1",
+                    ]
+
                     if output_audio_tracks[0].get("language") == "und":
-                        mkvpropedit_process = subprocess.Popen(
-                            [
-                                current_app.config["MKVPROPEDIT_BIN"],
-                                hidden_output_file,
-                                "--edit",
-                                "track:a1",
-                                "--set",
-                                "flag-default=1",
-                                "--edit",
-                                "track:a1",
-                                "--set",
-                                "language=und",
-                            ],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            universal_newlines=True,
-                            bufsize=1,
+                        audio_flag_args.extend(
+                            ["--edit", "track:a1", "--set", "language=und"]
                         )
 
-                    else:
-                        mkvpropedit_process = subprocess.Popen(
+                    # Clear the default flag from every other audio track, so
+                    # players don't choose between multiple defaults unpredictably
+
+                    for track_number in range(2, len(output_audio_tracks) + 1):
+                        audio_flag_args.extend(
                             [
-                                current_app.config["MKVPROPEDIT_BIN"],
-                                hidden_output_file,
                                 "--edit",
-                                "track:a1",
+                                f"track:a{track_number}",
                                 "--set",
-                                "flag-default=1",
-                            ],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            universal_newlines=True,
-                            bufsize=1,
+                                "flag-default=0",
+                            ]
                         )
+
+                    mkvpropedit_process = subprocess.Popen(
+                        [
+                            current_app.config["MKVPROPEDIT_BIN"],
+                            hidden_output_file,
+                        ]
+                        + audio_flag_args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
 
                     for line in mkvpropedit_process.stdout:
                         line = line.replace("\n", "")
