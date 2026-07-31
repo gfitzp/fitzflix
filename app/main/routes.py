@@ -853,6 +853,25 @@ def tv_library():
     # Subquery to get the number of episodes we have for in each season,
     # and the worst quality for each season
 
+    ranked_files = (
+        db.session.query(
+            File.id,
+            db.func.row_number()
+            .over(
+                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
+                order_by=(
+                    File.fullscreen.asc(),
+                    RefQuality.preference.desc(),
+                    File.last_episode.desc(),
+                ),
+            )
+            .label("rank"),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
     subquery = (
         db.session.query(
             File.series_id,
@@ -862,6 +881,8 @@ def tv_library():
         )
         .group_by(File.series_id, File.season)
         .join(RefQuality, (RefQuality.id == File.quality_id))
+        .join(ranked_files, (ranked_files.c.id == File.id))
+        .filter(ranked_files.c.rank == 1)
         .subquery()
     )
 
