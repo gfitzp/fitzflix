@@ -3340,7 +3340,11 @@ def evaluate_filename(file_path, tmdb_id=None):
             tmdb_result = r.json()
 
         if tmdb_result:
-            tmdb_results = tmdb_result.get("results")
+            if tmdb_id:
+                # /movie/<id> returns the movie object itself, not a results array
+                tmdb_results = [tmdb_result] if tmdb_result.get("id") else None
+            else:
+                tmdb_results = tmdb_result.get("results")
             if tmdb_results:
                 current_app.logger.info(tmdb_results)
                 tmdb_film = tmdb_results[0]
