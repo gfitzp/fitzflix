@@ -95,8 +95,8 @@ class DownloadProgressPercentage(object):
 
     def __init__(self, client, bucket, key, basename):
         self._file_path = basename
-        app.logger.info(client.head_object(Bucket=bucket, Key=key).get("ContentLength"))
         self._size = client.head_object(Bucket=bucket, Key=key).get("ContentLength", 0)
+        app.logger.info(f"'{basename}' Download size: {self._size} bytes")
         self._seen_so_far = 0
         self._lock = threading.Lock()
         self._job = rq.get_current_job()
