@@ -1395,7 +1395,9 @@ def track_metadata_scan(file_id):
         file = File.query.filter_by(id=file_id).first()
         file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         if not os.path.isfile(file_path):
-            raise
+            raise FileNotFoundError(
+                f"'{file_path}' does not exist, cannot scan track metadata"
+            )
 
         # Clear metadata for existing File record
 
