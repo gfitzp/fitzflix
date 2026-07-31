@@ -1901,7 +1901,7 @@ class TVCrew(db.Model):
     __table_args__ = (db.UniqueConstraint("tv_id", "credit_id", "department", "job"),)
 
     def __repr__(self):
-        return f"TVCrew '{self.tv_id}:{self.credit_id}:{self.job}'>"
+        return f"<TVCrew '{self.tv_id}:{self.credit_id}:{self.job}'>"
 
 
 class TMDBGenre(db.Model, TMDBMixin):
