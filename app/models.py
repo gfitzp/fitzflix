@@ -645,8 +645,8 @@ class TMDBMixin(object):
 
             self.tmdb_name = tmdb_info.get("name")
             if tmdb_info.get("status") == "Ended":
-                self.tmdb_number_of_episodes = tmdb_info.get("number_of_seasons")
-                self.tmdb_number_of_seasons = tmdb_info.get("number_of_episodes")
+                self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
+                self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
 
             self.tmdb_original_language = tmdb_info.get("original_language")
             self.tmdb_original_name = tmdb_info.get("original_name")
