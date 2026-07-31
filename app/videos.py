@@ -1292,15 +1292,23 @@ def manual_import_task():
                 .all()
             )
             qualities = [quality_title for (quality_title,) in qualities]
+
+            # A filename can contain more than one quality string; track the
+            # files already handled so each is only enqueued once per scan
+
+            handled_basenames = set()
+
             for quality_title in qualities:
                 for file in import_directory_files:
                     if (
                         (not os.path.basename(file).startswith("."))
                         and f"[{quality_title}]" in file
+                        and os.path.basename(file) not in handled_basenames
                         and os.path.isfile(
                             os.path.join(current_app.config["IMPORT_DIR"], file)
                         )
                     ):
+                        handled_basenames.add(os.path.basename(file))
                         lock = current_app.lock_manager.lock(
                             os.path.basename(file), 1000
                         )
@@ -4405,6 +4413,8 @@ def sanitize_string(
 ):
     """Remove or replace bad characters in a string and convert it to ASCII."""
 
+    original_string = string
+
     # Default set of bad/good character mapping is based on Sonarr's character replacement
     # https://github.com/Sonarr/Sonarr/blob/phantom-develop/src/NzbDrone.Core/Organizer/FileNameBuilder.cs#L329
 
@@ -4446,6 +4456,15 @@ def sanitize_string(
     # (startswith instead of string[0] so a fully-stripped empty string doesn't crash)
     if string.startswith("."):
         string = string[1:]
+
+    # Fail loudly rather than let an empty name flow into file or S3 key
+    # construction, where it would build degenerate paths
+
+    if not string:
+        raise ValueError(
+            f"'{original_string}' sanitizes to an empty string, so it can't be "
+            f"used in a file or key name"
+        )
 
     return string
 
