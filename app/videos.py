@@ -1531,6 +1531,13 @@ def mkvpropedit_task(
                 f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
             )
 
+            # The web form sends track ids as strings; mkvmerge_task sends ints.
+            # Normalize once so every comparison below compares like with like.
+
+            default_audio_track = str(default_audio_track)
+            if default_subtitle_track is not None:
+                default_subtitle_track = str(default_subtitle_track)
+
             audio_track_arguments = []
             subtitle_track_arguments = []
 
