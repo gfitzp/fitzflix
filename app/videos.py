@@ -859,6 +859,7 @@ def finalize_localization(file_path, file_details, lock):
                 for track in media_info.tracks:
                     if (
                         track.track_type == "General"
+                        and track.writing_application
                         and "MakeMKV" in track.writing_application
                     ):
                         native_language = iso_639_3_native_language()
