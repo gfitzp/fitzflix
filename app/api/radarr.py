@@ -111,7 +111,7 @@ def radarr_add():
                     "X-Api-Key": current_app.config["RADARR_API_KEY"],
                     "Content-Type": "application/json",
                 },
-                body=json.dumps({"name": "RefreshMovie", "movieIds": int(id)}).encode(
+                body=json.dumps({"name": "RefreshMovie", "movieIds": [int(id)]}).encode(
                     "utf-8"
                 ),
             )
