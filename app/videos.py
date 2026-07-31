@@ -76,7 +76,12 @@ class UploadProgressPercentage(object):
     def __call__(self, bytes_amount):
         with self._lock:
             self._seen_so_far += bytes_amount
-            progress = int((self._seen_so_far / self._size) * 100)
+
+            # Report a zero-byte file as already complete rather than divide by zero
+
+            progress = (
+                int((self._seen_so_far / self._size) * 100) if self._size else 100
+            )
             app.logger.info(
                 f"'{os.path.basename(self._file_path)}' Uploading to AWS: {progress}%"
             )
@@ -102,7 +107,12 @@ class DownloadProgressPercentage(object):
     def __call__(self, bytes_amount):
         with self._lock:
             self._seen_so_far += bytes_amount
-            progress = int((self._seen_so_far / self._size) * 100)
+
+            # Report a zero-byte object as already complete rather than divide by zero
+
+            progress = (
+                int((self._seen_so_far / self._size) * 100) if self._size else 100
+            )
             app.logger.info(
                 f"'{os.path.basename(self._file_path)}' Downloading from AWS: {progress}%"
             )
