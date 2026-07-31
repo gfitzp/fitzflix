@@ -1807,7 +1807,10 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
                 track for track in media_info.tracks if track.track_id is not None
             ]
 
-            current_app.logger.info("MediaInfo tracks: ", tracks)
+            current_app.logger.info(
+                f"MediaInfo tracks: "
+                f"{[(track.track_type, track.track_id, track.streamorder) for track in tracks]}"
+            )
 
             for i, track in enumerate(tracks):
                 if track.track_type == "Audio" and audio_start == None:
