@@ -2778,7 +2778,7 @@ def movie_shopping():
         movie = Movie.query.filter_by(
             id=int(movie_shopping_exclude_form.movie_id.data)
         ).first()
-        movie.shopping_list_exclude = 1
+        movie.shopping_list_exclude = None
         db.session.commit()
         flash(f"Added '{movie.title}' to the shopping list")
         return redirect(
