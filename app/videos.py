@@ -3595,7 +3595,7 @@ def get_audio_tracks_from_file(file_path):
                 else None
             )
             audio_track["bitrate_kbps"] = (
-                round(track.to_data().get("bit_rate") / 1000)
+                round(int(track.to_data().get("bit_rate")) / 1000)
                 if str(track.to_data().get("bit_rate", "")).isdigit()
                 else None
             )
@@ -3610,7 +3610,7 @@ def get_audio_tracks_from_file(file_path):
                 else None
             )
             audio_track["sampling_rate_khz"] = (
-                int(track.to_data().get("sampling_rate") / 1000)
+                int(int(track.to_data().get("sampling_rate")) / 1000)
                 if str(track.to_data().get("sampling_rate", "")).isdigit()
                 else None
             )
