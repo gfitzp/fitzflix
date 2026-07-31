@@ -5,6 +5,7 @@ import math
 import os
 import secrets
 import shutil
+import traceback
 
 from datetime import datetime, timezone
 from PIL import Image, ImageOps
@@ -769,8 +770,8 @@ def movie(movie_id):
             movie.custom_poster = poster_filename
             db.session.commit()
 
-        except:
-            raise
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
             db.session.rollback()
             flash(f"Unable to assign a custom poster to '{title}'!", "danger")
             return redirect(url_for("main.movie", movie_id=movie.id))
@@ -1651,8 +1652,8 @@ def file(file_id):
             file.custom_poster = poster_filename
             db.session.commit()
 
-        except:
-            raise
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
             db.session.rollback()
             flash(f"Unable to assign a custom poster to '{file.basename}'!", "danger")
             return redirect(url_for("main.file", file_id=file.id))
