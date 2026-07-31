@@ -3578,12 +3578,13 @@ def get_audio_tracks_from_file(file_path):
                 else None
             )
 
-            # Change track channel layout to include LFE track if present
+            # Change track channel layout to include LFE track if present;
+            # leave as None if MediaInfo didn't report a usable channel count
             if audio_track["channels"] and "LFE" in track.to_data().get(
                 "channel_layout", ""
             ):
                 audio_track["channels"] = str(audio_track["channels"] - 1 + 0.1)
-            else:
+            elif audio_track["channels"] is not None:
                 audio_track["channels"] = str(audio_track["channels"] * 1.0)
 
             audio_track["default"] = (
