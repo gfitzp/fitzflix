@@ -708,7 +708,7 @@ def movie(movie_id):
                 return redirect(url_for("main.movie", movie_id=movie.id))
 
             with Image.open(uploaded_data) as f:
-                current_app.logger.info(f.format)
+                current_app.logger.info(f"Uploaded poster format: {f.format}")
                 if f.format not in ["JPEG", "PNG"]:
                     flash(f"'{f.format}' is not an appropriate file type!", "danger")
                     return redirect(url_for("main.movie", movie_id=movie.id))
@@ -1571,7 +1571,7 @@ def file(file_id):
                 return redirect(url_for("main.file", file_id=file.id))
 
             with Image.open(uploaded_data) as f:
-                current_app.logger.info(f.format)
+                current_app.logger.info(f"Uploaded poster format: {f.format}")
                 if f.format not in ["JPEG", "PNG"]:
                     flash(f"'{f.format}' is not an appropriate file type!", "danger")
                     return redirect(url_for("main.file", file_id=file.id))

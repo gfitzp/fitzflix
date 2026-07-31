@@ -45,7 +45,6 @@ def radarr_add():
             return response
 
         response = jsonify(request.get_json())
-        current_app.logger.info(f"Request: {request.get_json() or {}}")
         downloaded_file_path = os.path.join(
             payload["movie"].get("folderPath"),
             payload["movieFile"].get("relativePath"),

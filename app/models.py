@@ -772,7 +772,6 @@ class TMDBMixin(object):
         tmdb_api_url = "https://api.themoviedb.org/3"
         current_app.logger.info(f"{self} Downloading images")
         base_dir = os.path.abspath(os.path.dirname(__file__))
-        # current_app.logger.info(image_types)
         for type in image_types:
             if "backdrop" in type and hasattr(self, "tmdb_backdrop_path"):
                 if self.tmdb_backdrop_path:
@@ -870,7 +869,6 @@ class TMDBMixin(object):
     @staticmethod
     def download_tmdb_image(image_url, destination_directory):
         file_name = os.path.basename(urlparse(image_url).path)
-        # current_app.logger.info(f"Downloading '{image_url}'")
         r = requests.get(image_url)
         with open(os.path.join(destination_directory, file_name), "wb") as f:
             f.write(r.content)

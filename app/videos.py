@@ -163,7 +163,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 return False
 
             file_details = evaluate_filename(file_path)
-            current_app.logger.info(file_details)
+            current_app.logger.info(f"'{basename}' File details: {file_details}")
             if not file_details:
                 current_app.logger.error(
                     f"'{basename}' doesn't match expected naming formats!"
@@ -1401,7 +1401,7 @@ def track_metadata_scan(file_id):
         FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
         media_info = MediaInfo.parse(file_path)
-        current_app.logger.info(
+        current_app.logger.debug(
             f"'{os.path.basename(file_path)}' -> {media_info.to_json()}"
         )
 
@@ -1616,7 +1616,7 @@ def mkvpropedit_task(
                 )
                 for line in mkvpropedit_task.stdout:
                     line = line.replace("\n", "")
-                    current_app.logger.info(line)
+                    current_app.logger.info(f"'{file.basename}' {line}")
 
                 wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 
@@ -1680,7 +1680,9 @@ def mkvpropedit_task(
                         file_path,
                     ]
 
-                    current_app.logger.info(command)
+                    current_app.logger.info(
+                        f"'{file.basename}' Running mkvmerge: {command}"
+                    )
 
                     mkvmerge_process = subprocess.Popen(
                         command,
@@ -1818,23 +1820,19 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
                 if track.track_type == "Text" and subtitle_start == None:
                     subtitle_start = i
 
-            current_app.logger.info(f"Audio tracks: ")
-            current_app.logger.info(audio_tracks)
-            current_app.logger.info("Subtitle tracks: ")
-            current_app.logger.info(subtitle_tracks)
+            current_app.logger.info(f"Audio tracks: {audio_tracks}")
+            current_app.logger.info(f"Subtitle tracks: {subtitle_tracks}")
 
-            current_app.logger.info(f"First audio track: {str(audio_start)}")
-            current_app.logger.info(f"First subtitle track: {str(subtitle_start)}")
+            current_app.logger.info(f"First audio track: {audio_start}")
+            current_app.logger.info(f"First subtitle track: {subtitle_start}")
 
             audio_tracks = [audio_start + int(track) - 1 for track in audio_tracks]
             subtitle_tracks = [
                 subtitle_start + int(track) - 1 for track in subtitle_tracks
             ]
 
-            current_app.logger.info("Modified audio tracks: ")
-            current_app.logger.info(audio_tracks)
-            current_app.logger.info("Modified subtitle tracks: ")
-            current_app.logger.info(subtitle_tracks)
+            current_app.logger.info(f"Modified audio tracks: {audio_tracks}")
+            current_app.logger.info(f"Modified subtitle tracks: {subtitle_tracks}")
 
             command = [
                 current_app.config["MKVMERGE_BIN"],
@@ -1860,7 +1858,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
             command.append(file_path)
 
-            current_app.logger.info(command)
+            current_app.logger.info(f"'{file.basename}' Running mkvmerge: {command}")
 
             mkvmerge_process = subprocess.Popen(
                 command,
@@ -2037,7 +2035,7 @@ def sync_aws_s3_storage_task():
                 .all()
             )
 
-            current_app.logger.info(files)
+            current_app.logger.info(f"Evaluating {len(files)} files for S3 sync")
 
             inventory_export = []
             orphaned_files = []
@@ -2809,10 +2807,12 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                             QueueUrl=current_app.config["AWS_SQS_URL"],
                             ReceiptHandle=sqs_receipt_handle,
                         )
-                        current_app.logger.info(response)
+                        current_app.logger.debug(
+                            f"SQS delete_message response: {response}"
+                        )
 
                     except:
-                        current_app.logger.warn(
+                        current_app.logger.warning(
                             f"Unable to delete message '{sqs_receipt_handle}' from SQS"
                         )
                         return False
@@ -2845,10 +2845,12 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                         QueueUrl=current_app.config["AWS_SQS_URL"],
                         ReceiptHandle=sqs_receipt_handle,
                     )
-                    current_app.logger.info(response)
+                    current_app.logger.debug(
+                        f"SQS delete_message response: {response}"
+                    )
 
                 except:
-                    current_app.logger.warn(
+                    current_app.logger.warning(
                         f"Unable to delete message '{sqs_receipt_handle}' from SQS"
                     )
                     return False
@@ -2940,8 +2942,6 @@ def aws_restore(key, days=1, tier="Standard"):
                     Bucket=current_app.config["AWS_BUCKET"], Key=key
                 )
 
-                # current_app.logger.info(head_response)
-
                 if contents[0].get(
                     "StorageClass"
                 ) == "STANDARD" or 'ongoing-request="false"' in head_response.get(
@@ -2971,7 +2971,6 @@ def aws_restore(key, days=1, tier="Standard"):
                     current_app.logger.info(
                         f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
                     )
-                    # current_app.logger.info(response)
 
             else:
                 current_app.logger.warning(
@@ -3112,8 +3111,8 @@ def aws_upload(
         except boto3.exceptions.S3UploadFailedError as e:
             retry = retry - 1
             if "BadDigest" in str(e):
-                current_app.logger.warn(e)
-                current_app.logger.warn(
+                current_app.logger.warning(e)
+                current_app.logger.warning(
                     f"'{file_path}' Retrying upload, "
                     f"this is retry {MAX_RETRY_COUNT - retry} out of {MAX_RETRY_COUNT}"
                 )
@@ -3365,7 +3364,7 @@ def evaluate_filename(file_path, tmdb_id=None):
             else:
                 tmdb_results = tmdb_result.get("results")
             if tmdb_results:
-                current_app.logger.info(tmdb_results)
+                current_app.logger.debug(f"TMDB results: {tmdb_results}")
                 tmdb_film = tmdb_results[0]
 
                 # See if we already have this tmdb_id in the database
@@ -3376,7 +3375,7 @@ def evaluate_filename(file_path, tmdb_id=None):
                     .first()
                 )
 
-                current_app.logger.info(m)
+                current_app.logger.info(f"Existing movie with this TMDB id: {m}")
 
                 # If so, use the existing film title and year instead of what we parsed
 
@@ -3959,7 +3958,7 @@ def remove_empty_subtitle_tracks(file_path):
         command.append("--no-subtitles")
 
     command.append(file_path)
-    current_app.logger.info(command)
+    current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
 
     mkvmerge_process = subprocess.Popen(
         command,
@@ -4215,7 +4214,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         )
                     else:
                         file_details = evaluate_filename(f.untouched_basename)
-                    # current_app.logger.info(file_details)
 
                     os.makedirs(
                         os.path.join(
@@ -4499,7 +4497,9 @@ def lossless_to_flac(file_path, file_id=None):
 
                     # Convert the file duration from milliseconds to seconds
                     file_duration = int(track.duration) / 1000
-                    current_app.logger.info(file_duration)
+                    current_app.logger.info(
+                        f"'{basename}' Duration: {file_duration}s"
+                    )
 
             if len(audio_tracks) > 0 and quality.physical_media == False:
                 audio_map = []
@@ -4602,7 +4602,7 @@ def lossless_to_flac(file_path, file_id=None):
                         track_metadata_scan_task(file_id)
 
                 elif file_details.get("container") != "Matroska":
-                    current_app.logger.warn(
+                    current_app.logger.warning(
                         f"'{basename}' Unable to convert lossless tracks as is not a MKV file!"
                     )
                     return False

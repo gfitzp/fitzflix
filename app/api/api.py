@@ -59,14 +59,13 @@ def add_to_cart():
 
         response = jsonify(request.get_json())
         response.status_code = 202
-        current_app.logger.info(f"Request: {request.get_json() or {}}")
 
         cart_item = Movie.query.filter_by(tmdb_id=int(payload["tmdb_id"])).first()
         if not cart_item:
             response.status_code = 500
             return response
 
-        current_app.logger.info(cart_item)
+        current_app.logger.info(f"Adding to shopping cart: {cart_item}")
 
         cart_item.shopping_cart_add_date = datetime.now(timezone.utc)
         if cart_item.shopping_cart_priority is None:

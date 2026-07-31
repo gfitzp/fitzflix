@@ -136,4 +136,4 @@ def register(app):
             job_timeout="2h",
             description=f"Polling AWS SQS for files to download",
         )
-        app.logger.info(f"Polling AWS SQS for files to download")
+        app.logger.info("Polling AWS SQS for files to download")
