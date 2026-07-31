@@ -30,9 +30,7 @@ def queue_details():
 def add_to_cart():
     """Endpoint for adding movies to the shopping cart."""
 
-    current_app.logger.info(
-        f"Authorization: *redacted*, Request: {request.get_json()}"
-    )
+    current_app.logger.info(f"Authorization: *redacted*, Request: {request.get_json()}")
     payload = request.get_json()
     response = jsonify({})
 

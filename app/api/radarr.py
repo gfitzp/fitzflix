@@ -14,9 +14,7 @@ from app.models import User
 def radarr_add():
     """Endpoint for Radarr to notify Fitzflix when a new video file is added."""
 
-    current_app.logger.info(
-        f"Authorization: *redacted*, Request: {request.get_json()}"
-    )
+    current_app.logger.info(f"Authorization: *redacted*, Request: {request.get_json()}")
     payload = request.get_json()
     response = jsonify({})
 

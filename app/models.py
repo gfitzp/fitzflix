@@ -19,7 +19,6 @@ from sqlalchemy.orm import joinedload
 from app import db, login
 from app.email import task_send_email as send_email
 
-
 movie_collections = db.Table(
     "movie_collections",
     db.Column("movie_id", db.Integer, db.ForeignKey("movie.id")),
@@ -1361,7 +1360,11 @@ class File(db.Model, LibraryMixin):
 
     def delete_local_file(self, delete_directory_tree=False):
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
-        transcoded_file = os.path.join(current_app.config["TRANSCODES_DIR"], self.dirname, f"{self.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}")
+        transcoded_file = os.path.join(
+            current_app.config["TRANSCODES_DIR"],
+            self.dirname,
+            f"{self.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}",
+        )
         try:
             os.remove(file_to_delete)
 

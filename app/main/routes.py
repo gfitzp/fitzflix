@@ -2509,31 +2509,106 @@ def movie_shopping():
                         (Movie.criterion_disc_owned == True, -1),
                         (Movie.shopping_list_exclude == True, -1),
                         (RefQuality.preference < bluray_quality, 1),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), 1),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            1,
+                        ),
                     ],
                     else_=(-1),
                 ).desc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 0),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), Movie.shopping_cart_priority),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), Movie.shopping_cart_priority),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            Movie.shopping_cart_priority,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            Movie.shopping_cart_priority,
+                        ),
                     ],
                     else_=(0),
                 ).desc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 99),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), RefQuality.preference),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), RefQuality.preference),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            RefQuality.preference,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            RefQuality.preference,
+                        ),
                     ],
                     else_=(99),
                 ).asc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 0),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), Movie.shopping_cart_add_date),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), Movie.shopping_cart_add_date),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            Movie.shopping_cart_add_date,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            Movie.shopping_cart_add_date,
+                        ),
                     ],
                     else_=(0),
                 ).desc(),
@@ -2658,31 +2733,106 @@ def movie_shopping():
                         (Movie.criterion_disc_owned == True, -1),
                         (Movie.shopping_list_exclude == True, -1),
                         (RefQuality.preference < bluray_quality, 1),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), 1),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            1,
+                        ),
                     ],
                     else_=(-1),
                 ).desc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 0),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), Movie.shopping_cart_priority),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), Movie.shopping_cart_priority),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            Movie.shopping_cart_priority,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            Movie.shopping_cart_priority,
+                        ),
                     ],
                     else_=(0),
                 ).desc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 99),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), RefQuality.preference),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), RefQuality.preference),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            RefQuality.preference,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            RefQuality.preference,
+                        ),
                     ],
                     else_=(99),
                 ).asc(),
                 db.case(
                     [
                         (Movie.criterion_disc_owned == True, 0),
-                        (db.and_(db.or_(Movie.shopping_list_exclude == False, Movie.shopping_list_exclude == None), RefQuality.preference < bluray_quality), Movie.shopping_cart_add_date),
-                        (db.and_(db.or_(Movie.criterion_spine_number != None, Movie.criterion_set_title != None), db.or_(Movie.criterion_disc_owned == False, Movie.criterion_disc_owned == None)), Movie.shopping_cart_add_date),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.shopping_list_exclude == False,
+                                    Movie.shopping_list_exclude == None,
+                                ),
+                                RefQuality.preference < bluray_quality,
+                            ),
+                            Movie.shopping_cart_add_date,
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
+                                ),
+                                db.or_(
+                                    Movie.criterion_disc_owned == False,
+                                    Movie.criterion_disc_owned == None,
+                                ),
+                            ),
+                            Movie.shopping_cart_add_date,
+                        ),
                     ],
                     else_=(0),
                 ).desc(),

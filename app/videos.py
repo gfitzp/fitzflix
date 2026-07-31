@@ -43,7 +43,6 @@ from app.models import (
     UserMovieReview,
 )
 
-
 EIGHT_MEGABYTES = 8388608
 
 
@@ -1650,7 +1649,9 @@ def mkvpropedit_task(
                     output_directory = os.path.join(
                         current_app.config["LIBRARY_DIR"], file.dirname
                     )
-                    hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+                    hidden_output_file = os.path.join(
+                        output_directory, f".{file.basename}"
+                    )
 
                     command = [
                         current_app.config["MKVMERGE_BIN"],
@@ -1684,7 +1685,9 @@ def mkvpropedit_task(
                                 f"'{file.basename}' Remuxing: {progress}%"
                             )
                             if job:
-                                job.meta["description"] = f"'{file.basename}' — Remuxing"
+                                job.meta["description"] = (
+                                    f"'{file.basename}' — Remuxing"
+                                )
                                 job.meta["progress"] = progress
                                 job.save_meta()
 
@@ -2429,35 +2432,42 @@ def transcode_task(file_id):
                 current_app.config["TRANSCODES_DIR"], file.dirname
             )
             hidden_output_file = os.path.join(
-                output_directory, f".{file.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}"
+                output_directory,
+                f".{file.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}",
             )
             os.makedirs(output_directory, exist_ok=True)
 
             if current_app.config["HANDBRAKE_PRESET_FILE"]:
                 preset_file = [
                     "--preset-import-file",
-                    current_app.config["HANDBRAKE_PRESET_FILE"]
+                    current_app.config["HANDBRAKE_PRESET_FILE"],
                 ]
             else:
                 preset_file = []
 
             # Transcode the file with Handbrake
 
-            current_app.logger.info([
+            current_app.logger.info(
+                [
                     current_app.config["HANDBRAKE_BIN"],
-                    ] + preset_file + [
+                ]
+                + preset_file
+                + [
                     "--preset",
                     current_app.config["HANDBRAKE_PRESET"],
                     "-i",
                     input_file,
                     "-o",
                     hidden_output_file,
-                ])
+                ]
+            )
 
             transcode_process = subprocess.Popen(
                 [
                     current_app.config["HANDBRAKE_BIN"],
-                    ] + preset_file + [
+                ]
+                + preset_file
+                + [
                     "--preset",
                     current_app.config["HANDBRAKE_PRESET"],
                     "-i",
@@ -2730,9 +2740,7 @@ def aws_delete(key):
             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
         )
-        s3_client.delete_object(
-            Bucket=current_app.config["AWS_BUCKET"], Key=key
-        )
+        s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
         return datetime.now(timezone.utc)
 
@@ -2826,9 +2834,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                         QueueUrl=current_app.config["AWS_SQS_URL"],
                         ReceiptHandle=sqs_receipt_handle,
                     )
-                    current_app.logger.debug(
-                        f"SQS delete_message response: {response}"
-                    )
+                    current_app.logger.debug(f"SQS delete_message response: {response}")
 
                 except:
                     current_app.logger.warning(
@@ -4431,9 +4437,7 @@ def lossless_to_flac(file_path, file_id=None):
 
                     # Convert the file duration from milliseconds to seconds
                     file_duration = int(track.duration) / 1000
-                    current_app.logger.info(
-                        f"'{basename}' Duration: {file_duration}s"
-                    )
+                    current_app.logger.info(f"'{basename}' Duration: {file_duration}s")
 
             if len(audio_tracks) > 0 and quality.physical_media == False:
                 audio_map = []
@@ -4572,7 +4576,7 @@ def reconstruct_filename(file_id):
     if not file:
         return False
 
-    (f, m, q, ft) = file
+    f, m, q, ft = file
 
     _, ext = os.path.splitext(f.untouched_basename)
 
