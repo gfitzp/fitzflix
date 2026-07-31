@@ -4373,7 +4373,8 @@ def sanitize_string(
     string = string.strip()
 
     # Remove leading period if name begins with a period, so it won't be invisible
-    if string[0] == ".":
+    # (startswith instead of string[0] so a fully-stripped empty string doesn't crash)
+    if string.startswith("."):
         string = string[1:]
 
     return string
