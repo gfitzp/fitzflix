@@ -936,6 +936,10 @@ def finalize_localization(file_path, file_details, lock):
 
                     wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
+                # Remove any subtitle tracks that have zero elements
+
+                remove_empty_subtitle_tracks(hidden_output_file)
+
                 # Rebuild the audio and subtitle track info
                 # now that we've possibly made modifications
 
@@ -973,28 +977,9 @@ def finalize_localization(file_path, file_details, lock):
 
             # Set file subtitle track info
 
-            possibly_forced_subtitle = False
-            if len(output_subtitle_tracks) > 1:
-                main_subtitle_track = output_subtitle_tracks[0].get("elements")
-                for i, track in enumerate(output_subtitle_tracks[1:]):
-                    track_length = track.get("elements")
-                    forced_flag = track.get("forced")
-
-                    # If a track is less than 1/3 the length of the first subtitle track,
-                    # but it's not marked as forced, speculate that it might be a forced
-                    # subtitle track
-
-                    if (
-                        track_length > 0
-                        and track_length <= (main_subtitle_track * 0.3)
-                        and not forced_flag
-                    ):
-                        current_app.logger.warning(
-                            f"{file} Subtitle track {i+2} has {track_length} elements "
-                            f"and may be a forced subtitle track!"
-                        )
-                        output_subtitle_tracks[i + 1]["forced"] = None
-                        possibly_forced_subtitle = True
+            possibly_forced_subtitle = flag_possibly_forced_subtitles(
+                file, output_subtitle_tracks
+            )
 
             for i, track in enumerate(output_subtitle_tracks):
                 track["file_id"] = file.id
@@ -1420,6 +1405,15 @@ def track_metadata_scan(file_id):
             f"'{os.path.basename(file_path)}' -> {media_info.to_json()}"
         )
 
+        # Remove any subtitle tracks that have zero elements, and re-parse if
+        # the file was rewritten (only Matroska files can be remuxed in place)
+
+        for track in media_info.tracks:
+            if track.track_type == "General" and track.format == "Matroska":
+                if remove_empty_subtitle_tracks(file_path):
+                    media_info = MediaInfo.parse(file_path)
+                break
+
         bytes = os.path.getsize(file_path)
         kilobytes = bytes / 1024
         megabytes = (bytes / 1024) / 1024
@@ -1476,28 +1470,9 @@ def track_metadata_scan(file_id):
 
         # Set file subtitle track info
 
-        possibly_forced_subtitle = False
-        if len(output_subtitle_tracks) > 1:
-            main_subtitle_track = output_subtitle_tracks[0].get("elements")
-            for i, track in enumerate(output_subtitle_tracks[1:]):
-                track_length = track.get("elements")
-                forced_flag = track.get("forced")
-
-                # If a track is less than 1/3 the length of the first subtitle track,
-                # but it's not marked as forced, speculate that it might be a forced
-                # subtitle track
-
-                if (
-                    track_length > 0
-                    and track_length <= (main_subtitle_track * 0.3)
-                    and not forced_flag
-                ):
-                    current_app.logger.warning(
-                        f"{file} Subtitle track {i+2} has {track_length} elements "
-                        f"and may be a forced subtitle track!"
-                    )
-                    output_subtitle_tracks[i + 1]["forced"] = None
-                    possibly_forced_subtitle = True
+        possibly_forced_subtitle = flag_possibly_forced_subtitles(
+            file, output_subtitle_tracks
+        )
 
         for i, track in enumerate(output_subtitle_tracks):
             track["file_id"] = file.id
@@ -1736,6 +1711,10 @@ def mkvpropedit_task(
 
                     os.rename(hidden_output_file, file_path)
 
+            # Remove any subtitle tracks that have zero elements
+
+            remove_empty_subtitle_tracks(file_path)
+
             # Rebuild the audio and subtitle track info now that we've made modifications
 
             output_audio_tracks = get_audio_tracks_from_file(file_path)
@@ -1753,22 +1732,7 @@ def mkvpropedit_task(
 
             # Set file subtitle track info
 
-            if len(output_subtitle_tracks) > 1:
-                main_subtitle_track = output_subtitle_tracks[0].get("elements")
-                for i, track in enumerate(output_subtitle_tracks[1:]):
-                    track_length = track.get("elements")
-                    forced_flag = track.get("forced")
-
-                    # If a track is less than 1/3 the length of the first subtitle track,
-                    # but it's not marked as forced, speculate that it might be a forced
-                    # subtitle track
-
-                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
-                        current_app.logger.warning(
-                            f"{file} Subtitle track {i+2} has {track_length} elements "
-                            f"and may be a forced subtitle track!"
-                        )
-                        output_subtitle_tracks[i + 1]["forced"] = None
+            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
             for i, track in enumerate(output_subtitle_tracks):
                 track["file_id"] = file.id
@@ -1920,6 +1884,10 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
             os.rename(hidden_output_file, file_path)
 
+            # Remove any subtitle tracks that have zero elements
+
+            remove_empty_subtitle_tracks(file_path)
+
             # Rebuild the audio and subtitle track info now that we've made modifications
 
             output_audio_tracks = get_audio_tracks_from_file(file_path)
@@ -1937,22 +1905,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
             # Set file subtitle track info
 
-            if len(output_subtitle_tracks) > 1:
-                main_subtitle_track = output_subtitle_tracks[0].get("elements")
-                for i, track in enumerate(output_subtitle_tracks[1:]):
-                    track_length = track.get("elements")
-                    forced_flag = track.get("forced")
-
-                    # If a track is less than 1/3 the length of the first subtitle track,
-                    # but it's not marked as forced, speculate that it might be a forced
-                    # subtitle track
-
-                    if track_length <= (main_subtitle_track * 0.3) and not forced_flag:
-                        current_app.logger.warning(
-                            f"{file} Subtitle track {i+2} has {track_length} elements "
-                            f"and may be a forced subtitle track!"
-                        )
-                        output_subtitle_tracks[i + 1]["forced"] = None
+            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
             for i, track in enumerate(output_subtitle_tracks):
                 track["file_id"] = file.id
@@ -3908,6 +3861,131 @@ def get_subtitle_tracks_from_file(file_path):
         f"'{os.path.basename(file_path)}' Subtitle tracks: {subtitle_tracks}"
     )
     return subtitle_tracks
+
+
+def flag_possibly_forced_subtitles(file, subtitle_tracks):
+    """Speculate which subtitle tracks might actually be forced subtitle tracks.
+
+    If a track has elements, but no more than 1/3 the elements of the first
+    subtitle track, and it isn't already marked as forced, mark its forced flag
+    as unknown (None) and report that the file may have a forced subtitle track.
+    """
+
+    possibly_forced_subtitle = False
+
+    if len(subtitle_tracks) > 1:
+        main_subtitle_track = subtitle_tracks[0].get("elements")
+        for i, track in enumerate(subtitle_tracks[1:]):
+            track_length = track.get("elements")
+            forced_flag = track.get("forced")
+
+            if (
+                main_subtitle_track
+                and track_length
+                and track_length <= (main_subtitle_track * 0.3)
+                and not forced_flag
+            ):
+                current_app.logger.warning(
+                    f"{file} Subtitle track {i+2} has {track_length} elements "
+                    f"and may be a forced subtitle track!"
+                )
+                subtitle_tracks[i + 1]["forced"] = None
+                possibly_forced_subtitle = True
+
+    return possibly_forced_subtitle
+
+
+def remove_empty_subtitle_tracks(file_path):
+    """Remux a Matroska file in place to drop subtitle tracks with zero elements.
+
+    Only tracks whose statistics tags explicitly report zero elements are
+    removed; a track with no statistics at all is left alone, since we can't
+    tell whether it's actually empty.
+
+    Returns True if the file was rewritten, False if there was nothing to remove.
+    """
+
+    basename = os.path.basename(file_path)
+    job = get_current_job()
+    media_info = MediaInfo.parse(file_path)
+
+    keep_track_ids = []
+    empty_track_ids = []
+    for track in media_info.tracks:
+        if track.track_type != "Text":
+            continue
+
+        streamorder = track.to_data().get("streamorder")
+        elements = track.to_data().get("count_of_elements")
+
+        # Tracks are selected by their mkvmerge track id (the stream order),
+        # so we can't safely remux if any id is unknown
+
+        if not str(streamorder).isdigit():
+            current_app.logger.warning(
+                f"'{basename}' Subtitle track ids are unknown, "
+                f"skipping empty-subtitle-track removal"
+            )
+            return False
+
+        if str(elements).isdigit() and int(elements) == 0:
+            empty_track_ids.append(int(streamorder))
+        else:
+            keep_track_ids.append(int(streamorder))
+
+    if not empty_track_ids:
+        return False
+
+    current_app.logger.info(
+        f"'{basename}' Removing zero-element subtitle track id(s) {empty_track_ids}"
+    )
+
+    hidden_output_file = os.path.join(
+        os.path.dirname(file_path), f".{basename}.remove-empty-subs.mkv"
+    )
+
+    command = [
+        current_app.config["MKVMERGE_BIN"],
+        "-o",
+        hidden_output_file,
+    ]
+
+    if keep_track_ids:
+        command.extend(["-s", ",".join(str(id) for id in keep_track_ids)])
+    else:
+        command.append("--no-subtitles")
+
+    command.append(file_path)
+    current_app.logger.info(command)
+
+    mkvmerge_process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+    for line in mkvmerge_process.stdout:
+        progress_match = re.search(r"Progress\: \d+\%", line)
+        if progress_match:
+            progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
+            progress = int(progress_match.group("percent"))
+            current_app.logger.info(
+                f"'{basename}' Removing empty subtitle tracks: {progress}%"
+            )
+            if job:
+                job.meta["description"] = (
+                    f"'{basename}' — Removing empty subtitle tracks"
+                )
+                job.meta["progress"] = progress
+                job.save_meta()
+
+    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+
+    # Move the new file into place
+
+    os.rename(hidden_output_file, file_path)
+    return True
 
 
 def iso_639_3_native_language():
