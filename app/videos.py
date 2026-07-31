@@ -1598,113 +1598,115 @@ def mkvpropedit_task(
                 f"{file.basename} localization_arguments: {localization_arguments}"
             )
 
-            mkvpropedit_task = subprocess.Popen(
-                [
-                    current_app.config["MKVPROPEDIT_BIN"],
-                    file_path,
-                ]
-                + localization_arguments,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-            )
-            for line in mkvpropedit_task.stdout:
-                line = line.replace("\n", "")
-                current_app.logger.info(line)
+            if localization_arguments:
 
-            wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
-
-            # If the default audio track isn't the first track, create a new file with the
-            # default audio track prioritized so Plex selects it first
-
-            if default_audio_track != "1":
-                new_track_order = []
-                media_info = MediaInfo.parse(file_path)
-
-                # Default video tracks
-                for track in media_info.tracks:
-                    if track.track_type == "Video" and track.default == "Yes":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                # Non-default video tracks
-                for track in media_info.tracks:
-                    if track.track_type == "Video" and track.default == "No":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                # Default audio tracks
-                for track in media_info.tracks:
-                    if track.track_type == "Audio" and track.default == "Yes":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                # Non-default audio tracks
-
-                for track in media_info.tracks:
-                    if track.track_type == "Audio" and track.default == "No":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                # Default subtitle tracks
-
-                for track in media_info.tracks:
-                    if track.track_type == "Text" and track.default == "Yes":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                # Non-default subtitle tracks
-
-                for track in media_info.tracks:
-                    if track.track_type == "Text" and track.default == "No":
-                        new_track_order.append(f"0:{track.streamorder}")
-
-                new_track_order = ",".join(new_track_order)
-
-                current_app.logger.info(
-                    f"{file.basename} new_track_order: {new_track_order}"
-                )
-
-                output_directory = os.path.join(
-                    current_app.config["LIBRARY_DIR"], file.dirname
-                )
-                hidden_output_file = os.path.join(output_directory, f".{file.basename}")
-
-                command = [
-                    current_app.config["MKVMERGE_BIN"],
-                    "--track-order",
-                    new_track_order,
-                    "-o",
-                    hidden_output_file,
-                    file_path,
-                ]
-
-                current_app.logger.info(command)
-
-                mkvmerge_process = subprocess.Popen(
-                    command,
+                mkvpropedit_task = subprocess.Popen(
+                    [
+                        current_app.config["MKVPROPEDIT_BIN"],
+                        file_path,
+                    ]
+                    + localization_arguments,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
                     bufsize=1,
                 )
+                for line in mkvpropedit_task.stdout:
+                    line = line.replace("\n", "")
+                    current_app.logger.info(line)
 
-                for line in mkvmerge_process.stdout:
-                    progress_match = re.search("Progress\: \d+\%", line)
-                    if progress_match:
-                        progress_match = re.match(
-                            "^Progress\: (?P<percent>\d+)\%", line
-                        )
-                        progress = int(progress_match.group("percent"))
-                        current_app.logger.info(
-                            f"'{file.basename}' Remuxing: {progress}%"
-                        )
-                        if job:
-                            job.meta["description"] = f"'{file.basename}' — Remuxing"
-                            job.meta["progress"] = progress
-                            job.save_meta()
+                wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 
-                wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+                # If the default audio track isn't the first track, create a new file with the
+                # default audio track prioritized so Plex selects it first
 
-                # Move the new file into place
+                if default_audio_track != "1":
+                    new_track_order = []
+                    media_info = MediaInfo.parse(file_path)
 
-                os.rename(hidden_output_file, file_path)
+                    # Default video tracks
+                    for track in media_info.tracks:
+                        if track.track_type == "Video" and track.default == "Yes":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    # Non-default video tracks
+                    for track in media_info.tracks:
+                        if track.track_type == "Video" and track.default == "No":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    # Default audio tracks
+                    for track in media_info.tracks:
+                        if track.track_type == "Audio" and track.default == "Yes":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    # Non-default audio tracks
+
+                    for track in media_info.tracks:
+                        if track.track_type == "Audio" and track.default == "No":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    # Default subtitle tracks
+
+                    for track in media_info.tracks:
+                        if track.track_type == "Text" and track.default == "Yes":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    # Non-default subtitle tracks
+
+                    for track in media_info.tracks:
+                        if track.track_type == "Text" and track.default == "No":
+                            new_track_order.append(f"0:{track.streamorder}")
+
+                    new_track_order = ",".join(new_track_order)
+
+                    current_app.logger.info(
+                        f"{file.basename} new_track_order: {new_track_order}"
+                    )
+
+                    output_directory = os.path.join(
+                        current_app.config["LIBRARY_DIR"], file.dirname
+                    )
+                    hidden_output_file = os.path.join(output_directory, f".{file.basename}")
+
+                    command = [
+                        current_app.config["MKVMERGE_BIN"],
+                        "--track-order",
+                        new_track_order,
+                        "-o",
+                        hidden_output_file,
+                        file_path,
+                    ]
+
+                    current_app.logger.info(command)
+
+                    mkvmerge_process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,
+                    )
+
+                    for line in mkvmerge_process.stdout:
+                        progress_match = re.search("Progress\: \d+\%", line)
+                        if progress_match:
+                            progress_match = re.match(
+                                "^Progress\: (?P<percent>\d+)\%", line
+                            )
+                            progress = int(progress_match.group("percent"))
+                            current_app.logger.info(
+                                f"'{file.basename}' Remuxing: {progress}%"
+                            )
+                            if job:
+                                job.meta["description"] = f"'{file.basename}' — Remuxing"
+                                job.meta["progress"] = progress
+                                job.save_meta()
+
+                    wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+
+                    # Move the new file into place
+
+                    os.rename(hidden_output_file, file_path)
 
             # Rebuild the audio and subtitle track info now that we've made modifications
 
