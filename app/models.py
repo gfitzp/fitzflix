@@ -518,8 +518,10 @@ class TMDBMixin(object):
 
     def tmdb_tv_query(self, tmdb_id=None):
         tmdb_info = {}
+        if not current_app.config["TMDB_API_KEY"]:
+            return self
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
-        tmdb_api_url = "https://api.themoviedb.org/3"
+        tmdb_api_url = current_app.config["TMDB_API_URL"]
         requested_info = "credits,external_ids,images,keywords,release_dates,videos"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
