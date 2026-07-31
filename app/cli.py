@@ -60,7 +60,7 @@ def register(app):
 
         if movies:
             for movie in movies:
-                refresh_job = app.sql_queue.enqueue(
+                app.sql_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=(
                         "Movies",
@@ -76,7 +76,7 @@ def register(app):
 
         if tv_shows:
             for tv in tv_shows:
-                refresh_job = app.sql_queue.enqueue(
+                app.sql_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=(
                         "TV Shows",
@@ -93,7 +93,7 @@ def register(app):
     def file(file_id):
         """Refresh metadata for file having specified file ID."""
 
-        refresh_job = app.sql_queue.enqueue(
+        app.sql_queue.enqueue(
             "app.videos.track_metadata_scan_task",
             args=(int(file_id),),
             job_timeout=app.config["SQL_TASK_TIMEOUT"],
@@ -109,7 +109,7 @@ def register(app):
             "app.videos.sync_aws_s3_storage_task",
             args=None,
             job_timeout="24h",
-            description=f"Pruning extra files from AWS S3 storage",
+            description="Pruning extra files from AWS S3 storage",
             at_front=True,
         )
         app.logger.info("Pruning extra files from AWS S3 storage")
@@ -134,6 +134,6 @@ def register(app):
         app.request_queue.enqueue(
             "app.videos.sqs_retrieve_task",
             job_timeout="2h",
-            description=f"Polling AWS SQS for files to download",
+            description="Polling AWS SQS for files to download",
         )
         app.logger.info("Polling AWS SQS for files to download")

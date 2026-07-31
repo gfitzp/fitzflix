@@ -4,13 +4,11 @@ import io
 import json
 import math
 import os
-import pathlib
 import random
 import re
 import shutil
 import subprocess
 import threading
-import time
 import traceback
 import urllib.parse
 
@@ -29,7 +27,7 @@ from rq import get_current_job
 from rq.registry import StartedJobRegistry
 from unidecode import unidecode
 
-from flask import current_app, flash, render_template
+from flask import current_app, render_template
 
 from app import create_app, db
 from app.email import task_send_email as send_email
@@ -450,7 +448,6 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             default_subtitle_tracks.extend(
                                 ["--default-track-flag", f"{track['streamorder']}:1"]
                             )
-                            first_native_language_sub_track = i
                             break
 
                     # Turn off all the subsequent native-language subtitle tracks
@@ -681,7 +678,6 @@ def finalize_localization(file_path, file_details, lock):
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             # Determine output directories and file to be created
 
@@ -889,7 +885,8 @@ def finalize_localization(file_path, file_details, lock):
                     ):
                         native_language = iso_639_3_native_language()
                         current_app.logger.warning(
-                            f"'{basename}' was created with MakeMKV. Will use ISO-639-3 "
+                            f"'{os.path.basename(hidden_output_file)}' was created "
+                            f"with MakeMKV. Will use ISO-639-3 "
                             f"code '{native_language}' instead of user-supplied "
                             f"ISO-639-2 '{current_app.config['NATIVE_LANGUAGE']}' when "
                             f"processing this file with mkvmerge"
@@ -1003,7 +1000,6 @@ def finalize_localization(file_path, file_details, lock):
             )
 
             bytes = os.path.getsize(hidden_output_file)
-            kilobytes = bytes / 1024
             megabytes = (bytes / 1024) / 1024
             gigabytes = ((bytes / 1024) / 1024) / 1024
 
@@ -1064,7 +1060,7 @@ def finalize_localization(file_path, file_details, lock):
                             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
                             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
                         )
-                        response = s3_client.delete_object(
+                        s3_client.delete_object(
                             Bucket=current_app.config["AWS_BUCKET"],
                             Key=worse.aws_untouched_key,
                         )
@@ -1230,7 +1226,6 @@ def finalize_transcoding(file_id, lock):
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             file = File.query.filter_by(id=file_id).first()
             ext = current_app.config["HANDBRAKE_EXTENSION"]
@@ -1306,7 +1301,7 @@ def manual_import_task():
                                 current_app.logger.info(
                                     f"'{os.path.basename(file)}' Found in import directory"
                                 )
-                                job = current_app.import_queue.enqueue(
+                                current_app.import_queue.enqueue(
                                     "app.videos.localization_task",
                                     args=(
                                         os.path.join(
@@ -1338,7 +1333,6 @@ def track_metadata_scan_library():
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             files = File.query.all()
             for file in files:
@@ -1365,7 +1359,6 @@ def track_metadata_scan_task(file_id):
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
@@ -1415,7 +1408,6 @@ def track_metadata_scan(file_id):
                 break
 
         bytes = os.path.getsize(file_path)
-        kilobytes = bytes / 1024
         megabytes = (bytes / 1024) / 1024
         gigabytes = ((bytes / 1024) / 1024) / 1024
 
@@ -1453,26 +1445,15 @@ def track_metadata_scan(file_id):
 
         # Set file audio track info
 
-        possibly_foreign_language = False
         for i, track in enumerate(output_audio_tracks):
             track["file_id"] = file.id
             track["track"] = i + 1
             audio_track = FileAudioTrack(**track)
             file.audio_track = audio_track
-            if track["track"] == 1 and audio_track.language not in [
-                current_app.config["NATIVE_LANGUAGE"],
-                "und",
-                "zxx",
-            ]:
-                possibly_foreign_language = True
             current_app.logger.info(f"{file} Adding audio track {audio_track}")
             db.session.add(audio_track)
 
         # Set file subtitle track info
-
-        possibly_forced_subtitle = flag_possibly_forced_subtitles(
-            file, output_subtitle_tracks
-        )
 
         for i, track in enumerate(output_subtitle_tracks):
             track["file_id"] = file.id
@@ -1957,7 +1938,7 @@ def sync_aws_s3_storage_task():
                 "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",
-                description=f"Syncing files with AWS S3 storage",
+                description="Syncing files with AWS S3 storage",
                 at_front=True,
             )
             current_app.logger.info(
@@ -2133,7 +2114,7 @@ def sync_aws_s3_storage_task():
                     aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
                     aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
                 )
-                response = client.put_object(
+                client.put_object(
                     Body=inventory_file,
                     Bucket=current_app.config["AWS_BUCKET"],
                     Key="inventory/rank_1.csv",
@@ -2749,7 +2730,7 @@ def aws_delete(key):
             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
             aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
         )
-        response = s3_client.delete_object(
+        s3_client.delete_object(
             Bucket=current_app.config["AWS_BUCKET"], Key=key
         )
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
@@ -2784,7 +2765,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
     while retry > 0:
         try:
-            response = s3_client.download_file(
+            s3_client.download_file(
                 current_app.config["AWS_BUCKET"],
                 key,
                 os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"),
@@ -3659,7 +3640,6 @@ def get_criterion_collection_from_wikipedia():
         r.raise_for_status()
         soup = BeautifulSoup(r.content, features="html.parser")
         table = soup.find_all("table")[1]
-        headers = table.findAll("th")
 
         # Column 2 = title
         # Column 4 = original release year
@@ -4065,7 +4045,6 @@ def refresh_criterion_collection_info(movie_id=None):
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             # If the user specified a particular movie to be updated, update the
             # Criterion Collection info for just that one movie. Otherwise, update all.
@@ -4120,19 +4099,15 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
         db.init_app(app)
 
         try:
-            job = get_current_job()
 
             if library == "Movies":
                 # Get the Movie record to be updated
 
                 movie = Movie.query.filter_by(id=id).first()
 
-                # Make a note of the original movie_id, title, year, and tmdb_id fields.
+                # Make a note of the original movie_id field.
 
                 original_movie_id = movie.id
-                original_title = movie.title
-                original_year = movie.year
-                original_tmdb_id = movie.tmdb_id
 
                 # See if the requested tmdb_id already exists in the Movie table.
                 # If so, we'll use that existing Movie record.
@@ -4152,12 +4127,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                 else:
                     movie.tmdb_movie_query()
 
-                # Make a note of the updated movie_id, title, year, and tmdb_id fields.
+                # Make a note of the updated movie_id field.
 
                 updated_movie_id = movie.id
-                updated_title = movie.title
-                updated_year = movie.year
-                updated_tmdb_id = movie.tmdb_id
 
                 # update files to the new movie record
 
@@ -4313,44 +4285,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
                         id=original_movie_id
                     ).first()
                     db.session.delete(original_movie_record)
-
-                movie_poster = (
-                    db.session.query(
-                        Movie.tmdb_id, File.dirname, Movie.tmdb_poster_path
-                    )
-                    .join(Movie, (Movie.id == File.movie_id))
-                    .filter(File.feature_type_id == None)
-                    .filter(Movie.tmdb_id != None)
-                    .filter(Movie.tmdb_poster_path != None)
-                    .filter(Movie.id == updated_movie_id)
-                    .first()
-                )
-
-                if movie_poster:
-                    tmdb_id, dirname, tmdb_poster_path = movie_poster
-
-                    source_poster = os.path.join(
-                        os.path.abspath(os.path.dirname(__file__)),
-                        "static",
-                        "tmdb",
-                        "movie",
-                        str(tmdb_id),
-                        "poster",
-                        "original",
-                        os.path.basename(tmdb_poster_path),
-                    )
-
-                    destination_poster = os.path.join(
-                        current_app.config["LIBRARY_DIR"],
-                        dirname,
-                        f"poster{pathlib.Path(tmdb_poster_path).suffix}",
-                    )
-
-                    # shutil.copy(source_poster, destination_poster)
-
-                    # current_app.logger.info(
-                    #    f"Copied '{source_poster}' to '{destination_poster}'"
-                    # )
 
             elif library == "TV Shows":
                 # Get the TVSeries record to be updated

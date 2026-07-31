@@ -4,14 +4,12 @@ import shutil
 
 from datetime import date, datetime
 
-import requests
 import urllib3
 
 from flask import current_app, jsonify, request
 
-from app import create_app, db
 from app.api import bp
-from app.models import TVSeries, User
+from app.models import User
 
 
 @bp.route("/sonarr/add", methods=["POST"])
@@ -118,7 +116,7 @@ def sonarr_add():
             # Using the urllib3 code below to make the API call instead.
 
             http = urllib3.PoolManager()
-            r = http.request(
+            http.request(
                 "POST",
                 current_app.config["SONARR_URL"] + "/api/command",
                 headers={

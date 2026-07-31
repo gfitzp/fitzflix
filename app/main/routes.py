@@ -10,27 +10,19 @@ import time
 import traceback
 
 from datetime import datetime, timezone
-from PIL import Image, ImageOps
-
-import boto3
-import botocore
-
-from botocore.client import Config
-from rq.job import Job
-from rq.registry import StartedJobRegistry, ScheduledJobRegistry
+from PIL import Image
 
 from flask import (
     current_app,
     render_template,
     flash,
-    jsonify,
     redirect,
     url_for,
     request,
     send_from_directory,
     Markup,
 )
-from flask_login import current_user, login_user, logout_user, login_required
+from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
 from app import db
@@ -72,7 +64,6 @@ from app.models import (
     RefQuality,
     TMDBCredit,
     TVSeries,
-    User,
     UserMovieReview,
 )
 from app.main import bp
@@ -164,7 +155,7 @@ def index():
             description="Manually scanning import directory for files",
             at_front=True,
         )
-        flash(f"Added files in import directory to import queue", "info")
+        flash("Added files in import directory to import queue", "info")
         return redirect(url_for("main.index"))
 
     return render_template(
@@ -494,11 +485,6 @@ def movie(movie_id):
         .all()
     )
     genres = [genre.name for genre in movie.genres]
-    rating = [
-        certification.certification
-        for certification in movie.certifications
-        if certification.country == "US"
-    ]
     review = (
         UserMovieReview.query.filter_by(user_id=int(current_user.id), movie_id=movie.id)
         .order_by(UserMovieReview.date_reviewed.desc())
@@ -682,7 +668,6 @@ def movie(movie_id):
     criterion_form.process()
 
     custom_poster_form = CustomPosterUploadForm()
-    valid_poster_extensions = [".jpg", ".jpeg", ".png", ".tbn"]
     if custom_poster_form.validate_on_submit():
         uploaded_data = custom_poster_form.custom_poster.data
         file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
@@ -1082,11 +1067,11 @@ def tv(series_id):
             flash(
                 Markup(
                     "Refreshing TMDb data for '{}' – <a href='{}'>Reload this page</a>"
-                ).format(tv.title, url_for("main.tv", series_id=tv.id)),
+                ).format(tv.title, url_for("main.tv", series_id=tv_id)),
                 "info",
             )
 
-        return redirect(url_for("main.tv", series_id=tv.id))
+        return redirect(url_for("main.tv", series_id=tv_id))
 
     return render_template(
         "tv.html",
@@ -1547,7 +1532,6 @@ def file(file_id):
             return redirect(url_for("main.index"))
 
     custom_poster_form = CustomPosterUploadForm()
-    valid_poster_extensions = [".jpg", ".jpeg", ".png", ".tbn"]
     if custom_poster_form.validate_on_submit():
         uploaded_data = custom_poster_form.custom_poster.data
         file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
@@ -1841,7 +1825,7 @@ def admin():
             at_front=True,
         )
         flash(
-            f"Refreshing Criterion Collection information for all movies in library",
+            "Refreshing Criterion Collection information for all movies in library",
             "info",
         )
         return redirect(url_for("main.admin"))
@@ -1854,7 +1838,7 @@ def admin():
         tv_shows = TVSeries.query.order_by(TVSeries.title.asc()).all()
 
         for movie in movies:
-            refresh_job = current_app.sql_queue.enqueue(
+            current_app.sql_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
                 args=("Movies", movie.id, movie.tmdb_id),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -1862,33 +1846,33 @@ def admin():
             )
 
         for tv in tv_shows:
-            refresh_job = current_app.sql_queue.enqueue(
+            current_app.sql_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
                 args=("TV Shows", tv.id, tv.tmdb_id),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
 
-        flash(f"Refreshing TMDb information for entire library", "info")
+        flash("Refreshing TMDb information for entire library", "info")
         return redirect(url_for("main.admin"))
 
     sync_form = SyncAWSStorageForm()
     if sync_form.sync_submit.data and sync_form.validate_on_submit():
         if not current_user.admin:
-            flash(f"Need to be an admin user for this task!", "danger")
+            flash("Need to be an admin user for this task!", "danger")
 
         elif current_user.check_password(sync_form.password.data):
             current_app.sql_queue.enqueue(
                 "app.videos.sync_aws_s3_storage_task",
                 args=None,
                 job_timeout="24h",
-                description=f"Syncing files from AWS S3 storage",
+                description="Syncing files from AWS S3 storage",
                 at_front=True,
             )
-            flash(f"Syncing files with AWS S3 storage", "info")
+            flash("Syncing files with AWS S3 storage", "info")
 
         else:
-            flash(f"Incorrect password provided!", "danger")
+            flash("Incorrect password provided!", "danger")
 
         return redirect(url_for("main.admin"))
 
@@ -1901,9 +1885,9 @@ def admin():
             "app.videos.track_metadata_scan_library",
             args=(),
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description=f"Scanning track metadata for all files in the library",
+            description="Scanning track metadata for all files in the library",
         )
-        flash(f"Scanning track metadata for all files in the library", "info")
+        flash("Scanning track metadata for all files in the library", "info")
         return redirect(url_for("main.admin"))
 
     import_form = ImportForm()
@@ -1915,7 +1899,7 @@ def admin():
             description="Manually scanning import directory for files",
             at_front=True,
         )
-        flash(f"Added files in import directory to import queue", "info")
+        flash("Added files in import directory to import queue", "info")
         return redirect(url_for("main.admin"))
 
     return render_template(
@@ -1974,12 +1958,10 @@ def movie_shopping():
     filter_form = MovieShoppingFilterForm()
     if library == "criterion":
         criterion_release = True
-        criterion_owned_false = False
         filter_form.filter_status.default = "criterion"
 
     else:
         criterion_release = None
-        criterion_owned_false = None
         filter_form.filter_status.default = "all"
 
     if media == "digital":
@@ -2105,20 +2087,6 @@ def movie_shopping():
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .filter(RefQuality.physical_media == True)
         .filter(File.feature_type_id == None)
-        .subquery()
-    )
-
-    file_count = (
-        db.session.query(
-            Movie.id,
-            File.edition,
-            db.func.min(RefQuality.preference).label("min_preference"),
-            db.func.count(File.id).label("file_count"),
-        )
-        .join(File, (File.movie_id == Movie.id))
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(File.feature_type_id == None)
-        .group_by(Movie.id, File.edition)
         .subquery()
     )
 
@@ -2959,7 +2927,7 @@ def tv_shopping():
         t = TVSeries.query.order_by(
             db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc()
         ).all()
-        title = f"TV Shows to upgrade"
+        title = "TV Shows to upgrade"
 
     for series in t:
         seasons = []
@@ -3041,7 +3009,7 @@ def queue():
             description="Manually scanning import directory for files",
             at_front=True,
         )
-        flash(f"Added files in import directory to import queue", "info")
+        flash("Added files in import directory to import queue", "info")
         return redirect(url_for("main.queue"))
 
     return render_template(

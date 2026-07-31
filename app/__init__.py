@@ -1,7 +1,5 @@
 import logging
 import os
-import random
-import time
 
 from logging.handlers import SMTPHandler
 from urllib.parse import quote_plus
@@ -68,7 +66,7 @@ def create_app(config_class=Config):
                         app.logger.info(
                             f"'{os.path.basename(event.dest_path)}' Found in import directory"
                         )
-                        job = app.import_queue.enqueue(
+                        app.import_queue.enqueue(
                             "app.videos.localization_task",
                             args=(event.dest_path,),
                             job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
@@ -106,7 +104,7 @@ def create_app(config_class=Config):
                         app.logger.info(
                             f"'{os.path.basename(event.src_path)}' Found in import directory"
                         )
-                        job = app.import_queue.enqueue(
+                        app.import_queue.enqueue(
                             "app.videos.localization_task",
                             args=(event.src_path,),
                             job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],

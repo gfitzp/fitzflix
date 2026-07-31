@@ -1,6 +1,4 @@
-from datetime import datetime, timedelta, timezone
-
-from rq.registry import StartedJobRegistry
+from datetime import datetime, timezone
 
 from flask import current_app, jsonify, request
 from flask_login import current_user, login_required
@@ -8,8 +6,6 @@ from flask_login import current_user, login_required
 from app import db
 from app.api import bp
 from app.models import Movie, User
-
-import requests
 
 
 @bp.route("/queue-details")

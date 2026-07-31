@@ -1,24 +1,18 @@
 import json
 import os
-import re
-import traceback
 
 from datetime import datetime, timezone
 from time import time
 from urllib.parse import urlparse
 
-import boto3
-import botocore
 import jwt
 import requests
 
-from botocore.client import Config
-from rq import get_current_job
 from rq.registry import StartedJobRegistry
 from unidecode import unidecode
 
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import current_app, jsonify, render_template
+from flask import current_app, render_template
 from flask_login import UserMixin
 from sqlalchemy.orm import joinedload
 
@@ -236,7 +230,6 @@ class TMDBMixin(object):
                 logo_sizes = r.json().get("images")["logo_sizes"]
                 poster_sizes = r.json().get("images")["poster_sizes"]
                 profile_sizes = r.json().get("images")["profile_sizes"]
-                still_sizes = r.json().get("images")["still_sizes"]
 
             else:
                 current_app.logger.warning(
@@ -586,8 +579,6 @@ class TMDBMixin(object):
                 backdrop_sizes = r.json().get("images")["backdrop_sizes"]
                 logo_sizes = r.json().get("images")["logo_sizes"]
                 poster_sizes = r.json().get("images")["poster_sizes"]
-                profile_sizes = r.json().get("images")["profile_sizes"]
-                still_sizes = r.json().get("images")["still_sizes"]
 
             else:
                 current_app.logger.warning(
@@ -764,12 +755,6 @@ class TMDBMixin(object):
         return self
 
     def get_tmdb_images(self, directory, record_id, base_url, image_types=[]):
-        if not current_app.config["TMDB_API_KEY"]:
-            current_app.logger.error("Cannot query TMDB without an API key!")
-            return False
-
-        tmdb_api_key = current_app.config["TMDB_API_KEY"]
-        tmdb_api_url = "https://api.themoviedb.org/3"
         current_app.logger.info(f"{self} Downloading images")
         base_dir = os.path.abspath(os.path.dirname(__file__))
         for type in image_types:

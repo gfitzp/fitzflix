@@ -22,7 +22,6 @@ from wtforms.validators import (
     EqualTo,
     InputRequired,
     Optional,
-    Regexp,
     ValidationError,
 )
 from wtforms.widgets import HiddenInput

@@ -1,5 +1,5 @@
 import sys
-from rq import Connection, SimpleWorker, Worker
+from rq import Connection, SimpleWorker
 
 # Libraries to preload
 
