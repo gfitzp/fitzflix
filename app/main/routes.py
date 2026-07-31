@@ -473,15 +473,15 @@ def criterion_collection():
     )
 
 
-@bp.route("/movie/<movie_id>", methods=["GET", "POST"])
+@bp.route("/movie/<int:movie_id>", methods=["GET", "POST"])
 @login_required
 def movie(movie_id):
     """Show details for a particular movie."""
 
-    movie = Movie.query.filter_by(id=int(movie_id)).first_or_404()
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
     starring_roles = (
-        MovieCast.query.filter(MovieCast.movie_id == int(movie_id))
+        MovieCast.query.filter(MovieCast.movie_id == movie_id)
         .filter(MovieCast.billing_order <= 2)
         .order_by(MovieCast.billing_order.asc())
         .all()
@@ -494,7 +494,7 @@ def movie(movie_id):
     )
     films = (
         File.query.join(RefQuality, (RefQuality.id == File.quality_id))
-        .filter(File.movie_id == int(movie_id))
+        .filter(File.movie_id == movie_id)
         .filter(File.feature_type_id == None)
         .order_by(
             File.fullscreen.asc(), File.edition.asc(), RefQuality.preference.desc()
@@ -502,7 +502,7 @@ def movie(movie_id):
         .all()
     )
     features = (
-        File.query.filter(File.movie_id == int(movie_id))
+        File.query.filter(File.movie_id == movie_id)
         .filter(File.feature_type_id != None)
         .order_by(File.basename.asc())
         .all()
@@ -794,12 +794,12 @@ def movie(movie_id):
     )
 
 
-@bp.route("/movie/<movie_id>/files")
+@bp.route("/movie/<int:movie_id>/files")
 @login_required
 def movie_files(movie_id):
     """Show all files for a particular movie, regardless of ranking."""
 
-    movie = Movie.query.filter_by(id=int(movie_id)).first_or_404()
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"Files for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
 
     # Subquery to get the ranking for each of this movie's files
@@ -830,7 +830,7 @@ def movie_files(movie_id):
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .join(ranked_files, (ranked_files.c.id == File.id))
         .outerjoin(RefFeatureType, (RefFeatureType.id == File.feature_type_id))
-        .filter(Movie.id == int(movie_id))
+        .filter(Movie.id == movie_id)
         .order_by(
             File.feature_type_id.asc(),
             File.plex_title.asc(),
@@ -925,12 +925,12 @@ def tv_library():
     return render_template("library_tv.html", title="TV Library", series=tv)
 
 
-@bp.route("/tv/<series_id>", methods=["GET", "POST"])
+@bp.route("/tv/<int:series_id>", methods=["GET", "POST"])
 @login_required
 def tv(series_id):
     """Show details for a particular TV series."""
 
-    tv = TVSeries.query.filter_by(id=int(series_id)).first_or_404()
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
     title = f"{tv.tmdb_name if tv.tmdb_name else tv.title}"
     seasons = []
     for file in tv.files:
@@ -968,7 +968,7 @@ def tv(series_id):
 
         files = (
             File.query.join(ranked_files, (ranked_files.c.id == File.id))
-            .filter(File.series_id == int(series_id))
+            .filter(File.series_id == series_id)
             .filter(ranked_files.c.rank == 1)
             .order_by(File.season.asc(), File.episode.asc())
             .all()
@@ -998,7 +998,7 @@ def tv(series_id):
         aws_untouched_keys = []
 
         try:
-            files = File.query.filter(File.series_id == int(series_id)).all()
+            files = File.query.filter(File.series_id == series_id).all()
             for file in files:
                 if file.aws_untouched_key:
                     aws_untouched_keys.append(file.aws_untouched_key)
@@ -1011,7 +1011,7 @@ def tv(series_id):
         except Exception:
             db.session.rollback()
             flash(f"Unable to delete TV series '{title}'!", "danger")
-            return redirect(url_for("main.tv", series_id=int(series_id)))
+            return redirect(url_for("main.tv", series_id=series_id))
 
         # Delete the AWS copies only after the database delete has committed, so
         # a failed commit can't leave database records whose backups are gone
@@ -1089,14 +1089,18 @@ def tv(series_id):
     )
 
 
-@bp.route("/tv/<series_id>/<season>")
+@bp.route("/tv/<int:series_id>/<int:season>")
 @login_required
 def season(series_id, season):
-    """Show all files for a TV show's season, regardless of ranking."""
+    """Show all files for a TV show's season, regardless of ranking.
 
-    tv = TVSeries.query.filter_by(id=int(series_id)).first_or_404()
+    The int converters make a non-numeric series or season in the URL a 404
+    instead of a ValueError further down.
+    """
 
-    if season == "0":
+    tv = TVSeries.query.filter_by(id=series_id).first_or_404()
+
+    if season == 0:
         title = (
             f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}" special episodes'
         )
@@ -1134,8 +1138,8 @@ def season(series_id, season):
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
         .join(ranked_files, (ranked_files.c.id == File.id))
-        .filter(TVSeries.id == int(series_id))
-        .filter(File.season == int(season))
+        .filter(TVSeries.id == series_id)
+        .filter(File.season == season)
         .order_by(
             File.episode.asc(), RefQuality.preference.desc(), File.last_episode.desc()
         )
@@ -1147,7 +1151,7 @@ def season(series_id, season):
     )
 
 
-@bp.route("/file/<file_id>", methods=["GET", "POST"])
+@bp.route("/file/<int:file_id>", methods=["GET", "POST"])
 @login_required
 def file(file_id):
     """Show the details for a particular video file."""
@@ -1163,7 +1167,7 @@ def file(file_id):
 
     #     current_app.logger.info(f"Forced subtitle tracks from the form: {forced_subtitle_tracks}")
 
-    file = File.query.filter_by(id=int(file_id)).first_or_404()
+    file = File.query.filter_by(id=file_id).first_or_404()
     title = file.basename
 
     # Since the video file can be for either a movie or a tv show, determine which
@@ -1198,7 +1202,7 @@ def file(file_id):
                 db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
             )
             .join(file_rank, (file_rank.c.id == File.id))
-            .filter(File.id == int(file_id))
+            .filter(File.id == file_id)
             .filter(file_rank.c.rank == 1)
             .first()
         )
@@ -1230,7 +1234,7 @@ def file(file_id):
                 db.case([(file_rank.c.rank == 1, 1)], else_=0).label("rank"),
             )
             .join(file_rank, (file_rank.c.id == File.id))
-            .filter(File.id == int(file_id))
+            .filter(File.id == file_id)
             .filter(file_rank.c.rank == 1)
             .first()
         )
