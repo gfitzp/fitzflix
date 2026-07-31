@@ -1529,10 +1529,12 @@ def mkvpropedit_task(
                 f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
             )
 
-            # The web form sends track ids as strings; mkvmerge_task sends ints.
+            # The web form sends track ids as strings; mkvmerge_task sends ints,
+            # and None means the file has no audio tracks to set a default on.
             # Normalize once so every comparison below compares like with like.
 
-            default_audio_track = str(default_audio_track)
+            if default_audio_track is not None:
+                default_audio_track = str(default_audio_track)
             if default_subtitle_track is not None:
                 default_subtitle_track = str(default_subtitle_track)
 
@@ -1618,7 +1620,7 @@ def mkvpropedit_task(
                 # If the default audio track isn't the first track, create a new file with the
                 # default audio track prioritized so Plex selects it first
 
-                if default_audio_track != "1":
+                if default_audio_track is not None and default_audio_track != "1":
                     new_track_order = []
                     media_info = MediaInfo.parse(file_path)
 

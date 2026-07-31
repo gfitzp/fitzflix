@@ -1288,8 +1288,16 @@ def file(file_id):
         if audio_track.default == True:
             default_audio_track_number = str(audio_track.track)
 
-    mkvpropedit_form.default_audio.choices = default_audio_choices
-    mkvpropedit_form.default_audio.default = default_audio_track_number
+    if audio_tracks:
+        mkvpropedit_form.default_audio.choices = default_audio_choices
+        mkvpropedit_form.default_audio.default = default_audio_track_number
+
+    else:
+        # No audio tracks: remove the field entirely, so its empty radio group
+        # can't fail validation and block subtitle-only property edits
+        # (the template already skips rendering it via {% if audio_tracks %})
+
+        del mkvpropedit_form.default_audio
 
     default_subtitle_choices = [("0", "None")]
     default_subtitle_track_number = "0"
@@ -1326,9 +1334,14 @@ def file(file_id):
         mkvpropedit_form.mkvpropedit_submit.data
         and mkvpropedit_form.validate_on_submit()
     ):
-        current_app.logger.debug(
-            f"Default audio: {mkvpropedit_form.default_audio.data}"
+        # The default_audio field is deleted from the form when the file has
+        # no audio tracks; None tells the task there's no default to set
+
+        default_audio_track = (
+            mkvpropedit_form.default_audio.data if audio_tracks else None
         )
+
+        current_app.logger.debug(f"Default audio: {default_audio_track}")
         current_app.logger.debug(
             f"Default subtitle: {mkvpropedit_form.default_subtitle.data}"
         )
@@ -1341,7 +1354,7 @@ def file(file_id):
                 "app.videos.mkvpropedit_task",
                 args=(
                     file.id,
-                    mkvpropedit_form.default_audio.data,
+                    default_audio_track,
                     mkvpropedit_form.default_subtitle.data,
                     mkvpropedit_form.forced_subtitles.data,
                 ),
