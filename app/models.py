@@ -1217,12 +1217,6 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
     def __repr__(self):
         return f"<Movie '{self.title} ({self.year})'>"
 
-    # Needed so sqlalchemy won't throw an error when it gets additional keys
-    # that don't match up to columns in the table
-    # See: https://stackoverflow.com/questions/33790769
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
 
 class TVSeries(db.Model, LibraryMixin, TMDBMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -1299,12 +1293,6 @@ class TVSeries(db.Model, LibraryMixin, TMDBMixin):
     def __repr__(self):
         return f"<TVSeries '{self.title}'>"
 
-    # Needed so sqlalchemy won't throw an error when it gets additional keys
-    # that don't match up to columns in the table
-    # See: https://stackoverflow.com/questions/33790769
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
 
 class File(db.Model, LibraryMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -1349,14 +1337,39 @@ class File(db.Model, LibraryMixin):
     )
     custom_poster = db.Column(db.String(64))
 
+    # Keys that aren't mapped columns, but that the import pipeline includes in
+    # the file_details dicts it constructs File objects from; they're kept as
+    # plain attributes because find_better_files() reads them when comparing an
+    # incoming file against the existing library
+
+    IMPORT_EXTRA_KEYS = {
+        "title",
+        "year",
+        "quality_title",
+        "extension",
+        "feature_type_name",
+    }
+
     def __repr__(self):
         return f"<File '{self.plex_title}'>"
 
-    # Needed so sqlalchemy won't throw an error when it gets additional keys
-    # that don't match up to columns in the table
-    # See: https://stackoverflow.com/questions/33790769
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+        # Route mapped columns/relationships through the real SQLAlchemy
+        # constructor so instrumentation and validation apply; allow only the
+        # known import-pipeline extras as plain attributes, and reject anything
+        # else so a typo'd column name fails fast instead of vanishing
+
+        mapped = set(db.inspect(File).attrs.keys())
+        unexpected = set(kwargs) - mapped - self.IMPORT_EXTRA_KEYS
+        if unexpected:
+            raise TypeError(
+                f"File() got unexpected keyword argument(s): {sorted(unexpected)}"
+            )
+
+        super().__init__(**{k: v for k, v in kwargs.items() if k in mapped})
+
+        for key in set(kwargs) & self.IMPORT_EXTRA_KEYS:
+            setattr(self, key, kwargs[key])
 
     def delete_local_file(self, delete_directory_tree=False):
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
