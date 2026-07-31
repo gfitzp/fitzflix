@@ -291,18 +291,63 @@ class TMDBMixin(object):
             self.tmdb_overview = tmdb_info.get("overview")
             self.tmdb_popularity = tmdb_info.get("popularity")
             self.tmdb_poster_path = tmdb_info.get("poster_path")
+            canonical_year = self.year
             if tmdb_info.get("release_date"):
                 self.tmdb_release_date = datetime.strptime(
                     tmdb_info.get("release_date"), "%Y-%m-%d"
                 )
-                self.year = self.tmdb_release_date.year
+                canonical_year = self.tmdb_release_date.year
 
             self.tmdb_revenue = tmdb_info.get("revenue")
             self.tmdb_runtime = tmdb_info.get("runtime")
             self.tmdb_status = tmdb_info.get("status")
             self.tmdb_tagline = tmdb_info.get("tagline")
             self.tmdb_title = tmdb_info.get("title")
-            self.title = tmdb_info.get("title")
+
+            # Rename this movie to TMDb's canonical title and year, unless a
+            # different movie record already holds that name: title + year is
+            # unique, so renaming onto it would fail the whole commit. The two
+            # records end up sharing a tmdb_id, so refreshing either movie will
+            # merge them via the existing duplicate-tmdb_id handling.
+
+            canonical_title = tmdb_info.get("title")
+
+            duplicate = Movie.query.filter(
+                Movie.title == canonical_title, Movie.year == canonical_year
+            ).first()
+
+            if duplicate is not None and duplicate is not self:
+                current_app.logger.warning(
+                    f"{self} not renamed to '{canonical_title} ({canonical_year})': "
+                    f"{duplicate} already has that name; refresh either movie "
+                    f"with TMDb id {tmdb_info.get('id')} to merge them"
+                )
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Duplicate movie detected",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=render_template(
+                        "email/duplicate_movie.txt",
+                        user=admin_user.email,
+                        movie=self,
+                        duplicate=duplicate,
+                        canonical_title=canonical_title,
+                        canonical_year=canonical_year,
+                    ),
+                    html_body=render_template(
+                        "email/duplicate_movie.html",
+                        user=admin_user.email,
+                        movie=self,
+                        duplicate=duplicate,
+                        canonical_title=canonical_title,
+                        canonical_year=canonical_year,
+                    ),
+                )
+
+            elif canonical_title:
+                self.title = canonical_title
+                self.year = canonical_year
             self.tmdb_video = tmdb_info.get("video")
             self.tmdb_vote_average = tmdb_info.get("vote_average")
             self.tmdb_vote_count = tmdb_info.get("vote_count")

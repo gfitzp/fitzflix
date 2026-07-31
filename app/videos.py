@@ -2338,22 +2338,31 @@ def review_task(user_id, title, rating):
                             tmdb_year = tmdb_release_date.year
 
                         if tmdb_title and tmdb_year:
-                            movie = Movie(title=tmdb_title, year=tmdb_year)
-                            db.session.add(movie)
+                            # A movie with the canonical title may already
+                            # exist; attach the review to it instead of
+                            # violating the unique title + year constraint
 
-                            try:
-                                # Establish a savepoint with db.session.begin_nested(), so if any of the
-                                # queries to get show metadata fail, we can just roll back those changes to
-                                # the savepoint and still commit the movie / tv show, file, and its tracks.
+                            movie = Movie.query.filter_by(
+                                title=tmdb_title, year=tmdb_year
+                            ).first()
 
-                                db.session.begin_nested()
-                                movie.tmdb_movie_query()
-                                db.session.commit()
+                            if not movie:
+                                movie = Movie(title=tmdb_title, year=tmdb_year)
+                                db.session.add(movie)
 
-                            except:
-                                current_app.logger.error(traceback.format_exc())
-                                db.session.rollback()
-                                pass
+                                try:
+                                    # Establish a savepoint with db.session.begin_nested(),
+                                    # so if any of the queries to get show metadata fail,
+                                    # we can just roll back those changes to the savepoint
+                                    # and still commit the movie and its review.
+
+                                    db.session.begin_nested()
+                                    movie.tmdb_movie_query()
+                                    db.session.commit()
+
+                                except Exception:
+                                    current_app.logger.error(traceback.format_exc())
+                                    db.session.rollback()
 
             if movie:
                 modified_rating = round(rating * 2) / 2
@@ -4143,7 +4152,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
 
                 current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 if tmdb_id != None:
-                    existing_movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+                    existing_movie = (
+                        Movie.query.filter_by(tmdb_id=tmdb_id)
+                        .order_by(Movie.date_created.asc())
+                        .first()
+                    )
                     if existing_movie:
                         movie = existing_movie
                         current_app.logger.info(f"Existing movie: {movie}")
