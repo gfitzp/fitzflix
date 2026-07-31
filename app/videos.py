@@ -687,7 +687,6 @@ def finalize_localization(file_path, file_details, lock):
 
                 file.date_updated = datetime.now(timezone.utc)
                 file.date_transcoded = None
-                file.date_archived = None
                 FileAudioTrack.query.filter_by(file_id=file.id).delete()
                 FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
