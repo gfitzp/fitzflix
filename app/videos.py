@@ -2802,7 +2802,13 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         # Don't resume if the file doesn't exist in AWS!
         # TODO: this code may need additional testing...
         except botocore.exceptions.ClientError as error:
-            if error.response["ResponseMetadata"]["HTTPStatusCode"] == 404:
+            # boto3 signals a missing object via Error.Code ("404"/"NoSuchKey");
+            # keep the HTTP status code check as a fallback
+            error_code = str(error.response.get("Error", {}).get("Code", ""))
+            status_code = error.response.get("ResponseMetadata", {}).get(
+                "HTTPStatusCode"
+            )
+            if error_code in ("404", "NoSuchKey") or status_code == 404:
                 current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
                 if sqs_receipt_handle:
                     try:
