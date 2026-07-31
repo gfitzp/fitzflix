@@ -131,6 +131,11 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
         # https://stackoverflow.com/a/60438156
         db.init_app(app)
 
+        # Define up front so the exception handler can tell whether the lock
+        # was acquired before the failure
+
+        lock = None
+
         try:
             job = get_current_job()
 
@@ -625,9 +630,19 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            move_to_rejects(file_path, "exception")
-            current_app.lock_manager.unlock(lock)
-            current_app.logger.info(f"Removed lock {lock}")
+
+            # Don't let a failed move to the rejects directory prevent us from
+            # releasing the lock; otherwise re-imports of this same title stay
+            # blocked until the lock's timeout expires
+
+            try:
+                move_to_rejects(file_path, "exception")
+            except Exception:
+                current_app.logger.error(traceback.format_exc())
+
+            if lock:
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
 
         else:
             current_app.sql_queue.enqueue(
@@ -2413,6 +2428,11 @@ def transcode_task(file_id):
         # https://stackoverflow.com/a/60438156
         db.init_app(app)
 
+        # Define up front so the exception handler can tell whether the lock
+        # was acquired before the failure
+
+        lock = None
+
         try:
             job = get_current_job()
 
@@ -2533,8 +2553,9 @@ def transcode_task(file_id):
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            current_app.lock_manager.unlock(lock)
-            current_app.logger.info(f"Removed lock {lock}")
+            if lock:
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
 
         else:
             current_app.sql_queue.enqueue(
@@ -2939,20 +2960,22 @@ def aws_restore(key, days=1, tier="Standard"):
                 Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
             )
 
-            # current_app.logger.info(response["Contents"])
+            # The listing has no "Contents" key at all when nothing matches
+
+            contents = response.get("Contents")
 
             # If the key exists
 
-            if response["Contents"][0]["Key"]:
+            if contents and contents[0].get("Key"):
                 head_response = s3_client.head_object(
                     Bucket=current_app.config["AWS_BUCKET"], Key=key
                 )
 
                 # current_app.logger.info(head_response)
 
-                if response["Contents"][0][
+                if contents[0].get(
                     "StorageClass"
-                ] == "STANDARD" or 'ongoing-request="false"' in head_response.get(
+                ) == "STANDARD" or 'ongoing-request="false"' in head_response.get(
                     "Restore", 'ongoing-request="true"'
                 ):
                     current_app.logger.info(
@@ -2981,7 +3004,15 @@ def aws_restore(key, days=1, tier="Standard"):
                     )
                     # current_app.logger.info(response)
 
-        except Exception as e:
+            else:
+                current_app.logger.warning(
+                    f"'{key}' does not exist in AWS S3 storage, cannot restore"
+                )
+
+        # Only botocore ClientError instances have a .response attribute;
+        # let any other exception propagate unmasked
+
+        except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
                 current_app.logger.info(
                     f"'{key}' is already in process of being restored"
@@ -3009,7 +3040,13 @@ def aws_upload(
         current_app.logger.error(
             f"'{file_path}' can't be uploaded to AWS since it's not a file!"
         )
-        return None
+
+        # Raise instead of returning None: every caller unpacks the return value
+        # as a (key, date_uploaded) tuple
+
+        raise FileNotFoundError(
+            f"'{file_path}' can't be uploaded to AWS since it's not a file"
+        )
 
     if key_name:
         key = sanitize_s3_key(key_name)
@@ -3040,12 +3077,17 @@ def aws_upload(
     # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
 
     if not force_upload and not current_app.config["FORCE_UPLOAD"]:
-        if response.get("Contents"):
-            for object in response.get("Contents"):
-                if object.get("Key") == key:
-                    remote_etag = object.get("ETag").replace('"', "")
-                    date_uploaded = object.get("LastModified")
+        # Look for an object with this exact key: since the listing is a Prefix
+        # search, it can return a different, longer key instead
 
+        remote_etag = None
+        date_uploaded = None
+        for object in response.get("Contents") or []:
+            if object.get("Key") == key:
+                remote_etag = object.get("ETag").replace('"', "")
+                date_uploaded = object.get("LastModified")
+
+        if remote_etag is not None:
             if ignore_etag or current_app.config["IGNORE_ETAGS"]:
                 current_app.logger.info(
                     f"'{file_path}' matches '{key}' and ETags are ignored, "
@@ -3124,6 +3166,13 @@ def aws_upload(
         f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
     )
     move_to_rejects(file_path, "upload error")
+
+    # Raise instead of falling off the end returning None: every caller unpacks
+    # the return value as a (key, date_uploaded) tuple
+
+    raise RuntimeError(
+        f"Unable to upload '{file_path}' to AWS after {MAX_RETRY_COUNT} attempts"
+    )
 
 
 def calculate_etag(file_path):
