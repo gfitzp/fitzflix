@@ -1386,7 +1386,11 @@ class File(db.Model, LibraryMixin):
         except FileNotFoundError:
             pass
 
-        # Delete transcoded file if exists
+        else:
+            current_app.logger.info(f"Deleted local file '{file_to_delete}'")
+
+        # Delete transcoded file and its directory if they exist
+
         try:
             os.remove(transcoded_file)
         except FileNotFoundError:
@@ -1397,25 +1401,20 @@ class File(db.Model, LibraryMixin):
         except OSError:
             pass
 
-        else:
-            current_app.logger.info(f"Deleted local file '{file_to_delete}'")
+        # Optionally delete the directory tree, even if the library file itself
+        # was already gone, so deleting a record purges its empty folder too
 
-            if self.aws_untouched_date_uploaded:
-                self.date_archived = datetime.now(timezone.utc)
+        if delete_directory_tree:
+            try:
+                os.removedirs(os.path.dirname(file_to_delete))
 
-            # Optionally delete the directory tree
+            except OSError:
+                pass
 
-            if delete_directory_tree:
-                try:
-                    os.removedirs(os.path.dirname(file_to_delete))
-
-                except OSError:
-                    pass
-
-                else:
-                    current_app.logger.info(
-                        f"Deleted the directory tree '{os.path.dirname(file_to_delete)}'"
-                    )
+            else:
+                current_app.logger.info(
+                    f"Deleted the directory tree '{os.path.dirname(file_to_delete)}'"
+                )
 
         return self
 
