@@ -1291,8 +1291,11 @@ def file(file_id):
 
     mkvpropedit_form = MKVPropEditForm()
 
+    # Choices and defaults are strings, since that's what WTForms coerces the
+    # submitted values to; ints here would fail the "valid choice" validation
+
     default_audio_choices = []
-    default_audio_track_number = 1
+    default_audio_track_number = "1"
     for audio_track in audio_tracks:
         if (
             audio_track.compression_mode == "Lossless"
@@ -1301,33 +1304,33 @@ def file(file_id):
         ):
             default_audio_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
                 )
             )
         elif audio_track.bitrate_kbps:
             default_audio_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
                 )
             )
         else:
             default_audio_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
                 )
             )
 
         if audio_track.default == True:
-            default_audio_track_number = audio_track.track
+            default_audio_track_number = str(audio_track.track)
 
     mkvpropedit_form.default_audio.choices = default_audio_choices
     mkvpropedit_form.default_audio.default = default_audio_track_number
 
-    default_subtitle_choices = [(0, "None")]
-    default_subtitle_track_number = 0
+    default_subtitle_choices = [("0", "None")]
+    default_subtitle_track_number = "0"
 
     forced_subtitle_choices = []
     default_forced_subtitles = []
@@ -1335,21 +1338,21 @@ def file(file_id):
     for subtitle_track in subtitle_tracks:
         default_subtitle_choices.append(
             (
-                subtitle_track.track,
+                str(subtitle_track.track),
                 f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
         if subtitle_track.default == True:
-            default_subtitle_track_number = subtitle_track.track
+            default_subtitle_track_number = str(subtitle_track.track)
 
         forced_subtitle_choices.append(
             (
-                subtitle_track.track,
+                str(subtitle_track.track),
                 f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
         if subtitle_track.forced == True:
-            default_forced_subtitles.append(subtitle_track.track)
+            default_forced_subtitles.append(str(subtitle_track.track))
 
     mkvpropedit_form.default_subtitle.choices = default_subtitle_choices
     mkvpropedit_form.default_subtitle.default = default_subtitle_track_number
@@ -1357,7 +1360,10 @@ def file(file_id):
     mkvpropedit_form.forced_subtitles.choices = forced_subtitle_choices
     mkvpropedit_form.forced_subtitles.default = default_forced_subtitles
 
-    if mkvpropedit_form.mkvpropedit_submit.data:
+    if (
+        mkvpropedit_form.mkvpropedit_submit.data
+        and mkvpropedit_form.validate_on_submit()
+    ):
         current_app.logger.debug(
             f"Default audio: {mkvpropedit_form.default_audio.data}"
         )
@@ -1415,34 +1421,34 @@ def file(file_id):
         ):
             audio_track_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bit_depth}-bit {audio_track.sampling_rate_khz} khz)",
                 )
             )
         elif audio_track.bitrate_kbps:
             audio_track_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels} ({audio_track.bitrate_kbps} kbps)",
                 )
             )
         else:
             audio_track_choices.append(
                 (
-                    audio_track.track,
+                    str(audio_track.track),
                     f"{audio_track.language_name}: {audio_track.codec} {audio_track.channels}",
                 )
             )
-        default_audio_tracks.append(audio_track.track)
+        default_audio_tracks.append(str(audio_track.track))
 
     for subtitle_track in subtitle_tracks:
         subtitle_track_choices.append(
             (
-                subtitle_track.track,
+                str(subtitle_track.track),
                 f"{subtitle_track.elements}-element {subtitle_track.language_name}",
             )
         )
-        default_subtitle_tracks.append(subtitle_track.track)
+        default_subtitle_tracks.append(str(subtitle_track.track))
 
     mkvmerge_form.audio_tracks.choices = audio_track_choices
     mkvmerge_form.audio_tracks.default = default_audio_tracks
@@ -1450,7 +1456,7 @@ def file(file_id):
     mkvmerge_form.subtitle_tracks.choices = subtitle_track_choices
     mkvmerge_form.subtitle_tracks.default = default_subtitle_tracks
 
-    if mkvmerge_form.mkvmerge_submit.data:
+    if mkvmerge_form.mkvmerge_submit.data and mkvmerge_form.validate_on_submit():
         current_app.logger.info(f"Audio tracks: {mkvmerge_form.audio_tracks.data}")
         current_app.logger.info(
             f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}"
