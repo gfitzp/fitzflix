@@ -68,6 +68,8 @@ def sonarr_add():
             .replace("Bluray", "WEBDL")
             .replace(" Remux", "")
         )
+        if payload["customFormatInfo"].get("customFormatScore", 0) < 1600:
+            new_quality = new_quality.replace("WEBDL", "WEBRip")
         sonarr_file_name = os.path.basename(downloaded_file_path).replace(
             f"[{original_quality}]", f"[{new_quality}]"
         )
