@@ -20,8 +20,10 @@ from flask import (
     url_for,
     request,
     send_from_directory,
-    Markup,
 )
+
+# flask.Markup was removed in Flask 2.4; import from its actual home
+from markupsafe import Markup
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
@@ -993,31 +995,34 @@ def tv(series_id):
         series_delete_form.delete_submit.data
         and series_delete_form.validate_on_submit()
     ):
+        aws_untouched_keys = []
+
         try:
             files = File.query.filter(File.series_id == int(series_id)).all()
             for file in files:
-                current_app.request_queue.enqueue(
-                    "app.videos.aws_delete",
-                    args=(file.aws_untouched_key,),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                )
+                if file.aws_untouched_key:
+                    aws_untouched_keys.append(file.aws_untouched_key)
                 file.delete_local_file(delete_directory_tree=True)
                 db.session.delete(file)
 
-        except:
-            db.session.rollback()
-            flash(f"Unable to delete '{file.basename}'!", "danger")
-            return redirect(url_for("main.tv", series_id=int(series_id)))
-
-        try:
             db.session.delete(tv)
+            db.session.commit()
 
-        except:
+        except Exception:
             db.session.rollback()
-            flash(f"Unable to delete TV series '{title}'")
+            flash(f"Unable to delete TV series '{title}'!", "danger")
             return redirect(url_for("main.tv", series_id=int(series_id)))
 
-        db.session.commit()
+        # Delete the AWS copies only after the database delete has committed, so
+        # a failed commit can't leave database records whose backups are gone
+
+        for aws_untouched_key in aws_untouched_keys:
+            current_app.request_queue.enqueue(
+                "app.videos.aws_delete",
+                args=(aws_untouched_key,),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            )
+
         flash(
             f"Deleted TV series '{title}' and its files from the database.", "success"
         )
@@ -1502,21 +1507,27 @@ def file(file_id):
 
     delete_form = FileDeleteForm()
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
+        aws_untouched_key = file.aws_untouched_key
+
         try:
-            current_app.request_queue.enqueue(
-                "app.videos.aws_delete",
-                args=(file.aws_untouched_key,),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            )
             file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
+            db.session.commit()
 
-        except:
+        except Exception:
             db.session.rollback()
             flash(f"Unable to delete '{file.basename}'!", "danger")
             return redirect(url_for("main.file", file_id=file.id))
 
-        db.session.commit()
+        # Delete the AWS copy only after the database delete has committed, so a
+        # failed commit can't leave a database record whose backup is gone
+
+        if aws_untouched_key:
+            current_app.request_queue.enqueue(
+                "app.videos.aws_delete",
+                args=(aws_untouched_key,),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            )
 
         flash(f"Deleted '{file.basename}' and removed from database.", "success")
 

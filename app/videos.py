@@ -1038,6 +1038,8 @@ def finalize_localization(file_path, file_details, lock):
             worse_files = file.find_worse_files()
             current_app.logger.info(f"{file} worse files: {worse_files}")
 
+            worse_aws_keys = []
+
             for worse in worse_files:
                 worse.delete_local_file()
 
@@ -1052,17 +1054,10 @@ def finalize_localization(file_path, file_details, lock):
                     or file.quality.physical_media == True
                 ):
                     if worse.aws_untouched_date_uploaded:
-                        # S3 delete logic needs to be placed in here directly, since it
-                        # won't work if called with app.app_context() (like in aws_delete())
-                        s3_client = boto3.client(
-                            "s3",
-                            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-                        )
-                        s3_client.delete_object(
-                            Bucket=current_app.config["AWS_BUCKET"],
-                            Key=worse.aws_untouched_key,
-                        )
+                        # Note the key now, but only delete it from AWS after the
+                        # database commit succeeds, so a failed commit can't cost
+                        # us the backup of a record that rolled back
+                        worse_aws_keys.append(worse.aws_untouched_key)
                     db.session.delete(worse)
 
                 if (
@@ -1112,6 +1107,25 @@ def finalize_localization(file_path, file_details, lock):
             os.rename(hidden_output_file, output_file)
 
             db.session.commit()
+
+            # Delete the replaced files from AWS S3 storage now that the commit
+            # succeeded; the S3 delete logic is placed in here directly, since it
+            # won't work if called with app.app_context() (like in aws_delete())
+
+            if worse_aws_keys:
+                s3_client = boto3.client(
+                    "s3",
+                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+                    aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+                )
+                for worse_key in worse_aws_keys:
+                    s3_client.delete_object(
+                        Bucket=current_app.config["AWS_BUCKET"],
+                        Key=worse_key,
+                    )
+                    current_app.logger.info(
+                        f"'{worse_key}' deleted from AWS S3 storage"
+                    )
 
             # Remove the file that was imported unless it was replaced by the localized file
             # (we don't want to remove the file we just created!)
