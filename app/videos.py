@@ -49,6 +49,20 @@ from app.models import (
 EIGHT_MEGABYTES = 8388608
 
 
+def wait_for_subprocess(process, ok_returncodes=(0,)):
+    """Wait for an external tool to finish, and raise if it exited with an error.
+
+    Accepts either a subprocess.Popen or a subprocess.CompletedProcess. The
+    mkvtoolnix tools (mkvmerge, mkvpropedit) exit with 1 for warnings and 2 for
+    errors, so callers for those tools should pass ok_returncodes=(0, 1).
+    """
+
+    if hasattr(process, "wait"):
+        process.wait()
+    if process.returncode not in ok_returncodes:
+        raise subprocess.CalledProcessError(process.returncode, process.args)
+
+
 class UploadProgressPercentage(object):
     """Return the upload progress as a callback when uploading a file to AWS S3."""
 
@@ -316,6 +330,8 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             job.meta["progress"] = progress
                             job.save_meta()
 
+                wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
+
                 # Re-parse the file now that the track statistics tags have been added
 
                 current_app.logger.info(
@@ -558,6 +574,8 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             job.meta["progress"] = progress
                             job.save_meta()
 
+                wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
+
             else:
                 if file_details.get("container") == "MPEG-4":
                     current_app.logger.info(f"'{basename}' Removing MPEG-4 metadata")
@@ -584,6 +602,8 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                             )
                             job.meta["progress"] = -1
                             job.save_meta()
+
+                    wait_for_subprocess(atomicparsley_process)
 
                     current_app.logger.info(f"'{basename}' Removed MPEG-4 metadata")
 
@@ -830,6 +850,8 @@ def finalize_localization(file_path, file_details, lock):
                             f"'{os.path.basename(hidden_output_file)}' {line}"
                         )
 
+                    wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
+
                 # Change from ISO-639-2 to ISO-639-3 language code
                 # if the file was written by MakeMKV
 
@@ -885,6 +907,8 @@ def finalize_localization(file_path, file_details, lock):
                         current_app.logger.info(
                             f"'{os.path.basename(hidden_output_file)}' {line}"
                         )
+
+                    wait_for_subprocess(mkvpropedit_process, ok_returncodes=(0, 1))
 
                 # Rebuild the audio and subtitle track info
                 # now that we've possibly made modifications
@@ -1582,6 +1606,8 @@ def mkvpropedit_task(
                 line = line.replace("\n", "")
                 current_app.logger.info(line)
 
+            wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
+
             # If the default audio track isn't the first track, create a new file with the
             # default audio track prioritized so Plex selects it first
 
@@ -1666,6 +1692,8 @@ def mkvpropedit_task(
                             job.meta["description"] = f"'{file.basename}' — Remuxing"
                             job.meta["progress"] = progress
                             job.save_meta()
+
+                wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
                 # Move the new file into place
 
@@ -1848,6 +1876,8 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
                         job.meta["description"] = f"'{file.basename}' — Remuxing"
                         job.meta["progress"] = progress
                         job.save_meta()
+
+            wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
             # Move the new file into place
 
@@ -2488,6 +2518,8 @@ def transcode_task(file_id):
                             job.meta["progress"] = -1
 
                         job.save_meta()
+
+            wait_for_subprocess(transcode_process)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -4396,6 +4428,8 @@ def lossless_to_flac(file_path, file_id=None):
                             )
                             job.meta["progress"] = progress
                             job.save_meta()
+
+                    wait_for_subprocess(flac_track_process)
 
                     current_app.logger.info(
                         f"'{basename}' Converted lossless tracks to FLAC"
