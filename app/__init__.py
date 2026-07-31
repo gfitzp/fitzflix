@@ -45,7 +45,9 @@ def create_app(config_class=Config):
 
             if os.path.basename(event.src_path).startswith(
                 "."
-            ) and not os.path.basename(event.dest_path).startswith("."):
+            ) and not os.path.basename(event.dest_path).startswith(
+                "."
+            ) and os.path.isfile(event.dest_path):
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
@@ -81,7 +83,9 @@ def create_app(config_class=Config):
 
             # Process only those files that are not invisible
 
-            if not os.path.basename(event.src_path).startswith("."):
+            if not os.path.basename(event.src_path).startswith(
+                "."
+            ) and os.path.isfile(event.src_path):
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
