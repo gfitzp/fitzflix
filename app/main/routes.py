@@ -3,8 +3,10 @@ import io
 import json
 import math
 import os
+import re
 import secrets
 import shutil
+import time
 import traceback
 
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from rq.job import Job
 from rq.registry import StartedJobRegistry, ScheduledJobRegistry
 
 from flask import (
+    current_app,
     render_template,
     flash,
     jsonify,
@@ -74,7 +77,7 @@ from app.models import (
 )
 from app.main import bp
 from app.email import send_email
-from app.videos import *
+from app.videos import track_metadata_scan
 
 
 @bp.route("/browserconfig.xml")
@@ -153,9 +156,15 @@ def index():
     )
 
     form = ImportForm()
-    if form.validate_on_submit():
-        file = import_video()
-        flash(f"Importing '{file}'...")
+    if form.submit.data and form.validate_on_submit():
+        current_app.request_queue.enqueue(
+            "app.videos.manual_import_task",
+            args=(),
+            job_timeout="1h",
+            description="Manually scanning import directory for files",
+            at_front=True,
+        )
+        flash(f"Added files in import directory to import queue", "info")
         return redirect(url_for("main.index"))
 
     return render_template(
