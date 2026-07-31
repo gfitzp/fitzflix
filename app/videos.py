@@ -2921,7 +2921,7 @@ def aws_restore(key, days=1, tier="Standard"):
                         args=(key, os.path.basename(key)),
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{os.path.basename(key)}'",
-                        atfront=True,
+                        at_front=True,
                     )
                     return
 

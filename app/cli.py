@@ -123,7 +123,7 @@ def register(app):
             args=(),
             job_timeout="1h",
             description="Scanning import directory for files",
-            atfront=True,
+            at_front=True,
         )
         app.logger.info("Scanning import directory for files")
 
