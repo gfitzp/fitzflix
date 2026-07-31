@@ -1106,7 +1106,7 @@ def season(series_id, season):
 
     tv = TVSeries.query.filter_by(id=int(series_id)).first_or_404()
 
-    if season == 0:
+    if season == "0":
         title = (
             f'Files for "{tv.tmdb_name if tv.tmdb_name else tv.title}" special episodes'
         )
@@ -1151,34 +1151,6 @@ def season(series_id, season):
         )
         .all()
     )
-
-    # Create a list of all of the episodes for this season,
-    # and all of the files for each episode
-
-    episode_numbers = []
-    for file in files:
-        episode_numbers.append(file.File.episode)
-
-    episode_numbers.sort()
-    episode_numbers = list(set(episode_numbers))
-    episodes = []
-    for ep_num in episode_numbers:
-        this_episode = {"episode": ep_num, "files": []}
-        for file in files:
-            if file.File.episode == ep_num:
-                this_episode["files"].append(
-                    {
-                        "id": file.File.id,
-                        "basename": file.File.basename,
-                        "quality_title": file.RefQuality.quality_title,
-                        "quality_preference": file.RefQuality.preference,
-                        "last_episode": file.File.last_episode,
-                        "edition": file.File.edition,
-                        "rank": file.rank,
-                    }
-                )
-
-        episodes.append(this_episode)
 
     return render_template(
         "season.html", title=title, tv=tv, season=season, files=files
