@@ -2367,6 +2367,7 @@ def review_task(user_id, title, rating):
                         tmdb_info = r.json()
 
                         tmdb_title = tmdb_info.get("title")
+                        tmdb_year = None
                         if tmdb_info.get("release_date"):
                             tmdb_release_date = datetime.strptime(
                                 tmdb_info.get("release_date"), "%Y-%m-%d"
