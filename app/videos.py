@@ -880,6 +880,7 @@ def finalize_localization(file_path, file_details, lock):
 
                 if (
                     len(output_subtitle_tracks) >= 1
+                    and len(output_audio_tracks) >= 1
                     and output_audio_tracks[0].get("language") != native_language
                     and output_audio_tracks[0].get("language") != "und"
                     and not existing_default_subtitle_track
