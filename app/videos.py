@@ -2293,7 +2293,22 @@ def review_task(user_id, title, rating):
         db.init_app(app)
 
         try:
-            movie = Movie.query.filter_by(title=title).first()
+            # A title alone can be ambiguous, since the Netflix export has no
+            # year; if multiple movies share this title, fall through to TMDb,
+            # which resolves the year, rather than guessing with .first()
+
+            movie_matches = Movie.query.filter_by(title=title).all()
+
+            if len(movie_matches) == 1:
+                movie = movie_matches[0]
+
+            else:
+                movie = None
+                if len(movie_matches) > 1:
+                    current_app.logger.warning(
+                        f"'{title}' matches {len(movie_matches)} movies in the "
+                        f"library; resolving via TMDb"
+                    )
 
             if not movie:
                 tmdb_info = {}
