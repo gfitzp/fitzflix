@@ -1889,7 +1889,7 @@ class TVCast(db.Model):
     __table_args__ = (db.UniqueConstraint("tv_id", "credit_id", "character"),)
 
     def __repr__(self):
-        return f"<TVCast '{self.tv_id}:{self.credit_id}:{self.name}'>"
+        return f"<TVCast '{self.tv_id}:{self.credit_id}:{self.character}'>"
 
 
 class TVCrew(db.Model):
