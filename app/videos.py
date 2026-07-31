@@ -156,7 +156,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             basename = os.path.basename(file_path)
 
             # If the file name contains "temp-1234.", then ignore it
-            if re.search("\-temp\-\d+\.", basename):
+            if re.search(r"\-temp\-\d+\.", basename):
                 return False
 
             file_details = evaluate_filename(file_path)
@@ -326,10 +326,10 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     bufsize=1,
                 )
                 for line in statistics_tags_process.stdout:
-                    progress_match = re.search("Progress\: \d+\%", line)
+                    progress_match = re.search(r"Progress\: \d+\%", line)
                     if progress_match:
                         progress_match = re.match(
-                            "^Progress\: (?P<percent>\d+)\%", line
+                            r"^Progress\: (?P<percent>\d+)\%", line
                         )
                         progress = int(progress_match.group("percent"))
                         current_app.logger.info(
@@ -573,10 +573,10 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     )
 
                 for line in mkvmerge_process.stdout:
-                    progress_match = re.search("Progress\: \d+\%", line)
+                    progress_match = re.search(r"Progress\: \d+\%", line)
                     if progress_match:
                         progress_match = re.match(
-                            "^Progress\: (?P<percent>\d+)\%", line
+                            r"^Progress\: (?P<percent>\d+)\%", line
                         )
                         progress = int(progress_match.group("percent"))
                         current_app.logger.info(f"'{basename}' Localizing: {progress}%")
@@ -1689,10 +1689,10 @@ def mkvpropedit_task(
                     )
 
                     for line in mkvmerge_process.stdout:
-                        progress_match = re.search("Progress\: \d+\%", line)
+                        progress_match = re.search(r"Progress\: \d+\%", line)
                         if progress_match:
                             progress_match = re.match(
-                                "^Progress\: (?P<percent>\d+)\%", line
+                                r"^Progress\: (?P<percent>\d+)\%", line
                             )
                             progress = int(progress_match.group("percent"))
                             current_app.logger.info(
@@ -1867,9 +1867,9 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             )
 
             for line in mkvmerge_process.stdout:
-                progress_match = re.search("Progress\: \d+\%", line)
+                progress_match = re.search(r"Progress\: \d+\%", line)
                 if progress_match:
-                    progress_match = re.match("^Progress\: (?P<percent>\d+)\%", line)
+                    progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
                     progress = int(progress_match.group("percent"))
                     current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
                     if job:
@@ -2496,11 +2496,11 @@ def transcode_task(file_id):
             )
             for line in transcode_process.stdout:
                 progress_match = re.search(
-                    "Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
+                    r"Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
                 )
                 if progress_match:
                     progress_match = re.match(
-                        "^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
+                        r"^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
                         line,
                     )
                     progress = int(progress_match.group("percent"))
@@ -3195,11 +3195,11 @@ def evaluate_filename(file_path, tmdb_id=None):
     # Determine if basename matches movie or tv formats
 
     movie_match = re.search(
-        "(.+) \((\d{4})\)(?: (\{edition\-(.+)\}) | )\-(?: (.+) | )\[(.+)\]\.(.+)",
+        r"(.+) \((\d{4})\)(?: (\{edition\-(.+)\}) | )\-(?: (.+) | )\[(.+)\]\.(.+)",
         basename,
     )
     tv_match = re.search(
-        "(.+) \- S(\d+)E(\d+)(?:\-E(\d+))? \-(?: (.+) | )\[(.+)\]\.(.+)", basename
+        r"(.+) \- S(\d+)E(\d+)(?:\-E(\d+))? \-(?: (.+) | )\[(.+)\]\.(.+)", basename
     )
 
     # Need to try to match TV series first, otherwise a tv series with a year in the
@@ -3208,9 +3208,9 @@ def evaluate_filename(file_path, tmdb_id=None):
 
     if tv_match:
         tv = re.match(
-            "(?P<title>.+) \- S(?P<season>\d+)E(?P<episode>\d+)"
-            "(?:\-E(?P<last_episode>\d+))? \-(?: (?P<version>.+) | )"
-            "\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
+            r"(?P<title>.+) \- S(?P<season>\d+)E(?P<episode>\d+)"
+            r"(?:\-E(?P<last_episode>\d+))? \-(?: (?P<version>.+) | )"
+            r"\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
             basename,
         )
 
@@ -3309,8 +3309,8 @@ def evaluate_filename(file_path, tmdb_id=None):
 
     elif movie_match:
         movie = re.match(
-            "(?P<title>.+) \((?P<year>\d{4})\)(?: \{edition\-(?P<edition>.+)\} | )\-(?: (?P<version>.+) | )"
-            "\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
+            r"(?P<title>.+) \((?P<year>\d{4})\)(?: \{edition\-(?P<edition>.+)\} | )\-(?: (?P<version>.+) | )"
+            r"\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
             basename,
         )
 
@@ -4516,7 +4516,7 @@ def lossless_to_flac(file_path, file_id=None):
                     progress = 0
                     for line in flac_track_process.stdout:
                         progress_match = re.search(
-                            "time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
+                            r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
                             line,
                         )
                         if progress_match:
