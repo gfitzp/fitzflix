@@ -2997,7 +2997,7 @@ def aws_upload(
     # If the ETags match, then the files are the same and there's no need to re-upload.
     # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
 
-    if not force_upload:
+    if not force_upload and not current_app.config["FORCE_UPLOAD"]:
         if response.get("Contents"):
             for object in response.get("Contents"):
                 if object.get("Key") == key:
@@ -3066,10 +3066,12 @@ def aws_upload(
                 )
 
             else:
+                move_to_rejects(file_path, "upload error")
                 current_app.logger.error(e)
                 raise
 
         except:
+            move_to_rejects(file_path, "upload error")
             raise
 
         else:
