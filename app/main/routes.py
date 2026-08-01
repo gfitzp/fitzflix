@@ -1536,9 +1536,6 @@ def file(file_id):
 
     download_form = S3DownloadForm()
     if download_form.s3_download_submit.data and download_form.validate_on_submit():
-        if file_exists_locally:
-            flash(f"'{file.basename}' is already present locally.", "info")
-            return redirect(url_for("main.file", file_id=file.id))
 
         # Enqueue a restore task for this file
 
