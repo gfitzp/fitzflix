@@ -28,8 +28,9 @@ from rq.registry import StartedJobRegistry
 from unidecode import unidecode
 
 from flask import current_app, render_template
+from werkzeug.local import LocalProxy
 
-from app import create_app, db
+from app import db, get_app
 from app.email import task_send_email as send_email
 from app.models import (
     File,
@@ -4598,4 +4599,7 @@ def reconstruct_filename(file_id):
     return reconstructed_filename
 
 
-app = create_app()
+# This process's app instance, resolved lazily so importing this module from
+# a process that already has an application doesn't build a second one
+
+app = LocalProxy(get_app)

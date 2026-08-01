@@ -32,6 +32,23 @@ mail = Mail()
 bootstrap = Bootstrap()
 moment = Moment()
 
+_app = None
+
+
+def get_app():
+    """Return this process's application instance, creating it if needed.
+
+    Task modules resolve their app through this instead of calling
+    create_app() at import time, so importing them from a process that
+    already has an application (e.g. the web process importing app.videos)
+    doesn't build a second one.
+    """
+
+    global _app
+    if _app is None:
+        _app = create_app()
+    return _app
+
 
 def check_config(app):
     """Warn at startup about config values that would make tasks fail later.
@@ -251,7 +268,7 @@ def create_app(config_class=Config):
 
     ProxyFix(app, x_proto=1, x_host=1, x_prefix=1)
 
-    from app import models, videos
+    from app import models
 
     # Build blueprints
 
@@ -274,7 +291,12 @@ def create_app(config_class=Config):
     if not app.debug:
         # Configure how to handle logs when running in production mode
 
-        if app.config["MAIL_SERVER"]:
+        # Both Flask instances in this package share the "app" logger, so only
+        # attach the mail and file handlers if an earlier create_app() hasn't
+
+        if app.config["MAIL_SERVER"] and not any(
+            isinstance(handler, SMTPHandler) for handler in app.logger.handlers
+        ):
             # Email any exceptions
 
             auth = None
@@ -299,14 +321,19 @@ def create_app(config_class=Config):
         if not os.path.exists("logs"):
             os.mkdir("logs")
 
-        file_handler = logging.FileHandler("logs/fitzflix.log")
-        file_handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
+        if not any(
+            isinstance(handler, logging.FileHandler)
+            for handler in app.logger.handlers
+        ):
+            file_handler = logging.FileHandler("logs/fitzflix.log")
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
+                )
             )
-        )
-        file_handler.setLevel(logging.INFO)
-        app.logger.addHandler(file_handler)
+            file_handler.setLevel(logging.INFO)
+            app.logger.addHandler(file_handler)
+
         app.logger.setLevel(logging.INFO)
         app.logger.info("Fitzflix startup")
 
@@ -324,5 +351,12 @@ def create_app(config_class=Config):
     observer = PollingObserver()
     observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
     observer.start()
+
+    # The first application created becomes this process's instance for
+    # modules that resolve their app through get_app()
+
+    global _app
+    if _app is None:
+        _app = app
 
     return app
