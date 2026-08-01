@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import traceback
 import urllib.parse
 
@@ -155,6 +156,25 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             # If the file name contains "temp-1234.", then ignore it
             if re.search(r"\-temp\-\d+\.", basename):
                 return False
+
+            # Don't process a file that's still being copied into place:
+            # if it's growing, check back in a minute
+
+            size_before = os.path.getsize(file_path)
+            time.sleep(5)
+            if os.path.getsize(file_path) != size_before:
+                current_app.logger.info(
+                    f"'{basename}' is still being copied, "
+                    f"returning to queue to try again in 1 minute"
+                )
+                current_app.import_scheduler.enqueue_in(
+                    timedelta(minutes=1),
+                    "app.videos.localization_task",
+                    file_path=file_path,
+                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_description=f"'{basename}'",
+                )
+                return True
 
             file_details = evaluate_filename(file_path)
             current_app.logger.info(f"'{basename}' File details: {file_details}")

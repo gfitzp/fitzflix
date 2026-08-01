@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+import threading
+import time
+import traceback
 
 from logging.handlers import SMTPHandler, WatchedFileHandler
 from urllib.parse import quote_plus
@@ -274,6 +277,18 @@ def create_app(config_class=Config):
         description="Rotating application logs",
     )
 
+    # Sweep the import directory hourly as a safety net in case the
+    # filesystem observer misses an arrival
+
+    app.request_scheduler.cron(
+        "0 * * * *",
+        func="app.videos.manual_import_task",
+        id="import-sweep",
+        use_local_timezone=True,
+        timeout="1h",
+        description="Scanning import directory for files",
+    )
+
     # Configure the Redis redlock manager
 
     app.lock_manager = Redlock([app.redis])
@@ -370,12 +385,66 @@ def create_app(config_class=Config):
 
     os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
 
-    # Watch the import directory for file changes
+    # Watch the import directory for file changes. The polling emitter shuts
+    # itself down permanently on any OSError from the (network-mounted)
+    # import directory, so a keeper thread rebuilds the observer whenever it
+    # dies, then sweeps the directory for anything that arrived while blind
 
     event_handler = MyHandler()
-    observer = PollingObserver()
-    observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
-    observer.start()
+
+    def start_observer():
+        observer = PollingObserver()
+        observer.schedule(
+            event_handler, path=app.config["IMPORT_DIR"], recursive=False
+        )
+        observer.start()
+        return observer
+
+    def enqueue_import_sweep():
+        app.request_queue.enqueue(
+            "app.videos.manual_import_task",
+            args=(),
+            job_timeout="1h",
+            description="Scanning import directory for files",
+        )
+
+    def keep_observer_alive(observer):
+        while True:
+            time.sleep(60)
+            try:
+                # The failed emitter thread stays in the emitters set after it
+                # dies, so check liveness rather than presence
+
+                healthy = (
+                    observer.is_alive()
+                    and observer.emitters
+                    and all(emitter.is_alive() for emitter in observer.emitters)
+                )
+                if not healthy:
+                    app.logger.warning(
+                        "Import directory observer died; "
+                        "rebuilding it and sweeping for missed files"
+                    )
+                    try:
+                        observer.stop()
+                    except Exception:
+                        pass
+                    observer = start_observer()
+                    enqueue_import_sweep()
+            except Exception:
+                app.logger.error(traceback.format_exc())
+
+    observer = start_observer()
+    threading.Thread(
+        target=keep_observer_alive,
+        args=(observer,),
+        daemon=True,
+        name="import-observer-keeper",
+    ).start()
+
+    # Process anything that arrived while the application wasn't watching
+
+    enqueue_import_sweep()
 
     # The first application created becomes this process's instance for
     # modules that resolve their app through get_app()
