@@ -280,7 +280,7 @@ def create_app(config_class=Config):
     # Sweep the import directory hourly as a safety net in case the
     # filesystem observer misses an arrival
 
-    app.request_scheduler.cron(
+    app.import_scheduler.cron(
         "0 * * * *",
         func="app.videos.manual_import_task",
         id="import-sweep",
@@ -401,7 +401,7 @@ def create_app(config_class=Config):
         return observer
 
     def enqueue_import_sweep():
-        app.request_queue.enqueue(
+        app.import_queue.enqueue(
             "app.videos.manual_import_task",
             args=(),
             job_timeout="1h",
