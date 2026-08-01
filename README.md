@@ -284,7 +284,7 @@ Run from the project root with the venv activated. Each command queues a backgro
 Archived originals live in S3 Glacier Deep Archive, so getting one back is a two-step process:
 
 1. On the file's detail page, request the download — Fitzflix asks AWS to restore the object from Glacier. Restores from Deep Archive typically take hours to complete.
-2. When AWS finishes the restore, it posts a notification to the SQS queue (`AWS_SQS_URL`; the S3 bucket must be configured to send its restore-completed event notifications there). Run `flask sqs` to poll the queue — each completed restore found is downloaded back into the library.
+2. When AWS finishes the restore, it posts a notification to the SQS queue (`AWS_SQS_URL`; the S3 bucket must be configured to send its restore-completed event notifications there). Fitzflix polls the queue automatically every hour and downloads each completed restore back into the library; run `flask sqs` to poll immediately instead of waiting for the next scheduled check.
 
 ## Logs and maintenance
 

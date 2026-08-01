@@ -322,6 +322,25 @@ def create_app(config_class=Config):
         description="Scanning import directory for files",
     )
 
+    # Download files restored from Glacier: poll the AWS SQS queue hourly for
+    # restore-completed notifications, offset from the import sweep so the
+    # maintenance worker isn't handed both at once
+
+    if app.config["AWS_SQS_URL"]:
+        register_cron(
+            app.maintenance_scheduler,
+            "30 * * * *",
+            func="app.videos.sqs_retrieve_task",
+            job_id="sqs-retrieve",
+            timeout="2h",
+            description="Polling AWS SQS for files to download",
+        )
+    elif "sqs-retrieve" in app.maintenance_scheduler:
+        # Drop the schedule if SQS was unconfigured, so the poller doesn't
+        # keep running and failing against a missing queue URL
+
+        app.maintenance_scheduler.cancel("sqs-retrieve")
+
     # Configure the Redis redlock manager
 
     app.lock_manager = Redlock([app.redis])

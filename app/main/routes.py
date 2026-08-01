@@ -1972,6 +1972,7 @@ def admin():
     cron_descriptions = {
         "0 0 * * *": "Daily at midnight",
         "0 * * * *": "Hourly",
+        "30 * * * *": "Hourly at :30",
         "* * * * *": "Every minute",
     }
     scheduled_tasks = []

@@ -2964,6 +2964,50 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                         )
                 return True
 
+            elif error_code == "InvalidObjectState":
+                # The restored copy expired before it could be downloaded, so
+                # the object is back in cold storage and this SQS message is
+                # stale. Request a new restore unless one is already underway;
+                # its completion notification will re-trigger the download.
+
+                head_response = s3_client.head_object(
+                    Bucket=current_app.config["AWS_BUCKET"], Key=key
+                )
+                restore_status = head_response.get("Restore") or ""
+                if 'ongoing-request="true"' in restore_status:
+                    current_app.logger.info(
+                        f"'{basename}' restore is already in progress, "
+                        f"waiting for its completion notification"
+                    )
+                else:
+                    current_app.logger.info(
+                        f"'{basename}' restored copy expired before download, "
+                        f"requesting a new restore"
+                    )
+                    aws_restore(key)
+
+                if sqs_receipt_handle:
+                    try:
+                        response = sqs_client.delete_message(
+                            QueueUrl=current_app.config["AWS_SQS_URL"],
+                            ReceiptHandle=sqs_receipt_handle,
+                        )
+                        current_app.logger.debug(
+                            f"SQS delete_message response: {response}"
+                        )
+
+                    except:
+                        current_app.logger.warning(
+                            f"Unable to delete message '{sqs_receipt_handle}' from SQS"
+                        )
+                        return False
+
+                    else:
+                        current_app.logger.info(
+                            f"Deleted stale message '{sqs_receipt_handle}' from SQS"
+                        )
+                return True
+
             else:
                 current_app.logger.error(traceback.format_exc())
                 retry = retry - 1
@@ -3045,7 +3089,7 @@ def aws_rename(old_key, new_key):
     return new_key, datetime.now(timezone.utc)
 
 
-def aws_restore(key, days=1, tier="Standard"):
+def aws_restore(key, days=2, tier="Standard"):
     """Request a file at AWS to be restored from Glacier status for download."""
 
     with app.app_context():
