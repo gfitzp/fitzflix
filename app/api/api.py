@@ -5,7 +5,8 @@ from flask_login import current_user
 
 from app import db
 from app.api import bp
-from app.models import Movie, User
+from app.api.auth import authenticate_api_request
+from app.models import Movie
 
 
 @bp.route("/queue-details")
@@ -40,12 +41,9 @@ def add_to_cart():
         return response
 
     if request.authorization.get("username") and request.authorization.get("password"):
-        # Check the user email and password to confirm if they're a valid user
+        # The password field must hold the user's API key
 
-        user = User.query.filter_by(email=request.authorization.get("username")).first()
-        if user is None or not user.check_password(
-            request.authorization.get("password")
-        ):
+        if authenticate_api_request() is None:
             response.status_code = 401
             return response
 

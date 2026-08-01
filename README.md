@@ -94,7 +94,7 @@ Fitzflix can sit downstream of Sonarr and Radarr, importing every file they down
 
 - URL: `http://<fitzflix host>:8000/api/sonarr/add` (Sonarr) or `http://<fitzflix host>:8000/api/radarr/add` (Radarr)
 - Method: `POST`, triggered **On Import** / **On Upgrade**
-- Credentials: a Fitzflix account's email and password (HTTP Basic authentication); the connection test in Sonarr/Radarr should succeed once these are set
+- Credentials (HTTP Basic authentication): a Fitzflix account's email as the username, and its **API key** shown on the user's Fitzflix admin page as the password. (The account password is not accepted; the key can be regenerated from the admin page without changing your login password.)
 
 When a download completes, Fitzflix renames the file with a *downgraded* quality title before importing — physical-media quality names are reserved for files ripped from actual discs, and `Remux` isn't used to label downloads:
 
