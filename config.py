@@ -73,6 +73,10 @@ class Config(object):
     ADMIN_EMAIL                         = os.environ.get("ADMIN_EMAIL") or os.environ.get("MAIL_USERNAME")
     TODO_EMAIL                          = os.environ.get("TODO_EMAIL") or None
 
+    # Logging configuration
+    LOG_FILE                            = os.environ.get("LOG_FILE") or os.path.join(basedir, "logs", "fitzflix.log")
+    LOG_RETENTION_DAYS                  = int(os.environ.get("LOG_RETENTION_DAYS") or 14)
+
     # Transcoding configuration
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or None

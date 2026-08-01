@@ -2,7 +2,7 @@ import json
 import logging
 import os
 
-from logging.handlers import SMTPHandler
+from logging.handlers import SMTPHandler, WatchedFileHandler
 from urllib.parse import quote_plus
 
 import rq
@@ -239,17 +239,31 @@ def create_app(config_class=Config):
     # Configure the Redis connection and queues
 
     app.redis = Redis.from_url(app.config["REDIS_URL"])
+    app.maintenance_queue = rq.Queue("fitzflix-maintenance", connection=app.redis)
     app.sql_queue = rq.Queue("fitzflix-sql", connection=app.redis)
     app.request_queue = rq.Queue("fitzflix-user-request", connection=app.redis)
     app.import_queue = rq.Queue("fitzflix-import", connection=app.redis)
     app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
     app.file_queue = rq.Queue("fitzflix-file-operation", connection=app.redis)
 
+    app.maintenance_scheduler = Scheduler("fitzflix-maintenance", connection=app.redis)
     app.sql_scheduler = Scheduler("fitzflix-sql", connection=app.redis)
     app.request_scheduler = Scheduler("fitzflix-user-request", connection=app.redis)
     app.import_scheduler = Scheduler("fitzflix-import", connection=app.redis)
     app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
     app.file_scheduler = Scheduler("fitzflix-file-operation", connection=app.redis)
+
+    # Rotate the application log daily at midnight; the fixed job id makes
+    # re-registration from each process update the same scheduled job
+
+    app.maintenance_scheduler.cron(
+        "0 0 * * *",
+        func="app.maintenance.rotate_logs",
+        id="rotate-logs",
+        use_local_timezone=True,
+        timeout=54000,
+        description="Rotating application logs",
+    )
 
     # Configure the Redis redlock manager
 
@@ -318,14 +332,16 @@ def create_app(config_class=Config):
             mail_handler.setLevel(logging.ERROR)
             app.logger.addHandler(mail_handler)
 
-        if not os.path.exists("logs"):
-            os.mkdir("logs")
+        os.makedirs(os.path.dirname(app.config["LOG_FILE"]), exist_ok=True)
 
         if not any(
             isinstance(handler, logging.FileHandler)
             for handler in app.logger.handlers
         ):
-            file_handler = logging.FileHandler("logs/fitzflix.log")
+            # WatchedFileHandler notices when the rotate_logs maintenance task
+            # renames the log file, and reopens it before the next write
+
+            file_handler = WatchedFileHandler(app.config["LOG_FILE"])
             file_handler.setFormatter(
                 logging.Formatter(
                     "%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]"
