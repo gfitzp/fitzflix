@@ -177,7 +177,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     "year": file_details.get("year"),
                     "feature_type": file_details.get("feature_type_name"),
                     "plex_title": file_details.get("plex_title"),
-                    "version": file_details.get("version"),
+                    "edition": file_details.get("edition"),
                 }
 
             elif file_details.get("media_library") == "TV Shows":
@@ -1295,7 +1295,7 @@ def manual_import_task():
                     ):
                         handled_basenames.add(os.path.basename(file))
                         lock = current_app.lock_manager.lock(
-                            os.path.basename(file), 1000
+                            os.path.basename(file), 30000
                         )
                         if lock:
                             job_queue = []
@@ -1362,7 +1362,19 @@ def track_metadata_scan_task(file_id):
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
             if os.path.isfile(file_path):
-                track_metadata_scan(file.id)
+                if not track_metadata_scan(file.id):
+                    sleep_duration = random.randint(5, 15)
+                    current_app.logger.warning(
+                        f"'{file.basename}' Lock exists, "
+                        f"returning to queue after {sleep_duration} minutes"
+                    )
+                    current_app.sql_scheduler.enqueue_in(
+                        timedelta(minutes=sleep_duration),
+                        "app.videos.track_metadata_scan_task",
+                        args=(file_id,),
+                        timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                        description=f"'{file.basename}'",
+                    )
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1376,7 +1388,31 @@ def track_metadata_scan_task(file_id):
 
 
 def track_metadata_scan(file_id):
-    """Rescan a file's metadata on demand."""
+    """Rescan a file's metadata on demand.
+
+    Returns False without scanning when another task holds this title's lock
+    (e.g. a remux, property edit, or transcode in progress).
+    """
+
+    file = File.query.filter_by(id=file_id).first()
+    lock = current_app.lock_manager.lock(
+        file.file_identifier(),
+        current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
+    )
+    if not lock:
+        current_app.logger.warning(
+            f"'{file.basename}' Lock exists, not rescanning track metadata"
+        )
+        return False
+
+    try:
+        return track_metadata_scan_unlocked(file_id)
+    finally:
+        current_app.lock_manager.unlock(lock)
+
+
+def track_metadata_scan_unlocked(file_id):
+    """Rescan a file's metadata; the caller must hold the title's lock."""
 
     try:
         file = File.query.filter_by(id=file_id).first()
@@ -1477,6 +1513,52 @@ def mkvpropedit_task(
     file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
 ):
     """Update a file's MKV properties."""
+
+    with app.app_context():
+        file = File.query.filter_by(id=file_id).first()
+
+        # Serialize with other tasks that rewrite this title's files or
+        # track records
+
+        lock = current_app.lock_manager.lock(
+            file.file_identifier(),
+            current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
+        )
+        if not lock:
+            sleep_duration = random.randint(5, 15)
+            current_app.logger.warning(
+                f"'{file.basename}' Lock exists, "
+                f"returning to queue after {sleep_duration} minutes"
+            )
+            current_app.file_scheduler.enqueue_in(
+                timedelta(minutes=sleep_duration),
+                "app.videos.mkvpropedit_task",
+                args=(
+                    file_id,
+                    default_audio_track,
+                    default_subtitle_track,
+                    forced_subtitle_tracks,
+                ),
+                timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                description=f"'{file.basename}'",
+            )
+            return True
+
+        try:
+            return mkvpropedit_unlocked(
+                file_id,
+                default_audio_track,
+                default_subtitle_track,
+                forced_subtitle_tracks,
+            )
+        finally:
+            current_app.lock_manager.unlock(lock)
+
+
+def mkvpropedit_unlocked(
+    file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
+):
+    """Update a file's MKV properties; the caller must hold the title's lock."""
 
     with app.app_context():
         try:
@@ -1765,6 +1847,40 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
     """Remux a MKV file."""
 
     with app.app_context():
+        file = File.query.filter_by(id=file_id).first()
+
+        # Serialize with other tasks that rewrite this title's files or
+        # track records
+
+        lock = current_app.lock_manager.lock(
+            file.file_identifier(),
+            current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
+        )
+        if not lock:
+            sleep_duration = random.randint(5, 15)
+            current_app.logger.warning(
+                f"'{file.basename}' Lock exists, "
+                f"returning to queue after {sleep_duration} minutes"
+            )
+            current_app.import_scheduler.enqueue_in(
+                timedelta(minutes=sleep_duration),
+                "app.videos.mkvmerge_task",
+                args=(file_id, audio_tracks, subtitle_tracks),
+                timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                description=f"'{file.basename}'",
+            )
+            return True
+
+        try:
+            return mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks)
+        finally:
+            current_app.lock_manager.unlock(lock)
+
+
+def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
+    """Remux a MKV file; the caller must hold the title's lock."""
+
+    with app.app_context():
         try:
             job = get_current_job()
 
@@ -1903,7 +2019,10 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
         else:
             db.session.commit()
-            mkvpropedit_task(file.id, 1, None, None)
+            # This task already holds the title's lock, so call the unlocked
+            # variant directly instead of deadlocking against ourselves
+
+            mkvpropedit_unlocked(file.id, 1, None, None)
             return True
 
 

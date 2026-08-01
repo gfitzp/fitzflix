@@ -159,7 +159,7 @@ def create_app(config_class=Config):
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
-                lock = app.lock_manager.lock(os.path.basename(event.dest_path), 1000)
+                lock = app.lock_manager.lock(os.path.basename(event.dest_path), 30000)
                 if lock:
                     job_queue = []
                     localization_tasks_running = StartedJobRegistry(
@@ -197,7 +197,7 @@ def create_app(config_class=Config):
                 # Create redis lock using the filename, to prevent multiple workers
                 # from grabbing the same file at once
 
-                lock = app.lock_manager.lock(os.path.basename(event.src_path), 1000)
+                lock = app.lock_manager.lock(os.path.basename(event.src_path), 30000)
                 if lock:
                     job_queue = []
                     localization_tasks_running = StartedJobRegistry(

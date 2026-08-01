@@ -1269,8 +1269,14 @@ def file(file_id):
             flash(f"'{file.basename}' is not present locally.", "warning")
             return redirect(url_for("main.file", file_id=file.id))
 
-        track_metadata_scan(file.id)
-        flash(f"Rescanned track metadata for '{file.basename}'", "info")
+        if track_metadata_scan(file.id):
+            flash(f"Rescanned track metadata for '{file.basename}'", "info")
+        else:
+            flash(
+                f"'{file.basename}' is being processed by another task; "
+                f"try again once it finishes.",
+                "warning",
+            )
         return redirect(url_for("main.file", file_id=file.id))
 
     # Form to edit the file's attributes
