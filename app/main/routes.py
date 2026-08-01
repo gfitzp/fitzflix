@@ -110,9 +110,9 @@ def favicon():
     )
 
 
-@bp.route("/", methods=["GET", "POST"])
-@bp.route("/index", methods=["GET", "POST"])
-@bp.route("/recently-added", methods=["GET", "POST"])
+@bp.route("/")
+@bp.route("/index")
+@bp.route("/recently-added")
 @login_required
 def index():
     """Show the ten most recently added files."""
@@ -148,24 +148,11 @@ def index():
         else None
     )
 
-    form = ImportForm()
-    if form.submit.data and form.validate_on_submit():
-        current_app.request_queue.enqueue(
-            "app.videos.manual_import_task",
-            args=(),
-            job_timeout="1h",
-            description="Manually scanning import directory for files",
-            at_front=True,
-        )
-        flash("Added files in import directory to import queue", "info")
-        return redirect(url_for("main.index"))
-
     return render_template(
         "recently_added.html",
         title="Recently Added",
         recently_added=recently_added.items,
         native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
-        form=form,
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,
@@ -1978,7 +1965,8 @@ def admin():
             description="Manually scanning import directory for files",
             at_front=True,
         )
-        flash("Added files in import directory to import queue", "info")
+        current_app.logger.info("Manually scanning import directory for files")
+        flash("Manually scanning import directory for files", "info")
         return redirect(url_for("main.admin"))
 
     return render_template(
@@ -3212,7 +3200,7 @@ def tv_shopping():
     )
 
 
-@bp.route("/queue", methods=["GET", "POST"])
+@bp.route("/queue")
 @login_required
 def queue():
     """Show a list of all localization and transcode tasks in queue.
@@ -3220,23 +3208,7 @@ def queue():
     See api.queue_details for how the queue is generated.
     """
 
-    import_form = ImportForm()
-    if import_form.submit.data and import_form.validate_on_submit():
-        current_app.request_queue.enqueue(
-            "app.videos.manual_import_task",
-            args=(),
-            job_timeout="1h",
-            description="Manually scanning import directory for files",
-            at_front=True,
-        )
-        flash("Added files in import directory to import queue", "info")
-        return redirect(url_for("main.queue"))
-
-    return render_template(
-        "queue.html",
-        title="Queue",
-        import_form=import_form,
-    )
+    return render_template("queue.html", title="Queue")
 
 
 @bp.route("/library/files", methods=["GET", "POST"])
