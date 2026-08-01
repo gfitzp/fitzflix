@@ -35,6 +35,15 @@ def radarr_add():
         if payload.get("eventType") == "Test":
             return response
 
+        # Only import events carry the file fields used below; acknowledge and
+        # ignore any other event type the webhook might be configured to send
+
+        if payload.get("eventType") != "Download":
+            current_app.logger.info(
+                f"Ignoring Radarr '{payload.get('eventType')}' event"
+            )
+            return response
+
         response = jsonify(request.get_json())
         downloaded_file_path = os.path.join(
             payload["movie"].get("folderPath"),
