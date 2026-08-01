@@ -1391,9 +1391,9 @@ def track_metadata_scan_task(file_id):
                     current_app.sql_scheduler.enqueue_in(
                         timedelta(minutes=sleep_duration),
                         "app.videos.track_metadata_scan_task",
-                        args=(file_id,),
+                        file_id=file_id,
                         timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                        description=f"'{file.basename}'",
+                        job_description=f"'{file.basename}'",
                     )
 
         except Exception:
@@ -1553,14 +1553,12 @@ def mkvpropedit_task(
             current_app.file_scheduler.enqueue_in(
                 timedelta(minutes=sleep_duration),
                 "app.videos.mkvpropedit_task",
-                args=(
-                    file_id,
-                    default_audio_track,
-                    default_subtitle_track,
-                    forced_subtitle_tracks,
-                ),
+                file_id,
+                default_audio_track,
+                default_subtitle_track,
+                forced_subtitle_tracks,
                 timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                description=f"'{file.basename}'",
+                job_description=f"'{file.basename}'",
             )
             return True
 
@@ -1885,9 +1883,11 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
             current_app.import_scheduler.enqueue_in(
                 timedelta(minutes=sleep_duration),
                 "app.videos.mkvmerge_task",
-                args=(file_id, audio_tracks, subtitle_tracks),
+                file_id,
+                audio_tracks,
+                subtitle_tracks,
                 timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                description=f"'{file.basename}'",
+                job_description=f"'{file.basename}'",
             )
             return True
 
@@ -2084,9 +2084,8 @@ def sync_aws_s3_storage_task():
             current_app.request_scheduler.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
-                args=None,
-                job_timeout="24h",
-                description="Syncing files with AWS S3 storage",
+                timeout="24h",
+                job_description="Syncing files with AWS S3 storage",
                 at_front=True,
             )
             current_app.logger.info(
@@ -2575,7 +2574,7 @@ def transcode_task(file_id):
                     "app.videos.transcode_task",
                     file_id=file_id,
                     timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    description=f"'{file.plex_title}'",
+                    job_description=f"'{file.plex_title}'",
                 )
                 return False
 
