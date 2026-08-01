@@ -883,34 +883,42 @@ def tv_library():
         .subquery()
     )
 
+    # Run the season aggregate once for the whole library and bucket the rows
+    # by series, rather than re-running the ranked subquery once per series
+
+    season_rows = (
+        db.session.query(
+            subquery.c.series_id,
+            subquery.c.season,
+            subquery.c.episodes,
+            RefQuality.quality_title,
+        )
+        .join(RefQuality, (RefQuality.preference == subquery.c.preference))
+        .order_by(
+            subquery.c.series_id,
+            db.case((subquery.c.season == 0, 1), else_=0).asc(),
+            subquery.c.season.asc(),
+        )
+        .all()
+    )
+
+    seasons_by_series = {}
+    for series_id, season, num_episodes, min_quality in season_rows:
+        seasons_by_series.setdefault(series_id, []).append(
+            {
+                "season": season,
+                "episode_count": num_episodes,
+                "min_quality": min_quality,
+            }
+        )
+
     tv = []
     for series in (
         TVSeries.query.join(File, (File.series_id == TVSeries.id))
+        .distinct()
         .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc())
         .all()
     ):
-        seasons = []
-        s = (
-            db.session.query(
-                subquery.c.season, subquery.c.episodes, RefQuality.quality_title
-            )
-            .join(RefQuality, (RefQuality.preference == subquery.c.preference))
-            .filter(subquery.c.series_id == series.id)
-            .order_by(
-                db.case((subquery.c.season == 0, 1), else_=0).asc(),
-                subquery.c.season.asc(),
-            )
-            .all()
-        )
-        for season, num_episodes, min_quality in s:
-            seasons.append(
-                {
-                    "season": season,
-                    "episode_count": num_episodes,
-                    "min_quality": min_quality,
-                }
-            )
-
         tv.append(
             {
                 "id": series.id,
@@ -918,7 +926,7 @@ def tv_library():
                 "tmdb_id": series.tmdb_id,
                 "tmdb_name": series.tmdb_name,
                 "tmdb_poster_path": series.tmdb_poster_path,
-                "seasons": seasons,
+                "seasons": seasons_by_series.get(series.id, []),
             }
         )
 
@@ -3074,6 +3082,43 @@ def tv_shopping():
         .subquery()
     )
 
+    # Run the season aggregate once for the whole library and bucket the rows
+    # by series, rather than re-running the subquery once per series
+
+    season_rows = (
+        db.session.query(
+            subquery.c.series_id,
+            subquery.c.season,
+            subquery.c.episodes,
+            RefQuality.quality_title,
+            db.case(
+                (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
+                (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                else_="Already owned",
+            ).label("instruction"),
+        )
+        .join(RefQuality, (RefQuality.preference == subquery.c.preference))
+        .filter(RefQuality.preference >= min_preference)
+        .filter(RefQuality.preference <= max_preference)
+        .order_by(
+            subquery.c.series_id,
+            db.case((subquery.c.season == 0, 1), else_=0).asc(),
+            subquery.c.season.asc(),
+        )
+        .all()
+    )
+
+    seasons_by_series = {}
+    for series_id, season, num_episodes, min_quality, instruction in season_rows:
+        seasons_by_series.setdefault(series_id, []).append(
+            {
+                "season": season,
+                "episode_count": num_episodes,
+                "min_quality": min_quality,
+                "instruction": instruction,
+            }
+        )
+
     tv = []
     if q:
         title = f"TV Shows to upgrade matching '{q}'"
@@ -3095,39 +3140,7 @@ def tv_shopping():
         title = "TV Shows to upgrade"
 
     for series in t:
-        seasons = []
-        s = (
-            db.session.query(
-                subquery.c.season,
-                subquery.c.episodes,
-                RefQuality.quality_title,
-                db.case(
-                    
-                        (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
-                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
-                    else_="Already owned",
-                ).label("instruction"),
-            )
-            .join(RefQuality, (RefQuality.preference == subquery.c.preference))
-            .filter(subquery.c.series_id == series.id)
-            .filter(RefQuality.preference >= min_preference)
-            .filter(RefQuality.preference <= max_preference)
-            .order_by(
-                db.case((subquery.c.season == 0, 1), else_=0).asc(),
-                subquery.c.season.asc(),
-            )
-            .all()
-        )
-
-        for season, num_episodes, min_quality, instruction in s:
-            seasons.append(
-                {
-                    "season": season,
-                    "episode_count": num_episodes,
-                    "min_quality": min_quality,
-                    "instruction": instruction,
-                }
-            )
+        seasons = seasons_by_series.get(series.id, [])
 
         # Don't show any tv series where there aren't any seasons
         # (Needed because of the quality filter, otherwise we may show a tv series that
