@@ -1911,21 +1911,34 @@ def sync_aws_s3_storage_task():
     """Add files to AWS, and remove files that aren't in the library."""
 
     with app.app_context():
-        localizations = StartedJobRegistry(
-            "fitzflix-import", connection=current_app.redis
-        )
-        localization_tasks_running = localizations.get_job_ids()
-        transcodes = StartedJobRegistry(
-            "fitzflix-transcode", connection=current_app.redis
-        )
-        transcodes_running = transcodes.get_job_ids()
+        # Only sync when every queue is idle: a file that's mid-import,
+        # mid-upload, or still waiting on database writes can exist at AWS
+        # without its final database record, and the prune below would see it
+        # as an extra file and delete it
 
-        if (
-            len(current_app.import_queue.job_ids)
-            + len(localization_tasks_running)
-            + len(current_app.transcode_queue.job_ids)
-            + len(transcodes_running)
-        ) > 0:
+        job = get_current_job()
+        busy = []
+        for queue_name, queue in (
+            ("fitzflix-import", current_app.import_queue),
+            ("fitzflix-transcode", current_app.transcode_queue),
+            ("fitzflix-file-operation", current_app.file_queue),
+            ("fitzflix-sql", current_app.sql_queue),
+            ("fitzflix-user-request", current_app.request_queue),
+        ):
+            started = StartedJobRegistry(
+                queue_name, connection=current_app.redis
+            ).get_job_ids()
+
+            # This task itself is in the user-request started registry
+
+            if job:
+                started = [job_id for job_id in started if job_id != job.id]
+
+            count = len(queue.job_ids) + len(started)
+            if count:
+                busy.append(f"{queue_name}: {count}")
+
+        if busy:
             current_app.request_scheduler.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
@@ -1935,7 +1948,8 @@ def sync_aws_s3_storage_task():
                 at_front=True,
             )
             current_app.logger.info(
-                "Waiting 5 minutes for tasks localization/transcoding tasks to finish before attempting to sync"
+                f"Waiting 5 minutes for other tasks to finish "
+                f"before attempting to sync ({', '.join(busy)})"
             )
             return True
 
