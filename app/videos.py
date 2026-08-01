@@ -134,10 +134,6 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
     """
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         # Define up front so the exception handler can tell whether the lock
         # was acquired before the failure
 
@@ -672,10 +668,6 @@ def finalize_localization(file_path, file_details, lock):
     """
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             # Determine output directories and file to be created
@@ -1235,10 +1227,6 @@ def finalize_transcoding(file_id, lock):
     """Update a file with details about its transcoding and move it into position."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             file = File.query.filter_by(id=file_id).first()
@@ -1279,10 +1267,6 @@ def manual_import_task():
     """Scan the Import directory and import files that aren't already in the queue."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             import_directory_files = os.listdir(current_app.config["IMPORT_DIR"])
             import_directory_files.sort()
@@ -1350,10 +1334,6 @@ def track_metadata_scan_library():
     """Add all files in the library to the metadata scan queue."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             files = File.query.all()
@@ -1376,10 +1356,6 @@ def track_metadata_scan_task(file_id):
     """Scan a file's metadata in the background."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             file = File.query.filter_by(id=file_id).first()
@@ -1502,10 +1478,6 @@ def mkvpropedit_task(
     """Update a file's MKV properties."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             job = get_current_job()
 
@@ -1792,10 +1764,6 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
     """Remux a MKV file."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             job = get_current_job()
 
@@ -1942,10 +1910,6 @@ def sync_aws_s3_storage_task():
     """Add files to AWS, and remove files that aren't in the library."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         localizations = StartedJobRegistry(
             "fitzflix-import", connection=current_app.redis
         )
@@ -2265,10 +2229,6 @@ def rename_task(file_id, new_key):
     """Rename an object already uploaded to AWS S3 storage."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             job = get_current_job()
 
@@ -2296,10 +2256,6 @@ def review_task(user_id, title, rating):
     """Import movie reviews from a Netflix export."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             # A title alone can be ambiguous, since the Netflix export has no
             # year; if multiple movies share this title, fall through to TMDb,
@@ -2424,10 +2380,6 @@ def transcode_task(file_id):
     """Transcode a file with Handbrake."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         # Define up front so the exception handler can tell whether the lock
         # was acquired before the failure
 
@@ -2579,10 +2531,6 @@ def download_task(key, basename, sqs_receipt_handle=None):
     """Download a file from AWS S3 storage."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         job = get_current_job()
 
         file = File.query.filter_by(aws_untouched_key=key).first()
@@ -2609,10 +2557,6 @@ def sqs_retrieve_task():
     """Poll AWS SQS for possible files ready to download."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         sqs_client = boto3.client(
             "sqs",
             aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
@@ -2732,10 +2676,6 @@ def upload_task(
     """Upload a file to AWS S3 storage."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             # Get the record of the file to be uploaded to AWS S3 storage
 
@@ -2952,10 +2892,6 @@ def aws_restore(key, days=1, tier="Standard"):
     """Request a file at AWS to be restored from Glacier status for download."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             config = Config(
                 connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
@@ -4101,10 +4037,6 @@ def refresh_criterion_collection_info(movie_id=None):
     """Refresh Criterion Collection information from Wikipedia."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             # If the user specified a particular movie to be updated, update the
@@ -4155,10 +4087,6 @@ def refresh_tmdb_info(library, id, tmdb_id=None):
     """Refresh movie or TV show information from TMDB."""
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
 
             if library == "Movies":
@@ -4478,10 +4406,6 @@ def lossless_to_flac(file_path, file_id=None):
     # the original format around, just in case.)
 
     with app.app_context():
-        # Initalize the database
-        # https://stackoverflow.com/a/60438156
-        db.init_app(app)
-
         try:
             job = get_current_job()
 
