@@ -50,18 +50,23 @@
 	{% endif %}
 </p>
 </p>
+{% if not file_exists_locally %}
+<div class="alert alert-warning" role="alert">
+	This file isn't present in the local library — restore it from AWS to enable editing, transcoding, or uploading.
+</div>
+{% endif %}
 {% if audio_tracks or subtitle_tracks %}
 <hr>
 <div class="row mt-n2 mb-n3 d-flex">
 	<h3 class="col-12 col-sm-auto mr-auto mb-n1">Tracks</h3>
-	{% if best_file %}
 	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="" method="post">
-			{{ metadata_scan_form.hidden_tag() }}
-			{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
+			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
+				{{ metadata_scan_form.hidden_tag() }}
+				{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
+			</fieldset>
 		</form>
 	</div>
-	{% endif %}
 </div>
 <div class="table-responsive mt-3">
 	<table class="table">
@@ -132,7 +137,9 @@
 <div class="row align-items-end">
 	<div class="col-md-8">
 		<hr class="d-block d-md-none">
+		{% if audio_tracks or subtitle_tracks %}
 		<form action="" method="post">
+			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvpropedit_form.hidden_tag() }}
 			{% if audio_tracks %}
 				<div class="form-group">
@@ -168,11 +175,15 @@
 				{% endif %}
 			</div>
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
+			</fieldset>
 		</form>
+		{% endif %}
 	</div>
 	<div class="col-md-4">
 		<hr class="d-block d-md-none">
+		{% if audio_tracks or subtitle_tracks %}
 		<form action="" method="post">
+			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvmerge_form.hidden_tag() }}
 			{% if audio_tracks %}
 			<div class="form-group">
@@ -197,7 +208,9 @@
 			</div>
 			{% endif %}
 			{{ mkvmerge_form.mkvmerge_submit(class_="btn btn-sm btn-danger mb-2") }}
+			</fieldset>
 		</form>
+		{% endif %}
 	</div>
 </div>
 {% endif %}
@@ -206,6 +219,7 @@
 <div class="row">
 	<div class="col-lg-4 col-md-6 col-sm-8">
 		<form method="post" enctype="multipart/form-data">
+			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ custom_poster_form.hidden_tag() }}
 			<div class="form-group">
 				{{ custom_poster_form.custom_poster.label }}
@@ -215,6 +229,7 @@
 				</div>
 			</div>
 			{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}
+			</fieldset>
 		</form>
 		<script>
 			document.querySelector('.custom-file-input').addEventListener('change',function(e){
@@ -228,27 +243,29 @@
 <hr>
 <div class="row">
 	<div class="col-sm-4">
-		{% if best_file %}
 		<form action="" method="post">
-			{{ transcode_form.hidden_tag() }}
-			{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
+			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
+				{{ transcode_form.hidden_tag() }}
+				{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
+			</fieldset>
 		</form>
 		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
-		{% endif %}
 	</div>
 	<div class="col-sm-4">
-		{% if best_file %}
 		<form action="" method="post">
-			{{ upload_form.hidden_tag() }}
-			{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
+			<fieldset {% if not file_exists_locally or not best_file %}disabled{% endif %}>
+				{{ upload_form.hidden_tag() }}
+				{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
+			</fieldset>
 		</form>
 		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
 		<p/>
 		<form action="" method="post">
-			{{ download_form.hidden_tag() }}
-			{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}
+			<fieldset {% if not best_file %}disabled{% endif %}>
+				{{ download_form.hidden_tag() }}
+				{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}
+			</fieldset>
 		</form>
-		{% endif %}
 	</div>
 	<div class="col-sm-4">
 		<form action="" method="post">

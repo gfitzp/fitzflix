@@ -1178,6 +1178,14 @@ def file(file_id):
     file = File.query.filter_by(id=file_id).first_or_404()
     title = file.basename
 
+    # When the file isn't present in the local library, only restoring it from
+    # AWS or deleting it make sense: the template disables the other forms,
+    # and their submit handlers below refuse stale submissions
+
+    file_exists_locally = os.path.isfile(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
+
     # Since the video file can be for either a movie or a tv show, determine which
     # it belongs to based off whether it has a movie_id or a series_id, get the
     # associated movie or tv series information
@@ -1257,6 +1265,10 @@ def file(file_id):
     metadata_scan_form = TrackMetadataScanForm()
 
     if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         track_metadata_scan(file.id)
         flash(f"Rescanned track metadata for '{file.basename}'", "info")
         return redirect(url_for("main.file", file_id=file.id))
@@ -1346,6 +1358,10 @@ def file(file_id):
         mkvpropedit_form.mkvpropedit_submit.data
         and mkvpropedit_form.validate_on_submit()
     ):
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         # The default_audio field is deleted from the form when the file has
         # no audio tracks; None tells the task there's no default to set
 
@@ -1444,6 +1460,10 @@ def file(file_id):
     mkvmerge_form.subtitle_tracks.default = default_subtitle_tracks
 
     if mkvmerge_form.mkvmerge_submit.data and mkvmerge_form.validate_on_submit():
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         current_app.logger.info(f"Audio tracks: {mkvmerge_form.audio_tracks.data}")
         current_app.logger.info(
             f"Subtitle tracks: {mkvmerge_form.subtitle_tracks.data}"
@@ -1479,6 +1499,10 @@ def file(file_id):
 
     transcode_form = TranscodeForm()
     if transcode_form.transcode_submit.data and transcode_form.validate_on_submit():
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         # Enqueue a transcode task for this file
 
         current_app.transcode_queue.enqueue(
@@ -1495,6 +1519,10 @@ def file(file_id):
 
     upload_form = S3UploadForm()
     if upload_form.s3_upload_submit.data and upload_form.validate_on_submit():
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         # Enqueue an upload task for this file
 
         current_app.file_queue.enqueue(
@@ -1515,6 +1543,10 @@ def file(file_id):
 
     download_form = S3DownloadForm()
     if download_form.s3_download_submit.data and download_form.validate_on_submit():
+        if file_exists_locally:
+            flash(f"'{file.basename}' is already present locally.", "info")
+            return redirect(url_for("main.file", file_id=file.id))
+
         # Enqueue a restore task for this file
 
         current_app.request_queue.enqueue(
@@ -1569,6 +1601,10 @@ def file(file_id):
 
     custom_poster_form = CustomPosterUploadForm()
     if custom_poster_form.validate_on_submit():
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file", file_id=file.id))
+
         uploaded_data = custom_poster_form.custom_poster.data
         file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
         poster_filename = f"poster{file_ext}"
@@ -1685,6 +1721,7 @@ def file(file_id):
         delete_form=delete_form,
         custom_poster_form=custom_poster_form,
         best_file=best_file,
+        file_exists_locally=file_exists_locally,
     )
 
 
