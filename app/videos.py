@@ -48,6 +48,51 @@ from app.models import (
 EIGHT_MEGABYTES = 8388608
 
 
+def aws_s3_client(with_retries=False):
+    """Build an S3 client using the application credentials."""
+
+    kwargs = {
+        "aws_access_key_id": current_app.config["AWS_ACCESS_KEY"],
+        "aws_secret_access_key": current_app.config["AWS_SECRET_KEY"],
+    }
+    if with_retries:
+        kwargs["config"] = Config(
+            connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
+        )
+    return boto3.client("s3", **kwargs)
+
+
+def aws_sqs_client():
+    """Build an SQS client using the application credentials."""
+
+    return boto3.client(
+        "sqs",
+        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
+        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
+        region_name="us-east-1",
+    )
+
+
+def delete_sqs_message(sqs_client, receipt_handle, note="message"):
+    """Delete a message from the SQS queue; returns False when deletion fails."""
+
+    try:
+        response = sqs_client.delete_message(
+            QueueUrl=current_app.config["AWS_SQS_URL"],
+            ReceiptHandle=receipt_handle,
+        )
+        current_app.logger.debug(f"SQS delete_message response: {response}")
+
+    except:
+        current_app.logger.warning(
+            f"Unable to delete message '{receipt_handle}' from SQS"
+        )
+        return False
+
+    current_app.logger.info(f"Deleted {note} '{receipt_handle}' from SQS")
+    return True
+
+
 def wait_for_subprocess(process, ok_returncodes=(0,)):
     """Wait for an external tool to finish, and raise if it exited with an error.
 
@@ -1127,11 +1172,7 @@ def finalize_localization(file_path, file_details, lock):
             # won't work if called with app.app_context() (like in aws_delete())
 
             if worse_aws_keys:
-                s3_client = boto3.client(
-                    "s3",
-                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                    aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-                )
+                s3_client = aws_s3_client()
                 for worse_key in worse_aws_keys:
                     s3_client.delete_object(
                         Bucket=current_app.config["AWS_BUCKET"],
@@ -2253,15 +2294,7 @@ def sync_aws_s3_storage_task():
                     inventory_writer.writerow(file_object)
                 inventory_file = bytes(f.getvalue(), encoding="utf-8")
                 f.close()
-                client = boto3.client(
-                    "s3",
-                    config=Config(
-                        connect_timeout=20,
-                        retries={"mode": "standard", "max_attempts": 10},
-                    ),
-                    aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                    aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-                )
+                client = aws_s3_client(with_retries=True)
                 client.put_object(
                     Body=inventory_file,
                     Bucket=current_app.config["AWS_BUCKET"],
@@ -2713,54 +2746,19 @@ def sqs_retrieve_task():
     """Poll AWS SQS for possible files ready to download."""
 
     with app.app_context():
-        sqs_client = boto3.client(
-            "sqs",
-            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-            region_name="us-east-1",
-        )
+        sqs_client = aws_sqs_client()
+        s3_client = aws_s3_client(with_retries=True)
 
-        config = Config(
-            connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
-        )
-        s3_client = boto3.client(
-            "s3",
-            config=config,
-            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-        )
-
-        # Extend timeout and restoration period for messages in download queue
+        # Extend timeout and restoration period for messages whose downloads
+        # are running or waiting in the download queue
 
         file_operations = StartedJobRegistry(
             "fitzflix-file-operation", connection=current_app.redis
         )
-        file_operations_running = file_operations.get_job_ids()
-        for job_id in file_operations_running:
-            job = current_app.file_queue.fetch_job(job_id)
-            if job:
-                if job.meta.get("sqs_receipt_handle"):
-                    response = sqs_client.change_message_visibility(
-                        QueueUrl=current_app.config["AWS_SQS_URL"],
-                        ReceiptHandle=job.meta.get("sqs_receipt_handle"),
-                        VisibilityTimeout=600,
-                    )
-                    job_description = job.meta.get("description", job.description)
-                    current_app.logger.info(
-                        f"'{job_description}' Extending SQS message timeout by 600 seconds"
-                    )
-                    response = s3_client.restore_object(
-                        Bucket=current_app.config["AWS_BUCKET"],
-                        Key=job.args[0],
-                        RestoreRequest={
-                            "Days": 1,
-                            "GlacierJobParameters": {"Tier": "Standard"},
-                        },
-                    )
-                    current_app.logger.info(
-                        f"'{job.args[0]}' Extending restoration period by 1 day"
-                    )
-        for job_id in current_app.file_queue.job_ids:
+        download_job_ids = file_operations.get_job_ids() + list(
+            current_app.file_queue.job_ids
+        )
+        for job_id in download_job_ids:
             job = current_app.file_queue.fetch_job(job_id)
             if job:
                 if job.meta.get("sqs_receipt_handle"):
@@ -2880,11 +2878,7 @@ def aws_delete(key):
     # Needs app.app_context() in order for user to call directly from web application
     with app.app_context():
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
-        s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-            aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-        )
+        s3_client = aws_s3_client()
         s3_client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=key)
         current_app.logger.info(f"'{key}' deleted from AWS S3 storage")
         return datetime.now(timezone.utc)
@@ -2904,17 +2898,8 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
     current_app.logger.info(f"'{basename}' downloading from AWS S3 storage")
 
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    )
-    sqs_client = boto3.client(
-        "sqs",
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-        region_name="us-east-1",
-    )
+    s3_client = aws_s3_client()
+    sqs_client = aws_sqs_client()
 
     while retry > 0:
         try:
@@ -2942,25 +2927,8 @@ def aws_download(key, basename, sqs_receipt_handle=None):
             if error_code in ("404", "NoSuchKey") or status_code == 404:
                 current_app.logger.info(f"'{basename}' doesn't exist in AWS S3")
                 if sqs_receipt_handle:
-                    try:
-                        response = sqs_client.delete_message(
-                            QueueUrl=current_app.config["AWS_SQS_URL"],
-                            ReceiptHandle=sqs_receipt_handle,
-                        )
-                        current_app.logger.debug(
-                            f"SQS delete_message response: {response}"
-                        )
-
-                    except:
-                        current_app.logger.warning(
-                            f"Unable to delete message '{sqs_receipt_handle}' from SQS"
-                        )
+                    if not delete_sqs_message(sqs_client, sqs_receipt_handle):
                         return False
-
-                    else:
-                        current_app.logger.info(
-                            f"Deleted message '{sqs_receipt_handle}' from SQS"
-                        )
                 return True
 
             elif error_code == "InvalidObjectState":
@@ -2986,25 +2954,10 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                     aws_restore(key)
 
                 if sqs_receipt_handle:
-                    try:
-                        response = sqs_client.delete_message(
-                            QueueUrl=current_app.config["AWS_SQS_URL"],
-                            ReceiptHandle=sqs_receipt_handle,
-                        )
-                        current_app.logger.debug(
-                            f"SQS delete_message response: {response}"
-                        )
-
-                    except:
-                        current_app.logger.warning(
-                            f"Unable to delete message '{sqs_receipt_handle}' from SQS"
-                        )
+                    if not delete_sqs_message(
+                        sqs_client, sqs_receipt_handle, note="stale message"
+                    ):
                         return False
-
-                    else:
-                        current_app.logger.info(
-                            f"Deleted stale message '{sqs_receipt_handle}' from SQS"
-                        )
                 return True
 
             else:
@@ -3024,23 +2977,8 @@ def aws_download(key, basename, sqs_receipt_handle=None):
             )
 
             if sqs_receipt_handle:
-                try:
-                    response = sqs_client.delete_message(
-                        QueueUrl=current_app.config["AWS_SQS_URL"],
-                        ReceiptHandle=sqs_receipt_handle,
-                    )
-                    current_app.logger.debug(f"SQS delete_message response: {response}")
-
-                except:
-                    current_app.logger.warning(
-                        f"Unable to delete message '{sqs_receipt_handle}' from SQS"
-                    )
+                if not delete_sqs_message(sqs_client, sqs_receipt_handle):
                     return False
-
-                else:
-                    current_app.logger.info(
-                        f"Deleted message '{sqs_receipt_handle}' from SQS"
-                    )
 
             return True
 
@@ -3093,15 +3031,7 @@ def aws_restore(key, days=2, tier="Standard"):
 
     with app.app_context():
         try:
-            config = Config(
-                connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
-            )
-            s3_client = boto3.client(
-                "s3",
-                config=config,
-                aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-                aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-            )
+            s3_client = aws_s3_client(with_retries=True)
 
             # Make sure the key exists in the AWS bucket
 
@@ -3202,15 +3132,7 @@ def aws_upload(
 
     key = os.path.join(key_prefix, key)
 
-    config = Config(
-        connect_timeout=20, retries={"mode": "standard", "max_attempts": 10}
-    )
-    s3_client = boto3.client(
-        "s3",
-        config=config,
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    )
+    s3_client = aws_s3_client(with_retries=True)
 
     # See if the key already exists in the AWS bucket
 
@@ -3924,11 +3846,7 @@ def get_matching_s3_objects(bucket, prefix="", suffix=""):
     OTHER DEALINGS IN THE SOFTWARE.
     """
 
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    )
+    s3 = aws_s3_client()
     paginator = s3.get_paginator("list_objects_v2")
     kwargs = {"Bucket": bucket}
     if isinstance(prefix, str):
