@@ -40,7 +40,9 @@ def rotate_logs():
                 archive = f"{log_file}.{stamp}"
 
             os.rename(log_file, archive)
-            with open(archive, "rb") as source, gzip.open(f"{archive}.gz", "wb") as target:
+            with open(archive, "rb") as source, gzip.open(
+                f"{archive}.gz", "wb"
+            ) as target:
                 shutil.copyfileobj(source, target)
             os.remove(archive)
             archived = f"{archive}.gz"

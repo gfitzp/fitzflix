@@ -359,8 +359,7 @@ def create_app(config_class=Config):
         os.makedirs(os.path.dirname(app.config["LOG_FILE"]), exist_ok=True)
 
         if not any(
-            isinstance(handler, logging.FileHandler)
-            for handler in app.logger.handlers
+            isinstance(handler, logging.FileHandler) for handler in app.logger.handlers
         ):
             # WatchedFileHandler notices when the rotate_logs maintenance task
             # renames the log file, and reopens it before the next write
@@ -394,9 +393,7 @@ def create_app(config_class=Config):
 
     def start_observer():
         observer = PollingObserver()
-        observer.schedule(
-            event_handler, path=app.config["IMPORT_DIR"], recursive=False
-        )
+        observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
         observer.start()
         return observer
 

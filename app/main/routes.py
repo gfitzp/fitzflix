@@ -2174,18 +2174,14 @@ def movie_shopping():
                 db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2
             ).label("whole_stars"),
             db.case(
-                
-                    (
-                        db.func.mod(
-                            (
-                                db.func.round(db.func.avg(UserMovieReview.rating) * 2)
-                                / 2
-                            ),
-                            1,
-                        )
-                        == 0,
-                        0,
-                    ),
+                (
+                    db.func.mod(
+                        (db.func.round(db.func.avg(UserMovieReview.rating) * 2) / 2),
+                        1,
+                    )
+                    == 0,
+                    0,
+                ),
                 else_=(1),
             ).label("half_stars"),
         )
@@ -2233,73 +2229,72 @@ def movie_shopping():
                     rating.c.whole_stars,
                     rating.c.half_stars,
                     db.case(
-                        
-                            (Movie.shopping_list_exclude == True, "Already owned"),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == True,
-                                    #                                 db.and_(
-                                    #                                     db.or_(
-                                    #                                         db.and_(
-                                    #                                             CriterionQuality.preference == dvd_quality,
-                                    #                                             RefQuality.preference >= dvd_quality,
-                                    #                                         ),
-                                    #                                         db.and_(
-                                    #                                             CriterionQuality.preference
-                                    #                                             >= bluray_quality,
-                                    #                                             RefQuality.preference >= bluray_quality,
-                                    #                                         ),
-                                    #                                     ),
-                                    #                                 ),
+                        (Movie.shopping_list_exclude == True, "Already owned"),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Already owned",
+                                Movie.criterion_disc_owned == True,
+                                #                                 db.and_(
+                                #                                     db.or_(
+                                #                                         db.and_(
+                                #                                             CriterionQuality.preference == dvd_quality,
+                                #                                             RefQuality.preference >= dvd_quality,
+                                #                                         ),
+                                #                                         db.and_(
+                                #                                             CriterionQuality.preference
+                                #                                             >= bluray_quality,
+                                #                                             RefQuality.preference >= bluray_quality,
+                                #                                         ),
+                                #                                     ),
+                                #                                 ),
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == uhd_quality,
-                                    # RefQuality.preference <= uhd_quality,
+                            "Already owned",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on 4K UHD Blu-Ray",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == uhd_quality,
+                                # RefQuality.preference <= uhd_quality,
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == bluray_quality,
-                                    # RefQuality.preference <= bluray_quality,
+                            "Buy Criterion edition on 4K UHD Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on Blu-Ray",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == bluray_quality,
+                                # RefQuality.preference <= bluray_quality,
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == dvd_quality,
-                                    # RefQuality.preference <= dvd_quality,
+                            "Buy Criterion edition on Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on DVD",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == dvd_quality,
+                                # RefQuality.preference <= dvd_quality,
                             ),
-                            (File.fullscreen == True, "Buy any non-fullscreen release"),
-                            (
-                                RefQuality.preference < dvd_quality,
-                                "Buy on DVD or Blu-Ray",
-                            ),
-                            (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                            "Buy Criterion edition on DVD",
+                        ),
+                        (File.fullscreen == True, "Buy any non-fullscreen release"),
+                        (
+                            RefQuality.preference < dvd_quality,
+                            "Buy on DVD or Blu-Ray",
+                        ),
+                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
                         else_=("Already owned"),
                     ).label("instruction"),
                 )
@@ -2342,73 +2337,72 @@ def movie_shopping():
                     rating.c.whole_stars,
                     rating.c.half_stars,
                     db.case(
-                        
-                            (Movie.shopping_list_exclude == True, "Already owned"),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == True,
-                                    #                                 db.and_(
-                                    #                                     db.or_(
-                                    #                                         db.and_(
-                                    #                                             CriterionQuality.preference == dvd_quality,
-                                    #                                             RefQuality.preference >= dvd_quality,
-                                    #                                         ),
-                                    #                                         db.and_(
-                                    #                                             CriterionQuality.preference
-                                    #                                             >= bluray_quality,
-                                    #                                             RefQuality.preference >= bluray_quality,
-                                    #                                         ),
-                                    #                                     ),
-                                    #                                 ),
+                        (Movie.shopping_list_exclude == True, "Already owned"),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Already owned",
+                                Movie.criterion_disc_owned == True,
+                                #                                 db.and_(
+                                #                                     db.or_(
+                                #                                         db.and_(
+                                #                                             CriterionQuality.preference == dvd_quality,
+                                #                                             RefQuality.preference >= dvd_quality,
+                                #                                         ),
+                                #                                         db.and_(
+                                #                                             CriterionQuality.preference
+                                #                                             >= bluray_quality,
+                                #                                             RefQuality.preference >= bluray_quality,
+                                #                                         ),
+                                #                                     ),
+                                #                                 ),
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == uhd_quality,
-                                    # RefQuality.preference <= uhd_quality,
+                            "Already owned",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on 4K UHD Blu-Ray",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == uhd_quality,
+                                # RefQuality.preference <= uhd_quality,
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == bluray_quality,
-                                    # RefQuality.preference <= bluray_quality,
+                            "Buy Criterion edition on 4K UHD Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on Blu-Ray",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == bluray_quality,
+                                # RefQuality.preference <= bluray_quality,
                             ),
-                            (
-                                db.and_(
-                                    db.or_(
-                                        Movie.criterion_spine_number != None,
-                                        Movie.criterion_set_title != None,
-                                    ),
-                                    Movie.criterion_disc_owned == False,
-                                    CriterionQuality.preference == dvd_quality,
-                                    # RefQuality.preference <= dvd_quality,
+                            "Buy Criterion edition on Blu-Ray",
+                        ),
+                        (
+                            db.and_(
+                                db.or_(
+                                    Movie.criterion_spine_number != None,
+                                    Movie.criterion_set_title != None,
                                 ),
-                                "Buy Criterion edition on DVD",
+                                Movie.criterion_disc_owned == False,
+                                CriterionQuality.preference == dvd_quality,
+                                # RefQuality.preference <= dvd_quality,
                             ),
-                            (File.fullscreen == True, "Buy any non-fullscreen release"),
-                            (
-                                RefQuality.preference < dvd_quality,
-                                "Buy on DVD or Blu-Ray",
-                            ),
-                            (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                            "Buy Criterion edition on DVD",
+                        ),
+                        (File.fullscreen == True, "Buy any non-fullscreen release"),
+                        (
+                            RefQuality.preference < dvd_quality,
+                            "Buy on DVD or Blu-Ray",
+                        ),
+                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
                         else_=("Already owned"),
                     ).label("instruction"),
                 )
@@ -2470,70 +2464,69 @@ def movie_shopping():
                 rating.c.whole_stars,
                 rating.c.half_stars,
                 db.case(
-                    
-                        (Movie.shopping_list_exclude == True, "Already owned"),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == True,
-                                #                                 db.and_(
-                                #                                     db.or_(
-                                #                                         db.and_(
-                                #                                             CriterionQuality.preference == dvd_quality,
-                                #                                             RefQuality.preference >= dvd_quality,
-                                #                                         ),
-                                #                                         db.and_(
-                                #                                             CriterionQuality.preference
-                                #                                             >= bluray_quality,
-                                #                                             RefQuality.preference >= bluray_quality,
-                                #                                         ),
-                                #                                     ),
-                                #                                 ),
+                    (Movie.shopping_list_exclude == True, "Already owned"),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Already owned",
+                            Movie.criterion_disc_owned == True,
+                            #                                 db.and_(
+                            #                                     db.or_(
+                            #                                         db.and_(
+                            #                                             CriterionQuality.preference == dvd_quality,
+                            #                                             RefQuality.preference >= dvd_quality,
+                            #                                         ),
+                            #                                         db.and_(
+                            #                                             CriterionQuality.preference
+                            #                                             >= bluray_quality,
+                            #                                             RefQuality.preference >= bluray_quality,
+                            #                                         ),
+                            #                                     ),
+                            #                                 ),
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == uhd_quality,
-                                # RefQuality.preference <= uhd_quality,
+                        "Already owned",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on 4K UHD Blu-Ray",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == uhd_quality,
+                            # RefQuality.preference <= uhd_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == bluray_quality,
-                                # RefQuality.preference <= bluray_quality,
+                        "Buy Criterion edition on 4K UHD Blu-Ray",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on Blu-Ray",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == bluray_quality,
+                            # RefQuality.preference <= bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == dvd_quality,
-                                # RefQuality.preference <= dvd_quality,
+                        "Buy Criterion edition on Blu-Ray",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on DVD",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == dvd_quality,
+                            # RefQuality.preference <= dvd_quality,
                         ),
-                        (File.fullscreen == True, "Buy any non-fullscreen release"),
-                        (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
-                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                        "Buy Criterion edition on DVD",
+                    ),
+                    (File.fullscreen == True, "Buy any non-fullscreen release"),
+                    (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
+                    (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
                     else_=("Already owned"),
                 ).label("instruction"),
             )
@@ -2568,107 +2561,103 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, -1),
-                        (Movie.shopping_list_exclude == True, -1),
-                        (RefQuality.preference < bluray_quality, 1),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                    (Movie.criterion_disc_owned == True, -1),
+                    (Movie.shopping_list_exclude == True, -1),
+                    (RefQuality.preference < bluray_quality, 1),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            1,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        1,
+                    ),
                     else_=(-1),
                 ).desc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 0),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 0),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            Movie.shopping_cart_priority,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        Movie.shopping_cart_priority,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            Movie.shopping_cart_priority,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        Movie.shopping_cart_priority,
+                    ),
                     else_=(0),
                 ).desc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 99),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 99),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            RefQuality.preference,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        RefQuality.preference,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            RefQuality.preference,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        RefQuality.preference,
+                    ),
                     else_=(99),
                 ).asc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 0),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 0),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            Movie.shopping_cart_add_date,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        Movie.shopping_cart_add_date,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            Movie.shopping_cart_add_date,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        Movie.shopping_cart_add_date,
+                    ),
                     else_=(0),
                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
@@ -2690,70 +2679,69 @@ def movie_shopping():
                 rating.c.whole_stars,
                 rating.c.half_stars,
                 db.case(
-                    
-                        (Movie.shopping_list_exclude == True, "Already owned"),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == True,
-                                #                                 db.and_(
-                                #                                     db.or_(
-                                #                                         db.and_(
-                                #                                             CriterionQuality.preference == dvd_quality,
-                                #                                             RefQuality.preference >= dvd_quality,
-                                #                                         ),
-                                #                                         db.and_(
-                                #                                             CriterionQuality.preference
-                                #                                             >= bluray_quality,
-                                #                                             RefQuality.preference >= bluray_quality,
-                                #                                         ),
-                                #                                     ),
-                                #                                 ),
+                    (Movie.shopping_list_exclude == True, "Already owned"),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Already owned",
+                            Movie.criterion_disc_owned == True,
+                            #                                 db.and_(
+                            #                                     db.or_(
+                            #                                         db.and_(
+                            #                                             CriterionQuality.preference == dvd_quality,
+                            #                                             RefQuality.preference >= dvd_quality,
+                            #                                         ),
+                            #                                         db.and_(
+                            #                                             CriterionQuality.preference
+                            #                                             >= bluray_quality,
+                            #                                             RefQuality.preference >= bluray_quality,
+                            #                                         ),
+                            #                                     ),
+                            #                                 ),
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == uhd_quality,
-                                # RefQuality.preference <= uhd_quality,
+                        "Already owned",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on 4K UHD Blu-Ray",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == uhd_quality,
+                            # RefQuality.preference <= uhd_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == bluray_quality,
-                                # RefQuality.preference <= bluray_quality,
+                        "Buy Criterion edition on 4K UHD Blu-Ray",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on Blu-Ray",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == bluray_quality,
+                            # RefQuality.preference <= bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                Movie.criterion_disc_owned == False,
-                                CriterionQuality.preference == dvd_quality,
-                                # RefQuality.preference <= dvd_quality,
+                        "Buy Criterion edition on Blu-Ray",
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            "Buy Criterion edition on DVD",
+                            Movie.criterion_disc_owned == False,
+                            CriterionQuality.preference == dvd_quality,
+                            # RefQuality.preference <= dvd_quality,
                         ),
-                        (File.fullscreen == True, "Buy any non-fullscreen release"),
-                        (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
-                        (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
+                        "Buy Criterion edition on DVD",
+                    ),
+                    (File.fullscreen == True, "Buy any non-fullscreen release"),
+                    (RefQuality.preference < dvd_quality, "Buy on DVD or Blu-Ray"),
+                    (RefQuality.preference < bluray_quality, "Buy on Blu-Ray"),
                     else_=("Already owned"),
                 ).label("instruction"),
             )
@@ -2787,107 +2775,103 @@ def movie_shopping():
             )
             .order_by(
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, -1),
-                        (Movie.shopping_list_exclude == True, -1),
-                        (RefQuality.preference < bluray_quality, 1),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                    (Movie.criterion_disc_owned == True, -1),
+                    (Movie.shopping_list_exclude == True, -1),
+                    (RefQuality.preference < bluray_quality, 1),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            1,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        1,
+                    ),
                     else_=(-1),
                 ).desc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 0),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 0),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            Movie.shopping_cart_priority,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        Movie.shopping_cart_priority,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            Movie.shopping_cart_priority,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        Movie.shopping_cart_priority,
+                    ),
                     else_=(0),
                 ).desc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 99),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 99),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            RefQuality.preference,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        RefQuality.preference,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            RefQuality.preference,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        RefQuality.preference,
+                    ),
                     else_=(99),
                 ).asc(),
                 db.case(
-                    
-                        (Movie.criterion_disc_owned == True, 0),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.shopping_list_exclude == False,
-                                    Movie.shopping_list_exclude == None,
-                                ),
-                                RefQuality.preference < bluray_quality,
+                    (Movie.criterion_disc_owned == True, 0),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.shopping_list_exclude == False,
+                                Movie.shopping_list_exclude == None,
                             ),
-                            Movie.shopping_cart_add_date,
+                            RefQuality.preference < bluray_quality,
                         ),
-                        (
-                            db.and_(
-                                db.or_(
-                                    Movie.criterion_spine_number != None,
-                                    Movie.criterion_set_title != None,
-                                ),
-                                db.or_(
-                                    Movie.criterion_disc_owned == False,
-                                    Movie.criterion_disc_owned == None,
-                                ),
+                        Movie.shopping_cart_add_date,
+                    ),
+                    (
+                        db.and_(
+                            db.or_(
+                                Movie.criterion_spine_number != None,
+                                Movie.criterion_set_title != None,
                             ),
-                            Movie.shopping_cart_add_date,
+                            db.or_(
+                                Movie.criterion_disc_owned == False,
+                                Movie.criterion_disc_owned == None,
+                            ),
                         ),
+                        Movie.shopping_cart_add_date,
+                    ),
                     else_=(0),
                 ).desc(),
                 db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
