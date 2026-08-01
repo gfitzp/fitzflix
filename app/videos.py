@@ -93,6 +93,58 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
     return True
 
 
+def watch_mkvmerge_progress(process, job, name, activity):
+    """Stream a process's output, logging its progress and updating job meta."""
+
+    for line in process.stdout:
+        progress_match = re.search(r"Progress\: \d+\%", line)
+        if progress_match:
+            progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
+            progress = int(progress_match.group("percent"))
+            current_app.logger.info(f"'{name}' {activity}: {progress}%")
+            if job:
+                job.meta["description"] = f"'{name}' — {activity}"
+                job.meta["progress"] = progress
+                job.save_meta()
+
+
+def acquire_lock_or_defer(
+    resource,
+    ttl_ms,
+    scheduler,
+    func,
+    minutes,
+    timeout,
+    description,
+    args=(),
+    kwargs=None,
+):
+    """Take the redlock for a title, or schedule the task to retry later.
+
+    Returns the lock on success, or None after scheduling the retry.
+    """
+
+    lock = current_app.lock_manager.lock(resource, ttl_ms)
+    if lock:
+        current_app.logger.info(f"Created lock {lock}")
+        return lock
+
+    sleep_duration = random.randint(*minutes)
+    current_app.logger.warning(
+        f"{description} Lock exists, "
+        f"returning to queue after {sleep_duration} minutes"
+    )
+    scheduler.enqueue_in(
+        timedelta(minutes=sleep_duration),
+        func,
+        *args,
+        **(kwargs or {}),
+        timeout=timeout,
+        job_description=description,
+    )
+    return None
+
+
 def wait_for_subprocess(process, ok_returncodes=(0,)):
     """Wait for an external tool to finish, and raise if it exited with an error.
 
@@ -255,29 +307,20 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             file_identifier = json.dumps(file_identifier)
             current_app.logger.debug(f"'{basename}' Lock identifier: {file_identifier}")
 
-            # Multiply by 1000 since we need to specify the redlock timeout in milliseconds
+            # If we don't get the lock, this task returns to the localization
+            # queue to be retried once the lock becomes available
 
-            lock = current_app.lock_manager.lock(
-                file_identifier, current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
+            lock = acquire_lock_or_defer(
+                file_identifier,
+                current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
+                current_app.import_scheduler,
+                "app.videos.localization_task",
+                minutes=(45, 75),
+                timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                description=f"'{basename}'",
+                kwargs={"file_path": file_path},
             )
-            current_app.logger.info(f"Created lock {lock}")
-
-            # If we didn't get a lock, return this task to the localization queue after
-            # 45 to 75 minutes to be processed once the lock becomes available
-
             if not lock:
-                sleep_duration = random.randint(45, 75)
-                current_app.logger.warning(
-                    f"'{basename}' Lock exists, "
-                    f"returning to queue after {sleep_duration} minutes"
-                )
-                current_app.import_scheduler.enqueue_in(
-                    timedelta(minutes=sleep_duration),
-                    "app.videos.localization_task",
-                    file_path=file_path,
-                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_description=f"'{basename}'",
-                )
                 return False
 
             # See if any better-quality versions of this file already exist
@@ -387,22 +430,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     universal_newlines=True,
                     bufsize=1,
                 )
-                for line in statistics_tags_process.stdout:
-                    progress_match = re.search(r"Progress\: \d+\%", line)
-                    if progress_match:
-                        progress_match = re.match(
-                            r"^Progress\: (?P<percent>\d+)\%", line
-                        )
-                        progress = int(progress_match.group("percent"))
-                        current_app.logger.info(
-                            f"'{basename}' Adding track statistics tags: {progress}%"
-                        )
-                        if job:
-                            job.meta["description"] = (
-                                f"'{basename}' — Adding track statistics tags"
-                            )
-                            job.meta["progress"] = progress
-                            job.save_meta()
+                watch_mkvmerge_progress(statistics_tags_process, job, basename, "Adding track statistics tags")
 
                 wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
 
@@ -634,18 +662,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                         bufsize=1,
                     )
 
-                for line in mkvmerge_process.stdout:
-                    progress_match = re.search(r"Progress\: \d+\%", line)
-                    if progress_match:
-                        progress_match = re.match(
-                            r"^Progress\: (?P<percent>\d+)\%", line
-                        )
-                        progress = int(progress_match.group("percent"))
-                        current_app.logger.info(f"'{basename}' Localizing: {progress}%")
-                        if job:
-                            job.meta["description"] = f"'{basename}' — Localizing"
-                            job.meta["progress"] = progress
-                            job.save_meta()
+                watch_mkvmerge_progress(mkvmerge_process, job, basename, "Localizing")
 
                 wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
@@ -1581,26 +1598,22 @@ def mkvpropedit_task(
         # Serialize with other tasks that rewrite this title's files or
         # track records
 
-        lock = current_app.lock_manager.lock(
+        lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-        )
-        if not lock:
-            sleep_duration = random.randint(5, 15)
-            current_app.logger.warning(
-                f"'{file.basename}' Lock exists, "
-                f"returning to queue after {sleep_duration} minutes"
-            )
-            current_app.file_scheduler.enqueue_in(
-                timedelta(minutes=sleep_duration),
-                "app.videos.mkvpropedit_task",
+            current_app.file_scheduler,
+            "app.videos.mkvpropedit_task",
+            minutes=(5, 15),
+            timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+            args=(
                 file_id,
                 default_audio_track,
                 default_subtitle_track,
                 forced_subtitle_tracks,
-                timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                job_description=f"'{file.basename}'",
-            )
+            ),
+        )
+        if not lock:
             return True
 
         try:
@@ -1813,22 +1826,7 @@ def mkvpropedit_unlocked(
                         bufsize=1,
                     )
 
-                    for line in mkvmerge_process.stdout:
-                        progress_match = re.search(r"Progress\: \d+\%", line)
-                        if progress_match:
-                            progress_match = re.match(
-                                r"^Progress\: (?P<percent>\d+)\%", line
-                            )
-                            progress = int(progress_match.group("percent"))
-                            current_app.logger.info(
-                                f"'{file.basename}' Remuxing: {progress}%"
-                            )
-                            if job:
-                                job.meta["description"] = (
-                                    f"'{file.basename}' — Remuxing"
-                                )
-                                job.meta["progress"] = progress
-                                job.save_meta()
+                    watch_mkvmerge_progress(mkvmerge_process, job, file.basename, "Remuxing")
 
                     wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
@@ -1911,25 +1909,17 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
         # Serialize with other tasks that rewrite this title's files or
         # track records
 
-        lock = current_app.lock_manager.lock(
+        lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
+            current_app.import_scheduler,
+            "app.videos.mkvmerge_task",
+            minutes=(5, 15),
+            timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+            args=(file_id, audio_tracks, subtitle_tracks),
         )
         if not lock:
-            sleep_duration = random.randint(5, 15)
-            current_app.logger.warning(
-                f"'{file.basename}' Lock exists, "
-                f"returning to queue after {sleep_duration} minutes"
-            )
-            current_app.import_scheduler.enqueue_in(
-                timedelta(minutes=sleep_duration),
-                "app.videos.mkvmerge_task",
-                file_id,
-                audio_tracks,
-                subtitle_tracks,
-                timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                job_description=f"'{file.basename}'",
-            )
             return True
 
         try:
@@ -2023,16 +2013,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 bufsize=1,
             )
 
-            for line in mkvmerge_process.stdout:
-                progress_match = re.search(r"Progress\: \d+\%", line)
-                if progress_match:
-                    progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
-                    progress = int(progress_match.group("percent"))
-                    current_app.logger.info(f"'{file.basename}' Remuxing: {progress}%")
-                    if job:
-                        job.meta["description"] = f"'{file.basename}' — Remuxing"
-                        job.meta["progress"] = progress
-                        job.save_meta()
+            watch_mkvmerge_progress(mkvmerge_process, job, file.basename, "Remuxing")
 
             wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
@@ -2587,28 +2568,17 @@ def transcode_task(file_id):
             current_app.logger.debug(
                 f"'{file.plex_title}' Lock identifier: {file_identifier}"
             )
-            lock = current_app.lock_manager.lock(
+            lock = acquire_lock_or_defer(
                 file.file_identifier(),
                 current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
+                current_app.transcode_scheduler,
+                "app.videos.transcode_task",
+                minutes=(45, 75),
+                timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                description=f"'{file.plex_title}'",
+                kwargs={"file_id": file_id},
             )
-            current_app.logger.info(f"Created lock {lock}")
-
-            # If we didn't get a lock, return this task to the transcoding queue after
-            # 45 to 75 minutes to be processed once the lock becomes available
-
             if not lock:
-                sleep_duration = random.randint(45, 75)
-                current_app.logger.warning(
-                    f"'{file.plex_title}' Lock exists, "
-                    f"returning to queue after {sleep_duration} minutes"
-                )
-                current_app.transcode_scheduler.enqueue_in(
-                    timedelta(minutes=sleep_duration),
-                    "app.videos.transcode_task",
-                    file_id=file_id,
-                    timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    job_description=f"'{file.plex_title}'",
-                )
                 return False
 
             # Start transcoding process
@@ -4062,20 +4032,7 @@ def remove_empty_subtitle_tracks(file_path):
         universal_newlines=True,
         bufsize=1,
     )
-    for line in mkvmerge_process.stdout:
-        progress_match = re.search(r"Progress\: \d+\%", line)
-        if progress_match:
-            progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
-            progress = int(progress_match.group("percent"))
-            current_app.logger.info(
-                f"'{basename}' Removing empty subtitle tracks: {progress}%"
-            )
-            if job:
-                job.meta["description"] = (
-                    f"'{basename}' — Removing empty subtitle tracks"
-                )
-                job.meta["progress"] = progress
-                job.save_meta()
+    watch_mkvmerge_progress(mkvmerge_process, job, basename, "Removing empty subtitle tracks")
 
     wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 

@@ -1,154 +1,76 @@
-import json
 import os
 import shutil
-
-import urllib3
 
 from flask import current_app, jsonify, request
 
 from app.api import bp
-from app.api.auth import authenticate_api_request
+from app.api.arr import (
+    downgrade_quality_title,
+    import_event_webhook,
+    send_arr_command,
+)
 
 
 @bp.route("/radarr/add", methods=["POST"])
-def radarr_add():
+@import_event_webhook("Radarr")
+def radarr_add(payload):
     """Endpoint for Radarr to notify Fitzflix when a new video file is added."""
 
-    current_app.logger.info(f"Authorization: *redacted*, Request: {request.get_json()}")
-    payload = request.get_json()
-    response = jsonify({})
+    response = jsonify(request.get_json())
+    downloaded_file_path = os.path.join(
+        payload["movie"].get("folderPath"),
+        payload["movieFile"].get("relativePath"),
+    )
 
-    if not request.authorization:
-        response.status_code = 401
-        return response
+    # Rename the downloaded file with a downgraded quality title
 
-    if request.authorization.get("username") and request.authorization.get("password"):
-        # The password field must hold the user's API key
-
-        if authenticate_api_request() is None:
-            response.status_code = 401
-            return response
-
-        # If Radarr is just confirming the connection, return a valid status code
-
-        response.status_code = 202
-        if payload.get("eventType") == "Test":
-            return response
-
-        # Only import events carry the file fields used below; acknowledge and
-        # ignore any other event type the webhook might be configured to send
-
-        if payload.get("eventType") != "Download":
-            current_app.logger.info(
-                f"Ignoring Radarr '{payload.get('eventType')}' event"
-            )
-            return response
-
-        response = jsonify(request.get_json())
-        downloaded_file_path = os.path.join(
-            payload["movie"].get("folderPath"),
-            payload["movieFile"].get("relativePath"),
+    original_quality = payload["movieFile"].get("quality")
+    new_quality = downgrade_quality_title(
+        original_quality, payload["customFormatInfo"].get("customFormatScore", 0)
+    )
+    radarr_file_name = os.path.basename(downloaded_file_path).replace(
+        f"[{original_quality}]", f"[{new_quality}]"
+    )
+    radarr_file_path = os.path.join(
+        os.path.dirname(downloaded_file_path), radarr_file_name
+    )
+    if downloaded_file_path != radarr_file_path:
+        shutil.move(downloaded_file_path, radarr_file_path)
+        current_app.logger.info(
+            f"'{downloaded_file_path}' renamed as '{radarr_file_path}'"
         )
 
-        # Downgrade quality title and rename the downloaded file.
-        # If a file isn't specifically known to be from physical media, I don't want to
-        # use a physical media quality title, so I instead use the next highest quality.
-        # Also, I don't use "Remux" to indicate a Bluray rip.
-        # So, if a file is listed as...             show as...
-        #                   - DVD                   WEBDL-480p
-        #                   - Bluray-480p           WEBDL-480p
-        #                   - Bluray-720p           WEBDL-720p
-        #                   - Bluray-1080p          WEBDL-1080p
-        #                   - Bluray-1080p Remux    WEBDL-1080p
+    # Ask Radarr to refresh its movie data now that we've possibly renamed the file
 
-        original_quality = payload["movieFile"].get("quality")
-        new_quality = (
-            original_quality.replace("DVD", "WEBDL-480p")
-            .replace("Bluray", "WEBDL")
-            .replace("Remux-", "WEBDL-")
-            .replace(" Remux", "")
+    id = payload["movie"].get("id")
+    if id:
+        current_app.logger.info(
+            f"Rescanning movie '{os.path.dirname(downloaded_file_path)}'"
         )
-        if payload["customFormatInfo"].get("customFormatScore", 0) < 1600:
-            new_quality = new_quality.replace("WEBDL", "WEBRip")
-        radarr_file_name = os.path.basename(downloaded_file_path).replace(
-            f"[{original_quality}]", f"[{new_quality}]"
+        send_arr_command(
+            "Radarr",
+            current_app.config["RADARR_URL"] + "/api/v3/command",
+            current_app.config["RADARR_API_KEY"],
+            {"name": "RefreshMovie", "movieIds": [int(id)]},
         )
-        radarr_file_path = os.path.join(
-            os.path.dirname(downloaded_file_path), radarr_file_name
-        )
-        if downloaded_file_path != radarr_file_path:
-            shutil.move(downloaded_file_path, radarr_file_path)
-            current_app.logger.info(
-                f"'{downloaded_file_path}' renamed as '{radarr_file_path}'"
-            )
 
-        # Ask Radarr to refresh its series data now that we've possibly renamed the file
+    # Pass the file to Fitzflix for processing; tried copying the file to the import
+    # directory for processing but if another file came in while it was copying
+    # then the first copy was abandoned, and tried doing a hard link to the import
+    # directory but that wasn't supported on my NAS, so just sending the downloaded
+    # file directly to Radarr to be imported in place
 
-        id = payload["movie"].get("id")
-        if id:
-            current_app.logger.info(
-                f"Rescanning movie '{os.path.dirname(downloaded_file_path)}'"
-            )
-
-            # r = requests.post(
-            #     current_app.config["radarr_URL"] + "/api/command",
-            #     params={"apikey": current_app.config["radarr_API_KEY"]},
-            #     json={"name": "RescanSeries", "seriesId": int(id)},
-            # )
-            # current_app.logger.info(r.json())
-
-            # I *would* have used the requests code above to submit the API call to Radarr
-            # to refresh the series, but it keeps crashing with a segmentation fault.
-            # No idea why, because the same code works perfectly fine on my local machine.
-            # Using the urllib3 code below to make the API call instead.
-
-            # Don't let a failed refresh command prevent the import below; log
-            # the failure so a rejected command is no longer invisible
-
-            try:
-                http = urllib3.PoolManager()
-                r = http.request(
-                    "POST",
-                    current_app.config["RADARR_URL"] + "/api/v3/command",
-                    headers={
-                        "X-Api-Key": current_app.config["RADARR_API_KEY"],
-                        "Content-Type": "application/json",
-                    },
-                    body=json.dumps(
-                        {"name": "RefreshMovie", "movieIds": [int(id)]}
-                    ).encode("utf-8"),
-                )
-                if not 200 <= r.status < 300:
-                    current_app.logger.warning(
-                        f"Radarr RefreshMovie command returned HTTP {r.status}: "
-                        f"{r.data.decode('utf-8', 'replace')[:200]}"
-                    )
-
-            except Exception as e:
-                current_app.logger.warning(
-                    f"Unable to send RefreshMovie command to Radarr: {e}"
-                )
-
-        # Pass the file to Fitzflix for processing; tried copying the file to the import
-        # directory for processing but if another file came in while it was copying
-        # then the first copy was abandoned, and tried doing a hard link to the import
-        # directory but that wasn't supported on my NAS, so just sending the downloaded
-        # file directly to Radarr to be imported in place
-
-        job = current_app.import_queue.enqueue(
-            "app.videos.localization_task",
-            args=(radarr_file_path,),
-            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-            description=f"'{os.path.basename(radarr_file_path)}'",
-            job_id=os.path.basename(radarr_file_path),
-        )
-        if job:
-            current_app.logger.info(f"'{radarr_file_path}' Sent to Fitzflix")
-
-        else:
-            response.status_code = 500
+    job = current_app.import_queue.enqueue(
+        "app.videos.localization_task",
+        args=(radarr_file_path,),
+        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+        description=f"'{os.path.basename(radarr_file_path)}'",
+        job_id=os.path.basename(radarr_file_path),
+    )
+    if job:
+        current_app.logger.info(f"'{radarr_file_path}' Sent to Fitzflix")
 
     else:
-        response.status_code = 401
+        response.status_code = 500
 
     return response

@@ -13,8 +13,8 @@ def send_async_email(app, msg):
         mail.send(msg)
 
 
-def send_email(subject, sender, recipients, text_body, html_body, attachments=None):
-    """Email sending framework."""
+def build_message(subject, sender, recipients, text_body, html_body, attachments=None):
+    """Assemble a mail message with optional attachments."""
 
     msg = Message(subject, sender=sender, recipients=recipients)
     msg.body = text_body
@@ -22,6 +22,13 @@ def send_email(subject, sender, recipients, text_body, html_body, attachments=No
     if attachments:
         for attachment in attachments:
             msg.attach(*attachment)
+    return msg
+
+
+def send_email(subject, sender, recipients, text_body, html_body, attachments=None):
+    """Send an email from a request without blocking on the mail server."""
+
+    msg = build_message(subject, sender, recipients, text_body, html_body, attachments)
     Thread(
         target=send_async_email, args=(current_app._get_current_object(), msg)
     ).start()
@@ -30,12 +37,8 @@ def send_email(subject, sender, recipients, text_body, html_body, attachments=No
 def task_send_email(
     subject, sender, recipients, text_body, html_body, attachments=None
 ):
-    """Email sending framework."""
+    """Send an email synchronously from a background task."""
 
-    msg = Message(subject, sender=sender, recipients=recipients)
-    msg.body = text_body
-    msg.html = html_body
-    if attachments:
-        for attachment in attachments:
-            msg.attach(*attachment)
-    mail.send(msg)
+    mail.send(
+        build_message(subject, sender, recipients, text_body, html_body, attachments)
+    )
