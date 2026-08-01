@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -30,6 +31,98 @@ login.login_view = "auth.login"
 mail = Mail()
 bootstrap = Bootstrap()
 moment = Moment()
+
+
+def check_config(app):
+    """Warn at startup about config values that would make tasks fail later.
+
+    Warnings only: a misconfigured optional feature shouldn't stop the app
+    from serving the rest of the library.
+    """
+
+    for key in (
+        "ATOMICPARSLEY_BIN",
+        "HANDBRAKE_BIN",
+        "MKVMERGE_BIN",
+        "MKVPROPEDIT_BIN",
+        "FFMPEG_BIN",
+    ):
+        path = app.config[key]
+        if not (os.path.isfile(path) and os.access(path, os.X_OK)):
+            app.logger.warning(f"{key} '{path}' is not an executable file")
+
+    for key in (
+        "MEDIA_LOCATION",
+        "LIBRARY_DIR",
+        "MOVIE_LIBRARY",
+        "TV_LIBRARY",
+        "REJECTS_DIR",
+        "TRANSCODES_DIR",
+    ):
+        path = app.config[key]
+        if not os.path.isdir(path):
+            app.logger.warning(f"{key} '{path}' is not an existing directory")
+
+    preset_file = app.config["HANDBRAKE_PRESET_FILE"]
+    if preset_file:
+        if not os.path.isfile(preset_file):
+            app.logger.warning(
+                f"HANDBRAKE_PRESET_FILE '{preset_file}' does not exist, "
+                f"transcodes will not use the custom preset"
+            )
+        else:
+            try:
+                with open(preset_file) as f:
+                    presets = [
+                        preset.get("PresetName")
+                        for preset in json.load(f).get("PresetList", [])
+                    ]
+            except (OSError, ValueError):
+                app.logger.warning(
+                    f"HANDBRAKE_PRESET_FILE '{preset_file}' is not a valid "
+                    f"HandBrake preset export"
+                )
+            else:
+                if app.config["HANDBRAKE_PRESET"] not in presets:
+                    app.logger.warning(
+                        f"HANDBRAKE_PRESET '{app.config['HANDBRAKE_PRESET']}' "
+                        f"is not in HANDBRAKE_PRESET_FILE (contains {presets})"
+                    )
+
+    aws_missing = [
+        key
+        for key in ("AWS_BUCKET", "AWS_ACCESS_KEY", "AWS_SECRET_KEY")
+        if not app.config[key]
+    ]
+    if aws_missing and len(aws_missing) < 3:
+        app.logger.warning(
+            f"AWS is partially configured, uploads will fail: missing {aws_missing}"
+        )
+    if app.config["ARCHIVE_ORIGINAL_MEDIA"] and aws_missing:
+        app.logger.warning(
+            f"ARCHIVE_ORIGINAL_MEDIA is set, but uploads will fail: "
+            f"missing {aws_missing}"
+        )
+
+    for service in ("SONARR", "RADARR"):
+        if bool(app.config[f"{service}_URL"]) != bool(app.config[f"{service}_API_KEY"]):
+            app.logger.warning(
+                f"{service}_URL and {service}_API_KEY must both be set "
+                f"for {service.capitalize()} requests to succeed"
+            )
+
+    if app.config["MAIL_SERVER"] and not (
+        app.config["SERVER_EMAIL"] and app.config["ADMIN_EMAIL"]
+    ):
+        app.logger.warning(
+            "MAIL_SERVER is set, but sending will fail without "
+            "SERVER_EMAIL and ADMIN_EMAIL (or MAIL_USERNAME as their fallback)"
+        )
+
+    if not app.config["TMDB_API_KEY"]:
+        app.logger.warning(
+            "TMDB_API_KEY is not set, TMDb metadata and poster lookups will be skipped"
+        )
 
 
 def create_app(config_class=Config):
@@ -216,6 +309,10 @@ def create_app(config_class=Config):
         app.logger.addHandler(file_handler)
         app.logger.setLevel(logging.INFO)
         app.logger.info("Fitzflix startup")
+
+    # Warn about configuration problems that would make tasks fail later
+
+    check_config(app)
 
     # Create the import directory
 
