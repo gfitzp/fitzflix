@@ -27,6 +27,13 @@ class Config(object):
     SERVER_NAME                         = os.environ.get("SERVER_NAME") or None
     APPLICATION_ROOT                    = os.environ.get("APPLICATION_ROOT") or "/"
 
+    # When the site is served over https, refuse to send session cookies over
+    # plain http (e.g. direct LAN requests to the gunicorn port)
+
+    SESSION_COOKIE_SECURE               = PREFERRED_URL_SCHEME == "https"
+    REMEMBER_COOKIE_SECURE              = PREFERRED_URL_SCHEME == "https"
+    SESSION_COOKIE_SAMESITE             = "Lax"
+
     # Fitzflix core configuration
 
     NATIVE_LANGUAGE                     = os.environ.get("ISO_639_2_NATIVE_LANGUAGE") or "eng"

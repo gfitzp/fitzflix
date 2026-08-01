@@ -236,6 +236,15 @@ def create_app(config_class=Config):
     app.config.from_object(config_class)
     app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
 
+    # The built-in SECRET_KEY fallback lets anyone forge session cookies and
+    # password-reset tokens, so it's only acceptable in debug mode
+
+    if app.config["SECRET_KEY"] == "fitzflix-secret" and not app.debug:
+        raise RuntimeError(
+            "SECRET_KEY is not set in .env; refusing to start with the "
+            "built-in default outside debug mode"
+        )
+
     # Configure the Redis connection and queues
 
     app.redis = Redis.from_url(app.config["REDIS_URL"])
