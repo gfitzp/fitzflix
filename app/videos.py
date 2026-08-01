@@ -2063,6 +2063,9 @@ def sync_aws_s3_storage_task():
             ("fitzflix-file-operation", current_app.file_queue),
             ("fitzflix-sql", current_app.sql_queue),
             ("fitzflix-user-request", current_app.request_queue),
+            # The maintenance queue runs the hourly import sweep, which can
+            # feed new files into the import pipeline mid-sync
+            ("fitzflix-maintenance", current_app.maintenance_queue),
         ):
             started = StartedJobRegistry(
                 queue_name, connection=current_app.redis

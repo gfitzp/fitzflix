@@ -1966,6 +1966,31 @@ def admin():
         flash("Manually scanning import directory for files", "info")
         return redirect(url_for("main.admin"))
 
+    # Status of the recurring scheduled tasks; the schedulers share one
+    # scheduled-jobs set, so filter each scheduler's results to its own queue
+
+    cron_descriptions = {
+        "0 0 * * *": "Daily at midnight",
+        "0 * * * *": "Hourly",
+        "* * * * *": "Every minute",
+    }
+    scheduled_tasks = []
+    for scheduler in (
+        current_app.maintenance_scheduler,
+    ):
+        for job, next_run in scheduler.get_jobs(with_times=True):
+            if job.origin != scheduler.queue_name:
+                continue
+            cron_string = job.meta.get("cron_string", "")
+            scheduled_tasks.append(
+                {
+                    "name": job.description or job.id,
+                    "schedule": cron_descriptions.get(cron_string, cron_string),
+                    "last_run": job.ended_at,
+                    "next_run": next_run,
+                }
+            )
+
     return render_template(
         "admin.html",
         title="Admin",
@@ -1976,6 +2001,7 @@ def admin():
         sync_form=sync_form,
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
+        scheduled_tasks=scheduled_tasks,
     )
 
 

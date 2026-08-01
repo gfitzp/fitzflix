@@ -66,4 +66,26 @@
     	<em class="small">This will delete all files that aren't in the Fitzflix database from AWS. Be <b>VERY SURE</b> you want to delete them before you click!</em>
     </div>
 </div>
+<hr>
+<h3>Scheduled tasks</h3>
+<table class="table table-sm mt-3">
+	<thead class="thead-light">
+		<tr>
+			<th scope="col">Task</th>
+			<th scope="col">Schedule</th>
+			<th scope="col">Last ran</th>
+			<th scope="col">Next run</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for task in scheduled_tasks %}
+		<tr>
+			<td>{{ task.name }}</td>
+			<td>{{ task.schedule }}</td>
+			<td>{% if task.last_run %}{{ moment(task.last_run).fromNow(refresh=True) }}{% else %}&mdash;{% endif %}</td>
+			<td>{{ moment(task.next_run).fromNow(refresh=True) }}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
 {% endblock %}

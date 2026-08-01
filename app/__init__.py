@@ -12,6 +12,8 @@ import rq
 
 from redis import Redis
 from redlock import Redlock
+from rq.exceptions import NoSuchJobError
+from rq.job import Job
 from rq.registry import StartedJobRegistry
 from rq_scheduler import Scheduler
 from watchdog.events import FileSystemEventHandler
@@ -36,6 +38,37 @@ bootstrap = Bootstrap()
 moment = Moment()
 
 _app = None
+
+
+def register_cron(scheduler, cron_string, func, job_id, timeout, description):
+    """Register a recurring job unless an identical one is already scheduled.
+
+    Re-registering rewrites the stored job, wiping runtime details like the
+    last run time, so matching registrations are left untouched.
+    """
+
+    try:
+        job = Job.fetch(job_id, connection=scheduler.connection)
+    except NoSuchJobError:
+        job = None
+
+    if (
+        job is not None
+        and job_id in scheduler
+        and job.func_name == func
+        and job.origin == scheduler.queue_name
+        and job.meta.get("cron_string") == cron_string
+    ):
+        return
+
+    scheduler.cron(
+        cron_string,
+        func=func,
+        id=job_id,
+        use_local_timezone=True,
+        timeout=timeout,
+        description=description,
+    )
 
 
 def get_app():
@@ -265,14 +298,14 @@ def create_app(config_class=Config):
     app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
     app.file_scheduler = Scheduler("fitzflix-file-operation", connection=app.redis)
 
-    # Rotate the application log daily at midnight; the fixed job id makes
-    # re-registration from each process update the same scheduled job
+    # Rotate the application log daily at midnight; the fixed job id keeps a
+    # single registration shared by every process
 
-    app.maintenance_scheduler.cron(
+    register_cron(
+        app.maintenance_scheduler,
         "0 0 * * *",
         func="app.maintenance.rotate_logs",
-        id="rotate-logs",
-        use_local_timezone=True,
+        job_id="rotate-logs",
         timeout=54000,
         description="Rotating application logs",
     )
@@ -280,11 +313,11 @@ def create_app(config_class=Config):
     # Sweep the import directory hourly as a safety net in case the
     # filesystem observer misses an arrival
 
-    app.import_scheduler.cron(
+    register_cron(
+        app.maintenance_scheduler,
         "0 * * * *",
         func="app.videos.manual_import_task",
-        id="import-sweep",
-        use_local_timezone=True,
+        job_id="import-sweep",
         timeout="1h",
         description="Scanning import directory for files",
     )
