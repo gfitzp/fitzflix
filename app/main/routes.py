@@ -27,7 +27,7 @@ from markupsafe import Markup
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 
-from app import db
+from app import db, enqueue_import_scan
 from app.main.forms import (
     CriterionFilterForm,
     CriterionForm,
@@ -67,6 +67,8 @@ from app.models import (
     TMDBCredit,
     TVSeries,
     UserMovieReview,
+    movie_file_rank,
+    tv_file_rank,
 )
 from app.main import bp
 from app.email import send_email
@@ -240,17 +242,7 @@ def movie_library():
     ranked_files = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(
-                    Movie.id,
-                    File.feature_type_id,
-                    File.plex_title,
-                    File.edition,
-                ),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-            )
-            .label("rank"),
+            movie_file_rank(),
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -457,17 +449,7 @@ def criterion_collection():
     ranked_files = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(
-                    Movie.id,
-                    File.feature_type_id,
-                    File.plex_title,
-                    File.edition,
-                ),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-            )
-            .label("rank"),
+            movie_file_rank(),
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -796,17 +778,7 @@ def movie_files(movie_id):
     ranked_files = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(
-                    Movie.id,
-                    File.feature_type_id,
-                    File.plex_title,
-                    File.edition,
-                ),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-            )
-            .label("rank"),
+            movie_file_rank(),
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -842,16 +814,7 @@ def tv_library():
     ranked_files = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
-                order_by=(
-                    File.fullscreen.asc(),
-                    RefQuality.preference.desc(),
-                    File.last_episode.desc(),
-                ),
-            )
-            .label("rank"),
+            tv_file_rank(),
         )
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -945,16 +908,7 @@ def tv(series_id):
         ranked_files = (
             db.session.query(
                 File.id,
-                db.func.row_number()
-                .over(
-                    partition_by=(TVSeries.id, File.season, File.episode, File.edition),
-                    order_by=(
-                        File.fullscreen.asc(),
-                        RefQuality.preference.desc(),
-                        File.last_episode.desc(),
-                    ),
-                )
-                .label("rank"),
+                tv_file_rank(),
             )
             .join(TVSeries, (TVSeries.id == File.series_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -1112,16 +1066,7 @@ def season(series_id, season):
     ranked_files = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
-                order_by=(
-                    File.fullscreen.asc(),
-                    RefQuality.preference.desc(),
-                    File.last_episode.desc(),
-                ),
-            )
-            .label("rank"),
+            tv_file_rank(),
         )
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -1185,17 +1130,7 @@ def file(file_id):
         file_rank = (
             db.session.query(
                 File.id,
-                db.func.row_number()
-                .over(
-                    partition_by=(
-                        Movie.id,
-                        File.feature_type_id,
-                        File.plex_title,
-                        File.edition,
-                    ),
-                    order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-                )
-                .label("rank"),
+                movie_file_rank(),
             )
             .join(Movie, (Movie.id == File.movie_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -1218,16 +1153,7 @@ def file(file_id):
         file_rank = (
             db.session.query(
                 File.id,
-                db.func.row_number()
-                .over(
-                    partition_by=(TVSeries.id, File.season, File.episode, File.edition),
-                    order_by=(
-                        File.fullscreen.asc(),
-                        RefQuality.preference.desc(),
-                        File.last_episode.desc(),
-                    ),
-                )
-                .label("rank"),
+                tv_file_rank(),
             )
             .join(TVSeries, (TVSeries.id == File.series_id))
             .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -1900,10 +1826,8 @@ def admin():
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
-        current_app.request_queue.enqueue(
-            "app.videos.manual_import_task",
-            args=(),
-            job_timeout="1h",
+        enqueue_import_scan(
+            current_app.request_queue,
             description="Manually scanning import directory for files",
             at_front=True,
         )
@@ -2098,17 +2022,7 @@ def movie_shopping():
             Movie.title,
             File.edition,
             RefQuality.quality_title,
-            db.func.row_number()
-            .over(
-                partition_by=(
-                    Movie.id,
-                    File.feature_type_id,
-                    File.plex_title,
-                    File.edition,
-                ),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-            )
-            .label("rank"),
+            movie_file_rank(),
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -2895,17 +2809,7 @@ def files():
     movie_rank = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(
-                    Movie.id,
-                    File.feature_type_id,
-                    File.plex_title,
-                    File.edition,
-                ),
-                order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-            )
-            .label("rank"),
+            movie_file_rank(),
         )
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -2915,16 +2819,7 @@ def files():
     tv_rank = (
         db.session.query(
             File.id,
-            db.func.row_number()
-            .over(
-                partition_by=(TVSeries.id, File.season, File.episode, File.edition),
-                order_by=(
-                    File.fullscreen.asc(),
-                    RefQuality.preference.desc(),
-                    File.last_episode.desc(),
-                ),
-            )
-            .label("rank"),
+            tv_file_rank(),
         )
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))

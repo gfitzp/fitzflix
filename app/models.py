@@ -126,42 +126,6 @@ class Utilities(object):
         return string
 
 
-class LibraryMixin(object):
-    def ranked_movie_files(self):
-        return (
-            db.session.query(
-                File.id,
-                File.movie_id,
-                File.feature_type_id,
-                File.plex_title,
-                File.edition,
-                File.fullscreen,
-                RefQuality.preference,
-                RefQuality.quality_title,
-                RefQuality.physical_media,
-                db.func.row_number()
-                .over(
-                    partition_by=(
-                        File.movie_id,
-                        File.feature_type_id,
-                        File.plex_title,
-                        File.edition,
-                    ),
-                    order_by=(
-                        RefQuality.preference.desc(),
-                        File.fullscreen,
-                        File.date_added.asc(),
-                    ),
-                )
-                .label("rank"),
-            )
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .subquery()
-        )
-
-    # TODO: write ranked_tv_episodes function
-
-
 class TMDBMixin(object):
     def tmdb_movie_query(self, tmdb_id=None):
         tmdb_info = {}
@@ -1149,7 +1113,7 @@ class UserMovieReview(db.Model):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"
 
 
-class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
+class Movie(db.Model, TMDBMixin, Utilities):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, index=True)
     year = db.Column(db.Integer, nullable=False, index=True)
@@ -1265,7 +1229,7 @@ class Movie(db.Model, LibraryMixin, TMDBMixin, Utilities):
         return f"<Movie '{self.title} ({self.year})'>"
 
 
-class TVSeries(db.Model, LibraryMixin, TMDBMixin):
+class TVSeries(db.Model, TMDBMixin):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, unique=True, index=True)
     date_created = db.Column(
@@ -1341,7 +1305,7 @@ class TVSeries(db.Model, LibraryMixin, TMDBMixin):
         return f"<TVSeries '{self.title}'>"
 
 
-class File(db.Model, LibraryMixin):
+class File(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     untouched_basename = db.Column(db.String(255))
     media_library = db.Column(db.String(16), nullable=False, index=True)
@@ -2019,3 +1983,38 @@ class TMDBSeason(db.Model, TMDBMixin):
 @login.user_loader
 def load_user(id):
     return db.session.get(User, int(id))
+
+
+def movie_file_rank():
+    """Rank each movie file within its title/feature/edition group by quality."""
+
+    return (
+        db.func.row_number()
+        .over(
+            partition_by=(
+                Movie.id,
+                File.feature_type_id,
+                File.plex_title,
+                File.edition,
+            ),
+            order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+        )
+        .label("rank")
+    )
+
+
+def tv_file_rank():
+    """Rank each episode file within its series/season/episode/edition group."""
+
+    return (
+        db.func.row_number()
+        .over(
+            partition_by=(TVSeries.id, File.season, File.episode, File.edition),
+            order_by=(
+                File.fullscreen.asc(),
+                RefQuality.preference.desc(),
+                File.last_episode.desc(),
+            ),
+        )
+        .label("rank")
+    )

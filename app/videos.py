@@ -43,6 +43,7 @@ from app.models import (
     TVSeries,
     User,
     UserMovieReview,
+    movie_file_rank,
 )
 
 EIGHT_MEGABYTES = 8388608
@@ -2132,17 +2133,7 @@ def sync_aws_s3_storage_task():
             movie_rank = (
                 db.session.query(
                     File.id,
-                    db.func.row_number()
-                    .over(
-                        partition_by=(
-                            Movie.id,
-                            File.feature_type_id,
-                            File.plex_title,
-                            File.edition,
-                        ),
-                        order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
-                    )
-                    .label("rank"),
+                    movie_file_rank(),
                 )
                 .join(Movie, (Movie.id == File.movie_id))
                 .join(RefQuality, (RefQuality.id == File.quality_id))

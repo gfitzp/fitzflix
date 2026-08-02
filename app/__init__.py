@@ -40,6 +40,20 @@ moment = Moment()
 _app = None
 
 
+def enqueue_import_scan(
+    queue, description="Scanning import directory for files", at_front=False
+):
+    """Queue a sweep of the import directory for files to import."""
+
+    queue.enqueue(
+        "app.videos.manual_import_task",
+        args=(),
+        job_timeout="1h",
+        description=description,
+        at_front=at_front,
+    )
+
+
 def register_cron(scheduler, cron_string, func, job_id, timeout, description):
     """Register a recurring job unless an identical one is already scheduled.
 
@@ -427,12 +441,7 @@ def create_app(config_class=Config):
         return observer
 
     def enqueue_import_sweep():
-        app.import_queue.enqueue(
-            "app.videos.manual_import_task",
-            args=(),
-            job_timeout="1h",
-            description="Scanning import directory for files",
-        )
+        enqueue_import_scan(app.import_queue)
 
     def keep_observer_alive(observer):
         while True:

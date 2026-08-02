@@ -1,5 +1,6 @@
 import click
 
+from app import enqueue_import_scan
 from app.models import Movie, TVSeries
 
 
@@ -118,13 +119,7 @@ def register(app):
     def scan():
         """Scan import directory for files to be imported."""
 
-        app.request_queue.enqueue(
-            "app.videos.manual_import_task",
-            args=(),
-            job_timeout="1h",
-            description="Scanning import directory for files",
-            at_front=True,
-        )
+        enqueue_import_scan(app.request_queue, at_front=True)
         app.logger.info("Scanning import directory for files")
 
     @app.cli.command()
