@@ -1991,7 +1991,7 @@ def admin():
         test_filename = filename_test_form.test_filename.data.strip()
         filename_test_result = {
             "filename": test_filename,
-            "details": evaluate_filename(test_filename),
+            "details": evaluate_filename(test_filename, log=False),
         }
 
     # Status of the recurring scheduled tasks; the schedulers share one

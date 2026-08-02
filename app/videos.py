@@ -3259,8 +3259,12 @@ def calculate_etag(file_path):
         )
 
 
-def evaluate_filename(file_path, tmdb_id=None):
-    """Review a file name string and return info about what movie or TV show it is."""
+def evaluate_filename(file_path, tmdb_id=None, log=True):
+    """Review a file name string and return info about what movie or TV show it is.
+
+    Pass log=False when only previewing a filename (e.g. the admin filename
+    tester) so the dry run doesn't clutter the log like a real import would.
+    """
 
     file_details = {}
     basename = os.path.basename(file_path)
@@ -3449,7 +3453,8 @@ def evaluate_filename(file_path, tmdb_id=None):
                     .first()
                 )
 
-                current_app.logger.info(f"Existing movie with this TMDB id: {m}")
+                if log:
+                    current_app.logger.info(f"Existing movie with this TMDB id: {m}")
 
                 # If so, use the existing film title and year instead of what we parsed
 
@@ -3465,8 +3470,9 @@ def evaluate_filename(file_path, tmdb_id=None):
                     release_date = datetime.strptime(release_date, "%Y-%m-%d")
                     year = release_date.year
 
-        current_app.logger.info(f"File: {basename}")
-        current_app.logger.info(f"Movie: {title} ({year})")
+        if log:
+            current_app.logger.info(f"File: {basename}")
+            current_app.logger.info(f"Movie: {title} ({year})")
         edition = None
         feature_type = None
         special_feature = None
