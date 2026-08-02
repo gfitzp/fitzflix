@@ -97,12 +97,15 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
 def watch_mkvmerge_progress(process, job, name, activity):
     """Stream a process's output, logging its progress and updating job meta."""
 
+    previous_log_line = None
     for line in process.stdout:
         progress_match = re.search(r"Progress\: \d+\%", line)
         if progress_match:
             progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
             progress = int(progress_match.group("percent"))
-            current_app.logger.info(f"'{name}' {activity}: {progress}%")
+            if previous_log_line != f"'{name}' {activity}: {progress}%":
+                current_app.logger.info(f"'{name}' {activity}: {progress}%")
+                previous_log_line = f"'{name}' {activity}: {progress}%"
             if job:
                 job.meta["description"] = f"'{name}' — {activity}"
                 job.meta["progress"] = progress
@@ -440,7 +443,12 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     universal_newlines=True,
                     bufsize=1,
                 )
-                watch_mkvmerge_progress(statistics_tags_process, job, basename, "Adding track statistics tags")
+                watch_mkvmerge_progress(
+                    statistics_tags_process,
+                    job,
+                    basename,
+                    "Adding track statistics tags",
+                )
 
                 wait_for_subprocess(statistics_tags_process, ok_returncodes=(0, 1))
 
@@ -1838,7 +1846,9 @@ def mkvpropedit_unlocked(
                         bufsize=1,
                     )
 
-                    watch_mkvmerge_progress(mkvmerge_process, job, file.basename, "Remuxing")
+                    watch_mkvmerge_progress(
+                        mkvmerge_process, job, file.basename, "Remuxing"
+                    )
 
                     wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
@@ -2644,6 +2654,7 @@ def transcode_task(file_id):
                 universal_newlines=True,
                 bufsize=1,
             )
+            previous_log_line = None
             for line in transcode_process.stdout:
                 progress_match = re.search(
                     r"Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
@@ -2654,9 +2665,16 @@ def transcode_task(file_id):
                         line,
                     )
                     progress = int(progress_match.group("percent"))
-                    current_app.logger.info(
-                        f"'{file.plex_title}' Transcoding: {progress}%"
-                    )
+                    if (
+                        previous_log_line
+                        != f"'{file.plex_title}' Transcoding: {progress}%"
+                    ):
+                        current_app.logger.info(
+                            f"'{file.plex_title}' Transcoding: {progress}%"
+                        )
+                        previous_log_line = (
+                            f"'{file.plex_title}' Transcoding: {progress}%"
+                        )
                     if job:
                         job.meta["description"] = (
                             f"'{file.plex_title}' — Transcoding file"
@@ -3239,11 +3257,16 @@ def calculate_etag(file_path):
         # Read a file in 8 MB chunks, and get the MD5 hash of each chunk
 
         with open(file_path, "rb") as f:
+            previous_log_line = None
             for chunk in iter(lambda: f.read(EIGHT_MEGABYTES), b""):
                 # Concatenate all of the MD5 hashes together
                 md5_digests.append(hashlib.md5(chunk).digest())
                 progress = int((f.tell() / file_size) * 100)
-                current_app.logger.info(f"'{basename}' Calculating ETag: {progress}%")
+                if previous_log_line != f"'{basename}' Calculating ETag: {progress}%":
+                    current_app.logger.info(
+                        f"'{basename}' Calculating ETag: {progress}%"
+                    )
+                    previous_log_line = f"'{basename}' Calculating ETag: {progress}%"
                 if job:
                     job.meta["description"] = f"'{basename}' — Calculating ETag"
                     job.meta["progress"] = progress
@@ -4042,7 +4065,9 @@ def remove_empty_subtitle_tracks(file_path):
         universal_newlines=True,
         bufsize=1,
     )
-    watch_mkvmerge_progress(mkvmerge_process, job, basename, "Removing empty subtitle tracks")
+    watch_mkvmerge_progress(
+        mkvmerge_process, job, basename, "Removing empty subtitle tracks"
+    )
 
     wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
@@ -4579,6 +4604,7 @@ def lossless_to_flac(file_path, file_id=None):
                         bufsize=1,
                     )
                     progress = 0
+                    previous_log_line = None
                     for line in flac_track_process.stdout:
                         progress_match = re.search(
                             r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
@@ -4595,9 +4621,14 @@ def lossless_to_flac(file_path, file_id=None):
                                 )
                                 * 100
                             )
-                        current_app.logger.info(
-                            f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
-                        )
+                        if (
+                            previous_log_line
+                            != f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
+                        ):
+                            current_app.logger.info(
+                                f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
+                            )
+                            previous_log_line = f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
                         if job:
                             job.meta["description"] = (
                                 f"'{basename}' — Converting lossless tracks to FLAC"
