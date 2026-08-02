@@ -35,6 +35,8 @@ from app.main.forms import (
     CustomPosterUploadForm,
     EditProfileForm,
     FileDeleteForm,
+    FailedJobForm,
+    FilenameTestForm,
     ImportForm,
     LibrarySearchForm,
     MKVMergeForm,
@@ -72,7 +74,10 @@ from app.models import (
 )
 from app.main import bp
 from app.email import send_email
-from app.videos import track_metadata_scan
+from app.videos import evaluate_filename, track_metadata_scan
+from rq.exceptions import NoSuchJobError
+from rq.job import Job
+from rq.registry import FailedJobRegistry
 
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
@@ -1835,11 +1840,83 @@ def admin():
         flash("Manually scanning import directory for files", "info")
         return redirect(url_for("main.admin"))
 
+    queues_by_name = {
+        queue.name: queue
+        for queue in (
+            current_app.import_queue,
+            current_app.sql_queue,
+            current_app.request_queue,
+            current_app.transcode_queue,
+            current_app.file_queue,
+            current_app.maintenance_queue,
+        )
+    }
+
+    # Form to requeue or forget a failed background job
+
+    failed_job_form = FailedJobForm()
+    if (
+        failed_job_form.requeue_submit.data or failed_job_form.forget_submit.data
+    ) and failed_job_form.validate_on_submit():
+        queue = queues_by_name.get(failed_job_form.failed_queue.data)
+        job_id = failed_job_form.failed_job_id.data
+        registry = FailedJobRegistry(queue=queue) if queue else None
+
+        if registry and job_id in registry.get_job_ids():
+            if failed_job_form.requeue_submit.data:
+                registry.requeue(job_id)
+                flash(f"Requeued '{job_id}'", "info")
+            else:
+                try:
+                    job = Job.fetch(job_id, connection=current_app.redis)
+                    registry.remove(job, delete_job=True)
+                except NoSuchJobError:
+                    registry.connection.zrem(registry.key, job_id)
+                flash(f"Removed failed job '{job_id}'", "info")
+        else:
+            flash("That failed job no longer exists.", "warning")
+
+        return redirect(url_for("main.admin"))
+
+    failed_jobs = []
+    for queue_name, queue in queues_by_name.items():
+        registry = FailedJobRegistry(queue=queue)
+        for job_id in registry.get_job_ids():
+            job = queue.fetch_job(job_id)
+            if job is None:
+                continue
+            exc_lines = (job.exc_info or "").strip().splitlines()
+            failed_jobs.append(
+                {
+                    "id": job_id,
+                    "queue": queue_name,
+                    "description": job.description or job.func_name,
+                    "failed_at": job.ended_at,
+                    "error": exc_lines[-1][:200] if exc_lines else "",
+                }
+            )
+    failed_jobs.sort(key=lambda job: job["failed_at"] or datetime.min, reverse=True)
+
+    # Form to preview how a filename would be parsed and filed on import
+
+    filename_test_form = FilenameTestForm()
+    filename_test_result = None
+    if (
+        filename_test_form.filename_test_submit.data
+        and filename_test_form.validate_on_submit()
+    ):
+        test_filename = filename_test_form.test_filename.data.strip()
+        filename_test_result = {
+            "filename": test_filename,
+            "details": evaluate_filename(test_filename),
+        }
+
     # Status of the recurring scheduled tasks; the schedulers share one
     # scheduled-jobs set, so filter each scheduler's results to its own queue
 
     cron_descriptions = {
         "0 0 * * *": "Daily at midnight",
+        "30 0 * * *": "Daily at 12:30 AM",
         "0 * * * *": "Hourly",
         "30 * * * *": "Hourly at :30",
         "* * * * *": "Every minute",
@@ -1872,6 +1949,10 @@ def admin():
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
         scheduled_tasks=scheduled_tasks,
+        failed_jobs=failed_jobs,
+        failed_job_form=failed_job_form,
+        filename_test_form=filename_test_form,
+        filename_test_result=filename_test_result,
     )
 
 

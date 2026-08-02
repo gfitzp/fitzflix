@@ -88,4 +88,70 @@
 		{% endfor %}
 	</tbody>
 </table>
+{% if failed_jobs %}
+<hr>
+<h3>Failed tasks</h3>
+<table class="table table-sm mt-3">
+	<thead class="thead-light">
+		<tr>
+			<th scope="col">Queue</th>
+			<th scope="col">Task</th>
+			<th scope="col">Failed</th>
+			<th scope="col">Error</th>
+			<th scope="col"></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for job in failed_jobs %}
+		<tr>
+			<td>{{ job.queue }}</td>
+			<td>{{ job.description }}</td>
+			<td>{% if job.failed_at %}{{ moment(job.failed_at).fromNow(refresh=True) }}{% else %}&mdash;{% endif %}</td>
+			<td><code class="small">{{ job.error }}</code></td>
+			<td>
+				<form action="" method="post" class="form-inline">
+					{{ failed_job_form.csrf_token }}
+					{{ failed_job_form.failed_job_id(value=job.id) }}
+					{{ failed_job_form.failed_queue(value=job.queue) }}
+					{{ failed_job_form.requeue_submit(class_="btn btn-sm btn-warning mr-1") }}
+					{{ failed_job_form.forget_submit(class_="btn btn-sm btn-outline-danger") }}
+				</form>
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+{% endif %}
+<hr>
+<h3>Filename tester</h3>
+<p class="small text-muted">Preview how a filename would be parsed and filed on import, without importing anything.</p>
+<form action="" method="post" class="form-inline">
+	{{ filename_test_form.hidden_tag() }}
+	{{ filename_test_form.test_filename(class_="form-control form-control-sm mr-2", size=60, placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
+	{{ filename_test_form.filename_test_submit(class_="btn btn-sm btn-primary") }}
+</form>
+{% if filename_test_result %}
+	{% if filename_test_result.details %}
+	<div class="alert alert-success mt-3">
+		<code>{{ filename_test_result.filename }}</code> would import as<br>
+		<code>{{ filename_test_result.details.file_path }}</code>
+		<hr class="my-2">
+		<span class="small">
+			{{ filename_test_result.details.media_library }}:
+			<b>{{ filename_test_result.details.title }}</b>
+			{%- if filename_test_result.details.year %} ({{ filename_test_result.details.year }}){% endif %}
+			{%- if filename_test_result.details.season is defined and filename_test_result.details.season is not none %},
+				season {{ filename_test_result.details.season }}, episode {{ filename_test_result.details.episode }}{% endif %}
+			&middot; {{ filename_test_result.details.quality_title }}
+			{%- if filename_test_result.details.feature_type_name %} &middot; {{ filename_test_result.details.feature_type_name }}{% endif %}
+			{%- if filename_test_result.details.edition %} &middot; {{ filename_test_result.details.edition }}{% endif %}
+			{%- if filename_test_result.details.fullscreen %} &middot; Full Screen{% endif %}
+		</span>
+	</div>
+	{% else %}
+	<div class="alert alert-danger mt-3">
+		<code>{{ filename_test_result.filename }}</code> would be rejected: the name doesn't match the expected formats, or its quality tag isn't a known quality title.
+	</div>
+	{% endif %}
+{% endif %}
 {% endblock %}

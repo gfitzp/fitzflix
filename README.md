@@ -292,6 +292,8 @@ All processes write to a shared log, `logs/fitzflix.log` (configurable via `LOG_
 
 The log rotates automatically every night at midnight: the day's file is gzipped alongside as `fitzflix.log.<date>.gz`, and archives older than `LOG_RETENTION_DAYS` (default 14) are deleted.
 
+The database is backed up nightly at 12:30 AM to a compressed dump in `DB_BACKUP_DIR` (default `backups/` in the project root), keeping `DB_BACKUP_RETENTION_DAYS` (default 14) days of dumps — the media files are archived at AWS, but reviews, Criterion details, and shopping priorities exist only in the database. The Admin page shows each scheduled task's last and next run, lists any failed background jobs with requeue/forget buttons, and includes a filename tester that previews how a file would be parsed and filed without importing anything.
+
 ### Rejected files
 
 Files that can't be imported — an unparseable filename, an unrecognized quality tag, or a file that fails processing — are moved into a subfolder of `REJECTS_DIR` named for the reason they were rejected, so the folder name tells you what to fix before re-importing. Active and queued jobs can be watched on the `/queue` page.

@@ -113,6 +113,7 @@ def check_config(app):
         "MKVMERGE_BIN",
         "MKVPROPEDIT_BIN",
         "FFMPEG_BIN",
+        "MYSQLDUMP_BIN",
     ):
         path = app.config[key]
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):
@@ -299,6 +300,18 @@ def create_app(config_class=Config):
         job_id="rotate-logs",
         timeout=54000,
         description="Rotating application logs",
+    )
+
+    # Back up the database nightly: the media files are archived at AWS, but
+    # the database itself exists only on this machine
+
+    register_cron(
+        app.maintenance_scheduler,
+        "30 0 * * *",
+        func="app.maintenance.backup_database",
+        job_id="backup-database",
+        timeout="1h",
+        description="Backing up the database",
     )
 
     # Sweep the import directory hourly as a safety net in case the

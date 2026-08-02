@@ -4,10 +4,12 @@ import glob
 import gzip
 import os
 import shutil
+import subprocess
 
 from datetime import datetime, timedelta
 
 from flask import current_app
+from sqlalchemy.engine import make_url
 from werkzeug.local import LocalProxy
 
 from app import get_app
@@ -60,3 +62,83 @@ def rotate_logs():
             f"deleted {len(deleted)} archive(s) older than {retention_days} days"
             f"{' ' + str(deleted) if deleted else ''}"
         )
+
+
+def backup_database():
+    """Dump the database to a compressed backup and prune old backups.
+
+    The media files are archived at AWS, but the database — reviews,
+    Criterion details, shopping priorities — exists only here, so it gets a
+    nightly dump with its own retention window.
+    """
+
+    with app.app_context():
+        backup_dir = current_app.config["DB_BACKUP_DIR"]
+        retention_days = current_app.config["DB_BACKUP_RETENTION_DAYS"]
+        url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
+
+        os.makedirs(backup_dir, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d")
+        backup_file = os.path.join(backup_dir, f"{url.database}-{stamp}.sql.gz")
+        if os.path.exists(backup_file):
+            # Already backed up today; timestamp instead of clobbering
+            stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            backup_file = os.path.join(backup_dir, f"{url.database}-{stamp}.sql.gz")
+
+        command = [
+            current_app.config["MYSQLDUMP_BIN"],
+            "--single-transaction",
+            f"--user={url.username}",
+        ]
+        if url.host:
+            command.append(f"--host={url.host}")
+        if url.port:
+            command.append(f"--port={url.port}")
+        command.append(url.database)
+
+        # Pass the password through the environment so it doesn't appear in
+        # the process list
+
+        env = dict(os.environ)
+        if url.password:
+            env["MYSQL_PWD"] = url.password
+
+        try:
+            with gzip.open(backup_file, "wb") as target:
+                dump = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                )
+                shutil.copyfileobj(dump.stdout, target)
+                dump.stdout.close()
+                stderr = dump.stderr.read().decode("utf-8", "replace")
+                if dump.wait() != 0:
+                    raise RuntimeError(
+                        f"mysqldump exited {dump.returncode}: {stderr[:300]}"
+                    )
+
+        except Exception:
+            # Don't leave a partial backup that looks like a good one
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+            raise
+
+        size_mb = round(os.path.getsize(backup_file) / 1024 / 1024, 1)
+
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        deleted = []
+        for path in sorted(glob.glob(os.path.join(backup_dir, "*.sql.gz"))):
+            if path != backup_file and (
+                datetime.fromtimestamp(os.path.getmtime(path)) < cutoff
+            ):
+                os.remove(path)
+                deleted.append(os.path.basename(path))
+
+        current_app.logger.info(
+            f"Backed up the database to {os.path.basename(backup_file)} "
+            f"({size_mb} MB), deleted {len(deleted)} backup(s) older than "
+            f"{retention_days} days{' ' + str(deleted) if deleted else ''}"
+        )
+        return True

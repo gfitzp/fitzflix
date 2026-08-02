@@ -6,6 +6,7 @@ from wtforms import (
     BooleanField,
     DateField,
     DecimalField,
+    HiddenField,
     IntegerField,
     PasswordField,
     RadioField,
@@ -210,3 +211,15 @@ class MovieShoppingExcludeForm(FlaskForm):
 class CustomPosterUploadForm(FlaskForm):
     custom_poster = FileField("Poster Image File", validators=[FileRequired()])
     poster_submit = SubmitField("Upload")
+
+
+class FailedJobForm(FlaskForm):
+    failed_job_id = HiddenField(validators=[DataRequired()])
+    failed_queue = HiddenField(validators=[DataRequired()])
+    requeue_submit = SubmitField("Requeue")
+    forget_submit = SubmitField("Forget")
+
+
+class FilenameTestForm(FlaskForm):
+    test_filename = StringField("Filename", validators=[DataRequired()])
+    filename_test_submit = SubmitField("Preview import")
