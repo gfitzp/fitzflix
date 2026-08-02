@@ -5,6 +5,11 @@ from dotenv import load_dotenv
 basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, ".env"))
 
+# Skip system proxy detection: on macOS it loads an Objective-C framework,
+# which aborts the process when it happens inside a forked gunicorn worker
+
+os.environ.setdefault("no_proxy", "*")
+
 
 class Config(object):
     # fmt: off
