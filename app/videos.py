@@ -3588,6 +3588,9 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
             elif fullscreen and len(version_strings) == 1:
                 if edition:
+                    # The version string is only "Full Screen"; report the
+                    # edition name, not the raw version, as the edition
+                    version = edition
                     plex_title = f"{title} ({year}) {{edition-{edition}}}"
                 else:
                     version = None
