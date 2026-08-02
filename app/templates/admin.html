@@ -3,6 +3,56 @@
 {% block app_content %}
 <h2 class="mt-2 mb-n2">Admin</h2>
 <hr>
+<h3>System health</h3>
+<div class="mb-2">
+	<span class="badge badge-success mr-1">Database {{ health.db_ms }} ms</span>
+	<span class="badge badge-success mr-1">Redis {{ health.redis_ms }} ms</span>
+	<span class="badge badge-{{ 'success' if health.scheduler.ok else 'danger' }} mr-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
+	<span class="badge badge-{{ 'success' if health.observer.ok else 'danger' }} mr-1">Import watcher{% if health.observer.ok %} &times;{{ health.observer.watchers }}{% else %} down{% endif %}</span>
+	<span class="badge badge-{{ 'success' if health.backup.ok else 'danger' }} mr-1">DB backup {% if health.backup.last %}{{ moment(health.backup.last).fromNow(refresh=True) }}{% else %}never{% endif %}</span>
+	{% for probe in health.probes %}
+	<span class="badge badge-{{ 'success' if probe.ok else 'danger' }} mr-1" title="{{ probe.detail }}">{{ probe.service }} {{ probe.latency_ms }} ms</span>
+	{% endfor %}
+	{% if health.probes %}
+	<div><span class="small text-muted">external services probed {{ moment(health.probes[0].checked).fromNow(refresh=True) }}</span></div>
+	{% else %}
+	<span class="badge badge-secondary mr-1" title="Results appear after the first scheduled probe runs">External probes pending</span>
+	{% endif %}
+</div>
+<div class="row my-2">
+	<div class="col-md-6">
+		<table class="table table-sm mb-2">
+			<thead class="thead-light">
+				<tr>
+					<th scope="col">Queue</th>
+					<th scope="col">Workers</th>
+					<th scope="col">Activity</th>
+				</tr>
+			</thead>
+			<tbody>
+				{% for entry in health.workers %}
+				<tr>
+					<td>{{ entry.queue|replace('fitzflix-', '') }}</td>
+					<td><span class="badge badge-{{ 'success' if entry.ok else 'danger' }}">{{ entry.live }}{% if entry.expected %} / {{ entry.expected }}{% endif %}</span></td>
+					<td class="small">{% if entry.busy %}{{ entry.busy|join(', ') }}{% else %}<span class="text-muted">idle</span>{% endif %}</td>
+				</tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</div>
+	<div class="col-md-6">
+		{% for disk in health.disks %}
+		<div class="small d-flex justify-content-between">
+			<span>{{ disk.mount }}</span>
+			<span>{{ disk.free }} free of {{ disk.total }} ({{ disk.percent }}%)</span>
+		</div>
+		<div class="progress mb-2" style="height: 6px;">
+			<div class="progress-bar bg-{{ disk.color }}" role="progressbar" style="width: {{ disk.percent }}%" aria-valuenow="{{ disk.percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+		</div>
+		{% endfor %}
+	</div>
+</div>
+<hr>
 <div class="row my-2">
     <div class="col-md-4">
     	<p>Email address: {{ current_user.email }}</p>

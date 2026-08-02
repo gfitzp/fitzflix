@@ -94,6 +94,11 @@ class Config(object):
     DB_BACKUP_DIR                       = os.environ.get("DB_BACKUP_DIR") or os.path.join(basedir, "backups")
     DB_BACKUP_RETENTION_DAYS            = int(os.environ.get("DB_BACKUP_RETENTION_DAYS") or 14)
 
+    # Health monitoring: alert when a volume's free space falls below this,
+    # rather than on percent used, since the NAS library volumes are kept
+    # nearly full by design
+    DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
+
     # Transcoding configuration
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or None

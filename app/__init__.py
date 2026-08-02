@@ -326,6 +326,18 @@ def create_app(config_class=Config):
         description="Scanning import directory for files",
     )
 
+    # Probe external services and system health every ten minutes; results
+    # feed the admin page's health card, and new problems are emailed
+
+    register_cron(
+        app.maintenance_scheduler,
+        "*/10 * * * *",
+        func="app.maintenance.health_probe",
+        job_id="health-probe",
+        timeout="10m",
+        description="Probing system health",
+    )
+
     # Download files restored from Glacier: poll the AWS SQS queue hourly for
     # restore-completed notifications, offset from the import sweep so the
     # maintenance worker isn't handed both at once
@@ -456,6 +468,16 @@ def create_app(config_class=Config):
     def enqueue_import_sweep():
         enqueue_import_scan(app.import_queue)
 
+    def write_observer_heartbeat():
+        # Expiring per-process heartbeat: the admin health card counts these
+        # keys to show how many processes are actually watching the import
+        # directory, and a dead or wedged process simply stops refreshing
+
+        try:
+            app.redis.set(f"fitzflix:observer:{os.getpid()}", int(time.time()), ex=180)
+        except Exception:
+            pass
+
     def keep_observer_alive(observer):
         while True:
             time.sleep(60)
@@ -479,10 +501,12 @@ def create_app(config_class=Config):
                         pass
                     observer = start_observer()
                     enqueue_import_sweep()
+                write_observer_heartbeat()
             except Exception:
                 app.logger.error(traceback.format_exc())
 
     observer = start_observer()
+    write_observer_heartbeat()
     threading.Thread(
         target=keep_observer_alive,
         args=(observer,),

@@ -74,6 +74,7 @@ from app.models import (
 )
 from app.main import bp
 from app.email import send_email
+from app.maintenance import system_health
 from app.videos import evaluate_filename, track_metadata_scan
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
@@ -2000,6 +2001,7 @@ def admin():
         "30 0 * * *": "Daily at 12:30 AM",
         "0 * * * *": "Hourly",
         "30 * * * *": "Hourly at :30",
+        "*/10 * * * *": "Every 10 minutes",
         "* * * * *": "Every minute",
     }
     scheduled_tasks = []
@@ -2017,9 +2019,12 @@ def admin():
                 }
             )
 
+    health = system_health(current_app)
+
     return render_template(
         "admin.html",
         title="Admin",
+        health=health,
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
