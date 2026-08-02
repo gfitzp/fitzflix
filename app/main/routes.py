@@ -273,9 +273,7 @@ def index():
                     )
                 elif entry.is_dir():
                     for file_entry in os.scandir(entry.path):
-                        if file_entry.is_file() and not file_entry.name.startswith(
-                            "."
-                        ):
+                        if file_entry.is_file() and not file_entry.name.startswith("."):
                             rejects.append(
                                 {
                                     "basename": file_entry.name,
@@ -2005,9 +2003,7 @@ def admin():
         "* * * * *": "Every minute",
     }
     scheduled_tasks = []
-    for scheduler in (
-        current_app.maintenance_scheduler,
-    ):
+    for scheduler in (current_app.maintenance_scheduler,):
         for job, next_run in scheduler.get_jobs(with_times=True):
             if job.origin != scheduler.queue_name:
                 continue
@@ -2260,7 +2256,6 @@ def movie_shopping():
 
     # These CASE expressions are shared by every shopping query variant
 
-
     shopping_instruction_case = db.case(
         (Movie.shopping_list_exclude == True, "Already owned"),
         (
@@ -2434,7 +2429,6 @@ def movie_shopping():
         ),
         else_=(0),
     )
-
 
     if q:
         if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
