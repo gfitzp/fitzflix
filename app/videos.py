@@ -135,12 +135,19 @@ def acquire_lock_or_defer(
         f"{description} Lock exists, "
         f"returning to queue after {sleep_duration} minutes"
     )
+
+    # The deterministic id makes repeat deferrals replace the pending retry
+    # instead of stacking new ones; the day-long result ttl keeps a finished
+    # retry's record alive long enough for any retry it scheduled itself
+
     scheduler.enqueue_in(
         timedelta(minutes=sleep_duration),
         func,
         *args,
         **(kwargs or {}),
         timeout=timeout,
+        job_id=f"retry:{func.rsplit('.', 1)[-1]}:{description}",
+        job_result_ttl=86400,
         job_description=description,
     )
     return None
@@ -270,6 +277,8 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     "app.videos.localization_task",
                     file_path=file_path,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_id=f"retry:localization_task:'{basename}'",
+                    job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
                 return True
@@ -1452,6 +1461,8 @@ def track_metadata_scan_task(file_id):
                         "app.videos.track_metadata_scan_task",
                         file_id=file_id,
                         timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                        job_id=f"retry:track_metadata_scan_task:{file_id}",
+                        job_result_ttl=86400,
                         job_description=f"'{file.basename}'",
                     )
 
@@ -2108,6 +2119,8 @@ def sync_aws_s3_storage_task():
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
                 timeout="24h",
+                job_id="retry:sync_aws_s3_storage_task",
+                job_result_ttl=86400,
                 job_description="Syncing files with AWS S3 storage",
                 at_front=True,
             )

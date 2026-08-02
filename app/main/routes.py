@@ -77,7 +77,7 @@ from app.email import send_email
 from app.videos import evaluate_filename, track_metadata_scan
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from rq.registry import FailedJobRegistry
+from rq.registry import FailedJobRegistry, StartedJobRegistry
 
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
@@ -215,11 +215,94 @@ def index():
         else None
     )
 
+    # Import pipeline activity, assembled from live state: running and queued
+    # imports, deferred retries, and whatever sits in the rejects folder
+
+    import_activity = None
+    if page == 1:
+        active = []
+        started_ids = StartedJobRegistry(
+            "fitzflix-import", connection=current_app.redis
+        ).get_job_ids()
+        for job_id in started_ids + list(current_app.import_queue.job_ids):
+            job = current_app.import_queue.fetch_job(job_id)
+            if job is None or job.func_name != "app.videos.localization_task":
+                continue
+            active.append(
+                {
+                    "description": job.meta.get("description")
+                    or job.description
+                    or job_id,
+                    "status": "running" if job_id in started_ids else "queued",
+                }
+            )
+
+        deferred = []
+        for job, next_run in current_app.import_scheduler.get_jobs(with_times=True):
+            if (
+                job.func_name == "app.videos.localization_task"
+                and job.origin == "fitzflix-import"
+            ):
+                deferred.append(
+                    {"description": job.description or job.id, "next_run": next_run}
+                )
+        deferred.sort(key=lambda entry: entry["next_run"])
+
+        # A file can accumulate several scheduled retries; show each file
+        # once, with its soonest retry time
+
+        unique_deferred = []
+        seen_descriptions = set()
+        for entry in deferred:
+            if entry["description"] not in seen_descriptions:
+                seen_descriptions.add(entry["description"])
+                unique_deferred.append(entry)
+        deferred = unique_deferred
+
+        rejects = []
+        rejects_dir = current_app.config["REJECTS_DIR"]
+        if os.path.isdir(rejects_dir):
+            for entry in os.scandir(rejects_dir):
+                if entry.is_file() and not entry.name.startswith("."):
+                    rejects.append(
+                        {
+                            "basename": entry.name,
+                            "reason": "",
+                            "when": entry.stat().st_ctime,
+                        }
+                    )
+                elif entry.is_dir():
+                    for file_entry in os.scandir(entry.path):
+                        if file_entry.is_file() and not file_entry.name.startswith(
+                            "."
+                        ):
+                            rejects.append(
+                                {
+                                    "basename": file_entry.name,
+                                    "reason": entry.name,
+                                    "when": file_entry.stat().st_ctime,
+                                }
+                            )
+        rejects.sort(key=lambda entry: entry["when"], reverse=True)
+        reject_count = len(rejects)
+        rejects = rejects[:10]
+        for entry in rejects:
+            entry["when"] = datetime.fromtimestamp(entry["when"], tz=timezone.utc)
+
+        if active or deferred or rejects:
+            import_activity = {
+                "active": active,
+                "deferred": deferred,
+                "rejects": rejects,
+                "reject_count": reject_count,
+            }
+
     return render_template(
         "recently_added.html",
         title="Recently Added",
         recently_added=recently_added.items,
         native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
+        import_activity=import_activity,
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,

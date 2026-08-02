@@ -5,6 +5,29 @@
 	<h2 class="col-12 col-sm-auto mr-auto">{{ title }}</h2>
 </div>
 <hr>
+{% if import_activity.deferred or import_activity.rejects %}
+<div class="card mb-3">
+	<div class="card-body py-2">
+		<h5 class="card-title mb-2">Import activity</h5>
+		{% if import_activity.deferred %}
+		<p class="mb-0"><b>Waiting to retry</b> <span class="small text-muted">(file still copying, or its title is locked)</span>:</p>
+		<ul class="mb-0 small">
+			{% for job in import_activity.deferred %}
+			<li>{{ job.description }} <span class="small text-muted">retries {{ moment(job.next_run).fromNow(refresh=True) }}</span></li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+		{% if import_activity.rejects %}
+		<p class="mb-0"><b>Recently rejected</b> <span class="small text-muted">(in the rejects folder{% if import_activity.reject_count > import_activity.rejects|length %}; showing {{ import_activity.rejects|length }} of {{ import_activity.reject_count }}{% endif %})</span>:</p>
+		<ul class="mb-0 small">
+			{% for reject in import_activity.rejects %}
+			<li>{{ reject.basename }} &mdash; <span class="badge badge-warning">{{ reject.reason or 'unspecified' }}</span> <span class="small text-muted">{{ moment(reject.when).fromNow(refresh=True) }}</span></li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+	</div>
+</div>
+{% endif %}
 {% if recently_added %}
 <nav class="d-none d-sm-block" aria-label="...">
 	<ul class="pagination">
