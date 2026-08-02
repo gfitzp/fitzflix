@@ -67,7 +67,7 @@ def sonarr_add(payload):
         current_app.logger.info(f"Rescanning series '{series.get('title')}'")
         send_arr_command(
             "Sonarr",
-            current_app.config["SONARR_URL"] + "/api/command",
+            current_app.config["SONARR_URL"] + "/api/v3/command",
             current_app.config["SONARR_API_KEY"],
             {"name": "RescanSeries", "seriesId": int(id)},
         )
