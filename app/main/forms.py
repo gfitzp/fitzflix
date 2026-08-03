@@ -159,17 +159,17 @@ class ReviewUploadForm(FlaskForm):
 
 class S3DownloadForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
-    s3_download_submit = SubmitField("Download from AWS")
+    s3_download_submit = SubmitField("Restore from AWS")
 
 
 class SeasonRestoreForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
-    season_restore_submit = SubmitField("Restore season from AWS")
+    season_restore_submit = SubmitField("Bulk restore season from AWS")
 
 
 class SeriesRestoreForm(FlaskForm):
     password = PasswordField("Password:", validators=[DataRequired()])
-    series_restore_submit = SubmitField("Restore series from AWS")
+    series_restore_submit = SubmitField("Bulk restore series from AWS")
 
 
 class S3UploadForm(FlaskForm):
