@@ -52,15 +52,16 @@ class Config(object):
     # Fitzflix directories
     MEDIA_LOCATION                      = os.environ.get("MEDIA_LOCATION") or os.path.join(basedir, "..", "fitzflix")
     IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(MEDIA_LOCATION, "import")
-    LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
-    MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
-    TV_LIBRARY                          = os.environ.get("TV_LIBRARY") or os.path.join(LIBRARY_DIR, "TV Shows")
     REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(MEDIA_LOCATION, "rejects")
     TRANSCODES_DIR                      = os.environ.get("TRANSCODES_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
     # Local scratch space: localization copies each source here and does its
     # processing against local disk, so sustained tool I/O never runs over SMB
-    STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(basedir, "staging")
+    STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(MEDIA_LOCATION, "staging")
+
+    LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
+    MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
+    TV_LIBRARY                          = os.environ.get("TV_LIBRARY") or os.path.join(LIBRARY_DIR, "TV Shows")
 
     # SMB server URL prefix (e.g. smb://user@nas.local) for remounting dead
     # network volumes; when unset, mount problems alert but aren't self-healed
