@@ -971,7 +971,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             current_app.file_queue.enqueue(
                 "app.videos.move_localized_file",
                 args=(source_path, file_details, lock, hidden_output_file),
-                job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 description=f"'{basename}'",
             )
 
@@ -1197,7 +1197,7 @@ def move_localized_file(source_path, file_details, lock, hidden_output_file):
                 file_details,
                 lock,
                 hidden_output_file,
-                timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=f"retry:move_localized_file:'{basename}'",
                 job_result_ttl=86400,
                 job_description=f"'{basename}'",
@@ -1590,7 +1590,7 @@ def finalize_localization(
                 current_app.file_queue.enqueue(
                     "app.videos.move_localized_file",
                     args=(file_path, file_details, lock, hidden_output_file),
-                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     description=f"'{file_details.get('basename')}'",
                 )
                 return False
@@ -1607,7 +1607,7 @@ def finalize_localization(
                 current_app.file_queue.enqueue(
                     "app.videos.aws_delete",
                     args=(worse_key,),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["FILE_TASK_TIMEOUT"],
                     description=f"Deleting '{worse_key}' from AWS",
                 )
 

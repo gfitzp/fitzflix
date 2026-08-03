@@ -129,11 +129,17 @@ class Config(object):
     WIKIPEDIA_CRITERION_COLLECTION_URL  = os.environ.get("WIKIPEDIA_CRITERION_COLLECTION_URL") or None
 
     # Task timeouts; if specifying in the .env file, set as number of seconds
+    # Note: LOCALIZATION_TASK_TIMEOUT also sets the title-lock TTL protecting
+    # the whole localization -> move -> finalize chain, including queue waits
     LOCALIZATION_TASK_TIMEOUT           = int(os.environ.get("LOCALIZATION_TASK_TIMEOUT") or ONE_DAY)
     SQL_TASK_TIMEOUT                    = int(os.environ.get("SQL_TASK_TIMEOUT") or TEN_MINUTES)
     UPLOAD_TASK_TIMEOUT                 = int(os.environ.get("UPLOAD_TASK_TIMEOUT") or SIX_HOURS)
     TRANSCODE_TASK_TIMEOUT              = int(os.environ.get("TRANSCODE_TASK_TIMEOUT") or TWO_DAYS)
     MKVPROPEDIT_TASK_TIMEOUT            = int(os.environ.get("MKVPROPEDIT_TASK_TIMEOUT") or SIX_HOURS)
+    # Library copies are LAN-bound (minutes, not hours), and small file-queue
+    # jobs like S3 deletes need only a wedge-detector
+    MOVE_TASK_TIMEOUT                   = int(os.environ.get("MOVE_TASK_TIMEOUT") or TWO_HOURS)
+    FILE_TASK_TIMEOUT                   = int(os.environ.get("FILE_TASK_TIMEOUT") or TEN_MINUTES)
 
     # File upload settings
     MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # ten megabytes
