@@ -76,6 +76,8 @@ class TestConfig(Config):
     TV_LIBRARY = os.path.join(LIBRARY_DIR, "TV Shows")
     REJECTS_DIR = os.path.join(MEDIA_LOCATION, "rejects")
     TRANSCODES_DIR = os.path.join(MEDIA_LOCATION, "transcoded")
+    STAGING_DIR = os.path.join(_TMP, "staging")
+    SMB_URL_PREFIX = None
 
     LOG_FILE = os.path.join(_TMP, "logs", "fitzflix.log")
     DB_BACKUP_DIR = os.path.join(_TMP, "backups")
@@ -144,6 +146,7 @@ def app():
         TestConfig.TV_LIBRARY,
         TestConfig.REJECTS_DIR,
         TestConfig.TRANSCODES_DIR,
+        TestConfig.STAGING_DIR,
         TestConfig.DB_BACKUP_DIR,
         os.path.dirname(TestConfig.LOG_FILE),
         os.path.join(_TMP, "incoming"),

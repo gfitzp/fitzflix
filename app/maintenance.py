@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 from datetime import datetime, timedelta, timezone
@@ -151,21 +152,71 @@ def worker_health(connection):
     return [queues[name] for name in sorted(queues)]
 
 
-def disk_health(config):
-    """Report usage for each distinct volume backing the app's directories."""
+def volume_alive(path, timeout=10):
+    """True if the filesystem behind path responds within the timeout.
 
-    alert_free_bytes = config["DISK_ALERT_FREE_GB"] * 1024**3
-    volumes = {}
-    for path in (
+    A dead SMB mount can hang stat calls rather than failing them, so the
+    probe runs in a daemon thread and a hang counts as dead.
+    """
+
+    result = {}
+
+    def probe():
+        try:
+            os.statvfs(path)
+            result["ok"] = True
+        except OSError:
+            result["ok"] = False
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    return result.get("ok", False)
+
+
+def _monitored_paths(config):
+    return (
         config["MEDIA_LOCATION"],
         config["IMPORT_DIR"],
         config["MOVIE_LIBRARY"],
         config["TV_LIBRARY"],
         config["TRANSCODES_DIR"],
         config["REJECTS_DIR"],
+        config["STAGING_DIR"],
         config["DB_BACKUP_DIR"],
         os.path.dirname(config["LOG_FILE"]),
-    ):
+    )
+
+
+def missing_volumes(config):
+    """Mountpoints under /Volumes that should be present but aren't responding."""
+
+    missing = []
+    checked = set()
+    for path in _monitored_paths(config):
+        if not path.startswith("/Volumes/"):
+            continue
+        mount = "/".join(path.split("/")[:3])
+        if mount in checked:
+            continue
+        checked.add(mount)
+        if not volume_alive(mount):
+            missing.append(mount)
+    return sorted(missing)
+
+
+def disk_health(config):
+    """Report usage for each distinct volume backing the app's directories."""
+
+    alert_free_bytes = config["DISK_ALERT_FREE_GB"] * 1024**3
+    dead_mounts = missing_volumes(config)
+    volumes = {}
+    for path in _monitored_paths(config):
+        # A dead network mount can hang stat calls; report it via
+        # missing_volumes rather than risk hanging on a gauge
+
+        if any(path.startswith(mount) for mount in dead_mounts):
+            continue
         if not os.path.isdir(path):
             continue
         device = os.stat(path).st_dev
@@ -372,6 +423,58 @@ def heal_worker_processes(connection, config):
     return actions
 
 
+def heal_mounts(dead_mounts, connection, config):
+    """Try to remount dead network volumes; return actions taken.
+
+    A half-dead mountpoint is force-unmounted first, then remounted through
+    the user session (osascript's `mount volume` authenticates from the
+    keychain). Requires SMB_URL_PREFIX; alert-only when it's unset.
+    """
+
+    actions = []
+    url_prefix = config.get("SMB_URL_PREFIX")
+    if not url_prefix:
+        return actions
+
+    for mount in dead_mounts:
+        cooldown_key = f"{HEALED_KEY_PREFIX}mount:{mount}"
+        if not connection.set(cooldown_key, "1", ex=HEAL_COOLDOWN_SECONDS, nx=True):
+            continue
+
+        share = os.path.basename(mount)
+        if os.path.isdir(mount):
+            # Mountpoint still present but dead: unmount it first
+            try:
+                subprocess.run(
+                    ["diskutil", "unmount", "force", mount],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", f'mount volume "{url_prefix}/{share}"'],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            actions.append(f"failed to remount {mount}: {e}")
+            continue
+
+        if result.returncode == 0 and volume_alive(mount):
+            actions.append(f"remounted {mount}")
+        else:
+            actions.append(
+                f"failed to remount {mount}: {result.stderr.strip() or 'still dead'}"
+            )
+
+    return actions
+
+
 def probe_health(connection):
     """Return the latest external-service probe results written by health_probe."""
 
@@ -405,6 +508,7 @@ def system_health(flask_app):
         "db_ms": db_ms,
         "workers": worker_health(flask_app.redis),
         "disks": disk_health(flask_app.config),
+        "missing_mounts": missing_volumes(flask_app.config),
         "backup": backup_health(flask_app.config),
         "observer": observer_health(flask_app.redis),
         "scheduler": scheduler_health(flask_app.redis),
@@ -664,12 +768,19 @@ def health_probe():
                     f"{entry['expected']} expected workers"
                 )
 
-        # Self-healing: re-list registry-swept workers every run, and bring
-        # dead or amnesiac worker processes back when a queue is short
+        dead_mounts = missing_volumes(config)
+        for mount in dead_mounts:
+            issues[f"mount:{mount}"] = f"Volume {mount} is not mounted or not responding"
+
+        # Self-healing: re-list registry-swept workers every run, bring dead
+        # or amnesiac worker processes back when a queue is short, and
+        # remount dead network volumes
 
         heal_actions = repair_worker_registry(redis)
         if any(not entry["ok"] for entry in worker_entries):
             heal_actions += heal_worker_processes(redis, config)
+        if dead_mounts:
+            heal_actions += heal_mounts(dead_mounts, redis, config)
         for action in heal_actions:
             current_app.logger.warning(f"Health self-heal: {action}")
 

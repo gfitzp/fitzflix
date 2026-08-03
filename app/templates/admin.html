@@ -10,6 +10,9 @@
 	<span class="badge badge-{{ 'success' if health.scheduler.ok else 'danger' }} mr-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
 	<span class="badge badge-{{ 'success' if health.observer.ok else 'danger' }} mr-1">Import watcher{% if health.observer.ok %} &times;{{ health.observer.watchers }}{% else %} down{% endif %}</span>
 	<span class="badge badge-{{ 'success' if health.backup.ok else 'danger' }} mr-1">DB backup {% if health.backup.last %}{{ moment(health.backup.last).fromNow(refresh=True) }}{% else %}never{% endif %}</span>
+	{% for mount in health.missing_mounts %}
+	<span class="badge badge-danger mr-1">{{ mount }} not mounted</span>
+	{% endfor %}
 	{% for probe in health.probes %}
 	<span class="badge badge-{{ 'success' if probe.ok else 'danger' }} mr-1" title="{{ probe.detail }}">{{ probe.service }} {{ probe.latency_ms }} ms</span>
 	{% endfor %}

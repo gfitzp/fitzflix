@@ -191,8 +191,14 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
         thread.join()
         os.remove(file_path)
 
-    # The file must not have been moved to rejects
-    assert not os.listdir(app.config["REJECTS_DIR"])
+    # The file must not have been moved to rejects (empty reason
+    # subdirectories may exist; only actual files count)
+    rejected = [
+        name
+        for _, _, files in os.walk(app.config["REJECTS_DIR"])
+        for name in files
+    ]
+    assert not rejected
 
 
 def test_sync_defers_while_queues_are_busy(app):

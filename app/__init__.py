@@ -449,9 +449,17 @@ def create_app(config_class=Config):
 
     check_config(app)
 
-    # Create the import directory
+    # Create the import and local staging directories
 
     os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
+    try:
+        os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
+    except OSError:
+        # An unavailable staging volume shouldn't stop the app; localization
+        # falls back to processing files in place
+        app.logger.warning(
+            f"STAGING_DIR '{app.config['STAGING_DIR']}' could not be created"
+        )
 
     # Watch the import directory for file changes. The polling emitter shuts
     # itself down permanently on any OSError from the (network-mounted)

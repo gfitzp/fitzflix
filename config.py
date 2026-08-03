@@ -58,6 +58,14 @@ class Config(object):
     REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(MEDIA_LOCATION, "rejects")
     TRANSCODES_DIR                      = os.environ.get("TRANSCODES_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
+    # Local scratch space: localization copies each source here and does its
+    # processing against local disk, so sustained tool I/O never runs over SMB
+    STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(basedir, "staging")
+
+    # SMB server URL prefix (e.g. smb://user@nas.local) for remounting dead
+    # network volumes; when unset, mount problems alert but aren't self-healed
+    SMB_URL_PREFIX                      = os.environ.get("SMB_URL_PREFIX") or None
+
     # Application locations
     ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/opt/homebrew/bin/AtomicParsley"
     HANDBRAKE_BIN                       = os.environ.get("HANDBRAKE_BIN") or "/opt/homebrew/bin/HandBrakeCLI"

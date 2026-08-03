@@ -33,6 +33,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.email import task_send_email as send_email
+from app.maintenance import volume_alive
 from app.models import (
     File,
     FileAudioTrack,
@@ -110,6 +111,38 @@ def watch_mkvmerge_progress(process, job, name, activity):
                 job.meta["description"] = f"'{name}' — {activity}"
                 job.meta["progress"] = progress
                 job.save_meta()
+
+
+def _rename_with_retries(src, dst, attempts=5, delay=5):
+    """Rename with retries.
+
+    A busy SMB volume can briefly return spurious errors — including ENOENT
+    for names that exist — so transient failures get another try before the
+    error is allowed to propagate.
+    """
+
+    for attempt in range(1, attempts + 1):
+        try:
+            os.rename(src, dst)
+            return
+        except OSError as e:
+            if attempt == attempts:
+                raise
+            current_app.logger.warning(
+                f"Renaming '{os.path.basename(dst)}' failed ({e}); "
+                f"retrying in {delay} seconds ({attempt}/{attempts})"
+            )
+            time.sleep(delay)
+
+
+def _dead_volumes(paths):
+    """The /Volumes mount roots among paths that aren't responding."""
+
+    mounts = set()
+    for path in paths:
+        if path and path.startswith("/Volumes/"):
+            mounts.add("/".join(path.split("/")[:3]))
+    return sorted(mount for mount in mounts if not volume_alive(mount))
 
 
 def acquire_lock_or_defer(
@@ -245,21 +278,49 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
     with app.app_context():
         # Define up front so the exception handler can tell whether the lock
-        # was acquired before the failure
+        # was acquired before the failure, and whether staging happened
 
         lock = None
+        source_path = file_path
+        staged = False
+        staging_paths = []
 
         try:
             job = get_current_job()
+            basename = os.path.basename(file_path)
+
+            # Don't start while any needed volume is dead: a mount failing
+            # mid-task strands partial files, so defer to a retry instead
+
+            dead = _dead_volumes(
+                [
+                    os.path.dirname(file_path),
+                    current_app.config["MOVIE_LIBRARY"],
+                    current_app.config["TV_LIBRARY"],
+                    current_app.config["MEDIA_LOCATION"],
+                    current_app.config["STAGING_DIR"],
+                ]
+            )
+            if dead:
+                current_app.logger.warning(
+                    f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
+                    f"returning to queue to try again in 5 minutes"
+                )
+                current_app.import_scheduler.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.localization_task",
+                    file_path=file_path,
+                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_id=f"retry:localization_task:'{basename}'",
+                    job_result_ttl=86400,
+                    job_description=f"'{basename}'",
+                )
+                return True
 
             # If the incoming file doesn't exist, there's nothing for us to do
 
             if not os.path.exists(file_path):
                 return False
-
-            # Parse movie or TV show info from the file name
-
-            basename = os.path.basename(file_path)
 
             # If the file name contains "temp-1234.", then ignore it
             if re.search(r"\-temp\-\d+\.", basename):
@@ -376,6 +437,34 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
             file_details["untouched_basename"] = os.path.basename(file_path)
 
+            # Copy the source to local staging so the archive upload and the
+            # localization tools do their heavy I/O against local disk; a
+            # network failure then costs a retry, not a stranded partial file
+
+            staging_dir = current_app.config["STAGING_DIR"]
+            try:
+                staging_free = shutil.disk_usage(staging_dir).free
+            except OSError:
+                staging_free = 0
+
+            if staging_free > os.path.getsize(file_path) * 2.5:
+                staged_path = os.path.join(staging_dir, basename)
+                current_app.logger.info(f"'{basename}' Copying to local staging")
+                if job:
+                    job.meta["description"] = f"'{basename}' — Copying to local staging"
+                    job.meta["progress"] = -1
+                    job.save_meta()
+                staging_paths.append(staged_path)
+                shutil.copyfile(file_path, staged_path)
+                file_path = staged_path
+                staged = True
+
+            else:
+                current_app.logger.warning(
+                    f"'{basename}' Staging space is insufficient, "
+                    f"processing on the source volume instead"
+                )
+
             # Upload the untouched file to AWS S3 storage for safekeeping
 
             if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
@@ -398,9 +487,16 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             output_directory = os.path.join(
                 current_app.config["LIBRARY_DIR"], file_details.get("dirname")
             )
+
+            # The localized output is written next to the staged copy when
+            # staging is on, so only the finished file crosses to the library
+
             hidden_output_file = os.path.join(
-                output_directory, f".{file_details.get('basename')}"
+                staging_dir if staged else output_directory,
+                f".{file_details.get('basename')}",
             )
+            if staged:
+                staging_paths.append(hidden_output_file)
 
             # Parse the incoming file and get its details with MediaInfo
 
@@ -734,12 +830,21 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
         except Exception:
             current_app.logger.error(traceback.format_exc())
 
+            # Remove any staged copies; the original source is what gets
+            # rejected, and it hasn't been touched since staging
+
+            for stray in staging_paths:
+                try:
+                    os.remove(stray)
+                except OSError:
+                    pass
+
             # Don't let a failed move to the rejects directory prevent us from
             # releasing the lock; otherwise re-imports of this same title stay
             # blocked until the lock's timeout expires
 
             try:
-                move_to_rejects(file_path, "exception")
+                move_to_rejects(source_path, "exception")
             except Exception:
                 current_app.logger.error(traceback.format_exc())
 
@@ -748,9 +853,18 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 current_app.logger.info(f"Removed lock {lock}")
 
         else:
+            # The staged source copy served its purpose; the localized output
+            # is what finalize_localization moves into the library
+
+            if staged:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+
             current_app.sql_queue.enqueue(
                 "app.videos.finalize_localization",
-                args=(file_path, file_details, lock),
+                args=(source_path, file_details, lock, hidden_output_file),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"'{basename}'",
             )
@@ -758,7 +872,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
         return True
 
 
-def finalize_localization(file_path, file_details, lock):
+def finalize_localization(file_path, file_details, lock, hidden_output_file=None):
     """Add a localized file to the database and move it into position.
 
     - A record of the localized file is added to the database.
@@ -766,19 +880,48 @@ def finalize_localization(file_path, file_details, lock):
     - Supplemental movie / tv show files (e.g. images) are downloaded.
     - The localized file is moved into position.
     - Changes are committed to the database.
+
+    hidden_output_file is where localization left the processed file; when
+    omitted (jobs from before local staging existed), it's assumed to be
+    hidden in the destination directory.
     """
 
     with app.app_context():
-        try:
-
-            # Determine output directories and file to be created
-
-            output_directory = os.path.join(
-                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
-            )
+        output_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
+        )
+        if hidden_output_file is None:
             hidden_output_file = os.path.join(
                 output_directory, f".{file_details.get('basename')}"
             )
+
+        # Defer if a needed volume is dead — before the try block, so the
+        # title lock stays held for the retry instead of being released
+
+        dead = _dead_volumes([output_directory, os.path.dirname(file_path)])
+        if dead:
+            current_app.logger.warning(
+                f"'{file_details.get('basename')}' Volumes unavailable "
+                f"({', '.join(dead)}), retrying finalization in 5 minutes"
+            )
+            current_app.sql_scheduler.enqueue_in(
+                timedelta(minutes=5),
+                "app.videos.finalize_localization",
+                file_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                job_id=f"retry:finalize_localization:'{file_details.get('basename')}'",
+                job_result_ttl=86400,
+                job_description=f"'{file_details.get('basename')}'",
+            )
+            return False
+
+        try:
+
+            # Determine output file to be created
+
             output_file = os.path.join(
                 current_app.config["LIBRARY_DIR"], file_details.get("file_path")
             )
@@ -1196,9 +1339,24 @@ def finalize_localization(file_path, file_details, lock):
                             ),
                         )
 
-            # Move the new file into place
+            # Move the new file into place. When it's coming from local
+            # staging (a different volume), copy to a hidden name at the
+            # destination first, so a failure never leaves a partial file
+            # that Plex would see
 
-            os.rename(hidden_output_file, output_file)
+            os.makedirs(output_directory, exist_ok=True)
+            if (
+                os.stat(os.path.dirname(hidden_output_file)).st_dev
+                == os.stat(output_directory).st_dev
+            ):
+                _rename_with_retries(hidden_output_file, output_file)
+            else:
+                destination_hidden = os.path.join(
+                    output_directory, f".{file_details.get('basename')}"
+                )
+                shutil.copyfile(hidden_output_file, destination_hidden)
+                _rename_with_retries(destination_hidden, output_file)
+                os.remove(hidden_output_file)
 
             db.session.commit()
 
@@ -4135,11 +4293,26 @@ def iso_639_3_native_language():
 
 
 def move_to_rejects(file_path, reason=""):
-    """Move a file to the rejects directory."""
+    """Move a file to the rejects directory, best effort.
+
+    Returns False instead of raising when a volume is unavailable: a dead
+    mount shouldn't turn one failure into a cascade, and the file stays
+    where it is for a later re-import.
+    """
 
     reject_directory = os.path.join(current_app.config["REJECTS_DIR"], reason)
-    os.makedirs(reject_directory, exist_ok=True)
-    shutil.move(file_path, os.path.join(reject_directory, os.path.basename(file_path)))
+    try:
+        os.makedirs(reject_directory, exist_ok=True)
+        shutil.move(
+            file_path, os.path.join(reject_directory, os.path.basename(file_path))
+        )
+    except OSError as e:
+        current_app.logger.error(
+            f"'{os.path.basename(file_path)}' Could not be moved to the rejects "
+            f"directory ({e}); leaving it in place"
+        )
+        return False
+
     current_app.logger.info(
         f"'{os.path.basename(file_path)}' Moved to rejects directory"
     )
