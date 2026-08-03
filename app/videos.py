@@ -113,6 +113,27 @@ def watch_mkvmerge_progress(process, job, name, activity):
                 job.save_meta()
 
 
+def copy_with_progress(src, dst, job, name, activity="Copying to library"):
+    """Copy a file in chunks, reporting progress like the external tools do."""
+
+    total = os.path.getsize(src)
+    copied = 0
+    previous_log_line = None
+
+    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
+        while chunk := fsrc.read(32 * 1024 * 1024):
+            fdst.write(chunk)
+            copied += len(chunk)
+            progress = int(copied / total * 100) if total else 100
+            if previous_log_line != f"'{name}' {activity}: {progress}%":
+                current_app.logger.info(f"'{name}' {activity}: {progress}%")
+                previous_log_line = f"'{name}' {activity}: {progress}%"
+                if job:
+                    job.meta["description"] = f"'{name}' — {activity}"
+                    job.meta["progress"] = progress
+                    job.save_meta()
+
+
 def _rename_with_retries(src, dst, attempts=5, delay=5):
     """Rename with retries.
 
@@ -449,13 +470,10 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
             if staging_free > os.path.getsize(file_path) * 2.5:
                 staged_path = os.path.join(staging_dir, basename)
-                current_app.logger.info(f"'{basename}' Copying to local staging")
-                if job:
-                    job.meta["description"] = f"'{basename}' — Copying to local staging"
-                    job.meta["progress"] = -1
-                    job.save_meta()
                 staging_paths.append(staged_path)
-                shutil.copyfile(file_path, staged_path)
+                copy_with_progress(
+                    file_path, staged_path, job, basename, "Copying to local staging"
+                )
                 file_path = staged_path
                 staged = True
 
@@ -854,7 +872,8 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
         else:
             # The staged source copy served its purpose; the localized output
-            # is what finalize_localization moves into the library
+            # is carried to the library by the file-operation queue, which
+            # then hands the quick database work to the sql queue
 
             if staged:
                 try:
@@ -862,9 +881,105 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 except OSError:
                     pass
 
+            current_app.file_queue.enqueue(
+                "app.videos.move_localized_file",
+                args=(source_path, file_details, lock, hidden_output_file),
+                job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                description=f"'{basename}'",
+            )
+
+        return True
+
+
+def move_localized_file(source_path, file_details, lock, hidden_output_file):
+    """Carry the localized output to a hidden name at its library destination.
+
+    This is the long file copy, split out of finalize_localization so it runs
+    on the file-operation queue: several copies can run in parallel, and the
+    single-worker sql queue only ever sees the quick database work plus an
+    instant same-volume rename. The title lock passes through to finalize.
+    """
+
+    with app.app_context():
+        basename = file_details.get("basename")
+        output_directory = os.path.join(
+            current_app.config["LIBRARY_DIR"], file_details.get("dirname")
+        )
+
+        # Defer if a needed volume is dead — the title lock stays held for
+        # the retry
+
+        dead = _dead_volumes(
+            [
+                output_directory,
+                os.path.dirname(hidden_output_file),
+                os.path.dirname(source_path),
+            ]
+        )
+        if dead:
+            current_app.logger.warning(
+                f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
+                f"retrying the library copy in 5 minutes"
+            )
+            current_app.file_scheduler.enqueue_in(
+                timedelta(minutes=5),
+                "app.videos.move_localized_file",
+                source_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                job_id=f"retry:move_localized_file:'{basename}'",
+                job_result_ttl=86400,
+                job_description=f"'{basename}'",
+            )
+            return False
+
+        destination_hidden = os.path.join(output_directory, f".{basename}")
+
+        try:
+            job = get_current_job()
+            os.makedirs(output_directory, exist_ok=True)
+
+            if hidden_output_file == destination_hidden:
+                # Legacy unstaged processing already left it at the destination
+                pass
+
+            elif (
+                os.stat(os.path.dirname(hidden_output_file)).st_dev
+                == os.stat(output_directory).st_dev
+            ):
+                _rename_with_retries(hidden_output_file, destination_hidden)
+
+            else:
+                copy_with_progress(hidden_output_file, destination_hidden, job, basename)
+                os.remove(hidden_output_file)
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+
+            # Remove both hidden copies; the original source is untouched and
+            # is what gets rejected (best effort)
+
+            for stray in (hidden_output_file, destination_hidden):
+                try:
+                    os.remove(stray)
+                except OSError:
+                    pass
+
+            try:
+                move_to_rejects(source_path, "exception")
+            except Exception:
+                current_app.logger.error(traceback.format_exc())
+
+            if lock:
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
+
+        else:
             current_app.sql_queue.enqueue(
                 "app.videos.finalize_localization",
-                args=(source_path, file_details, lock, hidden_output_file),
+                args=(source_path, file_details, lock, destination_hidden),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"'{basename}'",
             )

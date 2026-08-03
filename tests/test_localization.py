@@ -15,8 +15,7 @@ import pytest
 import app.videos as videos
 import app.maintenance as maintenance
 
-from app import db
-from app.models import File, Movie
+from app.models import File
 from app.videos import finalize_localization, localization_task, move_to_rejects
 
 from tests.conftest import _TMP
@@ -61,8 +60,30 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
     with app.app_context():
         assert localization_task(source) is True
 
-        # The processed hidden file was left in staging, and the finalize job
-        # carries the original source path plus the staged hidden location
+        # The processed hidden file was left in staging, and the library copy
+        # was handed to the file-operation queue, not the sql queue
+
+        move_jobs = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        ]
+        assert len(move_jobs) == 1
+        move_args = move_jobs[0].args
+        assert move_args[0] == source
+        hidden = move_args[3]
+        assert hidden.startswith(app.config["STAGING_DIR"])
+        assert os.path.exists(hidden)
+
+        # The staged source copy is already cleaned up after mkvmerge
+
+        assert os.listdir(app.config["STAGING_DIR"]) == [os.path.basename(hidden)]
+
+        # The move carries the file to a hidden destination name, empties
+        # staging, and enqueues the finalize on the sql queue
+
+        assert videos.move_localized_file(*move_args) is True
+        assert os.listdir(app.config["STAGING_DIR"]) == []
 
         finalize_jobs = [
             job
@@ -72,13 +93,9 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert len(finalize_jobs) == 1
         job_args = finalize_jobs[0].args
         assert job_args[0] == source
-        hidden = job_args[3]
-        assert hidden.startswith(app.config["STAGING_DIR"])
-        assert os.path.exists(hidden)
-
-        # The staged source copy is already cleaned up after mkvmerge
-
-        assert os.listdir(app.config["STAGING_DIR"]) == [os.path.basename(hidden)]
+        destination_hidden = job_args[3]
+        assert destination_hidden.startswith(app.config["LIBRARY_DIR"])
+        assert os.path.exists(destination_hidden)
 
         finalize_localization(*job_args)
 
@@ -233,6 +250,50 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
 def test_heal_mounts_alert_only_without_url(app):
     with app.app_context():
         assert maintenance.heal_mounts(["/Volumes/Movies"], app.redis, app.config) == []
+
+
+def test_copy_with_progress_reports_percentages(app, tmp_path):
+    src = tmp_path / "big.mkv"
+    dst = tmp_path / "copy.mkv"
+    src.write_bytes(os.urandom(96 * 1024 * 1024))  # three chunks
+
+    class FakeJob:
+        meta = {}
+        updates = []
+
+        def save_meta(self):
+            self.updates.append(dict(self.meta))
+
+    job = FakeJob()
+    with app.app_context():
+        videos.copy_with_progress(str(src), str(dst), job, "big.mkv")
+
+    assert dst.read_bytes() == src.read_bytes()
+    percents = [u["progress"] for u in job.updates]
+    assert percents == sorted(percents)
+    assert percents[-1] == 100
+    assert all(u["description"] == "'big.mkv' — Copying to library" for u in job.updates)
+
+
+def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch):
+    monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
+
+    file_details = {
+        "basename": "Move Defer (2021) - [DVD].mkv",
+        "dirname": "Movies/Move Defer (2021)",
+    }
+    with app.app_context():
+        result = videos.move_localized_file(
+            "/nonexistent/source.mkv", file_details, None, str(tmp_path / ".hidden.mkv")
+        )
+    assert result is False
+
+    retries = [
+        job.id
+        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        if job.id.startswith("retry:move_localized_file")
+    ]
+    assert retries == ["retry:move_localized_file:'Move Defer (2021) - [DVD].mkv'"]
 
 
 def test_rename_with_retries_rides_out_transient_errors(app, tmp_path, monkeypatch):

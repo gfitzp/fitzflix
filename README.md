@@ -204,7 +204,7 @@ Background work is split across six Redis queues; the supervisor config and the 
 | Queue | Handles |
 | --- | --- |
 | `fitzflix-import` | Importing new files: parsing, stripping non-native tracks, sorting into the library |
-| `fitzflix-file-operation` | Per-file operations: S3 uploads and downloads, Matroska property edits |
+| `fitzflix-file-operation` | Per-file operations: S3 uploads and downloads, Matroska property edits, carrying localized files from staging into the library |
 | `fitzflix-transcode` | HandBrake transcodes (CPU-heavy; usually one worker) |
 | `fitzflix-sql` | Database writes and TMDb metadata refreshes — run exactly one worker so they're serialized |
 | `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling |
