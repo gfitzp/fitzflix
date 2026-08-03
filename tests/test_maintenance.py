@@ -55,7 +55,9 @@ def test_rotate_logs_archives_and_prunes(app):
 @pytest.fixture
 def mysqldump_stub(app, tmp_path, monkeypatch):
     stub = tmp_path / "mysqldump"
-    stub.write_text('#!/bin/sh\necho "-- fitzflix dump"\necho "CREATE TABLE t (id INT);"\n')
+    stub.write_text(
+        '#!/bin/sh\necho "-- fitzflix dump"\necho "CREATE TABLE t (id INT);"\n'
+    )
     stub.chmod(0o755)
     monkeypatch.setitem(app.config, "MYSQLDUMP_BIN", str(stub))
     monkeypatch.setitem(

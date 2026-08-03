@@ -18,7 +18,11 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
 from app import register_cron
-from app.videos import acquire_lock_or_defer, localization_task, sync_aws_s3_storage_task
+from app.videos import (
+    acquire_lock_or_defer,
+    localization_task,
+    sync_aws_s3_storage_task,
+)
 
 
 def scheduled_ids(scheduler):
@@ -98,9 +102,7 @@ def test_defer_with_positional_args_binds(app, held_lock):
             args=("/incoming/args-form.mkv",),
         )
 
-        job = Job.fetch(
-            "retry:localization_task:'args-form.mkv'", connection=app.redis
-        )
+        job = Job.fetch("retry:localization_task:'args-form.mkv'", connection=app.redis)
         assert_binds(job)
         assert job.args == ("/incoming/args-form.mkv",)
 
@@ -194,9 +196,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
     # The file must not have been moved to rejects (empty reason
     # subdirectories may exist; only actual files count)
     rejected = [
-        name
-        for _, _, files in os.walk(app.config["REJECTS_DIR"])
-        for name in files
+        name for _, _, files in os.walk(app.config["REJECTS_DIR"]) for name in files
     ]
     assert not rejected
 
@@ -220,6 +220,7 @@ def test_sync_defers_while_queues_are_busy(app):
 
 def test_register_cron_preserves_run_history(app):
     with app.app_context():
+
         def register(cron_string):
             register_cron(
                 app.maintenance_scheduler,

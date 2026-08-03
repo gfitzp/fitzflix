@@ -273,9 +273,7 @@ class UploadProgressPercentage(object):
 
             # Report a zero-byte file as already complete rather than divide by zero
 
-            percent = (
-                int((self._seen_so_far / self._size) * 100) if self._size else 100
-            )
+            percent = int((self._seen_so_far / self._size) * 100) if self._size else 100
 
             # Transfer callbacks fire far more often than tool output lines,
             # so both the log line and the job-meta write wait for the
@@ -314,9 +312,7 @@ class DownloadProgressPercentage(object):
 
             # Report a zero-byte object as already complete rather than divide by zero
 
-            percent = (
-                int((self._seen_so_far / self._size) * 100) if self._size else 100
-            )
+            percent = int((self._seen_so_far / self._size) * 100) if self._size else 100
 
             # Transfer callbacks fire far more often than tool output lines,
             # so both the log line and the job-meta write wait for the
@@ -1053,9 +1049,7 @@ def inspect_localized_file(file_path, container, job=None):
             ]
 
             if audio_tracks[0].get("language") == "und":
-                audio_flag_args.extend(
-                    ["--edit", "track:a1", "--set", "language=und"]
-                )
+                audio_flag_args.extend(["--edit", "track:a1", "--set", "language=und"])
 
             # Clear the default flag from every other audio track, so
             # players don't choose between multiple defaults unpredictably
@@ -1071,8 +1065,7 @@ def inspect_localized_file(file_path, container, job=None):
                 )
 
             mkvpropedit_process = subprocess.Popen(
-                [current_app.config["MKVPROPEDIT_BIN"], file_path]
-                + audio_flag_args,
+                [current_app.config["MKVPROPEDIT_BIN"], file_path] + audio_flag_args,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
@@ -1230,7 +1223,9 @@ def move_localized_file(source_path, file_details, lock, hidden_output_file):
                 _rename_with_retries(hidden_output_file, destination_hidden)
 
             else:
-                copy_with_progress(hidden_output_file, destination_hidden, job, basename)
+                copy_with_progress(
+                    hidden_output_file, destination_hidden, job, basename
+                )
                 os.remove(hidden_output_file)
 
         except Exception:
@@ -1867,9 +1862,7 @@ def track_metadata_scan_task(file_id):
             if file is None:
                 return False
 
-            file_path = os.path.join(
-                current_app.config["LIBRARY_DIR"], file.file_path
-            )
+            file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
             if not os.path.isfile(file_path):
                 return True
 
@@ -2026,6 +2019,7 @@ def track_metadata_scan_unlocked(file_id):
 
     details = extract_track_metadata(file_path)
     return save_track_metadata(file_id, details)
+
 
 def mkvpropedit_task(
     file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
@@ -3085,10 +3079,7 @@ def transcode_task(file_id):
                         line,
                     )
                     percent = int(progress_match.group("percent"))
-                    if (
-                        previous_percent
-                        != percent
-                    ):
+                    if previous_percent != percent:
                         current_app.logger.info(
                             f"'{file.plex_title}' Transcoding: {percent}%"
                         )

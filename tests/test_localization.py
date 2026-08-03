@@ -31,9 +31,21 @@ def sample_mkv(app):
         subprocess.run(
             [
                 app.config["FFMPEG_BIN"],
-                "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=10",
-                "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                "-c:v", "libx264", "-c:a", "aac", "-shortest", "-y", base,
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=320x240:rate=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-shortest",
+                "-y",
+                base,
             ],
             check=True,
             capture_output=True,
@@ -41,8 +53,10 @@ def sample_mkv(app):
         subprocess.run(
             [
                 app.config["MKVMERGE_BIN"],
-                "-o", mkv,
-                "--language", "1:eng",
+                "-o",
+                mkv,
+                "--language",
+                "1:eng",
                 base,
             ],
             check=True,
@@ -305,9 +319,7 @@ def test_dead_volumes_only_checks_network_mounts(app, monkeypatch):
 
 def test_missing_volumes_reports_dead_mounts(app, monkeypatch):
     monkeypatch.setitem(app.config, "MOVIE_LIBRARY", "/Volumes/GhostShare/Movies")
-    monkeypatch.setattr(
-        maintenance, "volume_alive", lambda mount, timeout=10: False
-    )
+    monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: False)
     assert maintenance.missing_volumes(app.config) == ["/Volumes/GhostShare"]
 
 
@@ -366,7 +378,9 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     percents = [u["progress"] for u in job.updates]
     assert percents == sorted(percents)
     assert percents[-1] == 100
-    assert all(u["description"] == "'big.mkv' — Copying to library" for u in job.updates)
+    assert all(
+        u["description"] == "'big.mkv' — Copying to library" for u in job.updates
+    )
 
 
 def test_save_track_metadata_writes_rows_and_releases_lock(app):

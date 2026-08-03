@@ -13,9 +13,7 @@ def ranked_movie_files(session):
         .join(RefQuality, RefQuality.id == File.quality_id)
         .subquery()
     )
-    return {
-        row.id: row.rank for row in session.query(ranked.c.id, ranked.c.rank).all()
-    }
+    return {row.id: row.rank for row in session.query(ranked.c.id, ranked.c.rank).all()}
 
 
 def test_best_quality_ranks_first(app):
@@ -75,9 +73,7 @@ def ranked_tv_files(session):
         .join(RefQuality, RefQuality.id == File.quality_id)
         .subquery()
     )
-    return {
-        row.id: row.rank for row in session.query(ranked.c.id, ranked.c.rank).all()
-    }
+    return {row.id: row.rank for row in session.query(ranked.c.id, ranked.c.rank).all()}
 
 
 def test_tv_best_quality_ranks_first(app):

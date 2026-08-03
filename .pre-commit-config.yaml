@@ -1,0 +1,17 @@
+# Formats staged Python files with black and lints them with pyflakes
+# before each commit. One-time setup per clone: venv/bin/pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: black
+        name: black
+        entry: venv/bin/black
+        language: system
+        types: [python]
+        exclude: ^migrations/
+      - id: pyflakes
+        name: pyflakes
+        entry: scripts/pyflakes-staged
+        language: script
+        types: [python]
+        exclude: ^migrations/

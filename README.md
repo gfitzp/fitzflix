@@ -302,10 +302,34 @@ Files that can't be imported — an unparseable filename, an unrecognized qualit
 
 ```
 git pull &&
-venv/bin/pip install -r requirements.txt &&
+venv/bin/pip install -r requirements-dev.txt &&
 venv/bin/flask db upgrade &&
 supervisorctl restart "fitzflix:*"
 ```
+
+(`requirements-dev.txt` includes `requirements.txt`; a runtime-only install
+can use `requirements.txt` alone.)
+
+## Code formatting
+
+Commits are formatted with [black](https://github.com/psf/black) and linted
+with pyflakes via [pre-commit](https://pre-commit.com). One-time setup per
+clone:
+
+```
+venv/bin/pip install -r requirements-dev.txt
+```
+
+```
+venv/bin/pre-commit install
+```
+
+The hooks run on staged Python files at each commit (the `migrations/`
+directory is excluded — Alembic's generated scripts keep their generated
+formatting). If black reformats anything, the commit stops so the changes
+can be reviewed and re-staged; `git commit --no-verify` bypasses the hooks.
+`venv/bin/black .` formats the whole tree by hand, honoring the same
+exclusion via `pyproject.toml`.
 
 ## Running the tests
 
@@ -316,8 +340,8 @@ venv/bin/python -m pytest
 The suite is fully isolated from a running installation: it uses a temporary
 SQLite database, Redis database 9 (the app uses database 0), temporary media
 directories, and no external services — TMDb, Sonarr, Radarr, AWS, and mail
-are all stubbed or unreachable by configuration. The only requirement beyond
-`requirements.txt` is a local Redis server. It's safe to run while the real
+are all stubbed or unreachable by configuration. The only requirements beyond
+`requirements-dev.txt` are a local Redis server. It's safe to run while the real
 application is up, and takes about half a minute; run it after dependency
 upgrades and before deploying changes.
 

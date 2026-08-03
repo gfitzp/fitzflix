@@ -53,9 +53,9 @@ PROGRAM_COUNTS = {"fitzflix-import": 2, "fitzflix-file-operation": 2}
 EXPECTED_WORKERS = {}
 for _program, _queues in PROGRAM_QUEUES.items():
     for _queue in _queues:
-        EXPECTED_WORKERS[_queue] = EXPECTED_WORKERS.get(
-            _queue, 0
-        ) + PROGRAM_COUNTS.get(_program, 1)
+        EXPECTED_WORKERS[_queue] = EXPECTED_WORKERS.get(_queue, 0) + PROGRAM_COUNTS.get(
+            _program, 1
+        )
 
 # rq's default worker_ttl; an idle worker whose heartbeat is older than this
 # is a leftover registration, not a live worker
@@ -770,7 +770,9 @@ def health_probe():
 
         dead_mounts = missing_volumes(config)
         for mount in dead_mounts:
-            issues[f"mount:{mount}"] = f"Volume {mount} is not mounted or not responding"
+            issues[f"mount:{mount}"] = (
+                f"Volume {mount} is not mounted or not responding"
+            )
 
         # Self-healing: re-list registry-swept workers every run, bring dead
         # or amnesiac worker processes back when a queue is short, and

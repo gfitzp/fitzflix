@@ -189,9 +189,7 @@ def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):
 
     with app.app_context():
         quiet = evaluate_filename("Jaws (1975) - [DVD].mkv", log=False)
-        quiet_lines = [
-            r for r in log_capture if r.levelno >= logging.INFO
-        ]
+        quiet_lines = [r for r in log_capture if r.levelno >= logging.INFO]
         loud = evaluate_filename("Jaws (1975) - [DVD].mkv")
         loud_lines = [r for r in log_capture if r.levelno >= logging.INFO]
 

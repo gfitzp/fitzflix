@@ -1,0 +1,3 @@
+[tool.black]
+# Alembic's generated migration scripts keep their generated formatting
+extend-exclude = "^/migrations/"

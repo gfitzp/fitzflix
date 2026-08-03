@@ -19,9 +19,7 @@ def feature_type(name):
 
 
 def make_movie(title, year, **kwargs):
-    movie = Movie(
-        title=title, year=year, date_created=datetime.utcnow(), **kwargs
-    )
+    movie = Movie(title=title, year=year, date_created=datetime.utcnow(), **kwargs)
     db.session.add(movie)
     db.session.flush()
     return movie

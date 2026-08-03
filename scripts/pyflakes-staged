@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# pre-commit hook: pyflakes on the staged files, ignoring the known-good
+# side-effect imports:
+# - app/__init__.py and the blueprint __init__.py modules import modules to
+#   register models, tasks, and routes
+# - supervisor.py imports app.videos to preload tasks for the RQ workers
+#
+# Bypass with: git commit --no-verify
+
+if [ ! -x "venv/bin/python" ]; then
+    echo "pyflakes-staged: venv/bin/python not found; skipping check" >&2
+    exit 0
+fi
+
+findings=$(venv/bin/python -m pyflakes "$@" 2>&1 \
+    | grep -v "__init__\.py:.*imported but unused" \
+    | grep -v "supervisor\.py:.*'app\.videos' imported but unused")
+
+if [ -n "$findings" ]; then
+    echo "pyflakes found problems; commit blocked:"
+    echo "$findings"
+    echo "(bypass with git commit --no-verify)"
+    exit 1
+fi
+
+exit 0
