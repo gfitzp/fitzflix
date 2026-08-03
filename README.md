@@ -123,11 +123,11 @@ Fitzflix is developed and run on macOS with [Homebrew](https://brew.sh), and the
 | Binary | `.env` setting | Used for |
 | --- | --- | --- |
 | [MediaInfo](https://mediaarea.net/MediaInfo) (`libmediainfo`) | — (loaded as a library by `pymediainfo`) | Scanning every imported file's video, audio, and subtitle tracks |
-| [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxing Matroska files: stripping non-native-language and empty tracks |
+| [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxing Matroska files: stripping non-native-language and empty tracks, and converting other importable containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Editing Matroska properties in place: default/forced track flags, track statistics |
 | [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Transcoding library files to smaller Plex-friendly versions (see `HANDBRAKE_PRESET` / `HANDBRAKE_PRESET_FILE` for preset info) |
 | [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Video conversion functions |
-| [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Stripping embedded metadata from MP4 files during import |
+| [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Stripping embedded metadata from MP4 files that can't be converted to Matroska |
 
 ```
 brew install mediainfo mkvtoolnix handbrake ffmpeg atomicparsley mysql redis

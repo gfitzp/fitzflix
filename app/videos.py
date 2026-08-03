@@ -113,6 +113,37 @@ def watch_mkvmerge_progress(process, job, name, activity):
                 job.save_meta()
 
 
+def convert_to_matroska(file_path, output_file, job, name):
+    """Remux a non-Matroska file into a Matroska container.
+
+    Returns True on success. On failure — a format mkvmerge can't carry —
+    any partial output is removed and False is returned, so the caller can
+    fall back to importing the file as-is.
+    """
+
+    current_app.logger.info(f"'{name}' Converting to a Matroska container")
+    process = subprocess.Popen(
+        [current_app.config["MKVMERGE_BIN"], "-o", output_file, file_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+    )
+    watch_mkvmerge_progress(process, job, name, "Converting to Matroska")
+    try:
+        wait_for_subprocess(process, ok_returncodes=(0, 1))
+    except subprocess.CalledProcessError:
+        current_app.logger.warning(
+            f"'{name}' mkvmerge could not convert this file to Matroska"
+        )
+        try:
+            os.remove(output_file)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def copy_with_progress(src, dst, job, name, activity="Copying to library"):
     """Copy a file in chunks, reporting progress like the external tools do."""
 
@@ -500,21 +531,11 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
 
             current_app.logger.info(f"'{basename}' Starting localization process")
 
-            # Determine output directories and files to be created
+            # Determine the output directory
 
             output_directory = os.path.join(
                 current_app.config["LIBRARY_DIR"], file_details.get("dirname")
             )
-
-            # The localized output is written next to the staged copy when
-            # staging is on, so only the finished file crosses to the library
-
-            hidden_output_file = os.path.join(
-                staging_dir if staged else output_directory,
-                f".{file_details.get('basename')}",
-            )
-            if staged:
-                staging_paths.append(hidden_output_file)
 
             # Parse the incoming file and get its details with MediaInfo
 
@@ -528,6 +549,50 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                         f"'{basename}' File container {track.format}"
                     )
                     file_details["container"] = track.format
+
+            # A non-Matroska file is remuxed into a Matroska container first,
+            # so every importable format gets the same localization treatment;
+            # a format mkvmerge can't carry falls through to be imported as-is
+
+            if file_details.get("container") != "Matroska":
+                scratch_dir = staging_dir if staged else output_directory
+                os.makedirs(scratch_dir, exist_ok=True)
+                converted_file = os.path.join(scratch_dir, f".{basename}.convert.mkv")
+                staging_paths.append(converted_file)
+
+                if convert_to_matroska(file_path, converted_file, job, basename):
+                    # Adopt the converted file, and rename the eventual
+                    # output to match its new container
+
+                    if file_path != source_path:
+                        try:
+                            os.remove(file_path)
+                        except OSError:
+                            pass
+                    file_path = converted_file
+                    file_details["container"] = "Matroska"
+                    stem = file_details["basename"].rsplit(".", 1)[0]
+                    file_details["basename"] = f"{stem}.mkv"
+                    file_details["extension"] = "mkv"
+                    file_details["file_path"] = os.path.join(
+                        file_details["dirname"], file_details["basename"]
+                    )
+
+                else:
+                    current_app.logger.warning(
+                        f"'{basename}' Can't be converted to Matroska, "
+                        f"importing as-is"
+                    )
+
+            # The localized output is written next to the staged copy when
+            # staging is on, so only the finished file crosses to the library
+
+            hidden_output_file = os.path.join(
+                staging_dir if staged else output_directory,
+                f".{file_details.get('basename')}",
+            )
+            if staged:
+                staging_paths.append(hidden_output_file)
 
             # Export a localized version of the incoming file
 
@@ -871,11 +936,12 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 current_app.logger.info(f"Removed lock {lock}")
 
         else:
-            # The staged source copy served its purpose; the localized output
-            # is carried to the library by the file-operation queue, which
-            # then hands the quick database work to the sql queue
+            # The working copy (staged source or conversion temp) served its
+            # purpose; the localized output is carried to the library by the
+            # file-operation queue, which then hands the quick database work
+            # to the sql queue
 
-            if staged:
+            if file_path != source_path:
                 try:
                     os.remove(file_path)
                 except OSError:

@@ -124,6 +124,86 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
     os.remove(output)
 
 
+@pytest.fixture(scope="module")
+def sample_mp4(app, sample_mkv):
+    """The MP4 intermediate built by the sample_mkv fixture."""
+
+    return os.path.join(_TMP, "sample-base.mp4")
+
+
+def run_full_chain(app, source):
+    """Run localization -> move -> finalize, returning the enqueued names."""
+
+    assert localization_task(source) is True
+    move_jobs = [
+        job
+        for job in app.file_queue.jobs
+        if job.func_name == "app.videos.move_localized_file"
+    ]
+    assert len(move_jobs) == 1
+    assert videos.move_localized_file(*move_jobs[0].args) is True
+
+    finalize_jobs = [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.finalize_localization"
+    ]
+    assert len(finalize_jobs) == 1
+    finalize_localization(*finalize_jobs[0].args)
+    return finalize_jobs[0].args
+
+
+def test_non_matroska_is_converted_to_mkv(app, sample_mp4, incoming_dir):
+    source = os.path.join(incoming_dir, "Converted (2021) - [DVD].mp4")
+    with open(sample_mp4, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        # The library file and the database record both carry the .mkv name
+
+        output = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "Movies/Converted (2021)/Converted (2021) - [DVD].mkv",
+        )
+        assert os.path.exists(output)
+        assert not os.path.exists(source)
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+
+        file = File.query.filter_by(plex_title="Converted (2021)").one()
+        assert file.basename == "Converted (2021) - [DVD].mkv"
+        assert file.container == "Matroska"
+
+        # The untouched name remembers the original container
+
+        assert file.untouched_basename == "Converted (2021) - [DVD].mp4"
+
+    os.remove(output)
+
+
+def test_unconvertible_file_imports_as_is(app, incoming_dir):
+    source = os.path.join(incoming_dir, "Garbage (2021) - [DVD].dat")
+    with open(source, "wb") as f:
+        f.write(b"this is not a video file at all")
+
+    with app.app_context():
+        run_full_chain(app, source)
+
+        output = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "Movies/Garbage (2021)/Garbage (2021) - [DVD].dat",
+        )
+        assert os.path.exists(output)
+        assert not os.path.exists(source)
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+
+        file = File.query.filter_by(plex_title="Garbage (2021)").one()
+        assert file.basename == "Garbage (2021) - [DVD].dat"
+
+    os.remove(output)
+
+
 def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
     basename = "Dead Mount (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
