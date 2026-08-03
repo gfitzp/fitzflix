@@ -306,3 +306,23 @@ venv/bin/pip install -r requirements.txt &&
 venv/bin/flask db upgrade &&
 supervisorctl restart "fitzflix:*"
 ```
+
+## Running the tests
+
+```
+venv/bin/python -m pytest
+```
+
+The suite is fully isolated from a running installation: it uses a temporary
+SQLite database, Redis database 9 (the app uses database 0), temporary media
+directories, and no external services — TMDb, Sonarr, Radarr, AWS, and mail
+are all stubbed or unreachable by configuration. The only requirement beyond
+`requirements.txt` is a local Redis server. It's safe to run while the real
+application is up, and takes about half a minute; run it after dependency
+upgrades and before deploying changes.
+
+Covered: the filename-naming rules (every example table above is a test
+fixture), webhook authentication and the Sonarr/Radarr download flow, the
+deferred-retry scheduling machinery, the per-title lock contract, log
+rotation and database backups, the system-health probe and its email
+alerting, file-ranking queries, and page rendering.
