@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from flask import current_app
-from rq import Worker
+from rq import Worker, get_current_job
+from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from werkzeug.local import LocalProxy
@@ -26,17 +27,34 @@ from app.email import task_send_email
 
 app = LocalProxy(get_app)
 
-# Worker processes per queue, from fitzflix_supervisor.ini (numprocs times
-# the queues each program listens to); update when the roster changes there
+# The worker roster from fitzflix_supervisor.ini: the queues each program
+# listens to, and how many processes it runs (numprocs, default 1). Update
+# when the roster changes there; the expected per-queue counts and the
+# self-healing restart targets are both derived from it
 
-EXPECTED_WORKERS = {
-    "fitzflix-user-request": 1,
-    "fitzflix-import": 5,
-    "fitzflix-file-operation": 5,
-    "fitzflix-transcode": 1,
-    "fitzflix-sql": 1,
-    "fitzflix-maintenance": 1,
+SUPERVISOR_GROUP = "fitzflix"
+
+PROGRAM_QUEUES = {
+    "fitzflix-maintenance": ["fitzflix-maintenance"],
+    "fitzflix-sql": ["fitzflix-sql"],
+    "fitzflix-user-request": ["fitzflix-user-request"],
+    "fitzflix-import": ["fitzflix-import", "fitzflix-file-operation"],
+    "fitzflix-transcode": [
+        "fitzflix-transcode",
+        "fitzflix-import",
+        "fitzflix-file-operation",
+    ],
+    "fitzflix-file-operation": ["fitzflix-file-operation", "fitzflix-import"],
 }
+
+PROGRAM_COUNTS = {"fitzflix-import": 2, "fitzflix-file-operation": 2}
+
+EXPECTED_WORKERS = {}
+for _program, _queues in PROGRAM_QUEUES.items():
+    for _queue in _queues:
+        EXPECTED_WORKERS[_queue] = EXPECTED_WORKERS.get(
+            _queue, 0
+        ) + PROGRAM_COUNTS.get(_program, 1)
 
 # rq's default worker_ttl; an idle worker whose heartbeat is older than this
 # is a leftover registration, not a live worker
@@ -67,17 +85,42 @@ def _human_size(size):
     return f"{size:,.1f} {unit}"
 
 
+def _live_workers(connection):
+    """Discover workers from their heartbeat keys, not rq's registry set.
+
+    A worker that misses one heartbeat deadline (e.g. under heavy load) can
+    be swept out of the rq:workers set by rq's registry cleanup and never
+    re-adds itself, while continuing to work and heartbeat its own key. The
+    TTL'd per-worker keys are therefore the ground truth for liveness.
+    """
+
+    workers = []
+    for key in connection.scan_iter("rq:worker:*"):
+        # A cleanly shut-down worker's key lingers briefly with a death
+        # timestamp; it's not a live worker
+
+        if connection.hget(key, "death"):
+            continue
+        try:
+            worker = Worker.find_by_key(key.decode(), connection=connection)
+        except Exception:
+            continue
+        if worker is not None:
+            workers.append(worker)
+    return workers
+
+
 def worker_health(connection):
     """Summarize rq worker liveness per queue against the expected roster."""
 
     now = datetime.utcnow()
     queues = {name: {"queue": name, "live": 0, "busy": []} for name in EXPECTED_WORKERS}
-    for worker in Worker.all(connection=connection):
+    for worker in _live_workers(connection):
         # A busy worker stops refreshing its heartbeat for the duration of
         # the job, so only idle workers can be considered stale
 
         if (
-            worker.state != "busy"
+            worker.get_state() != "busy"
             and worker.last_heartbeat
             and (now - worker.last_heartbeat).total_seconds()
             > WORKER_HEARTBEAT_STALE_SECONDS
@@ -85,7 +128,7 @@ def worker_health(connection):
             continue
 
         job = None
-        if worker.state == "busy":
+        if worker.get_state() == "busy":
             try:
                 job = worker.get_current_job()
             except Exception:
@@ -185,6 +228,148 @@ def scheduler_health(connection):
 
     alive = any(True for _ in connection.scan_iter(f"{SCHEDULER_KEY_PREFIX}*"))
     return {"ok": alive}
+
+
+def repair_worker_registry(connection):
+    """Re-list live workers that rq's registry sweep dropped.
+
+    The intact-but-unlisted state: the worker's hash still has its queues
+    field and a live heartbeat, but a momentary key expiry got it removed
+    from the rq:workers set, which workers only join at birth. Adding it
+    back is a pure repair with no restart.
+    """
+
+    actions = []
+    for key in connection.scan_iter("rq:worker:*"):
+        if (
+            connection.hget(key, "queues")
+            and not connection.hget(key, "death")
+            and not connection.sismember(Worker.redis_workers_keys, key)
+        ):
+            connection.sadd(Worker.redis_workers_keys, key)
+            actions.append(f"re-listed {key.decode()} in the worker registry")
+    return actions
+
+
+def _supervisor_status(config):
+    """Return {process_name: (state, pid)} for the supervisor group, or None."""
+
+    try:
+        result = subprocess.run(
+            [config["SUPERVISORCTL_BIN"], "status", f"{SUPERVISOR_GROUP}:*"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    processes = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].startswith(f"{SUPERVISOR_GROUP}:"):
+            pid = None
+            if parts[1] == "RUNNING" and len(parts) >= 4 and parts[2] == "pid":
+                pid = int(parts[3].rstrip(","))
+            processes[parts[0]] = (parts[1], pid)
+    return processes or None
+
+
+def _run_supervisorctl(config, command, process_name):
+    """Run a supervisorctl command; return (succeeded, output)."""
+
+    try:
+        result = subprocess.run(
+            [config["SUPERVISORCTL_BIN"], command, process_name],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    output = result.stdout.strip()
+    return result.returncode == 0 and "ERROR" not in output, output
+
+
+HEAL_COOLDOWN_SECONDS = 3600
+HEALED_KEY_PREFIX = "fitzflix:health:healed:"
+
+
+def heal_worker_processes(connection, config):
+    """Start dead worker processes, and restart amnesiac ones.
+
+    Two failure states, told apart with supervisor's process view:
+    - Not RUNNING: the process died and supervisor gave up (or it was
+      stopped); start it again.
+    - RUNNING but its pid isn't attached to any registered rq worker: the
+      process is alive but its Redis registration lost its identity (a full
+      key expiry wiped the queues field), which no supervisor-level check
+      can see and only a restart (a fresh birth registration) can fix. Only
+      restarted while its queues are idle, so no job is killed mid-run.
+
+    Each process is healed at most once per cooldown window, so a genuinely
+    sick worker can't cause a restart loop.
+    """
+
+    actions = []
+    status = _supervisor_status(config)
+    if not status:
+        current_app.logger.warning(
+            "Health: supervisorctl is unavailable, cannot heal worker processes"
+        )
+        return actions
+
+    registered_pids = set()
+    for key in connection.scan_iter("rq:worker:*"):
+        pid = connection.hget(key, "pid")
+        if pid:
+            registered_pids.add(int(pid))
+
+    own_job = get_current_job()
+    for process_name, (state, pid) in sorted(status.items()):
+        program = process_name.split(":", 1)[1].rsplit("_", 1)[0]
+        cooldown_key = f"{HEALED_KEY_PREFIX}{process_name}"
+
+        if state in ("STOPPED", "EXITED", "FATAL"):
+            if connection.set(cooldown_key, "1", ex=HEAL_COOLDOWN_SECONDS, nx=True):
+                ok, output = _run_supervisorctl(config, "start", process_name)
+                actions.append(
+                    f"started {process_name} (was {state})"
+                    if ok
+                    else f"failed to start {process_name} (was {state}): {output}"
+                )
+
+        elif (
+            state == "RUNNING"
+            and pid is not None
+            and pid not in registered_pids
+            and program in PROGRAM_QUEUES
+        ):
+            busy = False
+            for queue_name in PROGRAM_QUEUES[program]:
+                started = StartedJobRegistry(
+                    queue_name, connection=connection
+                ).get_job_ids()
+                if own_job:
+                    started = [job_id for job_id in started if job_id != own_job.id]
+                if started or connection.llen(f"rq:queue:{queue_name}"):
+                    busy = True
+            if busy:
+                current_app.logger.info(
+                    f"Health: {process_name} has no registered rq worker and "
+                    f"needs a restart; deferring while its queues are busy"
+                )
+                continue
+            if connection.set(cooldown_key, "1", ex=HEAL_COOLDOWN_SECONDS, nx=True):
+                ok, output = _run_supervisorctl(config, "restart", process_name)
+                actions.append(
+                    f"restarted {process_name} (running, but not registered "
+                    f"as an rq worker)"
+                    if ok
+                    else f"failed to restart {process_name}: {output}"
+                )
+
+    return actions
 
 
 def probe_health(connection):
@@ -471,12 +656,22 @@ def health_probe():
                     f"{BACKUP_STALE_HOURS} hours ago"
                 )
 
-        for entry in worker_health(redis):
+        worker_entries = worker_health(redis)
+        for entry in worker_entries:
             if not entry["ok"]:
                 issues[f"workers:{entry['queue']}"] = (
                     f"Queue {entry['queue']} has {entry['live']} of "
                     f"{entry['expected']} expected workers"
                 )
+
+        # Self-healing: re-list registry-swept workers every run, and bring
+        # dead or amnesiac worker processes back when a queue is short
+
+        heal_actions = repair_worker_registry(redis)
+        if any(not entry["ok"] for entry in worker_entries):
+            heal_actions += heal_worker_processes(redis, config)
+        for action in heal_actions:
+            current_app.logger.warning(f"Health self-heal: {action}")
 
         if not observer_health(redis)["ok"]:
             issues["observer"] = "No process is watching the import directory"
@@ -515,6 +710,11 @@ def health_probe():
                     lines.append("")
                 lines.append("Recovered:")
                 lines.extend(f"  - {message}" for message in recovered.values())
+            if heal_actions:
+                if lines:
+                    lines.append("")
+                lines.append("Self-healing:")
+                lines.extend(f"  - {action}" for action in heal_actions)
 
             subject = (
                 f"Fitzflix health: {len(issues)} problem(s)"

@@ -98,6 +98,7 @@ class Config(object):
     # rather than on percent used, since the NAS library volumes are kept
     # nearly full by design
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
+    SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
     # Transcoding configuration
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"

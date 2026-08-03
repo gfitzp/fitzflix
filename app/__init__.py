@@ -114,6 +114,7 @@ def check_config(app):
         "MKVPROPEDIT_BIN",
         "FFMPEG_BIN",
         "MYSQLDUMP_BIN",
+        "SUPERVISORCTL_BIN",
     ):
         path = app.config[key]
         if not (os.path.isfile(path) and os.access(path, os.X_OK)):
