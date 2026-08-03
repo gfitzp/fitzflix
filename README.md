@@ -283,7 +283,7 @@ Run from the project root with the venv activated. Each command queues a backgro
 
 Archived originals live in S3 Glacier Deep Archive, so getting one back is a two-step process:
 
-1. On the file's detail page, request the download — Fitzflix asks AWS to restore the object from Glacier. Restores from Deep Archive typically take hours to complete.
+1. On the file's detail page, request the download — Fitzflix asks AWS to restore the object from Glacier. Restores from Deep Archive typically take hours to complete. To restore in bulk, a TV series page's **Restore series from AWS** button (or a season page's **Restore season from AWS**) requests every best-ranked archived file at once. Because restores cost real money, each restore button shows an estimated cost (per-request, per-GB retrieval, and per-GB transfer fees — season/series restores use the cheaper Bulk retrieval tier, single files use Standard; tune the `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` values in `.env` to match the current AWS rate card) and requires your account password to confirm.
 2. When AWS finishes the restore, it posts a notification to the SQS queue (`AWS_SQS_URL`; the S3 bucket must be configured to send its restore-completed event notifications there). Fitzflix polls the queue automatically every hour and downloads each completed restore back into the library; run `flask sqs` to poll immediately instead of waiting for the next scheduled check.
 
 ## Logs and maintenance

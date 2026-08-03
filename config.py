@@ -102,6 +102,15 @@ class Config(object):
     DB_BACKUP_DIR                       = os.environ.get("DB_BACKUP_DIR") or os.path.join(basedir, "backups")
     DB_BACKUP_RETENTION_DAYS            = int(os.environ.get("DB_BACKUP_RETENTION_DAYS") or 14)
 
+    # AWS Glacier restore cost estimation, in USD: a per-object retrieval
+    # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.
+    # Adjust to match the current AWS rate card if prices change
+    AWS_RESTORE_PER_1K_REQUEST_COST      = float(os.environ.get("AWS_RESTORE_PER_1K_REQUEST_COST") or 0.10)
+    AWS_RESTORE_PER_1K_REQUEST_BULK_COST = float(os.environ.get("AWS_RESTORE_PER_1K_REQUEST_BULK_COST") or 0.025)
+    AWS_RESTORE_PER_GB_COST              = float(os.environ.get("AWS_RESTORE_PER_GB_COST") or 0.02)
+    AWS_RESTORE_PER_GB_BULK_COST         = float(os.environ.get("AWS_RESTORE_PER_GB_BULK_COST") or 0.0025)
+    AWS_DOWNLOAD_PER_GB_COST             = float(os.environ.get("AWS_DOWNLOAD_PER_GB_COST") or 0.09)
+
     # Health monitoring: alert when a volume's free space falls below this,
     # rather than on percent used, since the NAS library volumes are kept
     # nearly full by design

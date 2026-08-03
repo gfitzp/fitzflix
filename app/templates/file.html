@@ -263,9 +263,13 @@
 		<form action="" method="post">
 			<fieldset {% if not best_file %}disabled{% endif %}>
 				{{ download_form.hidden_tag() }}
+				{{ download_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
 				{{ download_form.s3_download_submit(class_="btn btn-sm btn-success") }}
 			</fieldset>
 		</form>
+		{% if file_restore_estimate.count %}
+		<em class="small text-muted">Restore ≈ ${{ "%.2f"|format(file_restore_estimate.cost) }} ({{ "%.1f"|format(file_restore_estimate.gigabytes) }} GB)</em>
+		{% endif %}
 	</div>
 	<div class="col-sm-4">
 		<form action="" method="post">

@@ -48,6 +48,18 @@
 	</div>
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
 		<form action="" method="post">
+			{{ series_restore_form.hidden_tag() }}
+			{{ series_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
+			{{ series_restore_form.series_restore_submit(class_="btn btn-sm btn-primary container") }}
+		</form>
+		{% if series_restore_estimate.count %}
+		<em class="small text-muted">≈ ${{ "%.2f"|format(series_restore_estimate.cost) }} for {{ series_restore_estimate.count }} file(s), {{ "%.1f"|format(series_restore_estimate.gigabytes) }} GB</em>
+		{% else %}
+		<em class="small text-muted">No archived files to restore</em>
+		{% endif %}
+	</div>
+	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+		<form action="" method="post">
 			{{ series_delete_form.hidden_tag() }}
 			{{ series_delete_form.delete_submit(class_="btn btn-sm btn-danger container") }}
 		</form>

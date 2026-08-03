@@ -49,6 +49,8 @@ from app.main.forms import (
     ReviewExportForm,
     ReviewUploadForm,
     S3DownloadForm,
+    SeasonRestoreForm,
+    SeriesRestoreForm,
     S3UploadForm,
     SeriesDeleteForm,
     TMDBLookupForm,
@@ -972,6 +974,31 @@ def tv_library():
     return render_template("library_tv.html", title="TV Library", series=tv)
 
 
+def restore_cost_estimate(files, bulk=False):
+    """Estimate the AWS cost of restoring and downloading archived files.
+
+    Sizes come from the localized copies (the archived originals' sizes
+    aren't tracked), so the estimate includes a 1.25x fudge-factor.
+    """
+
+    if bulk:
+        restore_request_cost = (
+            current_app.config["AWS_RESTORE_PER_1K_REQUEST_BULK_COST"] / 1000
+        )
+        restore_per_gb_cost = current_app.config["AWS_RESTORE_PER_GB_BULK_COST"]
+    else:
+        restore_request_cost = (
+            current_app.config["AWS_RESTORE_PER_1K_REQUEST_COST"] / 1000
+        )
+        restore_per_gb_cost = current_app.config["AWS_RESTORE_PER_GB_COST"]
+    gigabytes = (sum(file.filesize_bytes or 0 for file in files) * 1.25) / 1024**3
+    cost = (len(files) * restore_request_cost) + (
+        gigabytes
+        * (restore_per_gb_cost + current_app.config["AWS_DOWNLOAD_PER_GB_COST"])
+    )
+    return {"count": len(files), "gigabytes": gigabytes, "cost": cost}
+
+
 @bp.route("/tv/<int:series_id>", methods=["GET", "POST"])
 @login_required
 def tv(series_id):
@@ -1024,6 +1051,58 @@ def tv(series_id):
             )
 
         flash(f"Added all files for '{title}' to transcoding queue", "success")
+        return redirect(url_for("main.tv", series_id=tv.id))
+
+    # Form to request every archived file for this series to be restored from
+    # AWS Glacier; the hourly SQS poll downloads each one once it's ready.
+    # Restores cost real money, so show an estimate and require the user's
+    # password before requesting anything
+
+    restore_ranked_files = (
+        db.session.query(
+            File.id,
+            tv_file_rank(),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    series_restorable = (
+        File.query.join(restore_ranked_files, (restore_ranked_files.c.id == File.id))
+        .filter(File.series_id == series_id)
+        .filter(restore_ranked_files.c.rank == 1)
+        .filter(File.aws_untouched_key != None)
+        .order_by(File.season.asc(), File.episode.asc())
+        .all()
+    )
+    series_restore_estimate = restore_cost_estimate(series_restorable, bulk=True)
+
+    series_restore_form = SeriesRestoreForm()
+    if (
+        series_restore_form.series_restore_submit.data
+        and series_restore_form.validate_on_submit()
+    ):
+        if not current_user.check_password(series_restore_form.password.data):
+            flash("Incorrect password provided!", "danger")
+
+        else:
+            for file in series_restorable:
+                current_app.request_queue.enqueue(
+                    "app.videos.aws_restore",
+                    args=(file.aws_untouched_key,),
+                    kwargs={"tier": "Bulk"},
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"'{file.untouched_basename}'",
+                )
+
+            flash(
+                f"Requesting {len(series_restorable)} file(s) for '{title}' to "
+                f"be restored from AWS Glacier "
+                f"(≈ ${series_restore_estimate['cost']:.2f})",
+                "info",
+            )
+
         return redirect(url_for("main.tv", series_id=tv.id))
 
     # Delete the TV series from the database
@@ -1122,12 +1201,14 @@ def tv(series_id):
         tv=tv,
         seasons=seasons,
         transcode_form=transcode_form,
+        series_restore_form=series_restore_form,
+        series_restore_estimate=series_restore_estimate,
         tmdb_lookup_form=tmdb_lookup_form,
         series_delete_form=series_delete_form,
     )
 
 
-@bp.route("/tv/<int:series_id>/<int:season>")
+@bp.route("/tv/<int:series_id>/<int:season>", methods=["GET", "POST"])
 @login_required
 def season(series_id, season):
     """Show all files for a TV show's season, regardless of ranking.
@@ -1175,8 +1256,52 @@ def season(series_id, season):
         .all()
     )
 
+    # Form to request this season's best archived files to be restored from
+    # AWS Glacier; the hourly SQS poll downloads each one once it's ready.
+    # Restores cost real money, so show an estimate and require the user's
+    # password before requesting anything
+
+    restorable = [
+        file for file, _, _, rank in files if rank == 1 and file.aws_untouched_key
+    ]
+    season_restore_estimate = restore_cost_estimate(restorable, bulk=True)
+
+    season_restore_form = SeasonRestoreForm()
+    if (
+        season_restore_form.season_restore_submit.data
+        and season_restore_form.validate_on_submit()
+    ):
+        if not current_user.check_password(season_restore_form.password.data):
+            flash("Incorrect password provided!", "danger")
+
+        else:
+            for file in restorable:
+                current_app.request_queue.enqueue(
+                    "app.videos.aws_restore",
+                    args=(file.aws_untouched_key,),
+                    kwargs={"tier": "Bulk"},
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"'{file.untouched_basename}'",
+                )
+
+            season_name = "specials" if season == 0 else f"season {season}"
+            flash(
+                f"Requesting {len(restorable)} file(s) for {season_name} to be "
+                f"restored from AWS Glacier "
+                f"(≈ ${season_restore_estimate['cost']:.2f})",
+                "info",
+            )
+
+        return redirect(url_for("main.season", series_id=series_id, season=season))
+
     return render_template(
-        "season.html", title=title, tv=tv, season=season, files=files
+        "season.html",
+        title=title,
+        tv=tv,
+        season=season,
+        files=files,
+        season_restore_form=season_restore_form,
+        season_restore_estimate=season_restore_estimate,
     )
 
 
@@ -1549,8 +1674,15 @@ def file(file_id):
         flash(f"Uploading '{file.basename}' to AWS S3 storage", "info")
         return redirect(url_for("main.file", file_id=file.id))
 
+    file_restore_estimate = restore_cost_estimate(
+        [file] if file.aws_untouched_key else []
+    )
+
     download_form = S3DownloadForm()
     if download_form.s3_download_submit.data and download_form.validate_on_submit():
+        if not current_user.check_password(download_form.password.data):
+            flash("Incorrect password provided!", "danger")
+            return redirect(url_for("main.file", file_id=file.id))
 
         # Enqueue a restore task for this file
 
@@ -1558,9 +1690,11 @@ def file(file_id):
             "app.videos.aws_restore",
             args=(file.aws_untouched_key,),
             job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"'{file.untouched_basename}'",
         )
         flash(
-            f"Requesting '{file.untouched_basename}' to be restored from AWS Glacier",
+            f"Requesting '{file.untouched_basename}' to be restored from AWS "
+            f"Glacier (≈ ${file_restore_estimate['cost']:.2f})",
             "info",
         )
         return redirect(url_for("main.file", file_id=file.id))
@@ -1666,6 +1800,7 @@ def file(file_id):
         transcode_form=transcode_form,
         upload_form=upload_form,
         download_form=download_form,
+        file_restore_estimate=file_restore_estimate,
         delete_form=delete_form,
         custom_poster_form=custom_poster_form,
         best_file=best_file,
