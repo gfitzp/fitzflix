@@ -268,7 +268,7 @@
 			</fieldset>
 		</form>
 		{% if file_restore_estimate.count %}
-		<em class="small text-muted">Restore ≈ ${{ "%.2f"|format(file_restore_estimate.cost) }} ({{ "%.1f"|format(file_restore_estimate.gigabytes) }} GB)</em>
+		<em class="small text-muted">Restore ≈ ${{ "%.2f"|format(file_restore_estimate.cost) }} (~{{ "%.1f"|format(file_restore_estimate.gigabytes) }} GB)</em>
 		{% endif %}
 	</div>
 	<div class="col-sm-4">

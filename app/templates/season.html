@@ -17,7 +17,7 @@
 			{{ season_restore_form.season_restore_submit(class_="btn btn-sm btn-primary container") }}
 		</form>
 		{% if season_restore_estimate.count %}
-		<em class="small text-muted">≈ ${{ "%.2f"|format(season_restore_estimate.cost) }} for {{ season_restore_estimate.count }} file(s), {{ "%.1f"|format(season_restore_estimate.gigabytes) }} GB</em>
+		<em class="small text-muted">≈ ${{ "%.2f"|format(season_restore_estimate.cost) }} for {{ season_restore_estimate.count }} file(s), ~{{ "%.1f"|format(season_restore_estimate.gigabytes) }} GB</em>
 		{% else %}
 		<em class="small text-muted">No archived files to restore</em>
 		{% endif %}
