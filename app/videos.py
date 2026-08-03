@@ -98,18 +98,18 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
 def watch_mkvmerge_progress(process, job, name, activity):
     """Stream a process's output, logging its progress and updating job meta."""
 
-    previous_log_line = None
+    previous_percent = None
     for line in process.stdout:
         progress_match = re.search(r"Progress\: \d+\%", line)
         if progress_match:
             progress_match = re.match(r"^Progress\: (?P<percent>\d+)\%", line)
-            progress = int(progress_match.group("percent"))
-            if previous_log_line != f"'{name}' {activity}: {progress}%":
-                current_app.logger.info(f"'{name}' {activity}: {progress}%")
-                previous_log_line = f"'{name}' {activity}: {progress}%"
+            percent = int(progress_match.group("percent"))
+            if previous_percent != percent:
+                current_app.logger.info(f"'{name}' {activity}: {percent}%")
+                previous_percent = percent
             if job:
                 job.meta["description"] = f"'{name}' — {activity}"
-                job.meta["progress"] = progress
+                job.meta["progress"] = percent
                 job.save_meta()
 
 
@@ -149,19 +149,19 @@ def copy_with_progress(src, dst, job, name, activity="Copying to library"):
 
     total = os.path.getsize(src)
     copied = 0
-    previous_log_line = None
+    previous_percent = None
 
     with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
         while chunk := fsrc.read(32 * 1024 * 1024):
             fdst.write(chunk)
             copied += len(chunk)
-            progress = int(copied / total * 100) if total else 100
-            if previous_log_line != f"'{name}' {activity}: {progress}%":
-                current_app.logger.info(f"'{name}' {activity}: {progress}%")
-                previous_log_line = f"'{name}' {activity}: {progress}%"
+            percent = int(copied / total * 100) if total else 100
+            if previous_percent != percent:
+                current_app.logger.info(f"'{name}' {activity}: {percent}%")
+                previous_percent = percent
                 if job:
                     job.meta["description"] = f"'{name}' — {activity}"
-                    job.meta["progress"] = progress
+                    job.meta["progress"] = percent
                     job.save_meta()
 
 
@@ -262,6 +262,7 @@ class UploadProgressPercentage(object):
         self._file_path = file_path
         self._size = float(os.path.getsize(file_path))
         self._seen_so_far = 0
+        self._previous_percent = None
         self._lock = threading.Lock()
         self._job = rq.get_current_job()
 
@@ -271,17 +272,26 @@ class UploadProgressPercentage(object):
 
             # Report a zero-byte file as already complete rather than divide by zero
 
-            progress = (
+            percent = (
                 int((self._seen_so_far / self._size) * 100) if self._size else 100
             )
+
+            # Transfer callbacks fire far more often than tool output lines,
+            # so both the log line and the job-meta write wait for the
+            # percentage to actually change
+
+            if percent == self._previous_percent:
+                return
+            self._previous_percent = percent
+
             app.logger.info(
-                f"'{os.path.basename(self._file_path)}' Uploading to AWS: {progress}%"
+                f"'{os.path.basename(self._file_path)}' Uploading to AWS: {percent}%"
             )
             if self._job:
                 self._job.meta["description"] = (
                     f"'{os.path.basename(self._file_path)}' — Uploading to AWS"
                 )
-                self._job.meta["progress"] = progress
+                self._job.meta["progress"] = percent
                 self._job.save_meta()
 
 
@@ -293,6 +303,7 @@ class DownloadProgressPercentage(object):
         self._size = client.head_object(Bucket=bucket, Key=key).get("ContentLength", 0)
         app.logger.info(f"'{basename}' Download size: {self._size} bytes")
         self._seen_so_far = 0
+        self._previous_percent = None
         self._lock = threading.Lock()
         self._job = rq.get_current_job()
 
@@ -302,17 +313,26 @@ class DownloadProgressPercentage(object):
 
             # Report a zero-byte object as already complete rather than divide by zero
 
-            progress = (
+            percent = (
                 int((self._seen_so_far / self._size) * 100) if self._size else 100
             )
+
+            # Transfer callbacks fire far more often than tool output lines,
+            # so both the log line and the job-meta write wait for the
+            # percentage to actually change
+
+            if percent == self._previous_percent:
+                return
+            self._previous_percent = percent
+
             app.logger.info(
-                f"'{os.path.basename(self._file_path)}' Downloading from AWS: {progress}%"
+                f"'{os.path.basename(self._file_path)}' Downloading from AWS: {percent}%"
             )
             if self._job:
                 self._job.meta["description"] = (
                     f"'{os.path.basename(self._file_path)}' — Downloading from AWS"
                 )
-                self._job.meta["progress"] = progress
+                self._job.meta["progress"] = percent
                 self._job.save_meta()
 
 
@@ -2993,7 +3013,7 @@ def transcode_task(file_id):
                 universal_newlines=True,
                 bufsize=1,
             )
-            previous_log_line = None
+            previous_percent = None
             for line in transcode_process.stdout:
                 progress_match = re.search(
                     r"Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
@@ -3003,17 +3023,15 @@ def transcode_task(file_id):
                         r"^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
                         line,
                     )
-                    progress = int(progress_match.group("percent"))
+                    percent = int(progress_match.group("percent"))
                     if (
-                        previous_log_line
-                        != f"'{file.plex_title}' Transcoding: {progress}%"
+                        previous_percent
+                        != percent
                     ):
                         current_app.logger.info(
-                            f"'{file.plex_title}' Transcoding: {progress}%"
+                            f"'{file.plex_title}' Transcoding: {percent}%"
                         )
-                        previous_log_line = (
-                            f"'{file.plex_title}' Transcoding: {progress}%"
-                        )
+                        previous_percent = percent
                     if job:
                         job.meta["description"] = (
                             f"'{file.plex_title}' — Transcoding file"
@@ -3021,7 +3039,7 @@ def transcode_task(file_id):
                         if progress_match.group("this_task") == progress_match.group(
                             "total_tasks"
                         ):
-                            job.meta["progress"] = progress
+                            job.meta["progress"] = percent
 
                         else:
                             job.meta["progress"] = -1
@@ -3596,19 +3614,19 @@ def calculate_etag(file_path):
         # Read a file in 8 MB chunks, and get the MD5 hash of each chunk
 
         with open(file_path, "rb") as f:
-            previous_log_line = None
+            previous_percent = None
             for chunk in iter(lambda: f.read(EIGHT_MEGABYTES), b""):
                 # Concatenate all of the MD5 hashes together
                 md5_digests.append(hashlib.md5(chunk).digest())
-                progress = int((f.tell() / file_size) * 100)
-                if previous_log_line != f"'{basename}' Calculating ETag: {progress}%":
+                percent = int((f.tell() / file_size) * 100)
+                if previous_percent != percent:
                     current_app.logger.info(
-                        f"'{basename}' Calculating ETag: {progress}%"
+                        f"'{basename}' Calculating ETag: {percent}%"
                     )
-                    previous_log_line = f"'{basename}' Calculating ETag: {progress}%"
+                    previous_percent = percent
                 if job:
                     job.meta["description"] = f"'{basename}' — Calculating ETag"
-                    job.meta["progress"] = progress
+                    job.meta["progress"] = percent
                     job.save_meta()
 
         # Get an MD5 hash of the concatenated hashes, and append the number of parts
@@ -4961,7 +4979,7 @@ def lossless_to_flac(file_path, file_id=None):
                         bufsize=1,
                     )
                     progress = 0
-                    previous_log_line = None
+                    previous_percent = None
                     for line in flac_track_process.stdout:
                         progress_match = re.search(
                             r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
@@ -4978,14 +4996,11 @@ def lossless_to_flac(file_path, file_id=None):
                                 )
                                 * 100
                             )
-                        if (
-                            previous_log_line
-                            != f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
-                        ):
+                        if previous_percent != progress:
                             current_app.logger.info(
                                 f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
                             )
-                            previous_log_line = f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
+                            previous_percent = progress
                         if job:
                             job.meta["description"] = (
                                 f"'{basename}' — Converting lossless tracks to FLAC"

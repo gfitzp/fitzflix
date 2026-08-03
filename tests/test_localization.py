@@ -355,6 +355,24 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     assert all(u["description"] == "'big.mkv' — Copying to library" for u in job.updates)
 
 
+def test_upload_progress_callback_dedupes_by_percent(app, tmp_path, log_capture):
+    source = tmp_path / "upload.bin"
+    source.write_bytes(b"x" * 1000)
+
+    with app.app_context():
+        callback = videos.UploadProgressPercentage(str(source))
+        for _ in range(200):
+            callback(5)  # 0.5% per call: two calls per whole percent
+
+    messages = [
+        r.getMessage() for r in log_capture if "Uploading to AWS" in r.getMessage()
+    ]
+    # 200 callbacks collapse to one line per distinct percentage
+    assert len(messages) == len(set(messages))
+    assert messages[-1].endswith("100%")
+    assert 90 <= len(messages) <= 101
+
+
 def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch):
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
 
