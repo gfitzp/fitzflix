@@ -114,6 +114,9 @@ def send_arr_command(service, url, api_key, body):
                 "Content-Type": "application/json",
             },
             body=json.dumps(body).encode("utf-8"),
+            # Bounded, so a wedged Sonarr/Radarr can't hang a worker
+            timeout=urllib3.Timeout(connect=5, read=30),
+            retries=False,
         )
         if not 200 <= r.status < 300:
             current_app.logger.warning(

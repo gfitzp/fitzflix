@@ -97,6 +97,15 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert destination_hidden.startswith(app.config["LIBRARY_DIR"])
         assert os.path.exists(destination_hidden)
 
+        # The move already inspected the file, so finalize receives the
+        # media details precomputed and never opens the file itself
+
+        assert len(job_args) == 5
+        inspection = job_args[4]
+        assert inspection["audio_tracks"]
+        assert inspection["filesize_bytes"] > 0
+        assert inspection["video"].get("format")
+
         finalize_localization(*job_args)
 
         # The finished file is in the library, staging is empty, the source
@@ -114,6 +123,11 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert file.movie.title == "Staging Test"
         assert file.movie.year == 2021
         assert file.quality.quality_title == "DVD"
+
+        # The video fields and track rows came from the inspection dict
+
+        assert file.format == "AVC"
+        assert [t.language for t in file.audiotrack] == ["eng"]
 
         # And the title lock was released
 
@@ -353,6 +367,62 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     assert percents == sorted(percents)
     assert percents[-1] == 100
     assert all(u["description"] == "'big.mkv' — Copying to library" for u in job.updates)
+
+
+def test_save_track_metadata_writes_rows_and_releases_lock(app):
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Metadata Test", 2021)
+        file = make_movie_file(movie, "DVD")
+
+        # Commit so save_track_metadata's own session can see the rows
+
+        db.session.commit()
+        details = {
+            "video": {"format": "AVC", "codec": "V_MPEG4/ISO/AVC"},
+            "audio_tracks": [
+                {
+                    "language": "eng",
+                    "language_name": "English",
+                    "streamorder": 1,
+                    "format": "AC-3",
+                    "channels": "5.1",
+                    "default": True,
+                }
+            ],
+            "subtitle_tracks": [
+                {
+                    "language": "eng",
+                    "language_name": "English",
+                    "streamorder": 2,
+                    "elements": 100,
+                    "default": False,
+                    "forced": False,
+                    "format": "PGS",
+                }
+            ],
+            "filesize_bytes": 4 * 1024**3,
+        }
+
+        lock = app.lock_manager.lock("save-metadata-test", 30000)
+        assert lock
+        assert videos.save_track_metadata(file.id, details, lock=lock) is True
+
+        # The task wrote through its own session; refresh this one's view
+
+        db.session.expire_all()
+
+        assert file.format == "AVC"
+        assert float(file.filesize_gigabytes) == 4.0
+        assert [t.language for t in file.audiotrack] == ["eng"]
+        assert len(file.subtrack) == 1
+
+        # The passed lock was released
+        relock = app.lock_manager.lock("save-metadata-test", 1000)
+        assert relock
+        app.lock_manager.unlock(relock)
 
 
 def test_upload_progress_callback_dedupes_by_percent(app, tmp_path, log_capture):

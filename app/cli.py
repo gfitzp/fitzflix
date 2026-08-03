@@ -94,10 +94,10 @@ def register(app):
     def file(file_id):
         """Refresh metadata for file having specified file ID."""
 
-        app.sql_queue.enqueue(
+        app.file_queue.enqueue(
             "app.videos.track_metadata_scan_task",
             args=(int(file_id),),
-            job_timeout=app.config["SQL_TASK_TIMEOUT"],
+            job_timeout=app.config["MKVPROPEDIT_TASK_TIMEOUT"],
             description=f"Refreshing metadata for file ID {file_id}",
         )
         app.logger.info(f"Refreshing metadata for file ID {file_id}")

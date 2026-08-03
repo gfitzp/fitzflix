@@ -1725,6 +1725,7 @@ class File(db.Model):
                 r = requests.get(
                     current_app.config["SONARR_URL"] + "/api/parse",
                     params=params,
+                    timeout=10,
                 )
                 r.raise_for_status()
                 current_app.logger.debug(r.json())
@@ -1742,6 +1743,7 @@ class File(db.Model):
                             current_app.config["SONARR_URL"] + "/api/command",
                             params=params,
                             data=json.dumps(data),
+                            timeout=10,
                         )
                         current_app.logger.debug(r.json())
 
