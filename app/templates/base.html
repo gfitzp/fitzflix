@@ -153,8 +153,9 @@
 	{% if current_user.is_authenticated %}
 	<script>
 		// Type-ahead for the global search box: debounced fetch against
-		// /search.json, rendered as a dropdown; Enter still submits the
-		// form for the full results page
+		// /search.json, rendered as a dropdown. Arrow keys move through the
+		// suggestions and Enter opens the highlighted one; with nothing
+		// highlighted, Enter still submits the form for the full results page
 
 		(function() {
 			var inputs = document.querySelectorAll(".global-search-input");
@@ -163,10 +164,26 @@
 			inputs.forEach(function(input) {
 				var menu = input.nextElementSibling;
 				var timer = null;
+				var activeIndex = -1;
+
+				function items() {
+					return menu.querySelectorAll(".dropdown-item");
+				}
 
 				function hide() {
 					menu.classList.remove("show");
 					menu.innerHTML = "";
+					activeIndex = -1;
+				}
+
+				function setActive(index) {
+					var list = items();
+					if (!list.length) return;
+					activeIndex = (index + list.length) % list.length;
+					list.forEach(function(item, i) {
+						item.classList.toggle("active", i === activeIndex);
+					});
+					list[activeIndex].scrollIntoView({ block: "nearest" });
 				}
 
 				input.addEventListener("input", function() {
@@ -181,6 +198,7 @@
 							.then(function(r) { return r.json(); })
 							.then(function(data) {
 								menu.innerHTML = "";
+								activeIndex = -1;
 								(data.results || []).forEach(function(item) {
 									var a = document.createElement("a");
 									a.className = "dropdown-item small text-truncate";
@@ -199,7 +217,21 @@
 				});
 
 				input.addEventListener("keydown", function(e) {
-					if (e.key === "Escape") hide();
+					if (e.key === "Escape") {
+						hide();
+						return;
+					}
+					if (!menu.classList.contains("show")) return;
+					if (e.key === "ArrowDown") {
+						e.preventDefault();
+						setActive(activeIndex + 1);
+					} else if (e.key === "ArrowUp") {
+						e.preventDefault();
+						setActive(activeIndex - 1);
+					} else if (e.key === "Enter" && activeIndex >= 0) {
+						e.preventDefault();
+						window.location = items()[activeIndex].href;
+					}
 				});
 
 				document.addEventListener("click", function(e) {

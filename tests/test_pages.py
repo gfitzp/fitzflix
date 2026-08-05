@@ -102,6 +102,11 @@ def test_pages_register_the_service_worker(admin_client):
     assert 'serviceWorker.register("/sw.js")' in body
     assert "site.webmanifest" in body
 
+    # The search type-ahead ships its keyboard navigation
+
+    assert "ArrowDown" in body
+    assert "ArrowUp" in body
+
 
 def test_manifest_declares_installable_app():
     import json
