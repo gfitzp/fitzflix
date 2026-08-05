@@ -175,8 +175,20 @@ def tmdb_images_config():
     return images
 
 
+# The artwork the templates actually serve: title posters at w185 (list
+# rows) and w500 (detail pages), cast headshots at w185. TMDb's
+# configuration offers many more sizes and image types (backdrops, logos,
+# every size up to original), but downloading them multiplied CDN requests
+# and disk usage several-fold for images nothing renders; anything needed
+# later comes back with a refresh.
+
+TMDB_POSTER_SIZES = ["w185", "w500"]
+TMDB_PROFILE_SIZES = ["w185"]
+
+
 def download_movie_artwork(tmdb_info, images_config):
-    """Download every image a movie details payload references.
+    """Download the served artwork a movie details payload references:
+    the movie's poster and its cast and crew headshots.
 
     Driven by the raw payload rather than ORM records, so it can run in
     the network phase of a refresh before any database rows change; the
@@ -185,20 +197,6 @@ def download_movie_artwork(tmdb_info, images_config):
     """
 
     base_url = images_config["secure_base_url"]
-    backdrop_sizes = images_config["backdrop_sizes"]
-    logo_sizes = images_config["logo_sizes"]
-    poster_sizes = images_config["poster_sizes"]
-    profile_sizes = images_config["profile_sizes"]
-
-    collection = tmdb_info.get("belongs_to_collection")
-    if collection:
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_poster_path=collection.get("poster_path")),
-            "collection",
-            collection.get("id"),
-            base_url,
-            [{"poster": poster_sizes}],
-        )
 
     credits = tmdb_info.get("credits") or {}
     for person in (credits.get("cast") or []) + (credits.get("crew") or []):
@@ -207,75 +205,30 @@ def download_movie_artwork(tmdb_info, images_config):
             "person",
             person.get("id"),
             base_url,
-            [{"profile": profile_sizes}],
-        )
-
-    for company in tmdb_info.get("production_companies") or []:
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_logo_path=company.get("logo_path")),
-            "company",
-            company.get("id"),
-            base_url,
-            [{"logo": logo_sizes}],
+            [{"profile": TMDB_PROFILE_SIZES}],
         )
 
     TMDBMixin.get_tmdb_images(
-        SimpleNamespace(
-            tmdb_backdrop_path=tmdb_info.get("backdrop_path"),
-            tmdb_poster_path=tmdb_info.get("poster_path"),
-        ),
+        SimpleNamespace(tmdb_poster_path=tmdb_info.get("poster_path")),
         "movie",
         tmdb_info.get("id"),
         base_url,
-        [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
+        [{"poster": TMDB_POSTER_SIZES}],
     )
 
 
 def download_tv_artwork(tmdb_info, images_config):
-    """Download every image a TV details payload references; see
-    download_movie_artwork."""
+    """Download the served artwork a TV details payload references — just
+    the series poster; see download_movie_artwork."""
 
     base_url = images_config["secure_base_url"]
-    backdrop_sizes = images_config["backdrop_sizes"]
-    logo_sizes = images_config["logo_sizes"]
-    poster_sizes = images_config["poster_sizes"]
-
-    for network in tmdb_info.get("networks") or []:
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_logo_path=network.get("logo_path")),
-            "network",
-            network.get("id"),
-            base_url,
-            [{"logo": logo_sizes}],
-        )
-
-    for company in tmdb_info.get("production_companies") or []:
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_logo_path=company.get("logo_path")),
-            "company",
-            company.get("id"),
-            base_url,
-            [{"logo": logo_sizes}],
-        )
-
-    for season in tmdb_info.get("seasons") or []:
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_poster_path=season.get("poster_path")),
-            "season",
-            season.get("id"),
-            base_url,
-            [{"poster": poster_sizes}],
-        )
 
     TMDBMixin.get_tmdb_images(
-        SimpleNamespace(
-            tmdb_backdrop_path=tmdb_info.get("backdrop_path"),
-            tmdb_poster_path=tmdb_info.get("poster_path"),
-        ),
+        SimpleNamespace(tmdb_poster_path=tmdb_info.get("poster_path")),
         "tv",
         tmdb_info.get("id"),
         base_url,
-        [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
+        [{"poster": TMDB_POSTER_SIZES}],
     )
 
 
