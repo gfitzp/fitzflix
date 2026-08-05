@@ -163,6 +163,45 @@ TRANSIENT_COPY_ERRNOS = {
 
 MAX_TRANSIENT_RETRIES = 3
 
+# The import completeness gate: how recently a file may have been modified
+# and still be trusted (when its container can't be probed), and how many
+# one-minute checks a file gets before being imported anyway
+
+COMPLETENESS_QUIET_SECONDS = 120
+MAX_COMPLETENESS_RETRIES = 30
+
+# Containers that declare their own length, letting MediaInfo prove that a
+# stalled partial copy is truncated rather than complete
+
+SELF_SIZING_FORMATS = {"Matroska", "MPEG-4"}
+
+
+def probe_file_completeness(file_path):
+    """Ask the container whether the file is structurally complete.
+
+    Matroska files declare their segment size and MP4s index themselves in
+    a trailing moov atom, so MediaInfo reports truncation for a partial
+    copy of either — no matter how long the copy has been stalled. Returns
+    True when such a container looks complete, False when it reports
+    truncation, and None for anything that can't be probed (unidentifiable
+    files, or formats with no declared length).
+    """
+
+    try:
+        media_info = MediaInfo.parse(file_path)
+    except Exception:
+        return None
+
+    general = next(
+        (track for track in media_info.tracks if track.track_type == "General"),
+        None,
+    )
+    if general is None or general.format not in SELF_SIZING_FORMATS:
+        return None
+    if str(general.to_data().get("istruncated", "")).lower() == "yes":
+        return False
+    return True
+
 
 def copy_with_progress(src, dst, job, name, activity="Copying to library"):
     """Copy a file in chunks, reporting progress like the external tools do."""
@@ -356,7 +395,11 @@ class DownloadProgressPercentage(object):
 
 
 def localization_task(
-    file_path, force_upload=False, ignore_etag=False, transient_retries=0
+    file_path,
+    force_upload=False,
+    ignore_etag=False,
+    transient_retries=0,
+    completeness_retries=0,
 ):
     """Archive an untouched file and remove unnecessary language tracks.
 
@@ -403,6 +446,7 @@ def localization_task(
                     force_upload=force_upload,
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
+                    completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=f"retry:localization_task:'{basename}'",
                     job_result_ttl=86400,
@@ -436,12 +480,59 @@ def localization_task(
                     force_upload=force_upload,
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
+                    completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=f"retry:localization_task:'{basename}'",
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
                 return True
+
+            # The size check above can be fooled by a stalled network copy,
+            # which holds a constant size while still incomplete. Let the
+            # container prove completeness where it can — a partial Matroska
+            # or MP4 reports truncation no matter how long the copy stalls —
+            # and give formats that can't be probed a modification-time
+            # quiet period instead. A file that never proves itself within
+            # the budget is imported anyway, since corrupt-but-complete
+            # files are deliberately imported as-is.
+
+            verdict = probe_file_completeness(file_path)
+            if verdict is False or (
+                verdict is None
+                and time.time() - os.path.getmtime(file_path)
+                < COMPLETENESS_QUIET_SECONDS
+            ):
+                if completeness_retries >= MAX_COMPLETENESS_RETRIES:
+                    current_app.logger.warning(
+                        f"'{basename}' Could not be confirmed complete after "
+                        f"{MAX_COMPLETENESS_RETRIES} checks, importing anyway"
+                    )
+                else:
+                    reason = (
+                        "is still incomplete"
+                        if verdict is False
+                        else "was modified too recently"
+                    )
+                    current_app.logger.info(
+                        f"'{basename}' {reason}, returning to queue to try "
+                        f"again in 1 minute (check {completeness_retries + 1} "
+                        f"of {MAX_COMPLETENESS_RETRIES})"
+                    )
+                    current_app.import_scheduler.enqueue_in(
+                        timedelta(minutes=1),
+                        "app.videos.localization_task",
+                        file_path=file_path,
+                        force_upload=force_upload,
+                        ignore_etag=ignore_etag,
+                        transient_retries=transient_retries,
+                        completeness_retries=completeness_retries + 1,
+                        timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        job_id=f"retry:localization_task:'{basename}'",
+                        job_result_ttl=86400,
+                        job_description=f"'{basename}'",
+                    )
+                    return True
 
             file_details = evaluate_filename(file_path)
             current_app.logger.info(f"'{basename}' File details: {file_details}")
@@ -585,6 +676,7 @@ def localization_task(
                         force_upload=force_upload,
                         ignore_etag=ignore_etag,
                         transient_retries=transient_retries + 1,
+                        completeness_retries=completeness_retries,
                         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=f"retry:localization_task:'{basename}'",
                         job_result_ttl=86400,

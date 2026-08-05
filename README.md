@@ -40,6 +40,8 @@ And makes a great shopping list for searching for films that aren't as good as t
 
 Drop video files into the import directory (`IMPORT_DIR`, by default `../fitzflix/import` relative to the application). Fitzflix watches that directory and automatically processes each file it finds: it parses the filename to identify the movie or TV episode, looks up the canonical title on TMDb, strips non-native-language audio and subtitle tracks, sorts the file into a Plex-compatible folder hierarchy under the library directory, and (if configured) uploads the original to AWS S3 for archival.
 
+Before importing, Fitzflix confirms the file is completely copied: a file whose size is still changing waits, a Matroska or MP4 file whose container reports truncation (a partial copy, even a stalled one) waits until it's structurally complete, and formats that can't be probed wait until they haven't been modified for a couple of minutes. When copying files in manually over a slow or unreliable connection, the most reliable approach is still to copy to a temporary name the importer ignores — a dot-prefixed name like `.Movie (2021) - [Bluray-1080p].mkv` or a non-video extension like `.partial` — and rename it into place once the copy finishes; the watcher and the hourly sweep both skip dotfiles, so the rename is what makes the file visible, and a half-copied file can never be picked up.
+
 ### Naming movies
 
 ```

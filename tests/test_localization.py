@@ -12,6 +12,7 @@ import inspect
 import json
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -22,6 +23,13 @@ from app.models import File
 from app.videos import finalize_localization, localization_task, move_to_rejects
 
 from tests.conftest import _TMP
+
+
+def settle(path, age_seconds=3600):
+    """Backdate a file's mtime so the completeness gate trusts it."""
+
+    stamp = time.time() - age_seconds
+    os.utime(path, (stamp, stamp))
 
 
 @pytest.fixture(scope="module")
@@ -217,6 +225,7 @@ def test_unconvertible_file_imports_as_is(app, incoming_dir):
     source = os.path.join(incoming_dir, "Garbage (2021) - [DVD].dat")
     with open(source, "wb") as f:
         f.write(b"this is not a video file at all")
+    settle(source)
 
     with app.app_context():
         run_full_chain(app, source)
@@ -271,6 +280,7 @@ def test_staging_copy_transient_error_defers_and_retries(
     source = os.path.join(incoming_dir, basename)
     with open(source, "wb") as f:
         f.write(b"video bytes")
+    settle(source)
 
     def revoked_handles(src, dst, job, name, activity="Copying to library"):
         with open(dst, "wb") as f:
@@ -334,6 +344,7 @@ def test_staging_copy_transient_error_rejects_after_max_retries(
     source = os.path.join(incoming_dir, basename)
     with open(source, "wb") as f:
         f.write(b"video bytes")
+    settle(source)
 
     def revoked_handles(src, dst, job, name, activity="Copying to library"):
         raise OSError(errno.EBADF, "Bad file descriptor")
@@ -360,6 +371,7 @@ def test_staging_copy_permanent_error_rejects_immediately(
     source = os.path.join(incoming_dir, basename)
     with open(source, "wb") as f:
         f.write(b"video bytes")
+    settle(source)
 
     def no_space(src, dst, job, name, activity="Copying to library"):
         raise OSError(errno.ENOSPC, "No space left on device")
@@ -841,3 +853,107 @@ def test_rename_with_retries_raises_after_exhaustion(app, tmp_path, monkeypatch)
     with app.app_context():
         with pytest.raises(OSError):
             videos._rename_with_retries("/a", "/b", attempts=3, delay=0)
+
+
+def test_truncated_matroska_defers_even_when_size_is_stable(
+    app, sample_mkv, incoming_dir
+):
+    """The completeness gate: a partial MKV proves its own incompleteness
+    structurally, so even an old, size-stable file defers — this is the
+    stalled-network-copy case the size check can't see."""
+
+    basename = "Halfway (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f:
+        data = f.read()
+    with open(source, "wb") as f:
+        f.write(data[: len(data) * 6 // 10])
+    settle(source)
+
+    try:
+        with app.app_context():
+            assert localization_task(source) is True
+
+        retries = [
+            job
+            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:")
+        ]
+        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+        job = retries[0]
+        assert job.kwargs["completeness_retries"] == 1
+        inspect.signature(localization_task).bind(
+            *(job.args or ()), **(job.kwargs or {})
+        )
+
+        # Untouched: not staged, not rejected
+
+        assert os.path.exists(source)
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+        assert basename not in rejected_files(app)
+    finally:
+        os.remove(source)
+
+
+def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
+    """A format with no declared length can't prove completeness, so a
+    recently-modified one waits for the mtime quiet period."""
+
+    basename = "Fresh (2021) - [DVD].dat"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"unidentifiable bytes")
+
+    try:
+        with app.app_context():
+            assert localization_task(source) is True
+
+        retries = [
+            job
+            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:")
+        ]
+        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+        assert retries[0].kwargs["completeness_retries"] == 1
+        assert os.path.exists(source)
+    finally:
+        os.remove(source)
+
+
+def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
+    """A file that never proves itself within the budget goes through the
+    normal pipeline: corrupt-but-complete files import as-is by design."""
+
+    basename = "Stubborn (2021) - [DVD].dat"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"unidentifiable bytes")
+
+    with app.app_context():
+        assert (
+            localization_task(
+                source, completeness_retries=videos.MAX_COMPLETENESS_RETRIES
+            )
+            is True
+        )
+
+        # It proceeded into the pipeline instead of deferring again
+
+        assert not any(
+            job.id.startswith("retry:")
+            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+        )
+        move_jobs = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        ]
+        assert len(move_jobs) == 1
+
+        # Clean up the staged working copy and hidden output of the aborted chain
+
+        for _, _, files in os.walk(app.config["STAGING_DIR"]):
+            assert files == [f".{basename}"] or files == []
+        for stray in move_jobs[0].args[3], source:
+            if os.path.exists(stray):
+                os.remove(stray)

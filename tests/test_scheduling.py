@@ -134,6 +134,11 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
     with open(file_path, "wb") as f:
         f.write(b"not a real video")
 
+    # Backdate past the completeness gate so this test reaches the lock
+
+    stamp = time.time() - 3600
+    os.utime(file_path, (stamp, stamp))
+
     identifier = json.dumps(
         {
             "title": "Jaws",
