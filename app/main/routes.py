@@ -47,6 +47,7 @@ from app.main.forms import (
     MovieReviewForm,
     MovieShoppingExcludeForm,
     MovieShoppingFilterForm,
+    RejectActionForm,
     SyncAWSStorageForm,
     QualityFilterForm,
     ReviewExportForm,
@@ -2208,6 +2209,7 @@ def admin():
         "admin.html",
         title="Admin",
         health=health,
+        rejected_count=len(_rejected_files()),
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
@@ -2220,6 +2222,100 @@ def admin():
         failed_job_form=failed_job_form,
         filename_test_form=filename_test_form,
         filename_test_result=filename_test_result,
+    )
+
+
+def _rejected_files():
+    """Every real file under the rejects directory, newest first."""
+
+    rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(rejects_dir):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            full_path = os.path.join(dirpath, name)
+            try:
+                stats = os.stat(full_path)
+            except OSError:
+                continue
+            relative_path = os.path.relpath(full_path, rejects_dir)
+            entries.append(
+                {
+                    "path": relative_path,
+                    "basename": name,
+                    "reason": os.path.dirname(relative_path) or "unknown",
+                    "size": stats.st_size,
+                    "rejected_at": datetime.fromtimestamp(stats.st_mtime, timezone.utc),
+                }
+            )
+    entries.sort(key=lambda entry: entry["rejected_at"], reverse=True)
+    return entries
+
+
+@bp.route("/rejects", methods=["GET", "POST"])
+@login_required
+def rejects():
+    """Triage rejected files: send them back for re-import, or delete them.
+
+    Re-importing is just a move into the import directory — the filesystem
+    watcher and the hourly sweep take it from there.
+    """
+
+    rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
+    form = RejectActionForm()
+
+    if form.validate_on_submit():
+        # The posted path must resolve to a real file inside the rejects
+        # directory: no traversal, no symlink escapes
+
+        requested = os.path.realpath(os.path.join(rejects_dir, form.file_path.data))
+        if not requested.startswith(rejects_dir + os.sep) or not os.path.isfile(
+            requested
+        ):
+            flash("That file no longer exists in the rejects directory.", "danger")
+            return redirect(url_for("main.rejects"))
+
+        basename = os.path.basename(requested)
+
+        if form.delete_submit.data:
+            os.remove(requested)
+            current_app.logger.info(f"'{basename}' Deleted from the rejects directory")
+            flash(f"Deleted '{basename}'.", "success")
+
+        else:
+            destination = os.path.join(current_app.config["IMPORT_DIR"], basename)
+            if os.path.exists(destination):
+                flash(
+                    f"'{basename}' already exists in the import directory; "
+                    f"not overwriting it.",
+                    "danger",
+                )
+                return redirect(url_for("main.rejects"))
+            shutil.move(requested, destination)
+            current_app.logger.info(
+                f"'{basename}' Moved from rejects to the import directory"
+            )
+            flash(f"Moved '{basename}' to the import directory.", "success")
+
+        # Tidy the reason folder if this was its last file (never the
+        # rejects directory itself)
+
+        reason_dir = os.path.dirname(requested)
+        if reason_dir != rejects_dir:
+            try:
+                os.rmdir(reason_dir)
+            except OSError:
+                pass
+
+        return redirect(url_for("main.rejects"))
+
+    return render_template(
+        "rejects.html",
+        title="Rejected files",
+        rejected=_rejected_files(),
+        form=form,
     )
 
 

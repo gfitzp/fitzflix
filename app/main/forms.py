@@ -230,6 +230,12 @@ class FailedJobForm(FlaskForm):
     forget_submit = SubmitField("Forget")
 
 
+class RejectActionForm(FlaskForm):
+    file_path = HiddenField(validators=[DataRequired()])
+    reimport_submit = SubmitField("Re-import")
+    delete_submit = SubmitField("Delete")
+
+
 class FilenameTestForm(FlaskForm):
     test_filename = StringField("Filename", validators=[DataRequired()])
     filename_test_submit = SubmitField("Preview import")

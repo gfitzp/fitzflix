@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+{% if rejected %}
+<p class="text-muted">{{ rejected|length }} file{{ "s" if rejected|length != 1 }} in the rejects directory. The folder name says why each file was rejected; re-importing moves a file back to the import directory, where it's picked up automatically.</p>
+<div class="list-group">
+	{% for entry in rejected %}
+	<div class="list-group-item">
+		<h6 class="mb-1 text-break">{{ entry.basename }}</h6>
+		<p class="mb-2 small">
+			<span class="badge badge-warning">{{ entry.reason }}</span>
+			<span class="text-muted">{{ entry.size|filesizeformat }} &middot; rejected {{ moment(entry.rejected_at).fromNow() }}</span>
+		</p>
+		<form action="" method="post" class="d-inline">
+			{{ form.csrf_token() }}
+			<input type="hidden" name="file_path" value="{{ entry.path }}">
+			<button class="btn btn-sm btn-primary" name="reimport_submit" value="Re-import" type="submit">Re-import</button>
+			<button class="btn btn-sm btn-outline-danger" name="delete_submit" value="Delete" type="submit" onclick="return confirm('Permanently delete this file?');">Delete</button>
+		</form>
+	</div>
+	{% endfor %}
+</div>
+{% else %}
+<p class="lead">The rejects directory is empty &mdash; nothing to triage.</p>
+{% endif %}
+{% endblock %}
