@@ -927,6 +927,8 @@ def tv_library():
         .subquery()
     )
 
+    upgrade_threshold = _upgrade_threshold()
+
     # Run the season aggregate once for the whole library and bucket the rows
     # by series, rather than re-running the ranked subquery once per series
 
@@ -935,6 +937,8 @@ def tv_library():
             subquery.c.series_id,
             subquery.c.season,
             subquery.c.episodes,
+            RefQuality.preference,
+            RefQuality.physical_media,
             RefQuality.quality_title,
         )
         .join(RefQuality, (RefQuality.preference == subquery.c.preference))
@@ -947,12 +951,23 @@ def tv_library():
     )
 
     seasons_by_series = {}
-    for series_id, season, num_episodes, min_quality in season_rows:
+    for (
+        series_id,
+        season,
+        num_episodes,
+        preference,
+        physical,
+        min_quality,
+    ) in season_rows:
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
                 "episode_count": num_episodes,
                 "min_quality": min_quality,
+                # Physical-media seasons (DVD, SD/720p Blu-ray) are often the
+                # only release that will ever exist, so they don't count as
+                # upgradable
+                "upgradable": not physical and preference < upgrade_threshold,
             }
         )
 
@@ -2306,6 +2321,7 @@ def _tv_search_results(wildcard, limit=50):
             season_aggregate.c.season,
             season_aggregate.c.episodes,
             season_aggregate.c.preference,
+            RefQuality.physical_media,
             RefQuality.quality_title,
         )
         .join(RefQuality, (RefQuality.preference == season_aggregate.c.preference))
@@ -2318,14 +2334,17 @@ def _tv_search_results(wildcard, limit=50):
     )
 
     seasons_by_series = {}
-    for series_id, season, episodes, preference, worst_quality in season_rows:
+    for series_id, season, episodes, preference, physical, worst_quality in season_rows:
         seasons_by_series.setdefault(series_id, []).append(
             {
                 "season": season,
                 "episode_count": episodes,
                 "worst_quality": worst_quality,
                 "preference": preference,
-                "upgradable": preference < upgrade_threshold,
+                # Physical-media seasons (DVD, SD/720p Blu-ray) are often the
+                # only release that will ever exist, so they don't count as
+                # upgradable
+                "upgradable": not physical and preference < upgrade_threshold,
             }
         )
 

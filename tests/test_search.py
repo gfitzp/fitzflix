@@ -110,6 +110,31 @@ def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
     assert 'badge-success" title="1 episode">Season 2: Bluray-1080p' in page
 
 
+def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
+    """Seasons whose worst copy came from physical media (DVD, SD/720p
+    Blu-ray) show green: they're often the only release that will ever
+    exist. Non-physical qualities below the threshold stay amber."""
+
+    with app.app_context():
+        series = make_tv_series("Disc Only (1995)")
+        make_tv_file(series, 1, 1, "DVD")
+        make_tv_file(series, 2, 1, "Bluray-480p")
+        make_tv_file(series, 3, 1, "WEBDL-480p")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=disc+only").get_data(as_text=True)
+    assert 'badge-success" title="1 episode">Season 1: DVD' in page
+    assert 'badge-success" title="1 episode">Season 2: Bluray-480p' in page
+    assert 'badge-warning" title="1 episode">Season 3: WEBDL-480p' in page
+
+    # The TV library page uses the same flag on its season badges
+
+    page = admin_client.get("/library/tv").get_data(as_text=True)
+    assert 'badge-success">DVD' in page
+    assert 'badge-success">Bluray-480p' in page
+    assert 'badge-warning">WEBDL-480p' in page
+
+
 def test_search_wildcard_ignores_word_gaps(app, admin_client):
     with app.app_context():
         movie = make_movie("The Three Amigos", 1986)
