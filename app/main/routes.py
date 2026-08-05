@@ -12,8 +12,11 @@ import traceback
 from datetime import datetime, timezone
 from PIL import Image
 
+import requests
+
 from flask import (
     current_app,
+    jsonify,
     render_template,
     flash,
     redirect,
@@ -2190,6 +2193,297 @@ def about():
     """Show general information about the Fitzflix application."""
 
     return render_template("about.html")
+
+
+def _upgrade_threshold():
+    """The quality preference below which a copy counts as upgradable."""
+
+    return (
+        db.session.query(RefQuality.preference)
+        .filter(RefQuality.quality_title == "Bluray-1080p")
+        .scalar()
+        or 0
+    )
+
+
+def _movie_search_results(wildcard, limit=50):
+    """Movies whose titles match, each with its best owned copy (if any)."""
+
+    upgrade_threshold = _upgrade_threshold()
+
+    results = []
+    movies = (
+        Movie.query.filter(
+            db.or_(
+                Movie.title.ilike(f"%{wildcard}%"),
+                Movie.tmdb_title.ilike(f"%{wildcard}%"),
+            )
+        )
+        .order_by(Movie.title.asc(), Movie.year.asc())
+        .limit(limit)
+        .all()
+    )
+    for movie in movies:
+        best = (
+            movie.files.filter(File.feature_type_id == None)
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
+            .first()
+        )
+        review = movie.ratings.first()
+        results.append(
+            {
+                "movie": movie,
+                "best_file": best,
+                "quality": best.quality.quality_title if best else None,
+                "upgradable": bool(
+                    best
+                    and (best.fullscreen or best.quality.preference < upgrade_threshold)
+                ),
+                "rating": review.rating if review else None,
+            }
+        )
+    return results
+
+
+def _tv_search_results(wildcard, limit=50):
+    """TV series whose titles match, each season summarized by the worst
+    quality among its best (rank-1) episode files.
+
+    TV shows are usually bought season by season, so a series-wide "best
+    quality" would hide the seasons that need upgrading: what matters in a
+    store is each season's weakest link.
+    """
+
+    series_list = (
+        TVSeries.query.filter(
+            db.or_(
+                TVSeries.title.ilike(f"%{wildcard}%"),
+                TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
+            )
+        )
+        .order_by(TVSeries.title.asc())
+        .limit(limit)
+        .all()
+    )
+    if not series_list:
+        return []
+
+    upgrade_threshold = _upgrade_threshold()
+    series_ids = [series.id for series in series_list]
+
+    # Same shape as the TV library page: rank each episode's copies, keep
+    # the best copy per episode, then take each season's worst best-copy
+
+    ranked_files = (
+        db.session.query(
+            File.id,
+            tv_file_rank(),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    season_aggregate = (
+        db.session.query(
+            File.series_id,
+            File.season,
+            db.func.count(db.func.distinct(File.episode)).label("episodes"),
+            db.func.min(RefQuality.preference).label("preference"),
+        )
+        .group_by(File.series_id, File.season)
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .join(ranked_files, (ranked_files.c.id == File.id))
+        .filter(ranked_files.c.rank == 1)
+        .filter(File.series_id.in_(series_ids))
+        .subquery()
+    )
+
+    season_rows = (
+        db.session.query(
+            season_aggregate.c.series_id,
+            season_aggregate.c.season,
+            season_aggregate.c.episodes,
+            season_aggregate.c.preference,
+            RefQuality.quality_title,
+        )
+        .join(RefQuality, (RefQuality.preference == season_aggregate.c.preference))
+        .order_by(
+            season_aggregate.c.series_id,
+            db.case((season_aggregate.c.season == 0, 1), else_=0).asc(),
+            season_aggregate.c.season.asc(),
+        )
+        .all()
+    )
+
+    seasons_by_series = {}
+    for series_id, season, episodes, preference, worst_quality in season_rows:
+        seasons_by_series.setdefault(series_id, []).append(
+            {
+                "season": season,
+                "episode_count": episodes,
+                "worst_quality": worst_quality,
+                "preference": preference,
+                "upgradable": preference < upgrade_threshold,
+            }
+        )
+
+    return [
+        {
+            "series": series,
+            "file_count": series.files.count(),
+            "seasons": seasons_by_series.get(series.id, []),
+        }
+        for series in series_list
+    ]
+
+
+@bp.route("/search")
+@login_required
+def search():
+    """Search movies and TV series from one box, anywhere in the app."""
+
+    q = (request.args.get("q") or "").strip()
+    movie_results = []
+    tv_results = []
+
+    if q:
+        # Spaces become wildcards so word order and punctuation don't matter
+
+        wildcard = q.replace(" ", "%")
+        movie_results = _movie_search_results(wildcard)
+        tv_results = _tv_search_results(wildcard)
+
+    return render_template(
+        "search.html",
+        title=f"Search results for '{q}'" if q else "Search",
+        q=q,
+        movie_results=movie_results,
+        tv_results=tv_results,
+    )
+
+
+@bp.route("/search.json")
+@login_required
+def search_json():
+    """Type-ahead suggestions for the global search box."""
+
+    q = (request.args.get("q") or "").strip()
+    results = []
+
+    if len(q) >= 2:
+        wildcard = q.replace(" ", "%")
+
+        for result in _movie_search_results(wildcard, limit=5):
+            movie = result["movie"]
+            display_title = movie.tmdb_title if movie.tmdb_title else movie.title
+            display_year = (
+                movie.tmdb_release_date.year
+                if movie.tmdb_title and movie.tmdb_release_date
+                else movie.year
+            )
+            results.append(
+                {
+                    "type": "Movie",
+                    "title": f"{display_title} ({display_year})",
+                    "detail": result["quality"] or "No copy in library",
+                    "url": url_for("main.movie", movie_id=movie.id),
+                }
+            )
+
+        for result in _tv_search_results(wildcard, limit=5):
+            series = result["series"]
+            seasons = result["seasons"]
+            if seasons:
+                worst = min(seasons, key=lambda season: season["preference"])
+                detail = (
+                    f"{len(seasons)} season{'s' if len(seasons) != 1 else ''}, "
+                    f"worst {worst['worst_quality']}"
+                )
+            else:
+                detail = "No copy in library"
+            results.append(
+                {
+                    "type": "TV",
+                    "title": (series.tmdb_name if series.tmdb_name else series.title),
+                    "detail": detail,
+                    "url": url_for("main.tv", series_id=series.id),
+                }
+            )
+
+    return jsonify({"results": results})
+
+
+@bp.route("/search/tmdb")
+@login_required
+def search_tmdb():
+    """Look a title up on TMDb, to confirm what exists beyond the library."""
+
+    q = (request.args.get("q") or "").strip()
+    movie_matches = []
+    tv_matches = []
+    error = None
+
+    if q and not current_app.config["TMDB_API_KEY"]:
+        error = "TMDB_API_KEY is not configured, so TMDb can't be searched."
+
+    elif q:
+        params = {"api_key": current_app.config["TMDB_API_KEY"], "query": q}
+        try:
+            for url, bucket, title_key, date_key in (
+                ("/search/movie", movie_matches, "title", "release_date"),
+                ("/search/tv", tv_matches, "name", "first_air_date"),
+            ):
+                r = requests.get(
+                    current_app.config["TMDB_API_URL"] + url,
+                    params=params,
+                    timeout=10,
+                )
+                r.raise_for_status()
+                for result in (r.json().get("results") or [])[:10]:
+                    bucket.append(
+                        {
+                            "tmdb_id": result.get("id"),
+                            "title": result.get(title_key),
+                            "year": (result.get(date_key) or "")[:4],
+                            "overview": result.get("overview"),
+                            "library_id": None,
+                        }
+                    )
+
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            error = "TMDb could not be reached; try again in a moment."
+
+        # Annotate which results are already in the library, by TMDb id
+
+        if movie_matches:
+            owned = dict(
+                db.session.query(Movie.tmdb_id, Movie.id)
+                .filter(Movie.tmdb_id.in_([m["tmdb_id"] for m in movie_matches]))
+                .all()
+            )
+            for match in movie_matches:
+                match["library_id"] = owned.get(match["tmdb_id"])
+
+        if tv_matches:
+            owned = dict(
+                db.session.query(TVSeries.tmdb_id, TVSeries.id)
+                .filter(TVSeries.tmdb_id.in_([m["tmdb_id"] for m in tv_matches]))
+                .all()
+            )
+            for match in tv_matches:
+                match["library_id"] = owned.get(match["tmdb_id"])
+
+    return render_template(
+        "search_tmdb.html",
+        title=f"TMDb results for '{q}'" if q else "TMDb search",
+        q=q,
+        movie_matches=movie_matches,
+        tv_matches=tv_matches,
+        error=error,
+    )
 
 
 @bp.route("/shopping-list/movie", methods=["GET", "POST"])

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+{% if not q %}
+<p class="text-muted">Type a movie or TV series title into the search box to see whether it's in the library.</p>
+{% else %}
+
+{% if movie_results %}
+<h4>Movies</h4>
+<div class="list-group mb-4">
+	{% for result in movie_results %}
+	{% set movie = result.movie %}
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
+		<div class="media">
+			{% include "_movie_poster_small.html" %}
+			<div class="media-body">
+				<h5 class="mb-1">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</h5>
+				{% if result.quality %}
+				<span class="badge badge-{{ "warning" if result.upgradable else "success" }}">{{ result.quality }}{% if result.upgradable %} &mdash; upgrade candidate{% endif %}</span>
+				{% else %}
+				<span class="badge badge-secondary">No copy in library</span>
+				{% endif %}
+				{% if result.rating is not none %}
+				<span class="badge badge-info">Seen &mdash; rated {{ result.rating }}</span>
+				{% endif %}
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
+{% endif %}
+
+{% if tv_results %}
+<h4>TV Shows</h4>
+<div class="list-group mb-4">
+	{% for result in tv_results %}
+	{% set tv = result.series %}
+	<a href="{{ url_for('main.tv', series_id=tv.id) }}" class="list-group-item list-group-item-action">
+		<div class="media">
+			{% include "_tv_poster_small.html" %}
+			<div class="media-body">
+				<h5 class="mb-1">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h5>
+				{% if result.seasons %}
+				{# Each season is summarized by the worst quality among its
+				   best (rank=1) episode files — amber means that season has
+				   at least one episode worth upgrading #}
+				{% for season in result.seasons %}
+				<span class="badge badge-{{ "warning" if season.upgradable else "success" }}" title="{{ season.episode_count }} episode{{ "s" if season.episode_count != 1 }}">{{ "Specials" if season.season == 0 else "Season " ~ season.season }}: {{ season.worst_quality }}</span>
+				{% endfor %}
+				<span class="badge badge-light">{{ result.file_count }} file{{ "s" if result.file_count != 1 }}</span>
+				{% else %}
+				<span class="badge badge-secondary">No episodes in library</span>
+				{% endif %}
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
+{% endif %}
+
+{% if not movie_results and not tv_results %}
+<p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
+{% endif %}
+
+<a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDb</a>
+<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.files', q=q) }}">Search filenames</a>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+{% if error %}
+<div class="alert alert-warning" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if movie_matches %}
+<h4>Movies on TMDb</h4>
+<div class="list-group mb-4">
+	{% for match in movie_matches %}
+	<div class="list-group-item">
+		<div class="d-flex w-100 justify-content-between">
+			<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
+			{% if match.library_id %}
+			<a href="{{ url_for('main.movie', movie_id=match.library_id) }}"><span class="badge badge-success">In library</span></a>
+			{% else %}
+			<span class="badge badge-secondary">Not in library</span>
+			{% endif %}
+		</div>
+		{% if match.overview %}
+		<p class="mb-1 small text-muted">{{ match.overview|truncate(240) }}</p>
+		{% endif %}
+	</div>
+	{% endfor %}
+</div>
+{% endif %}
+
+{% if tv_matches %}
+<h4>TV shows on TMDb</h4>
+<div class="list-group mb-4">
+	{% for match in tv_matches %}
+	<div class="list-group-item">
+		<div class="d-flex w-100 justify-content-between">
+			<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
+			{% if match.library_id %}
+			<a href="{{ url_for('main.tv', series_id=match.library_id) }}"><span class="badge badge-success">In library</span></a>
+			{% else %}
+			<span class="badge badge-secondary">Not in library</span>
+			{% endif %}
+		</div>
+		{% if match.overview %}
+		<p class="mb-1 small text-muted">{{ match.overview|truncate(240) }}</p>
+		{% endif %}
+	</div>
+	{% endfor %}
+</div>
+{% endif %}
+
+{% if q and not error and not movie_matches and not tv_matches %}
+<p class="lead">TMDb has no matches for &lsquo;<strong>{{ q }}</strong>&rsquo; either.</p>
+{% endif %}
+
+<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.search', q=q) }}">&laquo; Back to library search</a>
+{% endblock %}
