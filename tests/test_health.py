@@ -177,7 +177,7 @@ def test_worker_health_counts_and_staleness(app, monkeypatch):
 
 def test_expected_workers_derived_from_program_roster():
     assert maintenance.EXPECTED_WORKERS == {
-        "fitzflix-user-request": 1,
+        "fitzflix-user-request": 2,
         "fitzflix-import": 5,
         "fitzflix-file-operation": 5,
         "fitzflix-transcode": 1,

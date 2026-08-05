@@ -48,7 +48,11 @@ PROGRAM_QUEUES = {
     "fitzflix-file-operation": ["fitzflix-file-operation", "fitzflix-import"],
 }
 
-PROGRAM_COUNTS = {"fitzflix-import": 2, "fitzflix-file-operation": 2}
+PROGRAM_COUNTS = {
+    "fitzflix-import": 2,
+    "fitzflix-file-operation": 2,
+    "fitzflix-user-request": 2,
+}
 
 EXPECTED_WORKERS = {}
 for _program, _queues in PROGRAM_QUEUES.items():
