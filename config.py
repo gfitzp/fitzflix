@@ -81,6 +81,7 @@ class Config(object):
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
     AWS_BACKUP_PREFIX                   = os.environ.get("AWS_BACKUP_PREFIX") or "backup"
+    AWS_CUSTOM_POSTERS_PREFIX           = os.environ.get("AWS_CUSTOM_POSTERS_PREFIX") or "custom-posters"
     IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None
     FORCE_UPLOAD                        = os.environ.get("FORCE_UPLOAD") is not None
     AWS_SQS_URL                         = os.environ.get("AWS_SQS_URL") or None
@@ -101,8 +102,12 @@ class Config(object):
 
     # Database backup configuration
     MYSQLDUMP_BIN                       = os.environ.get("MYSQLDUMP_BIN") or "/opt/homebrew/bin/mysqldump"
+    MYSQL_BIN                           = os.environ.get("MYSQL_BIN") or "/opt/homebrew/bin/mysql"
     DB_BACKUP_DIR                       = os.environ.get("DB_BACKUP_DIR") or os.path.join(basedir, "backups")
     DB_BACKUP_RETENTION_DAYS            = int(os.environ.get("DB_BACKUP_RETENTION_DAYS") or 14)
+    BACKUP_PASSPHRASE                   = os.environ.get("BACKUP_PASSPHRASE") or None
+    ENV_FILE                            = os.environ.get("ENV_FILE") or os.path.join(basedir, ".env")
+    CUSTOM_ARTWORK_DIR                  = os.environ.get("CUSTOM_ARTWORK_DIR") or os.path.join(basedir, "app", "static", "custom")
 
     # AWS Glacier restore cost estimation, in USD: a per-object retrieval
     # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.

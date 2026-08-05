@@ -647,6 +647,97 @@ def backup_database():
                 f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], uploaded_key)}'"
             )
 
+            # Back up the environment file too — it's the one configuration
+            # that exists nowhere else — encrypted with BACKUP_PASSPHRASE.
+            # The passphrase belongs in a password manager: it's the key to
+            # recovering everything else
+
+            env_file = current_app.config["ENV_FILE"]
+            if not current_app.config["BACKUP_PASSPHRASE"]:
+                current_app.logger.info(
+                    "BACKUP_PASSPHRASE is not set, "
+                    "so the environment file is not being backed up"
+                )
+            elif os.path.isfile(env_file):
+                encrypted_file = os.path.join(backup_dir, f".dotenv-{stamp}.enc")
+                subprocess.run(
+                    [
+                        "openssl",
+                        "enc",
+                        "-aes-256-cbc",
+                        "-pbkdf2",
+                        "-iter",
+                        "200000",
+                        "-salt",
+                        "-in",
+                        env_file,
+                        "-out",
+                        encrypted_file,
+                        "-pass",
+                        "env:BACKUP_PASSPHRASE",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    env={
+                        **os.environ,
+                        "BACKUP_PASSPHRASE": current_app.config["BACKUP_PASSPHRASE"],
+                    },
+                )
+                env_key = f"{backup_prefix}/dotenv-{stamp}.enc"
+                client.upload_file(
+                    encrypted_file, current_app.config["AWS_BUCKET"], env_key
+                )
+                os.remove(encrypted_file)
+                current_app.logger.info(
+                    f"Uploaded the encrypted environment file as '{env_key}'"
+                )
+
+            # Mirror the custom posters to S3: user-created artwork that
+            # exists only on this machine. New and changed files upload,
+            # remote copies of deleted files are removed; the prefix sits
+            # outside AWS_BACKUP_PREFIX so retention pruning never touches it
+
+            posters_dir = current_app.config["CUSTOM_ARTWORK_DIR"]
+            posters_prefix = current_app.config["AWS_CUSTOM_POSTERS_PREFIX"]
+            posters_uploaded = 0
+            posters_deleted = 0
+            if os.path.isdir(posters_dir):
+                remote_posters = {
+                    object["Key"]: object["Size"]
+                    for object in get_matching_s3_objects(
+                        current_app.config["AWS_BUCKET"],
+                        prefix=f"{posters_prefix}/",
+                    )
+                }
+                local_keys = set()
+                for dirpath, dirnames, filenames in os.walk(posters_dir):
+                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                    for name in filenames:
+                        if name.startswith("."):
+                            continue
+                        full_path = os.path.join(dirpath, name)
+                        key = (
+                            f"{posters_prefix}/"
+                            f"{os.path.relpath(full_path, posters_dir)}"
+                        )
+                        local_keys.add(key)
+                        if remote_posters.get(key) != os.path.getsize(full_path):
+                            client.upload_file(
+                                full_path, current_app.config["AWS_BUCKET"], key
+                            )
+                            posters_uploaded += 1
+                for key in remote_posters:
+                    if key not in local_keys:
+                        client.delete_object(
+                            Bucket=current_app.config["AWS_BUCKET"], Key=key
+                        )
+                        posters_deleted += 1
+                if posters_uploaded or posters_deleted:
+                    current_app.logger.info(
+                        f"Custom posters synced to S3: "
+                        f"{posters_uploaded} uploaded, {posters_deleted} removed"
+                    )
+
             # Prune remote backups past the retention window
 
             remote_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
@@ -680,6 +771,162 @@ def backup_database():
             f"remote backup(s) older than {retention_days} days"
             f"{' ' + str(deleted + remote_deleted) if deleted or remote_deleted else ''}"
         )
+        return True
+
+
+RESTORE_CHECK_DATABASE = "fitzflix_restore_check"
+
+# Tables whose restored row counts prove the dump holds the real library;
+# a nightly dump may lag live growth slightly, hence the tolerance below
+
+RESTORE_CHECK_TABLES = ("movie", "file", "tv_series", "user", "user_movie_review")
+RESTORE_CHECK_TOLERANCE = 0.9
+
+
+def _newest_backup_key(objects, database):
+    """The most recent database dump among a backup-prefix S3 listing."""
+
+    dumps = [
+        object
+        for object in objects
+        if os.path.basename(object["Key"]).startswith(f"{database}-")
+        and object["Key"].endswith(".sql.gz")
+    ]
+    if not dumps:
+        return None
+    return max(dumps, key=lambda object: object["LastModified"])["Key"]
+
+
+def restore_drill():
+    """Prove the offsite database backup actually restores.
+
+    Downloads the newest dump from S3 (deliberately not the local copy —
+    the drill verifies what a disaster recovery would really use), loads it
+    into a scratch database, and compares the restored contents against the
+    live database. The scratch database needs a one-time grant:
+
+        GRANT ALL PRIVILEGES ON `fitzflix_restore_check`.* TO '<user>'@'localhost';
+
+    A failure raises, which lands the job on the failed-tasks page and
+    emails the error.
+    """
+
+    with app.app_context():
+        if not current_app.config["AWS_BUCKET"]:
+            current_app.logger.info("AWS is not configured, skipping the restore drill")
+            return True
+
+        # Imported here because app.videos imports this module
+
+        from app.videos import aws_s3_client, get_matching_s3_objects
+
+        url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
+        backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
+
+        key = _newest_backup_key(
+            get_matching_s3_objects(
+                current_app.config["AWS_BUCKET"], prefix=f"{backup_prefix}/"
+            ),
+            url.database,
+        )
+        if key is None:
+            raise RuntimeError(
+                f"Restore drill failed: no database dumps found under "
+                f"'{backup_prefix}/' in S3"
+            )
+
+        download_path = os.path.join(
+            current_app.config["DB_BACKUP_DIR"], ".restore-drill.sql.gz"
+        )
+        os.makedirs(current_app.config["DB_BACKUP_DIR"], exist_ok=True)
+        client = aws_s3_client(with_retries=True)
+        client.download_file(current_app.config["AWS_BUCKET"], key, download_path)
+
+        mysql_env = dict(os.environ)
+        if url.password:
+            mysql_env["MYSQL_PWD"] = url.password
+        mysql_command = [
+            current_app.config["MYSQL_BIN"],
+            f"--user={url.username}",
+        ]
+        if url.host:
+            mysql_command.append(f"--host={url.host}")
+        if url.port:
+            mysql_command.append(f"--port={url.port}")
+
+        def run_mysql(arguments, **kwargs):
+            return subprocess.run(
+                mysql_command + arguments,
+                env=mysql_env,
+                check=True,
+                capture_output=True,
+                **kwargs,
+            )
+
+        try:
+            run_mysql(
+                [
+                    "-e",
+                    f"DROP DATABASE IF EXISTS {RESTORE_CHECK_DATABASE}; "
+                    f"CREATE DATABASE {RESTORE_CHECK_DATABASE}",
+                ]
+            )
+            with gzip.open(download_path, "rb") as f:
+                run_mysql([RESTORE_CHECK_DATABASE], input=f.read())
+
+            # The restored schema must be at a migration state
+
+            version = db.session.execute(
+                text(
+                    f"SELECT version_num "
+                    f"FROM {RESTORE_CHECK_DATABASE}.alembic_version"
+                )
+            ).scalar()
+            if not version:
+                raise RuntimeError(
+                    "Restore drill failed: the restored database has no "
+                    "alembic_version"
+                )
+
+            # Restored row counts must be close to the live ones
+
+            summary = []
+            for table in RESTORE_CHECK_TABLES:
+                live = db.session.execute(
+                    text(f"SELECT COUNT(*) FROM `{table}`")
+                ).scalar()
+                restored = db.session.execute(
+                    text(f"SELECT COUNT(*) " f"FROM {RESTORE_CHECK_DATABASE}.`{table}`")
+                ).scalar()
+                if restored < int(live * RESTORE_CHECK_TOLERANCE) or (
+                    live > 0 and restored == 0
+                ):
+                    raise RuntimeError(
+                        f"Restore drill failed: '{table}' restored "
+                        f"{restored} row(s) but the live table has {live}"
+                    )
+                summary.append(f"{table} {restored}/{live}")
+
+            current_app.logger.info(
+                f"Restore drill passed: '{key}' restored at migration "
+                f"{version} ({', '.join(summary)})"
+            )
+
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or b"").decode("utf-8", "replace")[:300]
+            current_app.logger.error(f"Restore drill failed running mysql: {stderr}")
+            raise
+
+        finally:
+            try:
+                run_mysql(["-e", f"DROP DATABASE IF EXISTS {RESTORE_CHECK_DATABASE}"])
+            except Exception:
+                pass
+            try:
+                os.remove(download_path)
+            except OSError:
+                pass
+
         return True
 
 

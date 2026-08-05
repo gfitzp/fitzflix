@@ -81,6 +81,9 @@ class TestConfig(Config):
 
     LOG_FILE = os.path.join(_TMP, "logs", "fitzflix.log")
     DB_BACKUP_DIR = os.path.join(_TMP, "backups")
+    BACKUP_PASSPHRASE = None
+    ENV_FILE = os.path.join(_TMP, "dotenv-for-tests")
+    CUSTOM_ARTWORK_DIR = os.path.join(_TMP, "custom-artwork")
 
     MAIL_SERVER = None
     MAIL_USERNAME = None

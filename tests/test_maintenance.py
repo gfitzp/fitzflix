@@ -186,3 +186,177 @@ def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeyp
         backup_database()
 
     assert len(list(backup_dir.glob("fitzflix_test-*.sql.gz"))) == 1
+
+
+def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path):
+    """With a passphrase set, the nightly backup uploads an encrypted .env
+    that the documented openssl command can decrypt."""
+
+    import os
+    import subprocess
+
+    import app.videos as videos
+
+    stub, backup_dir = mysqldump_stub
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+    monkeypatch.setitem(app.config, "BACKUP_PASSPHRASE", "drill-passphrase")
+    env_file = tmp_path / "dotenv"
+    env_file.write_text("SECRET_KEY=abc123\n")
+    monkeypatch.setitem(app.config, "ENV_FILE", str(env_file))
+
+    captured = {}
+
+    class FakeS3Client:
+        def upload_file(self, filename, bucket, key, **kwargs):
+            with open(filename, "rb") as f:
+                captured[key] = f.read()
+
+        def delete_object(self, Bucket, Key):
+            pass
+
+    monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3Client())
+    monkeypatch.setattr(
+        videos,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="", suffix="": iter([]),
+    )
+
+    with app.app_context():
+        backup_database()
+
+    env_keys = [k for k in captured if "/dotenv-" in k and k.endswith(".enc")]
+    assert len(env_keys) == 1
+
+    # Actually encrypted, and recoverable with the runbook's exact command
+
+    encrypted = captured[env_keys[0]]
+    assert b"SECRET_KEY" not in encrypted
+
+    encrypted_path = tmp_path / "roundtrip.enc"
+    encrypted_path.write_bytes(encrypted)
+    decrypted = subprocess.run(
+        [
+            "openssl",
+            "enc",
+            "-d",
+            "-aes-256-cbc",
+            "-pbkdf2",
+            "-iter",
+            "200000",
+            "-in",
+            str(encrypted_path),
+            "-pass",
+            "env:BACKUP_PASSPHRASE",
+        ],
+        env={**os.environ, "BACKUP_PASSPHRASE": "drill-passphrase"},
+        capture_output=True,
+        check=True,
+    )
+    assert decrypted.stdout == b"SECRET_KEY=abc123\n"
+
+    # The encrypted temp file didn't linger locally
+
+    assert not list(backup_dir.glob(".dotenv-*"))
+
+
+def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
+    """Custom posters mirror to S3: new and changed files upload, unchanged
+    ones don't, and remote copies of deleted files are removed."""
+
+    import os
+    import shutil
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+
+    stub, backup_dir = mysqldump_stub
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+
+    posters_dir = os.path.join(app.config["CUSTOM_ARTWORK_DIR"], "movie", "7", "w185")
+    os.makedirs(posters_dir, exist_ok=True)
+    with open(os.path.join(posters_dir, "new.jpg"), "wb") as f:
+        f.write(b"new poster bytes")
+    with open(os.path.join(posters_dir, "changed.jpg"), "wb") as f:
+        f.write(b"now bigger contents")
+    with open(os.path.join(posters_dir, "same.jpg"), "wb") as f:
+        f.write(b"12345")
+
+    now = datetime.now(timezone.utc)
+
+    def fake_objects(bucket, prefix="", suffix=""):
+        if prefix.startswith("custom-posters"):
+            return iter(
+                [
+                    {
+                        "Key": "custom-posters/movie/7/w185/changed.jpg",
+                        "Size": 1,
+                        "LastModified": now,
+                    },
+                    {
+                        "Key": "custom-posters/movie/7/w185/same.jpg",
+                        "Size": 5,
+                        "LastModified": now,
+                    },
+                    {
+                        "Key": "custom-posters/orphan.jpg",
+                        "Size": 3,
+                        "LastModified": now,
+                    },
+                ]
+            )
+        return iter([])
+
+    uploads = []
+    deletes = []
+
+    class FakeS3Client:
+        def upload_file(self, filename, bucket, key, **kwargs):
+            uploads.append(key)
+
+        def delete_object(self, Bucket, Key):
+            deletes.append(Key)
+
+    monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3Client())
+    monkeypatch.setattr(videos, "get_matching_s3_objects", fake_objects)
+
+    try:
+        with app.app_context():
+            backup_database()
+
+        poster_uploads = {k for k in uploads if k.startswith("custom-posters/")}
+        assert poster_uploads == {
+            "custom-posters/movie/7/w185/new.jpg",
+            "custom-posters/movie/7/w185/changed.jpg",
+        }
+        assert deletes == ["custom-posters/orphan.jpg"]
+    finally:
+        shutil.rmtree(app.config["CUSTOM_ARTWORK_DIR"], ignore_errors=True)
+
+
+def test_newest_backup_key_picks_latest_dump():
+    from datetime import datetime, timezone
+
+    from app.maintenance import _newest_backup_key
+
+    def at(day):
+        return datetime(2026, 8, day, tzinfo=timezone.utc)
+
+    objects = [
+        {"Key": "backup/fitzflix_test-2026-08-01.sql.gz", "LastModified": at(1)},
+        {"Key": "backup/fitzflix_test-2026-08-05.sql.gz", "LastModified": at(5)},
+        {"Key": "backup/dotenv-2026-08-06.enc", "LastModified": at(6)},
+        {"Key": "backup/", "LastModified": at(6)},
+        {"Key": "backup/otherdb-2026-08-07.sql.gz", "LastModified": at(7)},
+    ]
+    assert (
+        _newest_backup_key(objects, "fitzflix_test")
+        == "backup/fitzflix_test-2026-08-05.sql.gz"
+    )
+    assert _newest_backup_key([], "fitzflix_test") is None
+
+
+def test_restore_drill_skips_without_aws(app):
+    from app.maintenance import restore_drill
+
+    with app.app_context():
+        assert restore_drill() is True

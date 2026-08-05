@@ -294,13 +294,41 @@ Archived originals live in S3 Glacier Deep Archive, so getting one back is a two
 1. On the file's detail page, request the download — Fitzflix asks AWS to restore the object from Glacier. Restores from Deep Archive typically take hours to complete. To restore in bulk, a TV series page's **Restore series from AWS** button (or a season page's **Restore season from AWS**) requests every best-ranked archived file at once. Because restores cost real money, each restore button shows an estimated cost (per-request, per-GB retrieval, and per-GB transfer fees — season/series restores use the cheaper Bulk retrieval tier, single files use Standard; tune the `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` values in `.env` to match the current AWS rate card) and requires your account password to confirm.
 2. When AWS finishes the restore, it posts a notification to the SQS queue (`AWS_SQS_URL`; the S3 bucket must be configured to send its restore-completed event notifications there). Fitzflix polls the queue automatically every hour and downloads each completed restore back into the library; run `flask sqs` to poll immediately instead of waiting for the next scheduled check.
 
+
+## Disaster recovery
+
+Everything needed to rebuild Fitzflix on a fresh machine derives from three things kept outside the machine: **AWS credentials + the bucket name, the `BACKUP_PASSPHRASE`, and access to this git repository** — keep all three in a password manager. The steps, in order:
+
+1. **Install the system requirements** (Homebrew: MariaDB, Redis, supervisor, and the third-party binaries listed above), clone this repository, create the virtualenv, and `pip install -r requirements.txt`.
+2. **Recover `.env`**: download the newest `backup/dotenv-<date>.enc` from the S3 bucket and decrypt it into the project root:
+
+   ```
+   BACKUP_PASSPHRASE=<from your password manager> openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in dotenv-<date>.enc -out .env -pass env:BACKUP_PASSPHRASE
+   ```
+3. **Create the database and user** named in the recovered `SQLALCHEMY_DATABASE_URI`, grant the user all privileges on that database, and add the restore-drill grant while you're there:
+
+   ```
+   GRANT ALL PRIVILEGES ON `fitzflix_restore_check`.* TO '<user>'@'localhost';
+   ```
+4. **Restore the newest dump** from `backup/` in the bucket:
+
+   ```
+   zcat fitzflix_db-<date>.sql.gz | mysql --user=<user> --password <database>
+   ```
+
+   then bring the schema up to the current code with `flask db upgrade` (a no-op unless the code is newer than the dump).
+5. **Restore the custom posters**: copy the bucket's `custom-posters/` prefix back to `app/static/custom/` (e.g. `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`). TMDb artwork doesn't need restoring — a TMDb refresh re-downloads it.
+6. **Mount the NAS volumes** (see the SMB notes: pin the NAS hostname in `/etc/hosts`, and `protocol_vers_map`/signing settings in `/etc/nsmb.conf`), and recreate the staging directory on local disk.
+7. **Start the workers** via supervisor and confirm the Admin page's health card is green. Scheduled jobs re-register themselves on startup; Redis needs no restoration.
+8. **Only if the NAS was also lost**: the localized library can be rebuilt from the untouched archives — the S3 sync task queues Bulk restores for every rank-1 file missing locally, and `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of everything at once.
+
 ## Logs and maintenance
 
 All processes write to a shared log, `logs/fitzflix.log` (configurable via `LOG_FILE`). Configuration problems — missing binaries, unreachable media directories, incomplete AWS or mail settings — are reported there as warnings at startup, so check the log first when something isn't working.
 
 The log rotates automatically every night at midnight: the day's file is gzipped alongside as `fitzflix.log.<date>.gz`, and archives older than `LOG_RETENTION_DAYS` (default 14) are deleted.
 
-The database is backed up nightly at 12:30 AM to a compressed dump in `DB_BACKUP_DIR` (default `backups/` in the project root), keeping `DB_BACKUP_RETENTION_DAYS` (default 14) days of dumps — the media files are archived at AWS, but reviews, Criterion details, and shopping priorities exist only in the database. When AWS is configured, each dump is also uploaded to the S3 bucket under `AWS_BACKUP_PREFIX` (default `backup`) in Standard storage, and remote dumps past the retention window are pruned on the same schedule, so losing the machine doesn't lose the database. The Admin page shows each scheduled task's last and next run, lists any failed background jobs with requeue/forget buttons, and includes a filename tester that previews how a file would be parsed and filed without importing anything.
+The database is backed up nightly at 12:30 AM to a compressed dump in `DB_BACKUP_DIR` (default `backups/` in the project root), keeping `DB_BACKUP_RETENTION_DAYS` (default 14) days of dumps — the media files are archived at AWS, but reviews, Criterion details, and shopping priorities exist only in the database. When AWS is configured, each dump is also uploaded to the S3 bucket under `AWS_BACKUP_PREFIX` (default `backup`) in Standard storage, and remote dumps past the retention window are pruned on the same schedule, so losing the machine doesn't lose the database. The nightly backup also uploads an encrypted copy of `.env` (AES-256, requires `BACKUP_PASSPHRASE` to be set — keep the passphrase in a password manager, since it's the key to recovering everything else) and mirrors the custom posters in `app/static/custom/` to the bucket under `AWS_CUSTOM_POSTERS_PREFIX` (default `custom-posters`). On the 1st of each month a restore drill downloads the newest offsite dump, restores it into a scratch `fitzflix_restore_check` database, and compares row counts against the live database, so a dump that won't restore is discovered within a month instead of during a disaster; the drill needs a one-time grant (see Disaster recovery below). The Admin page shows each scheduled task's last and next run, lists any failed background jobs with requeue/forget buttons, and includes a filename tester that previews how a file would be parsed and filed without importing anything.
 
 ### Rejected files
 

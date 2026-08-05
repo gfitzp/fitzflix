@@ -328,6 +328,19 @@ def create_app(config_class=Config):
         description="Scanning import directory for files",
     )
 
+    # Monthly restore drill: download the newest offsite database dump and
+    # prove it restores into a scratch database, comparing row counts
+    # against live — backups that were never restored are just hopes
+
+    register_cron(
+        app.maintenance_scheduler,
+        "0 4 1 * *",
+        func="app.maintenance.restore_drill",
+        job_id="restore-drill",
+        timeout="1h",
+        description="Verifying the offsite database backup restores",
+    )
+
     # Refresh Criterion Collection spine numbers from Wikidata monthly.
     # Criterion announces each month's new titles around the 15th (or the
     # nearest weekday), so the 18th leaves time for Wikidata to catch up
