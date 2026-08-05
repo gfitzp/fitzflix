@@ -1711,51 +1711,6 @@ class File(db.Model):
 
         return worse_files
 
-    def refresh_sonarr(self):
-        if current_app.config["SONARR_API_KEY"]:
-            tv_series = TVSeries.query.filter(TVSeries.id == self.series_id).first()
-            if tv_series:
-                current_app.logger.info(
-                    f"Getting the Sonarr ID for TV series '{tv_series.title}'"
-                )
-                params = {
-                    "apikey": current_app.config["SONARR_API_KEY"],
-                    "path": os.path.join(
-                        current_app.config["LIBRARY_DIR"], self.file_path
-                    ),
-                }
-                r = requests.get(
-                    current_app.config["SONARR_URL"] + "/api/parse",
-                    params=params,
-                    timeout=10,
-                )
-                r.raise_for_status()
-                current_app.logger.debug(r.json())
-                response = r.json()
-                series = response.get("series")
-                if series:
-                    id = series.get("id")
-                    if id:
-                        current_app.logger.info(
-                            f"Rescanning series '{series.get('title')}' in Sonarr"
-                        )
-                        params = {"apikey": current_app.config["SONARR_API_KEY"]}
-                        data = {"name": "RescanSeries", "seriesId": series.get("id")}
-                        r = requests.post(
-                            current_app.config["SONARR_URL"] + "/api/command",
-                            params=params,
-                            data=json.dumps(data),
-                            timeout=10,
-                        )
-                        current_app.logger.debug(r.json())
-
-                else:
-                    current_app.logger.info(
-                        f"Could not find '{tv_series.title}' in Sonarr"
-                    )
-
-        return self
-
 
 class FileAudioTrack(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -2008,12 +1963,17 @@ def movie_file_rank():
 
 
 def tv_file_rank():
-    """Rank each episode file within its series/season/episode/edition group."""
+    """Rank each episode file within its series/season/episode group.
+
+    Edition is deliberately not part of the grouping: for TV files it just
+    carries the optional episode title, so two copies of the same episode
+    compete whether or not their filenames included one.
+    """
 
     return (
         db.func.row_number()
         .over(
-            partition_by=(TVSeries.id, File.season, File.episode, File.edition),
+            partition_by=(TVSeries.id, File.season, File.episode),
             order_by=(
                 File.fullscreen.asc(),
                 RefQuality.preference.desc(),

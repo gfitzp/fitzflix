@@ -28,7 +28,8 @@ def sonarr_add(payload):
 
     original_quality = payload["episodeFile"].get("quality")
     new_quality = downgrade_quality_title(
-        original_quality, payload["customFormatInfo"].get("customFormatScore", 0)
+        original_quality,
+        (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
     )
     sonarr_file_name = os.path.basename(downloaded_file_path).replace(
         f"[{original_quality}]", f"[{new_quality}]"

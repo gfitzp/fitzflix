@@ -18,5 +18,40 @@
     ],
     "theme_color": "#f8f9fa",
     "background_color": "#ffffff",
-    "display": "standalone"
+    "display": "standalone",
+    "shortcuts": [
+        {
+            "name": "Movie shopping list",
+            "url": "/shopping-list/movie",
+            "icons": [
+                {
+                    "src": "/static/android-chrome-192x192.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }
+            ]
+        },
+        {
+            "name": "TV shopping list",
+            "url": "/shopping-list/tv",
+            "icons": [
+                {
+                    "src": "/static/android-chrome-192x192.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }
+            ]
+        },
+        {
+            "name": "Search the library",
+            "url": "/search",
+            "icons": [
+                {
+                    "src": "/static/android-chrome-192x192.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }
+            ]
+        }
+    ]
 }

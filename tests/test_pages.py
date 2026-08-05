@@ -112,3 +112,8 @@ def test_manifest_declares_installable_app():
     assert manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     assert {icon["sizes"] for icon in manifest["icons"]} == {"192x192", "512x512"}
+    assert {shortcut["url"] for shortcut in manifest["shortcuts"]} == {
+        "/shopping-list/movie",
+        "/shopping-list/tv",
+        "/search",
+    }

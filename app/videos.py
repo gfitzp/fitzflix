@@ -46,6 +46,7 @@ from app.models import (
     User,
     UserMovieReview,
     movie_file_rank,
+    tv_file_rank,
 )
 
 EIGHT_MEGABYTES = 8388608
@@ -1817,16 +1818,6 @@ def finalize_localization(
                 except FileNotFoundError:
                     pass
 
-            # Pass the TV series title to Sonarr to refresh the series data
-            # (ignore any exceptions, since it's no big deal if Sonarr can't refresh)
-
-            if file.series_id:
-                try:
-                    file.refresh_sonarr()
-
-                except Exception:
-                    pass
-
             # TMDb enrichment (API queries and artwork downloads) runs as its
             # own task after the commit, so this task never waits on the
             # network; it emails if the movie still can't be matched
@@ -2888,20 +2879,7 @@ def sync_aws_s3_storage_task():
             tv_rank = (
                 db.session.query(
                     File.id,
-                    db.func.row_number()
-                    .over(
-                        partition_by=(
-                            TVSeries.id,
-                            File.season,
-                            File.episode,
-                        ),
-                        order_by=(
-                            File.fullscreen.asc(),
-                            RefQuality.preference.desc(),
-                            File.last_episode.desc(),
-                        ),
-                    )
-                    .label("rank"),
+                    tv_file_rank(),
                 )
                 .join(TVSeries, (TVSeries.id == File.series_id))
                 .join(RefQuality, (RefQuality.id == File.quality_id))

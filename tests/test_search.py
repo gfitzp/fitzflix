@@ -246,3 +246,18 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
     assert 'badge-success">DVD &mdash; excluded' in page
     assert "upgrade candidate" not in page
+
+
+def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
+    """For TV files the edition field just holds the optional episode title,
+    so a titled copy and an untitled copy of the same episode compete in one
+    ranking group — the outranked copy can't drag the season down."""
+
+    with app.app_context():
+        series = make_tv_series("Titled Episodes (2020)")
+        make_tv_file(series, 1, 1, "DVD")
+        make_tv_file(series, 1, 1, "Bluray-1080p", edition="Pilot")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=titled+episodes").get_data(as_text=True)
+    assert 'badge-success" title="1 episode">Season 1: Bluray-1080p' in page
