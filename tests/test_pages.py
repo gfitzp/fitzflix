@@ -96,6 +96,11 @@ def test_service_worker_is_served_from_root_scope(client):
     assert "javascript" in response.headers["Content-Type"]
     assert b"fitzflix-v1" in response.data
 
+    # The manifest is excluded from cache-first so start_url/icon/shortcut
+    # edits actually reach installed apps
+
+    assert b"site.webmanifest" in response.data
+
 
 def test_pages_register_the_service_worker(admin_client):
     body = admin_client.get("/").get_data(as_text=True)
@@ -117,11 +122,12 @@ def test_manifest_declares_installable_app():
 
     with open("app/static/site.webmanifest") as f:
         manifest = json.load(f)
-    assert manifest["start_url"] == "/shopping-list/movie"
+    assert manifest["start_url"] == "/recently-added"
     assert manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     assert {icon["sizes"] for icon in manifest["icons"]} == {"192x192", "512x512"}
     assert {shortcut["url"] for shortcut in manifest["shortcuts"]} == {
+        "/recently-added",
         "/shopping-list/movie",
         "/shopping-list/tv",
         "/search",

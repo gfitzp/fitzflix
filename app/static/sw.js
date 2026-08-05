@@ -40,9 +40,18 @@ self.addEventListener("fetch", function (event) {
 
 	var url = new URL(request.url);
 
+	// The manifest must stay network-first even though it lives under
+	// /static/: served cache-first, an installed app would never see
+	// changes to start_url, icons, or shortcuts
+
+	var isManifest = url.pathname.endsWith("/site.webmanifest");
+
 	// Static assets and CDN resources: cache first, fetch once
 
-	if (url.pathname.startsWith("/static/") || url.origin !== location.origin) {
+	if (
+		!isManifest &&
+		(url.pathname.startsWith("/static/") || url.origin !== location.origin)
+	) {
 		event.respondWith(
 			caches.match(request).then(function (cached) {
 				return (
