@@ -304,7 +304,7 @@ The database is backed up nightly at 12:30 AM to a compressed dump in `DB_BACKUP
 
 ### Rejected files
 
-Files that can't be imported — an unparseable filename, an unrecognized quality tag, or a file that fails processing — are moved into a subfolder of `REJECTS_DIR` named for the reason they were rejected, so the folder name tells you what to fix before re-importing. Active and queued jobs can be watched on the `/queue` page.
+Files that can't be imported — an unparseable filename, an unrecognized quality tag, or a file that fails processing — are moved into a subfolder of `REJECTS_DIR` named for the reason they were rejected, so the folder name tells you what to fix. The `/rejects` page (linked from the Admin page) lists them for triage: one click re-imports a file (moving it back to the import directory, where it's picked up automatically) or deletes it. The Admin page also surfaces movies that share a TMDb id, with a one-click merge that moves the duplicates' files and reviews to the oldest record. Active and queued jobs can be watched on the `/queue` page.
 
 ### Updating
 
