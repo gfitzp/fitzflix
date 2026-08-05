@@ -236,6 +236,11 @@ class RejectActionForm(FlaskForm):
     delete_submit = SubmitField("Delete")
 
 
+class MovieMergeForm(FlaskForm):
+    merge_tmdb_id = HiddenField(validators=[DataRequired()])
+    merge_submit = SubmitField("Merge")
+
+
 class FilenameTestForm(FlaskForm):
     test_filename = StringField("Filename", validators=[DataRequired()])
     filename_test_submit = SubmitField("Preview import")

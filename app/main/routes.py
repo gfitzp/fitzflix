@@ -45,6 +45,7 @@ from app.main.forms import (
     MKVMergeForm,
     MKVPropEditForm,
     MovieReviewForm,
+    MovieMergeForm,
     MovieShoppingExcludeForm,
     MovieShoppingFilterForm,
     RejectActionForm,
@@ -2030,6 +2031,41 @@ def admin():
         )
         return redirect(url_for("main.admin"))
 
+    # Form to merge a group of movies that share a TMDb id: each duplicate
+    # is fed through refresh_tmdb_info, whose merge path (serialized with
+    # the import pipeline by title locks) moves files and reviews to the
+    # oldest record and deletes the duplicate
+
+    movie_merge_form = MovieMergeForm()
+    if movie_merge_form.merge_submit.data and movie_merge_form.validate_on_submit():
+        merge_tmdb_id = int(movie_merge_form.merge_tmdb_id.data)
+        group = (
+            Movie.query.filter_by(tmdb_id=merge_tmdb_id)
+            .order_by(Movie.date_created.asc())
+            .all()
+        )
+        if len(group) < 2:
+            flash("No duplicates found for that TMDb id.", "danger")
+
+        else:
+            canonical = group[0]
+            for duplicate in group[1:]:
+                current_app.request_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=("Movies", duplicate.id, merge_tmdb_id),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=(
+                        f"Merging '{duplicate.title} ({duplicate.year})' into "
+                        f"'{canonical.title} ({canonical.year})'"
+                    ),
+                )
+            flash(
+                f"Merging {len(group) - 1} duplicate(s) into "
+                f"'{canonical.title} ({canonical.year})'",
+                "info",
+            )
+        return redirect(url_for("main.admin"))
+
     # Form to update the TMDb data for the entire library, both movies and TV shows
 
     tmdb_refresh_form = TMDBRefreshForm()
@@ -2210,6 +2246,8 @@ def admin():
         title="Admin",
         health=health,
         rejected_count=len(_rejected_files()),
+        duplicate_groups=_duplicate_movie_groups(),
+        movie_merge_form=movie_merge_form,
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
@@ -2223,6 +2261,34 @@ def admin():
         filename_test_form=filename_test_form,
         filename_test_result=filename_test_result,
     )
+
+
+def _duplicate_movie_groups():
+    """Movies sharing a TMDb id, each group oldest-first.
+
+    The oldest record is the one refresh_tmdb_info keeps when merging, so
+    the first movie in each group is the survivor.
+    """
+
+    duplicated_ids = [
+        tmdb_id
+        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+        .filter(Movie.tmdb_id != None)
+        .group_by(Movie.tmdb_id)
+        .having(db.func.count(Movie.id) > 1)
+        .all()
+    ]
+    if not duplicated_ids:
+        return []
+
+    groups = {}
+    for movie in (
+        Movie.query.filter(Movie.tmdb_id.in_(duplicated_ids))
+        .order_by(Movie.tmdb_id.asc(), Movie.date_created.asc())
+        .all()
+    ):
+        groups.setdefault(movie.tmdb_id, []).append(movie)
+    return list(groups.values())
 
 
 def _rejected_files():
