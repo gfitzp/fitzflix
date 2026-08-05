@@ -7,6 +7,9 @@ checks the file lands in the library with its database records — with all
 intermediate work done in the staging directory.
 """
 
+import errno
+import inspect
+import json
 import os
 import subprocess
 
@@ -257,6 +260,234 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
         os.remove(source)
 
 
+def test_staging_copy_transient_error_defers_and_retries(
+    app, incoming_dir, monkeypatch
+):
+    """An smbfs handle revoked mid-copy (EBADF) is a mount hiccup, not a bad
+    file: the partial staged copy is removed, the title lock is released,
+    and the task is rescheduled instead of rejecting a healthy source."""
+
+    basename = "Flaky (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"video bytes")
+
+    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+        with open(dst, "wb") as f:
+            f.write(b"partial")
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
+    try:
+        with app.app_context():
+            assert localization_task(source, ignore_etag=True) is True
+
+        retries = [
+            job
+            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:")
+        ]
+        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+
+        # The retry carries the incremented attempt count and the original
+        # flags, and binds to the task's signature
+
+        job = retries[0]
+        assert job.kwargs["transient_retries"] == 1
+        assert job.kwargs["ignore_etag"] is True
+        assert job.kwargs["file_path"] == source
+        inspect.signature(localization_task).bind(
+            *(job.args or ()), **(job.kwargs or {})
+        )
+
+        # Partial staged copy removed, source untouched, nothing rejected
+
+        assert os.listdir(app.config["STAGING_DIR"]) == []
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+
+        # The title lock was released, so the retry won't spin on it
+
+        identifier = json.dumps(
+            {
+                "title": "Flaky",
+                "year": 2021,
+                "feature_type": None,
+                "plex_title": "Flaky (2021)",
+                "edition": None,
+            }
+        )
+        lock = app.lock_manager.lock(identifier, 1000)
+        assert lock, "title lock was not released by the deferred task"
+        app.lock_manager.unlock(lock)
+    finally:
+        os.remove(source)
+
+
+def test_staging_copy_transient_error_rejects_after_max_retries(
+    app, incoming_dir, monkeypatch
+):
+    """Once the retry budget is spent, a still-failing copy takes the
+    normal reject path rather than deferring forever."""
+
+    basename = "Hopeless (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"video bytes")
+
+    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
+
+    with app.app_context():
+        localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
+
+    assert not any(
+        job.id.startswith("retry:")
+        for job, _ in app.import_scheduler.get_jobs(with_times=True)
+    )
+    assert basename in rejected_files(app)
+    os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
+
+
+def test_staging_copy_permanent_error_rejects_immediately(
+    app, incoming_dir, monkeypatch
+):
+    """A non-transient error (e.g. disk full) doesn't burn retries."""
+
+    basename = "Truly Broken (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"video bytes")
+
+    def no_space(src, dst, job, name, activity="Copying to library"):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(videos, "copy_with_progress", no_space)
+
+    with app.app_context():
+        localization_task(source)
+
+    assert not any(
+        job.id.startswith("retry:")
+        for job, _ in app.import_scheduler.get_jobs(with_times=True)
+    )
+    assert basename in rejected_files(app)
+    os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
+
+
+def test_library_copy_transient_error_defers_and_keeps_lock(
+    app, incoming_dir, monkeypatch
+):
+    """A transient mount error during the library copy retries just the
+    copy: the localized output stays on staging, the title lock stays held,
+    and nothing is rejected — no need to redo the whole import."""
+
+    basename = "Flaky Move (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"untouched source")
+    hidden = os.path.join(app.config["STAGING_DIR"], f".{basename}")
+    with open(hidden, "wb") as f:
+        f.write(b"localized output")
+
+    file_details = {
+        "basename": basename,
+        "dirname": "Movies/Flaky Move (2021)",
+        "container": "Matroska",
+    }
+
+    monkeypatch.setattr(
+        videos, "inspect_localized_file", lambda *args, **kwargs: {"filesize_bytes": 16}
+    )
+
+    def flaky_rename(src, dst, **kwargs):
+        raise OSError(errno.ENOTCONN, "Socket is not connected")
+
+    monkeypatch.setattr(videos, "_rename_with_retries", flaky_rename)
+    try:
+        with app.app_context():
+            result = videos.move_localized_file(
+                source, file_details, "lock-sentinel", hidden
+            )
+        assert result is False
+
+        retries = [
+            job
+            for job, _ in app.file_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:")
+        ]
+        assert [job.id for job in retries] == [
+            f"retry:move_localized_file:'{basename}'"
+        ]
+
+        # The retry carries the original chain — including the lock — plus
+        # the incremented attempt count, and binds to the task's signature
+
+        job = retries[0]
+        assert list(job.args) == [source, file_details, "lock-sentinel", hidden]
+        assert job.kwargs == {"transient_retries": 1}
+        inspect.signature(videos.move_localized_file).bind(
+            *(job.args or ()), **(job.kwargs or {})
+        )
+
+        # The localized output survives on staging for the retry, nothing
+        # was rejected, and finalize was not enqueued
+
+        assert os.path.exists(hidden)
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+        assert len(app.sql_queue) == 0
+    finally:
+        os.remove(source)
+        os.remove(hidden)
+
+
+def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
+    """Once the retry budget is spent, the existing reject path takes over."""
+
+    basename = "Hopeless Move (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"untouched source")
+    hidden = os.path.join(app.config["STAGING_DIR"], f".{basename}")
+    with open(hidden, "wb") as f:
+        f.write(b"localized output")
+
+    file_details = {
+        "basename": basename,
+        "dirname": "Movies/Hopeless Move (2021)",
+        "container": "Matroska",
+    }
+
+    monkeypatch.setattr(
+        videos, "inspect_localized_file", lambda *args, **kwargs: {"filesize_bytes": 16}
+    )
+
+    def flaky_rename(src, dst, **kwargs):
+        raise OSError(errno.ENOTCONN, "Socket is not connected")
+
+    monkeypatch.setattr(videos, "_rename_with_retries", flaky_rename)
+
+    with app.app_context():
+        videos.move_localized_file(
+            source,
+            file_details,
+            None,
+            hidden,
+            transient_retries=videos.MAX_TRANSIENT_RETRIES,
+        )
+
+    assert not any(
+        job.id.startswith("retry:")
+        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+    )
+    assert basename in rejected_files(app)
+    assert not os.path.exists(hidden)
+    os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
+
+
 def test_finalize_defers_when_volumes_dead(app, monkeypatch):
     monkeypatch.setattr(videos, "_dead_volumes", lambda paths: ["/Volumes/Movies"])
 
@@ -284,16 +515,118 @@ def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
     with open(source, "wb") as f:
         f.write(b"video")
 
-    def dead_move(*args, **kwargs):
+    def dead(*args, **kwargs):
         raise OSError(57, "Socket is not connected")
 
-    monkeypatch.setattr(videos.shutil, "move", dead_move)
+    monkeypatch.setattr(videos.os, "rename", dead)
+    monkeypatch.setattr(videos.shutil, "copy2", dead)
     try:
         with app.app_context():
             assert move_to_rejects(source, "exception") is False
         assert os.path.exists(source)
     finally:
         os.remove(source)
+
+
+def rejected_files(app):
+    """All real files anywhere under the rejects directory."""
+
+    return [
+        name
+        for _, _, files in os.walk(app.config["REJECTS_DIR"])
+        for name in files
+        if name != ".DS_Store"
+    ]
+
+
+def test_move_to_rejects_cross_volume_move_is_staged_atomically(
+    app, incoming_dir, monkeypatch
+):
+    """When rename fails, the copy is staged through a hidden name and the
+    source is only removed after the copy is promoted."""
+
+    basename = "cross-volume.mkv"
+    source = os.path.join(incoming_dir, basename)
+    content = b"the complete file contents"
+    with open(source, "wb") as f:
+        f.write(content)
+
+    def refuse_rename(src, dst):
+        raise OSError(errno.EXDEV, "Cross-device link")
+
+    monkeypatch.setattr(videos.os, "rename", refuse_rename)
+
+    with app.app_context():
+        assert move_to_rejects(source, "exception") is True
+
+    destination = os.path.join(app.config["REJECTS_DIR"], "exception", basename)
+    with open(destination, "rb") as f:
+        assert f.read() == content
+    assert not os.path.exists(source)
+    assert not any(name.endswith(".partial") for name in rejected_files(app))
+    os.remove(destination)
+
+
+def test_move_to_rejects_failed_copy_leaves_no_partial(app, incoming_dir, monkeypatch):
+    """A copy that dies partway leaves nothing in rejects, hidden or not."""
+
+    basename = "half-copied.mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"the complete file contents")
+
+    def refuse_rename(src, dst):
+        raise OSError(errno.EXDEV, "Cross-device link")
+
+    def partial_copy(src, dst, **kwargs):
+        with open(dst, "wb") as f:
+            f.write(b"half")
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(videos.os, "rename", refuse_rename)
+    monkeypatch.setattr(videos.shutil, "copy2", partial_copy)
+    try:
+        with app.app_context():
+            assert move_to_rejects(source, "exception") is False
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+        assert not any(name.endswith(".partial") for name in rejected_files(app))
+    finally:
+        os.remove(source)
+
+
+def test_move_to_rejects_unremovable_source_discards_the_copy(
+    app, incoming_dir, monkeypatch
+):
+    """The August 4th incident: the copy completes but the source can't be
+    deleted (revoked SMB handle). The state must collapse back to 'the
+    source stays where it is' — no duplicate left in rejects."""
+
+    basename = "undeletable-source.mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"the complete file contents")
+
+    real_remove = os.remove
+
+    def refuse_rename(src, dst):
+        raise OSError(errno.EXDEV, "Cross-device link")
+
+    def refuse_source_remove(path, *args, **kwargs):
+        if path == source:
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        return real_remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(videos.os, "rename", refuse_rename)
+    monkeypatch.setattr(videos.os, "remove", refuse_source_remove)
+    try:
+        with app.app_context():
+            assert move_to_rejects(source, "exception") is False
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+        assert not any(name.endswith(".partial") for name in rejected_files(app))
+    finally:
+        real_remove(source)
 
 
 def test_dead_volumes_only_checks_network_mounts(app, monkeypatch):

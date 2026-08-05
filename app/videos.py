@@ -1,4 +1,5 @@
 import csv
+import errno
 import hashlib
 import io
 import json
@@ -143,6 +144,24 @@ def convert_to_matroska(file_path, output_file, job, name):
             pass
         return False
     return True
+
+
+# OSError numbers that signal a dropped or flaky network mount rather than a
+# problem with the file itself — e.g. macOS smbfs revokes a copy's open file
+# handles with EBADF when the SMB session they belong to resets mid-operation.
+# These deserve a retry, never an immediate reject
+
+TRANSIENT_COPY_ERRNOS = {
+    errno.EBADF,
+    errno.EIO,
+    errno.ESTALE,
+    errno.ENOTCONN,
+    errno.ETIMEDOUT,
+    errno.EHOSTDOWN,
+    errno.ENETDOWN,
+}
+
+MAX_TRANSIENT_RETRIES = 3
 
 
 def copy_with_progress(src, dst, job, name, activity="Copying to library"):
@@ -336,7 +355,9 @@ class DownloadProgressPercentage(object):
 # Tasks
 
 
-def localization_task(file_path, force_upload=False, ignore_etag=False):
+def localization_task(
+    file_path, force_upload=False, ignore_etag=False, transient_retries=0
+):
     """Archive an untouched file and remove unnecessary language tracks.
 
     - Untouched file is uploaded to AWS S3 storage for safekeeping.
@@ -379,6 +400,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     timedelta(minutes=5),
                     "app.videos.localization_task",
                     file_path=file_path,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                    transient_retries=transient_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=f"retry:localization_task:'{basename}'",
                     job_result_ttl=86400,
@@ -409,6 +433,9 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                     timedelta(minutes=1),
                     "app.videos.localization_task",
                     file_path=file_path,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                    transient_retries=transient_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=f"retry:localization_task:'{basename}'",
                     job_result_ttl=86400,
@@ -519,9 +546,52 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
             if staging_free > os.path.getsize(file_path) * 2.5:
                 staged_path = os.path.join(staging_dir, basename)
                 staging_paths.append(staged_path)
-                copy_with_progress(
-                    file_path, staged_path, job, basename, "Copying to local staging"
-                )
+                try:
+                    copy_with_progress(
+                        file_path,
+                        staged_path,
+                        job,
+                        basename,
+                        "Copying to local staging",
+                    )
+                except OSError as e:
+                    if (
+                        e.errno not in TRANSIENT_COPY_ERRNOS
+                        or transient_retries >= MAX_TRANSIENT_RETRIES
+                    ):
+                        raise
+
+                    # A flaky mount revoked the copy's file handles; the
+                    # source itself is fine, so clean up and retry once the
+                    # mount settles rather than rejecting a healthy file
+
+                    current_app.logger.warning(
+                        f"'{basename}' Staging copy failed with a transient "
+                        f"I/O error ({e}), returning to queue to try again in "
+                        f"5 minutes (attempt {transient_retries + 1} of "
+                        f"{MAX_TRANSIENT_RETRIES})"
+                    )
+                    try:
+                        os.remove(staged_path)
+                    except OSError:
+                        pass
+                    if lock:
+                        current_app.lock_manager.unlock(lock)
+                        current_app.logger.info(f"Removed lock {lock}")
+                    current_app.import_scheduler.enqueue_in(
+                        timedelta(minutes=5),
+                        "app.videos.localization_task",
+                        file_path=source_path,
+                        force_upload=force_upload,
+                        ignore_etag=ignore_etag,
+                        transient_retries=transient_retries + 1,
+                        timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        job_id=f"retry:localization_task:'{basename}'",
+                        job_result_ttl=86400,
+                        job_description=f"'{basename}'",
+                    )
+                    return True
+
                 file_path = staged_path
                 staged = True
 
@@ -1154,7 +1224,9 @@ def extract_track_metadata(file_path):
     return _extract_media_details(file_path)
 
 
-def move_localized_file(source_path, file_details, lock, hidden_output_file):
+def move_localized_file(
+    source_path, file_details, lock, hidden_output_file, transient_retries=0
+):
     """Carry the localized output to a hidden name at its library destination.
 
     This is the long file copy, split out of finalize_localization so it runs
@@ -1191,6 +1263,7 @@ def move_localized_file(source_path, file_details, lock, hidden_output_file):
                 file_details,
                 lock,
                 hidden_output_file,
+                transient_retries=transient_retries,
                 timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=f"retry:move_localized_file:'{basename}'",
                 job_result_ttl=86400,
@@ -1211,23 +1284,61 @@ def move_localized_file(source_path, file_details, lock, hidden_output_file):
                 hidden_output_file, file_details.get("container"), job
             )
 
-            os.makedirs(output_directory, exist_ok=True)
+            try:
+                os.makedirs(output_directory, exist_ok=True)
 
-            if hidden_output_file == destination_hidden:
-                # Legacy unstaged processing already left it at the destination
-                pass
+                if hidden_output_file == destination_hidden:
+                    # Legacy unstaged processing already left it at the destination
+                    pass
 
-            elif (
-                os.stat(os.path.dirname(hidden_output_file)).st_dev
-                == os.stat(output_directory).st_dev
-            ):
-                _rename_with_retries(hidden_output_file, destination_hidden)
+                elif (
+                    os.stat(os.path.dirname(hidden_output_file)).st_dev
+                    == os.stat(output_directory).st_dev
+                ):
+                    _rename_with_retries(hidden_output_file, destination_hidden)
 
-            else:
-                copy_with_progress(
-                    hidden_output_file, destination_hidden, job, basename
+                else:
+                    copy_with_progress(
+                        hidden_output_file, destination_hidden, job, basename
+                    )
+                    os.remove(hidden_output_file)
+
+            except OSError as e:
+                if (
+                    e.errno not in TRANSIENT_COPY_ERRNOS
+                    or transient_retries >= MAX_TRANSIENT_RETRIES
+                ):
+                    raise
+
+                # A flaky mount interrupted the library copy, but the
+                # localized output is still intact on staging: remove the
+                # partial destination and retry just this copy rather than
+                # rejecting and redoing the whole import. The title lock
+                # stays held for the retry
+
+                current_app.logger.warning(
+                    f"'{basename}' Library copy failed with a transient I/O "
+                    f"error ({e}), retrying in 5 minutes (attempt "
+                    f"{transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                 )
-                os.remove(hidden_output_file)
+                try:
+                    os.remove(destination_hidden)
+                except OSError:
+                    pass
+                current_app.file_scheduler.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.move_localized_file",
+                    source_path,
+                    file_details,
+                    lock,
+                    hidden_output_file,
+                    transient_retries=transient_retries + 1,
+                    timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                    job_id=f"retry:move_localized_file:'{basename}'",
+                    job_result_ttl=86400,
+                    job_description=f"'{basename}'",
+                )
+                return False
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -1722,10 +1833,14 @@ def finalize_localization(
                 current_app.logger.info(f"Removed lock {lock}")
 
 
-def finalize_transcoding(file_id, lock):
+def finalize_transcoding(file_id, lock, transient_retries=0):
     """Update a file with details about its transcoding and move it into position."""
 
     with app.app_context():
+        # Set if the task reschedules itself: the retry inherits the lock
+
+        handed_off = False
+
         try:
 
             file = File.query.filter_by(id=file_id).first()
@@ -1750,6 +1865,36 @@ def finalize_transcoding(file_id, lock):
 
             db.session.commit()
 
+        except OSError as e:
+            db.session.rollback()
+            if (
+                e.errno in TRANSIENT_COPY_ERRNOS
+                and transient_retries < MAX_TRANSIENT_RETRIES
+            ):
+                # A flaky mount interrupted the rename; the transcoded file
+                # is still at its hidden name, so retry just this step with
+                # the title lock held rather than losing the transcode
+
+                handed_off = True
+                current_app.logger.warning(
+                    f"'{file.plex_title}' Transcode rename failed with a "
+                    f"transient I/O error ({e}), retrying in 5 minutes "
+                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
+                )
+                current_app.sql_scheduler.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.finalize_transcoding",
+                    file_id,
+                    lock,
+                    transient_retries=transient_retries + 1,
+                    timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    job_id=f"retry:finalize_transcoding:{file_id}",
+                    job_result_ttl=86400,
+                    job_description=f"'{file.plex_title}'",
+                )
+                return False
+            current_app.logger.error(traceback.format_exc())
+
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
@@ -1758,8 +1903,9 @@ def finalize_transcoding(file_id, lock):
             current_app.logger.info(f"{file.plex_title}' Transcode complete")
 
         finally:
-            current_app.lock_manager.unlock(lock)
-            current_app.logger.info(f"Removed lock {lock}")
+            if not handed_off:
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
 
 
 def manual_import_task():
@@ -2026,7 +2172,11 @@ def track_metadata_scan_unlocked(file_id):
 
 
 def mkvpropedit_task(
-    file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
+    file_id,
+    default_audio_track,
+    default_subtitle_track,
+    forced_subtitle_tracks,
+    transient_retries=0,
 ):
     """Update a file's MKV properties."""
 
@@ -2050,6 +2200,7 @@ def mkvpropedit_task(
                 default_subtitle_track,
                 forced_subtitle_tracks,
             ),
+            kwargs={"transient_retries": transient_retries},
         )
         if not lock:
             return True
@@ -2061,6 +2212,38 @@ def mkvpropedit_task(
                 default_subtitle_track,
                 forced_subtitle_tracks,
             )
+        except OSError as e:
+            if (
+                e.errno in TRANSIENT_COPY_ERRNOS
+                and transient_retries < MAX_TRANSIENT_RETRIES
+                and not getattr(e, "retry_unsafe", False)
+            ):
+                # A flaky mount interrupted the edit before the file was
+                # restructured, so the same track arguments are still valid:
+                # retry once the mount settles. The finally releases the
+                # lock, and the retry takes it again like any fresh run
+
+                current_app.logger.warning(
+                    f"'{file.basename}' MKV property edit failed with a "
+                    f"transient I/O error ({e}), retrying in 5 minutes "
+                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
+                )
+                current_app.file_scheduler.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.mkvpropedit_task",
+                    file_id,
+                    default_audio_track,
+                    default_subtitle_track,
+                    forced_subtitle_tracks,
+                    transient_retries=transient_retries + 1,
+                    timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                    job_id=f"retry:mkvpropedit_task:{file_id}",
+                    job_result_ttl=86400,
+                    job_description=f"'{file.basename}'",
+                )
+                return False
+            current_app.logger.error(traceback.format_exc())
+            raise
         finally:
             current_app.lock_manager.unlock(lock)
 
@@ -2071,6 +2254,12 @@ def mkvpropedit_unlocked(
     """Update a file's MKV properties; the caller must hold the title's lock."""
 
     with app.app_context():
+        # Once the reorder remux is renamed into place the file's track
+        # numbering has changed, so retrying with the caller's original
+        # track arguments would flag the wrong tracks
+
+        reordered = False
+
         try:
             job = get_current_job()
 
@@ -2273,6 +2462,7 @@ def mkvpropedit_unlocked(
                     # Move the new file into place
 
                     os.rename(hidden_output_file, file_path)
+                    reordered = True
 
             # Remove any subtitle tracks that have zero elements
 
@@ -2309,6 +2499,14 @@ def mkvpropedit_unlocked(
 
             file.date_updated = datetime.now(timezone.utc)
 
+        except OSError as e:
+            # Tell the caller whether retrying with the same arguments is
+            # still safe; logging (or a quiet transient defer) is its job
+
+            e.retry_unsafe = reordered
+            db.session.rollback()
+            raise
+
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
@@ -2329,6 +2527,16 @@ def mkvpropedit_unlocked(
                     force_upload=True,
                     ignore_etag=True,
                 )
+
+            except OSError as e:
+                # The edit itself already succeeded and committed, so a
+                # whole-task retry could re-edit a restructured file; only
+                # the re-upload was lost, and the S3 sync task heals that
+
+                e.retry_unsafe = True
+                current_app.logger.error(traceback.format_exc())
+                db.session.rollback()
+                raise
 
             except Exception:
                 current_app.logger.error(traceback.format_exc())
@@ -2503,9 +2711,14 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
         else:
             db.session.commit()
             # This task already holds the title's lock, so call the unlocked
-            # variant directly instead of deadlocking against ourselves
+            # variant directly instead of deadlocking against ourselves.
+            # OSErrors from it leave logging to the caller, so log here
 
-            mkvpropedit_unlocked(file.id, 1, None, None)
+            try:
+                mkvpropedit_unlocked(file.id, 1, None, None)
+            except OSError:
+                current_app.logger.error(traceback.format_exc())
+                raise
             return True
 
 
@@ -3137,7 +3350,7 @@ def transcode_task(file_id):
         return True
 
 
-def download_task(key, basename, sqs_receipt_handle=None):
+def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
     """Download a file from AWS S3 storage."""
 
     with app.app_context():
@@ -3147,14 +3360,45 @@ def download_task(key, basename, sqs_receipt_handle=None):
         if file:
             basename = file.untouched_basename
 
-        job.meta["description"] = f"'{basename}' — Downloading from AWS"
-        job.save_meta()
+        if job:
+            job.meta["description"] = f"'{basename}' — Downloading from AWS"
+            job.save_meta()
 
         try:
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
             aws_download(key, basename, sqs_receipt_handle)
+
+        except OSError as e:
+            if (
+                e.errno in TRANSIENT_COPY_ERRNOS
+                and transient_retries < MAX_TRANSIENT_RETRIES
+            ):
+                # The import volume hiccuped mid-download or mid-rename; the
+                # S3 object and the SQS message are unaffected, so retry
+                # once the mount settles
+
+                current_app.logger.warning(
+                    f"'{basename}' Download failed with a transient I/O "
+                    f"error ({e}), returning to queue to try again in 5 "
+                    f"minutes (attempt {transient_retries + 1} of "
+                    f"{MAX_TRANSIENT_RETRIES})"
+                )
+                current_app.file_scheduler.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.download_task",
+                    key,
+                    basename,
+                    sqs_receipt_handle,
+                    transient_retries=transient_retries + 1,
+                    timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    job_id=f"retry:download_task:'{basename}'",
+                    job_result_ttl=86400,
+                    job_description=f"'{basename}' — Downloading from AWS",
+                )
+                return False
+            current_app.logger.error(traceback.format_exc())
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -3392,6 +3636,22 @@ def aws_download(key, basename, sqs_receipt_handle=None):
             else:
                 current_app.logger.error(traceback.format_exc())
                 retry = retry - 1
+
+        except OSError as e:
+            if e.errno in TRANSIENT_COPY_ERRNOS:
+                # A dead import volume fails instantly, so burning the whole
+                # in-place retry budget on it is pointless: drop the partial
+                # download and let the caller defer until the mount settles
+
+                try:
+                    os.remove(
+                        os.path.join(current_app.config["IMPORT_DIR"], f".{basename}")
+                    )
+                except OSError:
+                    pass
+                raise
+            current_app.logger.error(traceback.format_exc())
+            retry = retry - 1
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -4579,24 +4839,47 @@ def move_to_rejects(file_path, reason=""):
     Returns False instead of raising when a volume is unavailable: a dead
     mount shouldn't turn one failure into a cascade, and the file stays
     where it is for a later re-import.
+
+    A cross-volume move is staged through a hidden name and only promoted
+    once the copy is complete, so a failure partway can never leave a
+    partial file in the rejects directory under an importable name.
     """
 
+    basename = os.path.basename(file_path)
     reject_directory = os.path.join(current_app.config["REJECTS_DIR"], reason)
+    destination = os.path.join(reject_directory, basename)
+    hidden_destination = os.path.join(reject_directory, f".{basename}.partial")
+
     try:
         os.makedirs(reject_directory, exist_ok=True)
-        shutil.move(
-            file_path, os.path.join(reject_directory, os.path.basename(file_path))
-        )
+        try:
+            os.rename(file_path, destination)
+        except OSError:
+            # A different volume (or a rename the filesystem refused): copy
+            # to the hidden name, promote it, then delete the source. If any
+            # step fails, remove both destinations so the state is exactly
+            # "the source stays where it is" — complete or nothing
+
+            try:
+                shutil.copy2(file_path, hidden_destination)
+                os.replace(hidden_destination, destination)
+                os.remove(file_path)
+            except OSError:
+                for stray in (hidden_destination, destination):
+                    try:
+                        os.remove(stray)
+                    except OSError:
+                        pass
+                raise
+
     except OSError as e:
         current_app.logger.error(
-            f"'{os.path.basename(file_path)}' Could not be moved to the rejects "
+            f"'{basename}' Could not be moved to the rejects "
             f"directory ({e}); leaving it in place"
         )
         return False
 
-    current_app.logger.info(
-        f"'{os.path.basename(file_path)}' Moved to rejects directory"
-    )
+    current_app.logger.info(f"'{basename}' Moved to rejects directory")
     return True
 
 

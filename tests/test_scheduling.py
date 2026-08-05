@@ -296,3 +296,267 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
                 continue
             checked += 1
         assert checked >= 1
+
+
+def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkeypatch):
+    """A flaky mount during the transcode rename retries just that step,
+    keeping the title lock so nothing else touches the file meanwhile."""
+
+    import errno
+
+    import app.videos as videos
+
+    from app import db
+    from app.models import File
+    from app.videos import finalize_transcoding
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Transcode Retry", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        identifier = file.file_identifier()
+
+        lock = app.lock_manager.lock(identifier, 60000)
+        assert lock
+
+        def flaky_rename(src, dst):
+            raise OSError(errno.ENOTCONN, "Socket is not connected")
+
+        monkeypatch.setattr(videos.os, "rename", flaky_rename)
+
+        assert finalize_transcoding(file_id, lock) is False
+
+        retries = [
+            job
+            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:finalize_transcoding")
+        ]
+        assert [job.id for job in retries] == [f"retry:finalize_transcoding:{file_id}"]
+        job = retries[0]
+        assert list(job.args) == [file_id, lock]
+        assert job.kwargs == {"transient_retries": 1}
+        assert_binds(job)
+
+        # The lock is still held for the retry, and the transcode date was
+        # rolled back
+
+        assert not app.lock_manager.lock(identifier, 1000)
+        db.session.expire_all()
+        assert db.session.get(File, file_id).date_transcoded is None
+
+        app.lock_manager.unlock(lock)
+
+
+def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
+    """Once the budget is spent, the failure is logged and the lock freed."""
+
+    import errno
+
+    import app.videos as videos
+
+    from app import db
+    from app.videos import finalize_transcoding
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Transcode Hopeless", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        identifier = file.file_identifier()
+
+        lock = app.lock_manager.lock(identifier, 60000)
+        assert lock
+
+        def flaky_rename(src, dst):
+            raise OSError(errno.ENOTCONN, "Socket is not connected")
+
+        monkeypatch.setattr(videos.os, "rename", flaky_rename)
+
+        finalize_transcoding(
+            file_id, lock, transient_retries=videos.MAX_TRANSIENT_RETRIES
+        )
+
+        assert not any(
+            job.id.startswith("retry:finalize_transcoding")
+            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+        )
+
+        # The lock was released by the finally
+
+        relock = app.lock_manager.lock(identifier, 1000)
+        assert relock
+        app.lock_manager.unlock(relock)
+
+
+def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
+    """A transient mount error before the file is restructured reschedules
+    the edit with the same arguments; the retry re-acquires the lock."""
+
+    import errno
+
+    import app.videos as videos
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Propedit Retry", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        identifier = file.file_identifier()
+
+        def flaky_unlocked(*args, **kwargs):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+        monkeypatch.setattr(videos, "mkvpropedit_unlocked", flaky_unlocked)
+
+        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+
+        retries = [
+            job
+            for job, _ in app.file_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:mkvpropedit_task")
+        ]
+        assert [job.id for job in retries] == [f"retry:mkvpropedit_task:{file_id}"]
+        job = retries[0]
+        assert list(job.args) == [file_id, "2", None, []]
+        assert job.kwargs == {"transient_retries": 1}
+        assert_binds(job)
+
+        # The lock was released so the retry can take it fresh
+
+        relock = app.lock_manager.lock(identifier, 1000)
+        assert relock
+        app.lock_manager.unlock(relock)
+
+
+def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch):
+    """After the reorder remux lands, the original track numbers no longer
+    match the file, so even a transient error must not schedule a retry."""
+
+    import errno
+
+    import app.videos as videos
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Propedit Unsafe", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+
+        def unsafe_unlocked(*args, **kwargs):
+            error = OSError(errno.EBADF, "Bad file descriptor")
+            error.retry_unsafe = True
+            raise error
+
+        monkeypatch.setattr(videos, "mkvpropedit_unlocked", unsafe_unlocked)
+
+        with pytest.raises(OSError):
+            videos.mkvpropedit_task(file_id, "2", None, [])
+
+        assert not any(
+            job.id.startswith("retry:mkvpropedit_task")
+            for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        )
+
+
+def test_download_transient_error_defers(app, monkeypatch):
+    """A transient import-volume error during an S3 download reschedules the
+    download; the S3 object and SQS message are unaffected."""
+
+    import errno
+
+    import app.videos as videos
+
+    def flaky_download(key, basename, sqs_receipt_handle=None):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "aws_download", flaky_download)
+
+    with app.app_context():
+        result = videos.download_task(
+            "untouched/Thing (2021) - [DVD].mkv",
+            "Thing (2021) - [DVD].mkv",
+            "receipt-123",
+        )
+    assert result is False
+
+    retries = [
+        job
+        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        if job.id.startswith("retry:download_task")
+    ]
+    assert [job.id for job in retries] == [
+        "retry:download_task:'Thing (2021) - [DVD].mkv'"
+    ]
+    job = retries[0]
+    assert list(job.args) == [
+        "untouched/Thing (2021) - [DVD].mkv",
+        "Thing (2021) - [DVD].mkv",
+        "receipt-123",
+    ]
+    assert job.kwargs == {"transient_retries": 1}
+    assert_binds(job)
+
+
+def test_download_gives_up_after_max_retries(app, monkeypatch):
+    """Once the budget is spent, the failure is logged and the SQS message
+    left for redelivery, like any other download failure."""
+
+    import errno
+
+    import app.videos as videos
+
+    def flaky_download(key, basename, sqs_receipt_handle=None):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "aws_download", flaky_download)
+
+    with app.app_context():
+        result = videos.download_task(
+            "untouched/Thing (2021) - [DVD].mkv",
+            "Thing (2021) - [DVD].mkv",
+            "receipt-123",
+            transient_retries=videos.MAX_TRANSIENT_RETRIES,
+        )
+    assert result is not True
+
+    assert not any(
+        job.id.startswith("retry:download_task")
+        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+    )
+
+
+def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
+    """The download's in-place retry loop must not eat mount errors: they
+    escape immediately (partial file cleaned up) so the caller can defer."""
+
+    import errno
+
+    import app.videos as videos
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            with open(filename, "wb") as f:
+                f.write(b"partial")
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(videos, "aws_sqs_client", lambda: None)
+
+    with app.app_context():
+        with pytest.raises(OSError):
+            videos.aws_download("untouched/x.mkv", "x.mkv")
+
+        hidden = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
+        assert not os.path.exists(hidden)
