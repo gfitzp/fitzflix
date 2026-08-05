@@ -12,8 +12,6 @@ import traceback
 from datetime import datetime, timezone
 from PIL import Image
 
-import requests
-
 from flask import (
     current_app,
     jsonify,
@@ -77,6 +75,7 @@ from app.models import (
     TVSeries,
     UserMovieReview,
     movie_file_rank,
+    tmdb_get,
     tv_file_rank,
 )
 from app.main import bp
@@ -2639,7 +2638,7 @@ def search_tmdb():
                 ("/search/movie", movie_matches, "title", "release_date"),
                 ("/search/tv", tv_matches, "name", "first_air_date"),
             ):
-                r = requests.get(
+                r = tmdb_get(
                     current_app.config["TMDB_API_URL"] + url,
                     params=params,
                     timeout=10,

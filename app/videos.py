@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import zlib
 
 from datetime import datetime, timedelta, timezone
 
@@ -46,6 +47,7 @@ from app.models import (
     User,
     UserMovieReview,
     movie_file_rank,
+    tmdb_get,
     tv_file_rank,
 )
 
@@ -1820,10 +1822,12 @@ def finalize_localization(
 
             # TMDb enrichment (API queries and artwork downloads) runs as its
             # own task after the commit, so this task never waits on the
-            # network; it emails if the movie still can't be matched
+            # network; it emails if the movie still can't be matched. The
+            # fetch runs on the request queue and hands its payload to the
+            # sql queue for the database writes.
 
             if file.movie_id and movie.tmdb_id == None:
-                current_app.sql_queue.enqueue(
+                current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=("Movies", movie.id, None),
                     kwargs={"notify_if_missing": True},
@@ -1833,7 +1837,7 @@ def finalize_localization(
                     ),
                 )
             elif file.series_id and tv_series.tmdb_id == None:
-                current_app.sql_queue.enqueue(
+                current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=("TV Shows", tv_series.id, None),
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -3179,7 +3183,7 @@ def review_task(user_id, title, rating):
                     "credits,external_ids,images,keywords,release_dates,videos"
                 )
                 current_app.logger.info(f"'{title}' not in database, searching in TMDB")
-                r = requests.get(
+                r = tmdb_get(
                     tmdb_api_url + "/search/movie",
                     params={
                         "api_key": tmdb_api_key,
@@ -3194,7 +3198,7 @@ def review_task(user_id, title, rating):
 
                     if tmdb_id and title == first_result.get("title"):
                         current_app.logger.info(f"'{title}' Getting details from TMDB")
-                        r = requests.get(
+                        r = tmdb_get(
                             tmdb_api_url + "/movie/" + str(tmdb_id),
                             params={
                                 "api_key": tmdb_api_key,
@@ -4207,7 +4211,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                     "primary_release_year": year,
                 }
                 url = "/search/movie"
-            r = requests.get(current_app.config["TMDB_API_URL"] + url, params=params)
+            r = tmdb_get(current_app.config["TMDB_API_URL"] + url, params=params)
             current_app.logger.debug(r.json())
             r.raise_for_status()
 
@@ -5123,22 +5127,113 @@ def _movie_refresh_lock_resources(*movies):
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
-    """Refresh movie or TV show information from TMDB.
+    """Network phase of a TMDb refresh: query TMDb and download artwork,
+    then hand the payload to apply_tmdb_refresh on the sql queue.
 
-    With notify_if_missing (used by finalize_localization for new imports),
-    an email goes out if the movie still has no TMDb match after the query.
-    Movie refreshes hold the affected titles' locks for the duration, so
-    they can't interleave with an import of the same title.
+    This phase runs on the user-request queue, where several jobs may run
+    concurrently — safe, because it writes nothing to the database. Every
+    database and library-file change happens in apply_tmdb_refresh,
+    serialized through the single sql worker.
+    """
+
+    with app.app_context():
+        try:
+
+            if library == "Movies":
+                movie = Movie.query.filter_by(id=id).first()
+                if movie is None:
+                    # e.g. merged into another record by an earlier job in
+                    # a bulk refresh
+                    current_app.logger.warning(
+                        f"Movie id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
+                description = f"Updating '{movie.title} ({movie.year})' with TMDb data"
+                current_app.logger.info(f"tmdb_id: {tmdb_id}")
+                tmdb_info = movie.tmdb_movie_fetch(tmdb_id)
+
+            elif library == "TV Shows":
+                tv_show = TVSeries.query.filter_by(id=id).first()
+                if tv_show is None:
+                    current_app.logger.warning(
+                        f"TV series id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
+
+                # Search under the canonical record's title if this series
+                # already shares a tmdb_id with one
+
+                if tv_show.tmdb_id != None:
+                    existing_series = TVSeries.query.filter_by(
+                        tmdb_id=tv_show.tmdb_id
+                    ).first()
+                    if existing_series:
+                        tv_show = existing_series
+                description = f"Updating '{tv_show.title}' with TMDb data"
+                tmdb_info = tv_show.tmdb_tv_fetch(tmdb_id)
+
+            else:
+                return False
+
+            # Compress the payload for its trip through Redis; a details
+            # response stripped of its unused blocks is small, but a bulk
+            # refresh can have thousands of these queued at once
+
+            tmdb_payload = None
+            if tmdb_info:
+                tmdb_payload = zlib.compress(json.dumps(tmdb_info).encode("utf-8"))
+
+            current_app.sql_queue.enqueue(
+                "app.videos.apply_tmdb_refresh",
+                kwargs={
+                    "library": library,
+                    "id": id,
+                    "tmdb_id": tmdb_id,
+                    "tmdb_payload": tmdb_payload,
+                    "notify_if_missing": notify_if_missing,
+                },
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=description,
+            )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            return False
+
+        else:
+            return True
+
+
+def apply_tmdb_refresh(
+    library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
+):
+    """Database phase of a TMDb refresh: apply a payload fetched by
+    refresh_tmdb_info, rewrite file paths, and merge duplicate records.
+
+    Runs on the single-worker sql queue so refreshes are serialized
+    against each other and all other database writes. Movie refreshes
+    additionally hold the affected titles' locks for the duration, so
+    they can't interleave with an import of the same title. With
+    notify_if_missing (used for new imports), an email goes out if the
+    movie still has no TMDb match after the payload is applied.
     """
 
     with app.app_context():
         locks = []
         try:
+            tmdb_info = None
+            if tmdb_payload:
+                tmdb_info = json.loads(zlib.decompress(tmdb_payload).decode("utf-8"))
 
             if library == "Movies":
                 # Get the Movie record to be updated
 
                 movie = Movie.query.filter_by(id=id).first()
+                if movie is None:
+                    current_app.logger.warning(
+                        f"Movie id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
 
                 # Make a note of the original movie_id field.
 
@@ -5146,10 +5241,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
 
                 # See if the requested tmdb_id already exists in the Movie table.
                 # If so, we'll use that existing Movie record.
-                # If the user specified a tmdb_id, get the info for that tmdb_id.
-                # If not, try to find a movie from TMDB based on the movie's title and year.
 
-                current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 existing_movie = None
                 if tmdb_id != None:
                     existing_movie = (
@@ -5179,19 +5271,20 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                             f"by another task, returning the TMDb refresh to "
                             f"the queue after {sleep_duration} minutes"
                         )
-                        current_app.request_scheduler.enqueue_in(
+                        current_app.sql_scheduler.enqueue_in(
                             timedelta(minutes=sleep_duration),
-                            "app.videos.refresh_tmdb_info",
+                            "app.videos.apply_tmdb_refresh",
                             library=library,
                             id=id,
                             tmdb_id=tmdb_id,
+                            tmdb_payload=tmdb_payload,
                             notify_if_missing=notify_if_missing,
                             timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                            job_id=f"retry:refresh_tmdb_info:{library}:{id}",
+                            job_id=f"retry:apply_tmdb_refresh:{library}:{id}",
                             job_result_ttl=86400,
                             job_description=(
-                                f"Refreshing TMDB data for "
-                                f"'{movie.title} ({movie.year})'"
+                                f"Updating '{movie.title} ({movie.year})' "
+                                f"with TMDb data"
                             ),
                         )
                         return False
@@ -5200,12 +5293,10 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 if existing_movie:
                     movie = existing_movie
                     current_app.logger.info(f"Existing movie: {movie}")
-                    existing_movie.tmdb_movie_query(tmdb_id)
+                    existing_movie.tmdb_movie_apply(tmdb_info)
                     db.session.commit()
-                elif tmdb_id != None:
-                    movie.tmdb_movie_query(tmdb_id)
                 else:
-                    movie.tmdb_movie_query()
+                    movie.tmdb_movie_apply(tmdb_info)
 
                 if notify_if_missing and movie.tmdb_id == None:
                     admin_user = User.query.filter(User.admin == True).first()
@@ -5384,6 +5475,11 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 # Get the TVSeries record to be updated
 
                 tv_show = TVSeries.query.filter_by(id=id).first()
+                if tv_show is None:
+                    current_app.logger.warning(
+                        f"TV series id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
 
                 # See if the requested tmdb_id already exists in the TVSeries table.
                 # If so, we'll use that existing TVSeries record.
@@ -5396,14 +5492,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                     if existing_series:
                         tv_show = existing_series
 
-                # If the user specified a tmdb_id, get the info for that tmdb_id.
-                # If not, try to find a tv show from TMDB based on the show's title.
-
-                if tmdb_id:
-                    tv_show.tmdb_tv_query(tmdb_id)
-
-                else:
-                    tv_show.tmdb_tv_query()
+                tv_show.tmdb_tv_apply(tmdb_info)
 
             db.session.commit()
 

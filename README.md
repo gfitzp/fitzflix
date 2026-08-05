@@ -212,8 +212,10 @@ Background work is split across six Redis queues; the supervisor config and the 
 | `fitzflix-import` | Importing new files: parsing, stripping non-native tracks, sorting into the library |
 | `fitzflix-file-operation` | Per-file operations: S3 uploads and downloads, Matroska property edits, carrying localized files from staging into the library |
 | `fitzflix-transcode` | HandBrake transcodes (CPU-heavy; usually one worker) |
-| `fitzflix-sql` | Database writes and TMDb metadata refreshes — run exactly one worker so they're serialized |
-| `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling |
+| `fitzflix-sql` | Database writes, including the database half of TMDb refreshes — run exactly one worker so they're serialized |
+| `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling, and the network half of TMDb refreshes |
+
+A TMDb refresh runs in two phases: the API queries and artwork downloads happen on `fitzflix-user-request` (safe to run several at once, since nothing touches the database), and the fetched payload is then applied — record updates, file renames, duplicate merges — on the single-worker `fitzflix-sql` queue, so database writes never run concurrently. All TMDb traffic (API and image CDN alike) flows through a shared Redis rate limiter capped at `TMDB_REQUESTS_PER_SECOND` (default 10) across every process, keeping Fitzflix well under [TMDb's ~40–50 requests/second limit](https://developer.themoviedb.org/docs/rate-limiting); the `/configuration` endpoint is cached for a day, as TMDb recommends.
 | `fitzflix-maintenance` | Scheduled application upkeep, such as nightly log rotation — one worker |
 
 ## Running Manually

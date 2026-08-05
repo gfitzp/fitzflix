@@ -219,7 +219,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes.requests, "get", fake_get)
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page

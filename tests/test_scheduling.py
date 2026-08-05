@@ -567,12 +567,70 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
         assert not os.path.exists(hidden)
 
 
-def test_tmdb_refresh_defers_while_title_is_locked(app, held_lock, fake_tmdb):
-    """A movie's TMDb refresh rewrites file paths and can merge records, so
-    it must wait for any import chain holding one of the title's locks."""
+def test_tmdb_refresh_hands_off_to_sql_queue(app):
+    """The fetch phase runs on the multi-worker request queue; every
+    database write happens in apply_tmdb_refresh on the single-worker sql
+    queue, so concurrent fetches can't produce concurrent writes."""
 
     from app import db
     from app.videos import refresh_tmdb_info
+    from tests.factories import make_movie
+
+    with app.app_context():
+        movie = make_movie("Handoff Film", 2003)
+        db.session.commit()
+        movie_id = movie.id
+
+        # With no TMDB_API_KEY configured the fetch finds nothing, but the
+        # apply job must still be enqueued (it also rewrites file paths)
+
+        assert refresh_tmdb_info("Movies", movie_id) is True
+
+        jobs = [
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.apply_tmdb_refresh"
+            and job.kwargs.get("id") == movie_id
+        ]
+        assert len(jobs) == 1
+        assert jobs[0].kwargs["library"] == "Movies"
+        assert jobs[0].kwargs["tmdb_payload"] is None
+        assert_binds(jobs[0])
+
+
+def test_apply_tmdb_refresh_round_trips_payload(app):
+    """The compressed payload built by the fetch phase decompresses and
+    applies in the database phase."""
+
+    import zlib
+
+    from app import db
+    from app.models import TVSeries
+    from app.videos import apply_tmdb_refresh
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        tv = make_tv_series("Payload Show")
+        db.session.commit()
+        tv_id = tv.id
+
+        payload = zlib.compress(
+            json.dumps({"id": 999, "name": "Payload Show Canonical"}).encode("utf-8")
+        )
+        assert apply_tmdb_refresh("TV Shows", tv_id, tmdb_payload=payload) is True
+
+        db.session.expire_all()
+        refreshed = TVSeries.query.filter_by(id=tv_id).first()
+        assert refreshed.tmdb_id == 999
+        assert refreshed.tmdb_name == "Payload Show Canonical"
+
+
+def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
+    """A movie's TMDb apply rewrites file paths and can merge records, so
+    it must wait for any import chain holding one of the title's locks."""
+
+    from app import db
+    from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -583,15 +641,15 @@ def test_tmdb_refresh_defers_while_title_is_locked(app, held_lock, fake_tmdb):
 
         held_lock(file.file_identifier())
 
-        assert refresh_tmdb_info("Movies", movie_id) is False
+        assert apply_tmdb_refresh("Movies", movie_id) is False
 
         retries = [
             job
-            for job, _ in app.request_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:refresh_tmdb_info")
+            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:apply_tmdb_refresh")
         ]
         assert [job.id for job in retries] == [
-            f"retry:refresh_tmdb_info:Movies:{movie_id}"
+            f"retry:apply_tmdb_refresh:Movies:{movie_id}"
         ]
         job = retries[0]
         assert job.kwargs["library"] == "Movies"
@@ -599,12 +657,12 @@ def test_tmdb_refresh_defers_while_title_is_locked(app, held_lock, fake_tmdb):
         assert_binds(job)
 
 
-def test_tmdb_refresh_locks_the_merge_target_too(app, held_lock, fake_tmdb):
-    """When a TMDb id points at an existing movie, the refresh will merge
+def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
+    """When a TMDb id points at an existing movie, the apply will merge
     records — so a lock held on the *target* movie's files defers it."""
 
     from app import db
-    from app.videos import refresh_tmdb_info
+    from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -617,16 +675,16 @@ def test_tmdb_refresh_locks_the_merge_target_too(app, held_lock, fake_tmdb):
 
         held_lock(target_file.file_identifier())
 
-        assert refresh_tmdb_info("Movies", source_id, tmdb_id=4242) is False
+        assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is False
         assert any(
-            job.id == f"retry:refresh_tmdb_info:Movies:{source_id}"
-            for job, _ in app.request_scheduler.get_jobs(with_times=True)
+            job.id == f"retry:apply_tmdb_refresh:Movies:{source_id}"
+            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
         )
 
 
-def test_tmdb_refresh_releases_locks_when_done(app, fake_tmdb):
+def test_tmdb_apply_releases_locks_when_done(app):
     from app import db
-    from app.videos import refresh_tmdb_info
+    from app.videos import apply_tmdb_refresh
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
@@ -638,8 +696,8 @@ def test_tmdb_refresh_releases_locks_when_done(app, fake_tmdb):
         movie_id = movie.id
         identifier = file.file_identifier()
 
-        assert refresh_tmdb_info("Movies", movie_id) is True
+        assert apply_tmdb_refresh("Movies", movie_id) is True
 
         lock = app.lock_manager.lock(identifier, 1000)
-        assert lock, "refresh did not release the title lock"
+        assert lock, "apply did not release the title lock"
         app.lock_manager.unlock(lock)

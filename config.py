@@ -142,6 +142,11 @@ class Config(object):
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"
 
+    # Combined ceiling for all TMDb requests (API + image CDN) across every
+    # worker process; TMDb rate-limits at roughly 40-50 requests per second
+    # per IP, so stay well below that
+    TMDB_REQUESTS_PER_SECOND            = int(os.environ.get("TMDB_REQUESTS_PER_SECOND") or 10)
+
     WIKIDATA_SPARQL_URL                 = os.environ.get("WIKIDATA_SPARQL_URL") or "https://query.wikidata.org/sparql"
 
     # Task timeouts; if specifying in the .env file, set as number of seconds

@@ -2,7 +2,8 @@ import json
 import os
 
 from datetime import datetime, timezone
-from time import time
+from time import sleep, time
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import jwt
@@ -126,17 +127,174 @@ class Utilities(object):
         return string
 
 
+def tmdb_get(url, **kwargs):
+    """GET a TMDb resource (API or image CDN) through a shared rate limiter.
+
+    TMDb rate-limits at roughly 40-50 requests per second per IP
+    (https://developer.themoviedb.org/docs/rate-limiting). A Redis counter
+    keyed on the current second is shared by every worker and web process,
+    so their combined request rate stays capped at
+    TMDB_REQUESTS_PER_SECOND no matter how many run concurrently.
+    """
+
+    limit = current_app.config["TMDB_REQUESTS_PER_SECOND"]
+    while True:
+        now = time()
+        bucket = f"fitzflix:tmdb:requests:{int(now)}"
+        pipe = current_app.redis.pipeline()
+        pipe.incr(bucket)
+        pipe.expire(bucket, 3)
+        if pipe.execute()[0] <= limit:
+            break
+        sleep(max(int(now) + 1 - now, 0.05))
+    kwargs.setdefault("timeout", 30)
+    return requests.get(url, **kwargs)
+
+
+def tmdb_images_config():
+    """The images block of TMDb's /configuration response, cached for a day.
+
+    TMDb asks integrators to cache this endpoint for a few days instead of
+    fetching it alongside every request; returns None if it's unavailable
+    and nothing is cached.
+    """
+
+    cached = current_app.redis.get("fitzflix:tmdb:configuration")
+    if cached:
+        return json.loads(cached)
+    r = tmdb_get(
+        current_app.config["TMDB_API_URL"] + "/configuration",
+        params={"api_key": current_app.config["TMDB_API_KEY"]},
+    )
+    r.raise_for_status()
+    images = r.json().get("images")
+    if images:
+        current_app.redis.setex(
+            "fitzflix:tmdb:configuration", 86400, json.dumps(images)
+        )
+    return images
+
+
+def download_movie_artwork(tmdb_info, images_config):
+    """Download every image a movie details payload references.
+
+    Driven by the raw payload rather than ORM records, so it can run in
+    the network phase of a refresh before any database rows change; the
+    SimpleNamespace shims reuse get_tmdb_images so the on-disk layout has
+    a single source of truth.
+    """
+
+    base_url = images_config["secure_base_url"]
+    backdrop_sizes = images_config["backdrop_sizes"]
+    logo_sizes = images_config["logo_sizes"]
+    poster_sizes = images_config["poster_sizes"]
+    profile_sizes = images_config["profile_sizes"]
+
+    collection = tmdb_info.get("belongs_to_collection")
+    if collection:
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_poster_path=collection.get("poster_path")),
+            "collection",
+            collection.get("id"),
+            base_url,
+            [{"poster": poster_sizes}],
+        )
+
+    credits = tmdb_info.get("credits") or {}
+    for person in (credits.get("cast") or []) + (credits.get("crew") or []):
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_profile_path=person.get("profile_path")),
+            "person",
+            person.get("id"),
+            base_url,
+            [{"profile": profile_sizes}],
+        )
+
+    for company in tmdb_info.get("production_companies") or []:
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_logo_path=company.get("logo_path")),
+            "company",
+            company.get("id"),
+            base_url,
+            [{"logo": logo_sizes}],
+        )
+
+    TMDBMixin.get_tmdb_images(
+        SimpleNamespace(
+            tmdb_backdrop_path=tmdb_info.get("backdrop_path"),
+            tmdb_poster_path=tmdb_info.get("poster_path"),
+        ),
+        "movie",
+        tmdb_info.get("id"),
+        base_url,
+        [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
+    )
+
+
+def download_tv_artwork(tmdb_info, images_config):
+    """Download every image a TV details payload references; see
+    download_movie_artwork."""
+
+    base_url = images_config["secure_base_url"]
+    backdrop_sizes = images_config["backdrop_sizes"]
+    logo_sizes = images_config["logo_sizes"]
+    poster_sizes = images_config["poster_sizes"]
+
+    for network in tmdb_info.get("networks") or []:
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_logo_path=network.get("logo_path")),
+            "network",
+            network.get("id"),
+            base_url,
+            [{"logo": logo_sizes}],
+        )
+
+    for company in tmdb_info.get("production_companies") or []:
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_logo_path=company.get("logo_path")),
+            "company",
+            company.get("id"),
+            base_url,
+            [{"logo": logo_sizes}],
+        )
+
+    for season in tmdb_info.get("seasons") or []:
+        TMDBMixin.get_tmdb_images(
+            SimpleNamespace(tmdb_poster_path=season.get("poster_path")),
+            "season",
+            season.get("id"),
+            base_url,
+            [{"poster": poster_sizes}],
+        )
+
+    TMDBMixin.get_tmdb_images(
+        SimpleNamespace(
+            tmdb_backdrop_path=tmdb_info.get("backdrop_path"),
+            tmdb_poster_path=tmdb_info.get("poster_path"),
+        ),
+        "tv",
+        tmdb_info.get("id"),
+        base_url,
+        [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
+    )
+
+
 class TMDBMixin(object):
-    def tmdb_movie_query(self, tmdb_id=None):
+    def tmdb_movie_fetch(self, tmdb_id=None):
+        """Network half of a TMDb movie refresh: search (when no id is
+        given), pull the movie details, and download artwork. Writes
+        nothing to the database, so concurrent fetches are safe; returns
+        the details payload for tmdb_movie_apply, or None with no match."""
+
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
-            return self
+            return None
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
         requested_info = "credits,external_ids,images,keywords,release_dates,videos"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
-            r = requests.get(
+            r = tmdb_get(
                 tmdb_api_url + "/search/movie",
                 params={
                     "api_key": tmdb_api_key,
@@ -152,7 +310,7 @@ class TMDBMixin(object):
 
         if tmdb_id:
             try:
-                r = requests.get(
+                r = tmdb_get(
                     tmdb_api_url + "/movie/" + str(tmdb_id),
                     params={
                         "api_key": tmdb_api_key,
@@ -179,362 +337,356 @@ class TMDBMixin(object):
                         tmdb_id=tmdb_id,
                     ),
                 )
-                return self
+                return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
-            r = requests.get(
-                tmdb_api_url + "/configuration",
-                params={"api_key": tmdb_api_key},
-            )
-            r.raise_for_status()
-            if r.json().get("images"):
-                base_url = r.json().get("images")["secure_base_url"]
-                backdrop_sizes = r.json().get("images")["backdrop_sizes"]
-                logo_sizes = r.json().get("images")["logo_sizes"]
-                poster_sizes = r.json().get("images")["poster_sizes"]
-                profile_sizes = r.json().get("images")["profile_sizes"]
+
+            # The appended images/videos blocks aren't read by the apply
+            # phase, and they dominate the payload's size; drop them before
+            # the payload travels between tasks through Redis
+
+            tmdb_info.pop("images", None)
+            tmdb_info.pop("videos", None)
+
+            images_config = tmdb_images_config()
+            if images_config:
+                download_movie_artwork(tmdb_info, images_config)
 
             else:
                 current_app.logger.warning(
                     "Unable to get image configuration info from TMDB!"
                 )
 
-            # Delete any existing records associated with this movie
+        return tmdb_info or None
 
-            tmdb_collections = TMDBMovieCollection.query.all()
-            for collection in tmdb_collections:
-                if collection in self.collections:
-                    self.collections.remove(collection)
+    def tmdb_movie_apply(self, tmdb_info):
+        """Database half of a TMDb movie refresh: replace this movie's TMDb
+        fields and associations with the fetched payload. No network calls
+        here — artwork is already on disk — so it belongs on the
+        single-worker sql queue, serialized against other database work."""
 
-            MovieCast.query.filter_by(movie_id=self.id).delete()
-            MovieCrew.query.filter_by(movie_id=self.id).delete()
+        if not tmdb_info:
+            return self
 
-            tmdb_genres = TMDBGenre.query.all()
-            for genre in tmdb_genres:
-                if genre in self.genres:
-                    self.genres.remove(genre)
+        # Delete any existing records associated with this movie
 
-            tmdb_keywords = TMDBKeyword.query.all()
-            for keyword in tmdb_keywords:
-                if keyword in self.keywords:
-                    self.keywords.remove(keyword)
+        tmdb_collections = TMDBMovieCollection.query.all()
+        for collection in tmdb_collections:
+            if collection in self.collections:
+                self.collections.remove(collection)
 
-            tmdb_production_companies = TMDBProductionCompany.query.all()
-            for company in tmdb_production_companies:
-                if company in self.production_companies:
-                    self.production_companies.remove(company)
+        MovieCast.query.filter_by(movie_id=self.id).delete()
+        MovieCrew.query.filter_by(movie_id=self.id).delete()
 
-            tmdb_production_countries = TMDBProductionCountry.query.all()
-            for country in tmdb_production_countries:
-                if country in self.production_countries:
-                    self.production_countries.remove(country)
+        tmdb_genres = TMDBGenre.query.all()
+        for genre in tmdb_genres:
+            if genre in self.genres:
+                self.genres.remove(genre)
 
-            tmdb_spoken_languages = TMDBSpokenLanguage.query.all()
-            for language in tmdb_spoken_languages:
-                if language in self.spoken_languages:
-                    self.spoken_languages.remove(language)
+        tmdb_keywords = TMDBKeyword.query.all()
+        for keyword in tmdb_keywords:
+            if keyword in self.keywords:
+                self.keywords.remove(keyword)
 
-            ref_tmdb_certifications = RefTMDBCertification.query.all()
-            for certification in ref_tmdb_certifications:
-                if certification in self.certifications:
-                    self.certifications.remove(certification)
+        tmdb_production_companies = TMDBProductionCompany.query.all()
+        for company in tmdb_production_companies:
+            if company in self.production_companies:
+                self.production_companies.remove(company)
 
-            # Add fresh new data from TMDB
+        tmdb_production_countries = TMDBProductionCountry.query.all()
+        for country in tmdb_production_countries:
+            if country in self.production_countries:
+                self.production_countries.remove(country)
 
-            if tmdb_info.get("external_ids"):
-                external_ids = tmdb_info.get("external_ids")
-                self.imdb_id = external_ids.get("imdb_id")
+        tmdb_spoken_languages = TMDBSpokenLanguage.query.all()
+        for language in tmdb_spoken_languages:
+            if language in self.spoken_languages:
+                self.spoken_languages.remove(language)
 
-            self.tmdb_id = tmdb_info.get("id")
-            self.tmdb_adult = tmdb_info.get("adult")
-            self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
-            self.tmdb_budget = tmdb_info.get("budget")
-            self.tmdb_homepage = tmdb_info.get("homepage")
-            self.tmdb_original_language = tmdb_info.get("original_language")
-            self.tmdb_original_title = tmdb_info.get("original_title")
-            self.tmdb_overview = tmdb_info.get("overview")
-            self.tmdb_popularity = tmdb_info.get("popularity")
-            self.tmdb_poster_path = tmdb_info.get("poster_path")
-            canonical_year = self.year
-            if tmdb_info.get("release_date"):
-                self.tmdb_release_date = datetime.strptime(
-                    tmdb_info.get("release_date"), "%Y-%m-%d"
-                )
-                canonical_year = self.tmdb_release_date.year
+        ref_tmdb_certifications = RefTMDBCertification.query.all()
+        for certification in ref_tmdb_certifications:
+            if certification in self.certifications:
+                self.certifications.remove(certification)
 
-            self.tmdb_revenue = tmdb_info.get("revenue")
-            self.tmdb_runtime = tmdb_info.get("runtime")
-            self.tmdb_status = tmdb_info.get("status")
-            self.tmdb_tagline = tmdb_info.get("tagline")
-            self.tmdb_title = tmdb_info.get("title")
+        # Add fresh new data from TMDB
 
-            # Rename this movie to TMDb's canonical title and year, unless a
-            # different movie record already holds that name: title + year is
-            # unique, so renaming onto it would fail the whole commit. The two
-            # records end up sharing a tmdb_id, so refreshing either movie will
-            # merge them via the existing duplicate-tmdb_id handling.
+        if tmdb_info.get("external_ids"):
+            external_ids = tmdb_info.get("external_ids")
+            self.imdb_id = external_ids.get("imdb_id")
 
-            canonical_title = tmdb_info.get("title")
+        self.tmdb_id = tmdb_info.get("id")
+        self.tmdb_adult = tmdb_info.get("adult")
+        self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
+        self.tmdb_budget = tmdb_info.get("budget")
+        self.tmdb_homepage = tmdb_info.get("homepage")
+        self.tmdb_original_language = tmdb_info.get("original_language")
+        self.tmdb_original_title = tmdb_info.get("original_title")
+        self.tmdb_overview = tmdb_info.get("overview")
+        self.tmdb_popularity = tmdb_info.get("popularity")
+        self.tmdb_poster_path = tmdb_info.get("poster_path")
+        canonical_year = self.year
+        if tmdb_info.get("release_date"):
+            self.tmdb_release_date = datetime.strptime(
+                tmdb_info.get("release_date"), "%Y-%m-%d"
+            )
+            canonical_year = self.tmdb_release_date.year
 
-            duplicate = Movie.query.filter(
-                Movie.title == canonical_title, Movie.year == canonical_year
+        self.tmdb_revenue = tmdb_info.get("revenue")
+        self.tmdb_runtime = tmdb_info.get("runtime")
+        self.tmdb_status = tmdb_info.get("status")
+        self.tmdb_tagline = tmdb_info.get("tagline")
+        self.tmdb_title = tmdb_info.get("title")
+
+        # Rename this movie to TMDb's canonical title and year, unless a
+        # different movie record already holds that name: title + year is
+        # unique, so renaming onto it would fail the whole commit. The two
+        # records end up sharing a tmdb_id, so refreshing either movie will
+        # merge them via the existing duplicate-tmdb_id handling.
+
+        canonical_title = tmdb_info.get("title")
+
+        duplicate = Movie.query.filter(
+            Movie.title == canonical_title, Movie.year == canonical_year
+        ).first()
+
+        if duplicate is not None and duplicate is not self:
+            current_app.logger.warning(
+                f"{self} not renamed to '{canonical_title} ({canonical_year})': "
+                f"{duplicate} already has that name; refresh either movie "
+                f"with TMDb id {tmdb_info.get('id')} to merge them"
+            )
+            admin_user = User.query.filter(User.admin == True).first()
+            send_email(
+                "Fitzflix - Duplicate movie detected",
+                sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                recipients=[admin_user.email],
+                text_body=render_template(
+                    "email/duplicate_movie.txt",
+                    user=admin_user.email,
+                    movie=self,
+                    duplicate=duplicate,
+                    canonical_title=canonical_title,
+                    canonical_year=canonical_year,
+                ),
+                html_body=render_template(
+                    "email/duplicate_movie.html",
+                    user=admin_user.email,
+                    movie=self,
+                    duplicate=duplicate,
+                    canonical_title=canonical_title,
+                    canonical_year=canonical_year,
+                ),
+            )
+
+        elif canonical_title:
+            self.title = canonical_title
+            self.year = canonical_year
+        self.tmdb_video = tmdb_info.get("video")
+        self.tmdb_vote_average = tmdb_info.get("vote_average")
+        self.tmdb_vote_count = tmdb_info.get("vote_count")
+        if tmdb_info.get("id"):
+            self.tmdb_data_as_of = datetime.now(timezone.utc)
+
+        release_dates = tmdb_info.get("release_dates")
+        if release_dates:
+            if release_dates.get("results"):
+                for country_release in release_dates["results"]:
+                    country = country_release.get("iso_3166_1")
+                    if country:
+                        dates = country_release.get("release_dates")
+                        if dates:
+                            certification = RefTMDBCertification.query.filter_by(
+                                country=country,
+                                certification=dates[0].get("certification"),
+                            ).first()
+                            if certification:
+                                self.certifications.append(certification)
+
+        if tmdb_info.get("belongs_to_collection"):
+            collection = tmdb_info.get("belongs_to_collection")
+            movie_collection = TMDBMovieCollection.query.filter_by(
+                id=collection.get("id")
             ).first()
-
-            if duplicate is not None and duplicate is not self:
-                current_app.logger.warning(
-                    f"{self} not renamed to '{canonical_title} ({canonical_year})': "
-                    f"{duplicate} already has that name; refresh either movie "
-                    f"with TMDb id {tmdb_info.get('id')} to merge them"
+            if not movie_collection:
+                movie_collection = TMDBMovieCollection(
+                    id=collection.get("id"),
+                    tmdb_backdrop_path=collection.get("backdrop_path"),
+                    name=collection.get("name"),
+                    tmdb_poster_path=collection.get("poster_path"),
                 )
-                admin_user = User.query.filter(User.admin == True).first()
-                send_email(
-                    "Fitzflix - Duplicate movie detected",
-                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-                    recipients=[admin_user.email],
-                    text_body=render_template(
-                        "email/duplicate_movie.txt",
-                        user=admin_user.email,
-                        movie=self,
-                        duplicate=duplicate,
-                        canonical_title=canonical_title,
-                        canonical_year=canonical_year,
-                    ),
-                    html_body=render_template(
-                        "email/duplicate_movie.html",
-                        user=admin_user.email,
-                        movie=self,
-                        duplicate=duplicate,
-                        canonical_title=canonical_title,
-                        canonical_year=canonical_year,
-                    ),
-                )
+                db.session.add(movie_collection)
 
-            elif canonical_title:
-                self.title = canonical_title
-                self.year = canonical_year
-            self.tmdb_video = tmdb_info.get("video")
-            self.tmdb_vote_average = tmdb_info.get("vote_average")
-            self.tmdb_vote_count = tmdb_info.get("vote_count")
-            if tmdb_info.get("id"):
-                self.tmdb_data_as_of = datetime.now(timezone.utc)
+            if (
+                self.collections.filter(
+                    TMDBMovieCollection.id == movie_collection.id
+                ).count()
+                == 0
+            ):
+                self.collections.append(movie_collection)
 
-            release_dates = tmdb_info.get("release_dates")
-            if release_dates:
-                if release_dates.get("results"):
-                    for country_release in release_dates["results"]:
-                        country = country_release.get("iso_3166_1")
-                        if country:
-                            dates = country_release.get("release_dates")
-                            if dates:
-                                certification = RefTMDBCertification.query.filter_by(
-                                    country=country,
-                                    certification=dates[0].get("certification"),
-                                ).first()
-                                if certification:
-                                    self.certifications.append(certification)
-
-            if tmdb_info.get("belongs_to_collection"):
-                collection = tmdb_info.get("belongs_to_collection")
-                movie_collection = TMDBMovieCollection.query.filter_by(
-                    id=collection.get("id")
-                ).first()
-                if not movie_collection:
-                    movie_collection = TMDBMovieCollection(
-                        id=collection.get("id"),
-                        tmdb_backdrop_path=collection.get("backdrop_path"),
-                        name=collection.get("name"),
-                        tmdb_poster_path=collection.get("poster_path"),
+        if tmdb_info.get("credits"):
+            credits = tmdb_info.get("credits")
+            for person in credits.get("cast"):
+                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
+                if not p:
+                    p = TMDBCredit(
+                        id=person.get("id"),
+                        name=person.get("name"),
+                        gender=person.get("gender"),
+                        tmdb_profile_path=person.get("profile_path"),
                     )
-                    db.session.add(movie_collection)
+                    db.session.add(p)
 
                 if (
-                    self.collections.filter(
-                        TMDBMovieCollection.id == movie_collection.id
+                    MovieCast.query.filter_by(
+                        movie_id=self.id,
+                        credit_id=p.id,
+                        character=person.get("character"),
                     ).count()
                     == 0
                 ):
-                    self.collections.append(movie_collection)
-
-                movie_collection.get_tmdb_images(
-                    "collection",
-                    movie_collection.id,
-                    base_url,
-                    [{"poster": poster_sizes}],
-                )
-
-            if tmdb_info.get("credits"):
-                credits = tmdb_info.get("credits")
-                for person in credits.get("cast"):
-                    p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                    if not p:
-                        p = TMDBCredit(
-                            id=person.get("id"),
-                            name=person.get("name"),
-                            gender=person.get("gender"),
-                            tmdb_profile_path=person.get("profile_path"),
-                        )
-                        db.session.add(p)
-
-                    if (
-                        MovieCast.query.filter_by(
-                            movie_id=self.id,
-                            credit_id=p.id,
-                            character=person.get("character"),
-                        ).count()
-                        == 0
-                    ):
-                        mc = MovieCast(
-                            movie_id=self.id,
-                            credit_id=p.id,
-                            character=person.get("character"),
-                            billing_order=person.get("order"),
-                        )
-                        db.session.add(mc)
-
-                    p.get_tmdb_images(
-                        "person", p.id, base_url, [{"profile": profile_sizes}]
+                    mc = MovieCast(
+                        movie_id=self.id,
+                        credit_id=p.id,
+                        character=person.get("character"),
+                        billing_order=person.get("order"),
                     )
+                    db.session.add(mc)
 
-                for person in credits.get("crew"):
-                    p = TMDBCredit.query.filter_by(id=person.get("id")).first()
-                    if not p:
-                        p = TMDBCredit(
-                            id=person.get("id"),
-                            name=person.get("name"),
-                            gender=person.get("gender"),
-                            tmdb_profile_path=person.get("profile_path"),
-                        )
-                        db.session.add(p)
-
-                    if (
-                        MovieCrew.query.filter_by(
-                            movie_id=self.id,
-                            credit_id=p.id,
-                            department=person.get("department"),
-                            job=person.get("job"),
-                        ).count()
-                        == 0
-                    ):
-                        mc = MovieCrew(
-                            movie_id=self.id,
-                            credit_id=p.id,
-                            department=person.get("department"),
-                            job=person.get("job"),
-                        )
-                        db.session.add(mc)
-
-                    p.get_tmdb_images(
-                        "person", p.id, base_url, [{"profile": profile_sizes}]
+            for person in credits.get("crew"):
+                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
+                if not p:
+                    p = TMDBCredit(
+                        id=person.get("id"),
+                        name=person.get("name"),
+                        gender=person.get("gender"),
+                        tmdb_profile_path=person.get("profile_path"),
                     )
+                    db.session.add(p)
 
-            if tmdb_info.get("genres"):
-                tmdb_genres = tmdb_info.get("genres")
-                for genre in tmdb_genres:
-                    g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
-                    if not g:
-                        g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
-                        db.session.add(g)
-
-                    if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
-                        self.genres.append(g)
-
-            if tmdb_info.get("keywords"):
-                tmdb_keywords = tmdb_info.get("keywords")
-                for keyword in tmdb_keywords.get("keywords"):
-                    k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
-                    if not k:
-                        k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
-                        db.session.add(k)
-
-                    if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
-                        self.keywords.append(k)
-
-            if tmdb_info.get("production_companies"):
-                tmdb_production_companies = tmdb_info.get("production_companies")
-                for company in tmdb_production_companies:
-                    prod_company = TMDBProductionCompany.query.filter_by(
-                        id=company.get("id")
-                    ).first()
-                    if not prod_company:
-                        prod_company = TMDBProductionCompany(
-                            id=company.get("id"),
-                            name=company.get("name"),
-                            country=company.get("origin_country"),
-                            tmdb_logo_path=company.get("logo_path"),
-                        )
-                        db.session.add(prod_company)
-
-                    if (
-                        self.production_companies.filter(
-                            TMDBProductionCompany.id == prod_company.id
-                        ).count()
-                        == 0
-                    ):
-                        self.production_companies.append(prod_company)
-
-                    prod_company.get_tmdb_images(
-                        "company", prod_company.id, base_url, [{"logo": logo_sizes}]
+                if (
+                    MovieCrew.query.filter_by(
+                        movie_id=self.id,
+                        credit_id=p.id,
+                        department=person.get("department"),
+                        job=person.get("job"),
+                    ).count()
+                    == 0
+                ):
+                    mc = MovieCrew(
+                        movie_id=self.id,
+                        credit_id=p.id,
+                        department=person.get("department"),
+                        job=person.get("job"),
                     )
+                    db.session.add(mc)
 
-            if tmdb_info.get("production_countries"):
-                tmdb_production_countries = tmdb_info.get("production_countries")
-                for country in tmdb_production_countries:
-                    prod_country = TMDBProductionCountry.query.filter_by(
-                        id=country.get("iso_3166_1")
-                    ).first()
-                    if not prod_country:
-                        prod_country = TMDBProductionCountry(
-                            id=country.get("iso_3166_1"), name=country.get("name")
-                        )
-                        db.session.add(prod_country)
+        if tmdb_info.get("genres"):
+            tmdb_genres = tmdb_info.get("genres")
+            for genre in tmdb_genres:
+                g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
+                if not g:
+                    g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
+                    db.session.add(g)
 
-                    if (
-                        self.production_countries.filter(
-                            TMDBProductionCountry.id == prod_country.id
-                        ).count()
-                        == 0
-                    ):
-                        self.production_countries.append(prod_country)
+                if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
+                    self.genres.append(g)
 
-            if tmdb_info.get("spoken_languages"):
-                tmdb_languages = tmdb_info.get("spoken_languages")
-                for language in tmdb_languages:
-                    spoken_lang = TMDBSpokenLanguage.query.filter_by(
-                        id=language.get("iso_639_1")
-                    ).first()
-                    if not spoken_lang:
-                        spoken_lang = TMDBSpokenLanguage(
-                            id=language.get("iso_639_1"), name=language.get("name")
-                        )
-                        db.session.add(spoken_lang)
+        if tmdb_info.get("keywords"):
+            tmdb_keywords = tmdb_info.get("keywords")
+            for keyword in tmdb_keywords.get("keywords"):
+                k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
+                if not k:
+                    k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
+                    db.session.add(k)
 
-                    if (
-                        self.spoken_languages.filter(
-                            TMDBSpokenLanguage.id == spoken_lang.id
-                        ).count()
-                        == 0
-                    ):
-                        self.spoken_languages.append(spoken_lang)
+                if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
+                    self.keywords.append(k)
 
-            self.get_tmdb_images(
-                "movie",
-                self.tmdb_id,
-                base_url,
-                [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
-            )
+        if tmdb_info.get("production_companies"):
+            tmdb_production_companies = tmdb_info.get("production_companies")
+            for company in tmdb_production_companies:
+                prod_company = TMDBProductionCompany.query.filter_by(
+                    id=company.get("id")
+                ).first()
+                if not prod_company:
+                    prod_company = TMDBProductionCompany(
+                        id=company.get("id"),
+                        name=company.get("name"),
+                        country=company.get("origin_country"),
+                        tmdb_logo_path=company.get("logo_path"),
+                    )
+                    db.session.add(prod_company)
+
+                if (
+                    self.production_companies.filter(
+                        TMDBProductionCompany.id == prod_company.id
+                    ).count()
+                    == 0
+                ):
+                    self.production_companies.append(prod_company)
+
+        if tmdb_info.get("production_countries"):
+            tmdb_production_countries = tmdb_info.get("production_countries")
+            for country in tmdb_production_countries:
+                prod_country = TMDBProductionCountry.query.filter_by(
+                    id=country.get("iso_3166_1")
+                ).first()
+                if not prod_country:
+                    prod_country = TMDBProductionCountry(
+                        id=country.get("iso_3166_1"), name=country.get("name")
+                    )
+                    db.session.add(prod_country)
+
+                if (
+                    self.production_countries.filter(
+                        TMDBProductionCountry.id == prod_country.id
+                    ).count()
+                    == 0
+                ):
+                    self.production_countries.append(prod_country)
+
+        if tmdb_info.get("spoken_languages"):
+            tmdb_languages = tmdb_info.get("spoken_languages")
+            for language in tmdb_languages:
+                spoken_lang = TMDBSpokenLanguage.query.filter_by(
+                    id=language.get("iso_639_1")
+                ).first()
+                if not spoken_lang:
+                    spoken_lang = TMDBSpokenLanguage(
+                        id=language.get("iso_639_1"), name=language.get("name")
+                    )
+                    db.session.add(spoken_lang)
+
+                if (
+                    self.spoken_languages.filter(
+                        TMDBSpokenLanguage.id == spoken_lang.id
+                    ).count()
+                    == 0
+                ):
+                    self.spoken_languages.append(spoken_lang)
 
         return self
 
-    def tmdb_tv_query(self, tmdb_id=None):
+    def tmdb_movie_query(self, tmdb_id=None):
+        """Fetch from TMDb and apply to the database in one step, for
+        callers outside the split refresh pipeline (e.g. review_task
+        creating a movie inline)."""
+
+        return self.tmdb_movie_apply(self.tmdb_movie_fetch(tmdb_id))
+
+    def tmdb_tv_fetch(self, tmdb_id=None):
+        """Network half of a TMDb TV refresh; see tmdb_movie_fetch."""
+
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
-            return self
+            return None
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
         requested_info = "credits,external_ids,images,keywords,release_dates,videos"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
-            r = requests.get(
+            r = tmdb_get(
                 tmdb_api_url + "/search/tv",
                 params={
                     "api_key": tmdb_api_key,
@@ -549,7 +701,7 @@ class TMDBMixin(object):
 
         if tmdb_id:
             try:
-                r = requests.get(
+                r = tmdb_get(
                     tmdb_api_url + "/tv/" + str(tmdb_id),
                     params={
                         "api_key": tmdb_api_key,
@@ -576,193 +728,190 @@ class TMDBMixin(object):
                         tmdb_id=tmdb_id,
                     ),
                 )
-                return self
+                return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
-            r = requests.get(
-                tmdb_api_url + "/configuration",
-                params={"api_key": tmdb_api_key},
-            )
-            r.raise_for_status()
-            if r.json().get("images"):
-                base_url = r.json().get("images")["secure_base_url"]
-                backdrop_sizes = r.json().get("images")["backdrop_sizes"]
-                logo_sizes = r.json().get("images")["logo_sizes"]
-                poster_sizes = r.json().get("images")["poster_sizes"]
+
+            # As with movies, drop the unread appended blocks before the
+            # payload travels between tasks through Redis
+
+            tmdb_info.pop("images", None)
+            tmdb_info.pop("videos", None)
+
+            images_config = tmdb_images_config()
+            if images_config:
+                download_tv_artwork(tmdb_info, images_config)
 
             else:
                 current_app.logger.warning(
                     "Unable to get image configuration info from TMDB!"
                 )
 
-            # Delete any existing records associated with this tv series
+        return tmdb_info or None
 
-            tmdb_genres = TMDBGenre.query.all()
-            for genre in tmdb_genres:
-                if genre in self.genres:
-                    self.genres.remove(genre)
+    def tmdb_tv_apply(self, tmdb_info):
+        """Database half of a TMDb TV refresh; see tmdb_movie_apply."""
 
-            tmdb_keywords = TMDBKeyword.query.all()
-            for keyword in tmdb_keywords:
-                if keyword in self.keywords:
-                    self.keywords.remove(keyword)
+        if not tmdb_info:
+            return self
 
-            tmdb_networks = TMDBNetwork.query.all()
-            for network in tmdb_networks:
-                if network in self.networks:
-                    self.networks.remove(network)
+        # Delete any existing records associated with this tv series
 
-            tmdb_production_companies = TMDBProductionCompany.query.all()
-            for company in tmdb_production_companies:
-                if company in self.production_companies:
-                    self.production_companies.remove(company)
+        tmdb_genres = TMDBGenre.query.all()
+        for genre in tmdb_genres:
+            if genre in self.genres:
+                self.genres.remove(genre)
 
-            tmdb_seasons = TMDBSeason.query.all()
-            for season in tmdb_seasons:
-                if season in self.seasons:
-                    self.seasons.remove(season)
+        tmdb_keywords = TMDBKeyword.query.all()
+        for keyword in tmdb_keywords:
+            if keyword in self.keywords:
+                self.keywords.remove(keyword)
 
-            # Add fresh new data from TMDB
+        tmdb_networks = TMDBNetwork.query.all()
+        for network in tmdb_networks:
+            if network in self.networks:
+                self.networks.remove(network)
 
-            if tmdb_info.get("external_ids"):
-                external_ids = tmdb_info.get("external_ids")
-                self.imdb_id = external_ids.get("imdb_id")
-                self.thetvdb_id = external_ids.get("thetvdb_id")
+        tmdb_production_companies = TMDBProductionCompany.query.all()
+        for company in tmdb_production_companies:
+            if company in self.production_companies:
+                self.production_companies.remove(company)
 
-            self.tmdb_id = tmdb_info.get("id")
-            self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
-            if tmdb_info.get("first_air_date"):
-                self.tmdb_first_air_date = datetime.strptime(
-                    tmdb_info.get("first_air_date"), "%Y-%m-%d"
-                )
+        tmdb_seasons = TMDBSeason.query.all()
+        for season in tmdb_seasons:
+            if season in self.seasons:
+                self.seasons.remove(season)
 
-            self.tmdb_homepage = tmdb_info.get("homepage")
-            self.tmdb_poster_path = tmdb_info.get("poster_path")
-            self.tmdb_in_production = tmdb_info.get("in_production")
-            if tmdb_info.get("last_air_date"):
-                self.tmdb_last_air_date = datetime.strptime(
-                    tmdb_info.get("last_air_date"), "%Y-%m-%d"
-                )
+        # Add fresh new data from TMDB
 
-            self.tmdb_name = tmdb_info.get("name")
-            if tmdb_info.get("status") == "Ended":
-                self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
-                self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
+        if tmdb_info.get("external_ids"):
+            external_ids = tmdb_info.get("external_ids")
+            self.imdb_id = external_ids.get("imdb_id")
+            self.thetvdb_id = external_ids.get("thetvdb_id")
 
-            self.tmdb_original_language = tmdb_info.get("original_language")
-            self.tmdb_original_name = tmdb_info.get("original_name")
-            self.tmdb_overview = tmdb_info.get("overview")
-            self.tmdb_popularity = tmdb_info.get("popularity")
-            self.tmdb_poster_path = tmdb_info.get("poster_path")
-            self.tmdb_status = tmdb_info.get("status")
-            self.tmdb_type = tmdb_info.get("type")
-            self.tmdb_vote_average = tmdb_info.get("vote_average")
-            self.tmdb_vote_count = tmdb_info.get("vote_count")
-            if tmdb_info.get("id"):
-                self.tmdb_data_as_of = datetime.now(timezone.utc)
-
-            if tmdb_info.get("genres"):
-                tmdb_genres = tmdb_info.get("genres")
-                for genre in tmdb_genres:
-                    g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
-                    if not g:
-                        g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
-                        db.session.add(g)
-
-                    if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
-                        self.genres.append(g)
-
-            if tmdb_info.get("keywords"):
-                tmdb_keywords = tmdb_info.get("keywords")
-                for keyword in tmdb_keywords.get("results"):
-                    k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
-                    if not k:
-                        k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
-                        db.session.add(k)
-
-                    if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
-                        self.keywords.append(k)
-
-            if tmdb_info.get("networks"):
-                tmdb_networks = tmdb_info.get("networks")
-                for network in tmdb_networks:
-                    n = TMDBNetwork.query.filter_by(id=network.get("id")).first()
-                    if not n:
-                        n = TMDBNetwork(
-                            id=network.get("id"),
-                            tmdb_logo_path=network.get("logo_path"),
-                            name=network.get("name"),
-                            origin_country=network.get("origin_country"),
-                        )
-                        db.session.add(n)
-
-                    if self.networks.filter(TMDBNetwork.id == n.id).count() == 0:
-                        self.networks.append(n)
-
-                    n.get_tmdb_images("network", n.id, base_url, [{"logo": logo_sizes}])
-
-            if tmdb_info.get("production_companies"):
-                tmdb_production_companies = tmdb_info.get("production_companies")
-                for company in tmdb_production_companies:
-                    prod_company = TMDBProductionCompany.query.filter_by(
-                        id=company.get("id")
-                    ).first()
-                    if not prod_company:
-                        prod_company = TMDBProductionCompany(
-                            id=company.get("id"),
-                            name=company.get("name"),
-                            country=company.get("origin_country"),
-                            tmdb_logo_path=company.get("logo_path"),
-                        )
-                        db.session.add(prod_company)
-
-                    if (
-                        self.production_companies.filter(
-                            TMDBProductionCompany.id == prod_company.id
-                        ).count()
-                        == 0
-                    ):
-                        self.production_companies.append(prod_company)
-
-                    prod_company.get_tmdb_images(
-                        "company", prod_company.id, base_url, [{"logo": logo_sizes}]
-                    )
-
-            if tmdb_info.get("seasons"):
-                tmdb_seasons = tmdb_info.get("seasons")
-                for season in tmdb_seasons:
-                    s = TMDBSeason.query.filter_by(id=season.get("id")).first()
-                    if not s:
-                        s = TMDBSeason(
-                            id=season.get("id"),
-                            air_date=(
-                                datetime.strptime(season.get("air_date"), "%Y-%m-%d")
-                                if season.get("air_date")
-                                else None
-                            ),
-                            episode_count=season.get("episode_count"),
-                            name=season.get("name"),
-                            overview=season.get("overview"),
-                            tmdb_poster_path=season.get("poster_path"),
-                            season_number=season.get("season_number"),
-                        )
-                        db.session.add(s)
-
-                    if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
-                        self.seasons.append(s)
-
-                    s.get_tmdb_images(
-                        "season", s.id, base_url, [{"poster": poster_sizes}]
-                    )
-
-            self.get_tmdb_images(
-                "tv",
-                self.tmdb_id,
-                base_url,
-                [{"backdrop": backdrop_sizes}, {"poster": poster_sizes}],
+        self.tmdb_id = tmdb_info.get("id")
+        self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
+        if tmdb_info.get("first_air_date"):
+            self.tmdb_first_air_date = datetime.strptime(
+                tmdb_info.get("first_air_date"), "%Y-%m-%d"
             )
 
+        self.tmdb_homepage = tmdb_info.get("homepage")
+        self.tmdb_poster_path = tmdb_info.get("poster_path")
+        self.tmdb_in_production = tmdb_info.get("in_production")
+        if tmdb_info.get("last_air_date"):
+            self.tmdb_last_air_date = datetime.strptime(
+                tmdb_info.get("last_air_date"), "%Y-%m-%d"
+            )
+
+        self.tmdb_name = tmdb_info.get("name")
+        if tmdb_info.get("status") == "Ended":
+            self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
+            self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
+
+        self.tmdb_original_language = tmdb_info.get("original_language")
+        self.tmdb_original_name = tmdb_info.get("original_name")
+        self.tmdb_overview = tmdb_info.get("overview")
+        self.tmdb_popularity = tmdb_info.get("popularity")
+        self.tmdb_poster_path = tmdb_info.get("poster_path")
+        self.tmdb_status = tmdb_info.get("status")
+        self.tmdb_type = tmdb_info.get("type")
+        self.tmdb_vote_average = tmdb_info.get("vote_average")
+        self.tmdb_vote_count = tmdb_info.get("vote_count")
+        if tmdb_info.get("id"):
+            self.tmdb_data_as_of = datetime.now(timezone.utc)
+
+        if tmdb_info.get("genres"):
+            tmdb_genres = tmdb_info.get("genres")
+            for genre in tmdb_genres:
+                g = TMDBGenre.query.filter_by(id=genre.get("id")).first()
+                if not g:
+                    g = TMDBGenre(id=genre.get("id"), name=genre.get("name"))
+                    db.session.add(g)
+
+                if self.genres.filter(TMDBGenre.id == g.id).count() == 0:
+                    self.genres.append(g)
+
+        if tmdb_info.get("keywords"):
+            tmdb_keywords = tmdb_info.get("keywords")
+            for keyword in tmdb_keywords.get("results"):
+                k = TMDBKeyword.query.filter_by(id=keyword.get("id")).first()
+                if not k:
+                    k = TMDBKeyword(id=keyword.get("id"), name=keyword.get("name"))
+                    db.session.add(k)
+
+                if self.keywords.filter(TMDBKeyword.id == k.id).count() == 0:
+                    self.keywords.append(k)
+
+        if tmdb_info.get("networks"):
+            tmdb_networks = tmdb_info.get("networks")
+            for network in tmdb_networks:
+                n = TMDBNetwork.query.filter_by(id=network.get("id")).first()
+                if not n:
+                    n = TMDBNetwork(
+                        id=network.get("id"),
+                        tmdb_logo_path=network.get("logo_path"),
+                        name=network.get("name"),
+                        origin_country=network.get("origin_country"),
+                    )
+                    db.session.add(n)
+
+                if self.networks.filter(TMDBNetwork.id == n.id).count() == 0:
+                    self.networks.append(n)
+
+        if tmdb_info.get("production_companies"):
+            tmdb_production_companies = tmdb_info.get("production_companies")
+            for company in tmdb_production_companies:
+                prod_company = TMDBProductionCompany.query.filter_by(
+                    id=company.get("id")
+                ).first()
+                if not prod_company:
+                    prod_company = TMDBProductionCompany(
+                        id=company.get("id"),
+                        name=company.get("name"),
+                        country=company.get("origin_country"),
+                        tmdb_logo_path=company.get("logo_path"),
+                    )
+                    db.session.add(prod_company)
+
+                if (
+                    self.production_companies.filter(
+                        TMDBProductionCompany.id == prod_company.id
+                    ).count()
+                    == 0
+                ):
+                    self.production_companies.append(prod_company)
+
+        if tmdb_info.get("seasons"):
+            tmdb_seasons = tmdb_info.get("seasons")
+            for season in tmdb_seasons:
+                s = TMDBSeason.query.filter_by(id=season.get("id")).first()
+                if not s:
+                    s = TMDBSeason(
+                        id=season.get("id"),
+                        air_date=(
+                            datetime.strptime(season.get("air_date"), "%Y-%m-%d")
+                            if season.get("air_date")
+                            else None
+                        ),
+                        episode_count=season.get("episode_count"),
+                        name=season.get("name"),
+                        overview=season.get("overview"),
+                        tmdb_poster_path=season.get("poster_path"),
+                        season_number=season.get("season_number"),
+                    )
+                    db.session.add(s)
+
+                if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
+                    self.seasons.append(s)
+
         return self
+
+    def tmdb_tv_query(self, tmdb_id=None):
+        """Fetch from TMDb and apply to the database in one step; see
+        tmdb_movie_query."""
+
+        return self.tmdb_tv_apply(self.tmdb_tv_fetch(tmdb_id))
 
     def get_tmdb_images(self, directory, record_id, base_url, image_types=[]):
         current_app.logger.info(f"{self} Downloading images")
@@ -864,7 +1013,7 @@ class TMDBMixin(object):
     @staticmethod
     def download_tmdb_image(image_url, destination_directory):
         file_name = os.path.basename(urlparse(image_url).path)
-        r = requests.get(image_url)
+        r = tmdb_get(image_url)
         with open(os.path.join(destination_directory, file_name), "wb") as f:
             f.write(r.content)
 

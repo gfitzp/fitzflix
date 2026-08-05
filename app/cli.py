@@ -59,9 +59,12 @@ def register(app):
                 .all()
             )
 
+        # The refresh's network phase belongs on the request queue; it hands
+        # its payload to the sql queue for the database writes
+
         if movies:
             for movie in movies:
-                app.sql_queue.enqueue(
+                app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=(
                         "Movies",
@@ -77,7 +80,7 @@ def register(app):
 
         if tv_shows:
             for tv in tv_shows:
-                app.sql_queue.enqueue(
+                app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=(
                         "TV Shows",
