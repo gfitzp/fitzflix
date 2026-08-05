@@ -106,3 +106,83 @@ def test_backup_database_failure_leaves_no_partial(app, mysqldump_stub):
             backup_database()
 
     assert list(backup_dir.glob("*.sql.gz")) == []
+
+
+def test_backup_database_uploads_to_s3_and_prunes_remote(
+    app, mysqldump_stub, monkeypatch
+):
+    """With AWS configured, the dump is copied to the backup prefix and
+    remote copies past the retention window are deleted."""
+
+    from datetime import datetime, timedelta, timezone
+
+    import app.videos as videos
+
+    stub, backup_dir = mysqldump_stub
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
+
+    uploads = []
+    deletes = []
+
+    class FakeS3Client:
+        def upload_file(self, filename, bucket, key, **kwargs):
+            uploads.append((filename, bucket, key))
+
+        def delete_object(self, Bucket, Key):
+            deletes.append((Bucket, Key))
+
+    stale = {
+        "Key": "backup/fitzflix_test-2020-01-01.sql.gz",
+        "LastModified": datetime.now(timezone.utc) - timedelta(days=30),
+    }
+    fresh = {
+        "Key": "backup/fitzflix_test-fresh.sql.gz",
+        "LastModified": datetime.now(timezone.utc) - timedelta(days=1),
+    }
+    marker = {
+        "Key": "backup/",
+        "LastModified": datetime.now(timezone.utc) - timedelta(days=999),
+    }
+
+    monkeypatch.setattr(
+        videos, "aws_s3_client", lambda with_retries=False: FakeS3Client()
+    )
+    monkeypatch.setattr(
+        videos,
+        "get_matching_s3_objects",
+        lambda bucket, prefix="", suffix="": iter([stale, fresh, marker]),
+    )
+
+    with app.app_context():
+        backup_database()
+
+    assert len(uploads) == 1
+    filename, bucket, key = uploads[0]
+    assert filename.endswith(".sql.gz")
+    assert bucket == "test-bucket"
+    assert key.startswith("backup/fitzflix_test-")
+    assert key.endswith(".sql.gz")
+
+    # Only the stale backup is deleted: not the fresh one, not the
+    # directory marker, and never the object just uploaded
+
+    assert deletes == [("test-bucket", "backup/fitzflix_test-2020-01-01.sql.gz")]
+
+
+def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeypatch):
+    """Without an AWS bucket, the backup succeeds without touching boto3."""
+
+    import app.videos as videos
+
+    stub, backup_dir = mysqldump_stub
+    assert app.config["AWS_BUCKET"] is None
+
+    def explode(*args, **kwargs):
+        raise AssertionError("S3 client should not be built")
+
+    monkeypatch.setattr(videos, "aws_s3_client", explode)
+
+    with app.app_context():
+        backup_database()
+
+    assert len(list(backup_dir.glob("fitzflix_test-*.sql.gz"))) == 1

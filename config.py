@@ -80,6 +80,7 @@ class Config(object):
     AWS_ACCESS_KEY                      = os.environ.get("AWS_ACCESS_KEY") or None
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
     AWS_UNTOUCHED_PREFIX                = os.environ.get("AWS_UNTOUCHED_PREFIX") or "untouched"
+    AWS_BACKUP_PREFIX                   = os.environ.get("AWS_BACKUP_PREFIX") or "backup"
     IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None
     FORCE_UPLOAD                        = os.environ.get("FORCE_UPLOAD") is not None
     AWS_SQS_URL                         = os.environ.get("AWS_SQS_URL") or None

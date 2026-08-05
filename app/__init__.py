@@ -304,7 +304,8 @@ def create_app(config_class=Config):
     )
 
     # Back up the database nightly: the media files are archived at AWS, but
-    # the database itself exists only on this machine
+    # the database itself exists only on this machine, so each dump is also
+    # copied to the S3 bucket
 
     register_cron(
         app.maintenance_scheduler,

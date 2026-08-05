@@ -565,7 +565,9 @@ def backup_database():
 
     The media files are archived at AWS, but the database — reviews,
     Criterion details, shopping priorities — exists only here, so it gets a
-    nightly dump with its own retention window.
+    nightly dump with its own retention window. Each dump is also copied to
+    the S3 bucket so a machine failure can't take the database and its
+    backups with it; remote copies are pruned on the same retention window.
     """
 
     with app.app_context():
@@ -623,6 +625,44 @@ def backup_database():
 
         size_mb = round(os.path.getsize(backup_file) / 1024 / 1024, 1)
 
+        # Copy the backup to the S3 bucket. The backup prefix sits outside
+        # AWS_UNTOUCHED_PREFIX, so the S3 sync task's pruning of unreferenced
+        # media keys never touches it
+
+        uploaded_key = None
+        remote_deleted = []
+        if current_app.config["AWS_BUCKET"]:
+            # Imported here because app.videos imports this module
+
+            from app.videos import aws_s3_client, get_matching_s3_objects
+
+            backup_prefix = current_app.config["AWS_BACKUP_PREFIX"]
+            uploaded_key = f"{backup_prefix}/{os.path.basename(backup_file)}"
+            client = aws_s3_client(with_retries=True)
+            client.upload_file(
+                backup_file, current_app.config["AWS_BUCKET"], uploaded_key
+            )
+            current_app.logger.info(
+                f"Uploaded '{backup_file}' to "
+                f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], uploaded_key)}'"
+            )
+
+            # Prune remote backups past the retention window
+
+            remote_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+            for object in get_matching_s3_objects(
+                current_app.config["AWS_BUCKET"], prefix=f"{backup_prefix}/"
+            ):
+                if (
+                    object["Key"] != uploaded_key
+                    and object["Key"] != f"{backup_prefix}/"
+                    and object["LastModified"] < remote_cutoff
+                ):
+                    client.delete_object(
+                        Bucket=current_app.config["AWS_BUCKET"], Key=object["Key"]
+                    )
+                    remote_deleted.append(object["Key"])
+
         cutoff = datetime.now() - timedelta(days=retention_days)
         deleted = []
         for path in sorted(glob.glob(os.path.join(backup_dir, "*.sql.gz"))):
@@ -634,8 +674,11 @@ def backup_database():
 
         current_app.logger.info(
             f"Backed up the database to {os.path.basename(backup_file)} "
-            f"({size_mb} MB), deleted {len(deleted)} backup(s) older than "
-            f"{retention_days} days{' ' + str(deleted) if deleted else ''}"
+            f"({size_mb} MB)"
+            f"{f', uploaded to AWS as {uploaded_key!r}' if uploaded_key else ''}, "
+            f"deleted {len(deleted)} local backup(s) and {len(remote_deleted)} "
+            f"remote backup(s) older than {retention_days} days"
+            f"{' ' + str(deleted + remote_deleted) if deleted or remote_deleted else ''}"
         )
         return True
 
