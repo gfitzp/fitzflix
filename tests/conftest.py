@@ -105,7 +105,7 @@ class TestConfig(Config):
     RADARR_URL = "http://127.0.0.1:1"
     RADARR_API_KEY = "radarr-test-key"
     RADARR_PROXY_URL = "http://127.0.0.1:1"
-    WIKIPEDIA_CRITERION_COLLECTION_URL = None
+    WIKIDATA_SPARQL_URL = "http://127.0.0.1:1"
     HANDBRAKE_PRESET_FILE = None
 
 

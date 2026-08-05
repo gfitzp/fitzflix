@@ -565,3 +565,81 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
         hidden = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
         assert not os.path.exists(hidden)
+
+
+def test_tmdb_refresh_defers_while_title_is_locked(app, held_lock, fake_tmdb):
+    """A movie's TMDb refresh rewrites file paths and can merge records, so
+    it must wait for any import chain holding one of the title's locks."""
+
+    from app import db
+    from app.videos import refresh_tmdb_info
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Locked Film", 1999)
+        file = make_movie_file(movie, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+
+        held_lock(file.file_identifier())
+
+        assert refresh_tmdb_info("Movies", movie_id) is False
+
+        retries = [
+            job
+            for job, _ in app.request_scheduler.get_jobs(with_times=True)
+            if job.id.startswith("retry:refresh_tmdb_info")
+        ]
+        assert [job.id for job in retries] == [
+            f"retry:refresh_tmdb_info:Movies:{movie_id}"
+        ]
+        job = retries[0]
+        assert job.kwargs["library"] == "Movies"
+        assert job.kwargs["id"] == movie_id
+        assert_binds(job)
+
+
+def test_tmdb_refresh_locks_the_merge_target_too(app, held_lock, fake_tmdb):
+    """When a TMDb id points at an existing movie, the refresh will merge
+    records — so a lock held on the *target* movie's files defers it."""
+
+    from app import db
+    from app.videos import refresh_tmdb_info
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        source = make_movie("Duplicate Entry", 2001)
+        make_movie_file(source, "DVD")
+        target = make_movie("Canonical Entry", 2001, tmdb_id=4242)
+        target_file = make_movie_file(target, "Bluray-1080p")
+        db.session.commit()
+        source_id = source.id
+
+        held_lock(target_file.file_identifier())
+
+        assert refresh_tmdb_info("Movies", source_id, tmdb_id=4242) is False
+        assert any(
+            job.id == f"retry:refresh_tmdb_info:Movies:{source_id}"
+            for job, _ in app.request_scheduler.get_jobs(with_times=True)
+        )
+
+
+def test_tmdb_refresh_releases_locks_when_done(app, fake_tmdb):
+    from app import db
+    from app.videos import refresh_tmdb_info
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Free Film", 2002)
+        file = make_movie_file(
+            movie, "DVD", untouched_basename="Free Film (2002) - [DVD].mkv"
+        )
+        db.session.commit()
+        movie_id = movie.id
+        identifier = file.file_identifier()
+
+        assert refresh_tmdb_info("Movies", movie_id) is True
+
+        lock = app.lock_manager.lock(identifier, 1000)
+        assert lock, "refresh did not release the title lock"
+        app.lock_manager.unlock(lock)

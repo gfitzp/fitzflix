@@ -793,7 +793,6 @@ def movie(movie_id):
             movie.criterion_set_title = None
 
         movie.criterion_in_print = criterion_form.in_print.data
-        movie.criterion_bluray = criterion_form.bluray_release.data
         movie.criterion_disc_owned = criterion_form.owned.data
         movie.criterion_quality_id = criterion_form.quality.data
 
@@ -2013,10 +2012,14 @@ def admin():
         criterion_refresh_form.criterion_refresh.data
         and criterion_refresh_form.validate_on_submit()
     ):
-        current_app.sql_queue.enqueue(
+        # On the user-request queue, like the monthly scheduled refresh runs
+        # on maintenance: the forced Wikidata fetch would otherwise block
+        # the single sql worker on network I/O
+
+        current_app.request_queue.enqueue(
             "app.videos.refresh_criterion_collection_info",
             args=None,
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            job_timeout="1h",
             description="Refreshing Criterion Collection information for all movies in library",
             at_front=True,
         )
@@ -2033,8 +2036,12 @@ def admin():
         movies = Movie.query.order_by(Movie.title.asc(), Movie.year.asc()).all()
         tv_shows = TVSeries.query.order_by(TVSeries.title.asc()).all()
 
+        # On the user-request queue: each job is a TMDb API call plus
+        # artwork downloads, and thousands of them would starve the single
+        # sql worker of import work for the whole run
+
         for movie in movies:
-            current_app.sql_queue.enqueue(
+            current_app.request_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
                 args=("Movies", movie.id, movie.tmdb_id),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -2042,7 +2049,7 @@ def admin():
             )
 
         for tv in tv_shows:
-            current_app.sql_queue.enqueue(
+            current_app.request_queue.enqueue(
                 "app.videos.refresh_tmdb_info",
                 args=("TV Shows", tv.id, tv.tmdb_id),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
@@ -2174,6 +2181,7 @@ def admin():
     cron_descriptions = {
         "0 0 * * *": "Daily at midnight",
         "30 0 * * *": "Daily at 12:30 AM",
+        "0 3 18 * *": "Monthly on the 18th at 3:00 AM",
         "0 * * * *": "Hourly",
         "30 * * * *": "Hourly at :30",
         "*/10 * * * *": "Every 10 minutes",

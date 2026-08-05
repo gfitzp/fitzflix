@@ -283,7 +283,9 @@ Run from the project root with the venv activated. Each command queues a backgro
 | `flask refresh tmdb` | Refresh TMDb metadata for every matched movie and TV series |
 | `flask refresh tmdb movie <tmdb_id>` / `flask refresh tmdb tv <tmdb_id>` | Refresh TMDb metadata for a single title |
 | `flask refresh file <file_id>` | Rescan one file's audio/subtitle track metadata |
-| `flask refresh criterion` | Refresh Criterion Collection spine numbers (currently non-functional — its Wikipedia source page no longer exists) |
+| `flask refresh criterion` | Refresh Criterion Collection data from Wikidata (also runs automatically on the 18th of each month, after Criterion's mid-month announcements) |
+
+Criterion data comes from [Wikidata](https://www.wikidata.org): each movie is matched by TMDb id (falling back to title and year) to pick up its spine number and a direct link to its film page at criterion.com. Box sets are supported too — a film released only inside a set (say, a Godzilla Showa-era or Olympic-films collection) takes its set's spine number, and the set title is filled in automatically when one hasn't been entered by hand. The refresh is additive: it never clears spine numbers or overwrites hand-curated set titles, and in-print/disc-owned flags stay whatever they've been set to.
 
 ## Restoring files from AWS
 

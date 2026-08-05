@@ -22,7 +22,6 @@ import requests
 import rq
 
 from botocore.client import Config
-from bs4 import BeautifulSoup
 from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
 from rq import get_current_job
@@ -1560,25 +1559,20 @@ def finalize_localization(
                         title=file_details.get("title"), year=file_details.get("year")
                     )
                     current_app.logger.info(f"{file} Creating {movie}")
-                    criterion_collection = get_criterion_collection_from_wikipedia()
-                    for release in criterion_collection:
-                        if (movie.title == release.get("title")) and (
-                            movie.year == release.get("year")
-                        ):
-                            movie.criterion_spine_number = release.get("spine_number")
 
-                            # Decided against automatically adding the box set title
-                            # movie.criterion_set_title = release.get("set")
+                    # Check the new movie against the (cached) Criterion
+                    # list; a Wikidata hiccup must never fail an import —
+                    # the monthly refresh catches the movie up later
 
-                            movie.criterion_in_print = release.get("in_print")
-                            movie.criterion_bluray = release.get("bluray")
-                            if movie.criterion_disc_owned == None:
-                                movie.criterion_disc_owned = False
+                    try:
+                        criterion_collection = get_criterion_collection_from_wikidata()
+                    except Exception:
+                        current_app.logger.warning(traceback.format_exc())
+                        criterion_collection = []
 
-                            current_app.logger.info(
-                                f"{movie} Assigning Criterion Collection "
-                                f"spine #{movie.criterion_spine_number}"
-                            )
+                    assign_criterion_release(
+                        movie, *criterion_release_lookups(criterion_collection)
+                    )
 
                     db.session.add(movie)
 
@@ -4545,76 +4539,177 @@ def get_audio_tracks_from_file(file_path):
     return audio_tracks
 
 
-def get_criterion_collection_from_wikipedia():
-    """Scrape Wikipedia for Criterion Collection information."""
+# Wikidata models Criterion spine numbers as property P12279, TMDb movie ids
+# as P4947, and publication dates as P577; the earliest publication year is
+# taken since a film carries one date per release
 
-    url = current_app.config["WIKIPEDIA_CRITERION_COLLECTION_URL"]
+CRITERION_SPARQL_QUERY = """
+SELECT ?spine ?tmdbId ?filmLabel
+       (MIN(YEAR(?date)) AS ?year)
+       (SAMPLE(?criterionId) AS ?criterionId) WHERE {
+  ?film wdt:P12279 ?spine .
+  OPTIONAL { ?film wdt:P4947 ?tmdbId . }
+  OPTIONAL { ?film wdt:P9584 ?criterionId . }
+  OPTIONAL { ?film wdt:P577 ?date . }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+GROUP BY ?spine ?film ?filmLabel ?tmdbId
+"""
+
+# Box sets carry the spine number on the set's own Wikidata item, with the
+# member films linked via P527 ("has part"): map each member to its set's
+# spine and title
+
+CRITERION_SETS_SPARQL_QUERY = """
+SELECT ?spine ?setLabel ?tmdbId ?filmLabel
+       (MIN(YEAR(?date)) AS ?year)
+       (SAMPLE(?criterionId) AS ?criterionId) WHERE {
+  ?set wdt:P12279 ?spine .
+  ?set wdt:P527 ?film .
+  OPTIONAL { ?film wdt:P4947 ?tmdbId . }
+  OPTIONAL { ?film wdt:P9584 ?criterionId . }
+  OPTIONAL { ?film wdt:P577 ?date . }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+}
+GROUP BY ?spine ?set ?setLabel ?film ?filmLabel ?tmdbId
+"""
+
+CRITERION_CACHE_KEY = "fitzflix:criterion:releases"
+CRITERION_CACHE_SECONDS = 7 * 86400
+
+
+def _wikidata_sparql(url, query):
+    """Run one SPARQL query against Wikidata, per its access guidelines."""
+
+    contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
+    r = requests.get(
+        url,
+        params={"query": query},
+        headers={
+            "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
+            "Accept": "application/sparql-results+json",
+            "Accept-Encoding": "gzip,deflate",
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json().get("results", {}).get("bindings", [])
+
+
+def _parse_criterion_binding(binding):
+    """A SPARQL result row as a release dict, or None if the spine is bad."""
+
+    spine = binding.get("spine", {}).get("value", "")
+    if not spine.isdigit():
+        return None
+
+    tmdb_id = binding.get("tmdbId", {}).get("value", "")
+    title = (binding.get("filmLabel", {}).get("value") or "").strip()
+    year = binding.get("year", {}).get("value", "")
+
+    return {
+        "spine_number": int(spine),
+        "tmdb_id": int(tmdb_id) if tmdb_id.isdigit() else None,
+        "title": title.upper(),
+        "year": int(year) if year.isdigit() else None,
+        "criterion_film_id": binding.get("criterionId", {}).get("value") or None,
+        "set_title": None,
+    }
+
+
+def get_criterion_collection_from_wikidata(force_refresh=False):
+    """Fetch Criterion Collection spine numbers from Wikidata.
+
+    Access follows Wikidata's data-access guidelines: a descriptive
+    User-Agent with a contact address, a single narrowly-scoped SPARQL
+    query, and results cached in Redis for a week so per-import lookups
+    never re-query the endpoint. The monthly scheduled refresh forces a
+    fresh fetch.
+    """
+
+    url = current_app.config["WIKIDATA_SPARQL_URL"]
+    if not url:
+        return []
+
+    if not force_refresh:
+        cached = current_app.redis.get(CRITERION_CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+
     criterion_collection = []
+    for binding in _wikidata_sparql(url, CRITERION_SPARQL_QUERY):
+        release = _parse_criterion_binding(binding)
+        if release:
+            criterion_collection.append(release)
 
-    if url:
-        r = requests.get(url)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.content, features="html.parser")
-        table = soup.find_all("table")[1]
+    # Standalone releases come first, so a film that has both its own
+    # release and a set membership keeps its own spine — the matching
+    # lookups keep the first entry per film
 
-        # Column 2 = title
-        # Column 4 = original release year
-        # Column 0 = spine
-        # Column 7 = box set title
-        # Column 5 = blu-ray version
+    for binding in _wikidata_sparql(url, CRITERION_SETS_SPARQL_QUERY):
+        release = _parse_criterion_binding(binding)
+        if release:
+            release["set_title"] = (
+                binding.get("setLabel", {}).get("value") or ""
+            ).strip() or None
+            criterion_collection.append(release)
 
-        contents = table.findAll("tr")
-        for row in contents:
-            columns = row.findAll("td")
-            if not columns:
-                continue
-
-            title = re.search(r"^([^\[]+)", columns[2].text.strip())
-            if not title:
-                continue
-
-            title = title.group(1)
-
-            year = re.search(r"(\d{4})$", columns[4].text.strip())
-            if not year:
-                continue
-
-            year = int(year.group())
-
-            spine_number = re.search(r"^(\d+)", columns[0].text.strip())
-            spine_number = spine_number.group(1)
-            if columns[0].get("style") == "background:gray;":
-                in_print = False
-
-            else:
-                in_print = True
-
-            if columns[5].text.strip()[0:3] == "Yes":
-                bluray = True
-
-            else:
-                bluray = False
-
-            set = columns[7].get_text(separator=" ").strip()
-            if not set:
-                set = None
-
-            else:
-                while "  " in set:
-                    set = set.replace("  ", " ")
-
-            criterion_collection.append(
-                {
-                    "title": title.upper(),
-                    "year": year,
-                    "spine_number": spine_number,
-                    "set": set,
-                    "in_print": in_print,
-                    "bluray": bluray,
-                }
-            )
-
+    current_app.redis.setex(
+        CRITERION_CACHE_KEY,
+        CRITERION_CACHE_SECONDS,
+        json.dumps(criterion_collection),
+    )
+    current_app.logger.info(
+        f"Fetched {len(criterion_collection)} Criterion Collection releases "
+        f"from Wikidata"
+    )
     return criterion_collection
+
+
+def criterion_release_lookups(criterion_collection):
+    """Index Criterion releases by TMDb id and by (title, year)."""
+
+    by_tmdb_id = {}
+    by_title_year = {}
+    for release in criterion_collection:
+        if release.get("tmdb_id"):
+            by_tmdb_id.setdefault(release["tmdb_id"], release)
+        if release.get("title") and release.get("year"):
+            by_title_year.setdefault((release["title"], release["year"]), release)
+    return by_tmdb_id, by_title_year
+
+
+def assign_criterion_release(movie, by_tmdb_id, by_title_year):
+    """Record a movie's Criterion spine number if a release matches.
+
+    TMDb id matches are exact; title and year are the fallback for movies
+    that haven't been matched to TMDb yet. Box-set members get their set's
+    spine and title. Wikidata doesn't model in-print status, so existing
+    values are kept and new matches get optimistic defaults; hand-curated
+    set titles are never overwritten.
+    """
+
+    release = by_tmdb_id.get(movie.tmdb_id) if movie.tmdb_id else None
+    if release is None and movie.title and movie.year:
+        release = by_title_year.get((movie.title.upper(), movie.year))
+    if release is None:
+        return False
+
+    movie.criterion_spine_number = release["spine_number"]
+    if release.get("criterion_film_id"):
+        movie.criterion_film_id = release["criterion_film_id"]
+    if release.get("set_title") and movie.criterion_set_title == None:
+        movie.criterion_set_title = release["set_title"]
+    if movie.criterion_in_print == None:
+        movie.criterion_in_print = True
+    if movie.criterion_disc_owned == None:
+        movie.criterion_disc_owned = False
+
+    current_app.logger.info(
+        f"{movie} Assigning Criterion Collection "
+        f"spine #{movie.criterion_spine_number}"
+    )
+    return True
 
 
 def get_matching_s3_objects(bucket, prefix="", suffix=""):
@@ -4976,7 +5071,13 @@ def move_to_rejects(file_path, reason=""):
 
 
 def refresh_criterion_collection_info(movie_id=None):
-    """Refresh Criterion Collection information from Wikipedia."""
+    """Refresh Criterion Collection information from Wikidata.
+
+    Runs monthly on the 18th — Criterion announces each month's new titles
+    around the 15th, and a few days leaves time for Wikidata to catch up.
+    A full refresh forces a fresh fetch; single-movie refreshes use the
+    week-long cache.
+    """
 
     with app.app_context():
         try:
@@ -4985,37 +5086,26 @@ def refresh_criterion_collection_info(movie_id=None):
             # Criterion Collection info for just that one movie. Otherwise, update all.
 
             if movie_id:
-                movies = Movie.query.filter_by(id=movie_id).first()
+                movies = Movie.query.filter_by(id=movie_id).all()
 
             else:
                 movies = Movie.query.all()
 
-            criterion_collection = get_criterion_collection_from_wikipedia()
+            criterion_collection = get_criterion_collection_from_wikidata(
+                force_refresh=movie_id is None
+            )
+            by_tmdb_id, by_title_year = criterion_release_lookups(criterion_collection)
 
+            matched = 0
             for movie in movies:
-                for release in criterion_collection:
-                    # See if the title and year for movies in our library match what we
-                    # scraped from Wikipedia. If so, update it with Criterion release info.
-
-                    if (movie.title.upper() == release.get("title")) and (
-                        movie.year == release.get("year")
-                    ):
-                        movie.criterion_spine_number = release.get("spine_number")
-
-                        # Decided against automatically adding the set title
-                        # movie.criterion_set_title = release.get("set")
-
-                        movie.criterion_in_print = release.get("in_print")
-                        movie.criterion_bluray = release.get("bluray")
-                        if movie.criterion_disc_owned == None:
-                            movie.criterion_disc_owned = False
-
-                        current_app.logger.info(
-                            f"{movie} Assigning Criterion Collection "
-                            f"spine #{movie.criterion_spine_number}"
-                        )
+                if assign_criterion_release(movie, by_tmdb_id, by_title_year):
+                    matched += 1
 
             db.session.commit()
+            current_app.logger.info(
+                f"Matched {matched} of {len(movies)} movie(s) against "
+                f"{len(criterion_collection)} Criterion Collection releases"
+            )
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -5025,14 +5115,46 @@ def refresh_criterion_collection_info(movie_id=None):
             return True
 
 
+def _movie_refresh_lock_resources(*movies):
+    """Every title-lock resource an import of these movies could hold.
+
+    Covers the identifier of each existing file, plus each movie's base
+    main-feature identifier so a brand-new first file of the title arriving
+    mid-refresh is serialized too. Sorted, so two refreshes acquiring locks
+    for overlapping movies can't deadlock each other.
+    """
+
+    resources = set()
+    for movie in movies:
+        if movie is None:
+            continue
+        resources.add(
+            json.dumps(
+                {
+                    "title": movie.title,
+                    "year": movie.year,
+                    "feature_type": None,
+                    "plex_title": f"{movie.title} ({movie.year})",
+                    "edition": None,
+                }
+            )
+        )
+        for file in movie.files.all():
+            resources.add(file.file_identifier())
+    return sorted(resources)
+
+
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
     """Refresh movie or TV show information from TMDB.
 
     With notify_if_missing (used by finalize_localization for new imports),
     an email goes out if the movie still has no TMDb match after the query.
+    Movie refreshes hold the affected titles' locks for the duration, so
+    they can't interleave with an import of the same title.
     """
 
     with app.app_context():
+        locks = []
         try:
 
             if library == "Movies":
@@ -5050,19 +5172,60 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 # If not, try to find a movie from TMDB based on the movie's title and year.
 
                 current_app.logger.info(f"tmdb_id: {tmdb_id}")
+                existing_movie = None
                 if tmdb_id != None:
                     existing_movie = (
                         Movie.query.filter_by(tmdb_id=tmdb_id)
                         .order_by(Movie.date_created.asc())
                         .first()
                     )
-                    if existing_movie:
-                        movie = existing_movie
-                        current_app.logger.info(f"Existing movie: {movie}")
-                        existing_movie.tmdb_movie_query(tmdb_id)
-                        db.session.commit()
-                    else:
-                        movie.tmdb_movie_query(tmdb_id)
+
+                # This task rewrites file paths and — when the TMDb id
+                # reveals a duplicate — merges two movie records, so it must
+                # not interleave with a localization chain holding one of
+                # these titles' locks. Take every lock an import of either
+                # movie could hold (in sorted order, so concurrent refreshes
+                # can't deadlock); if any is busy, retry later.
+
+                for resource in _movie_refresh_lock_resources(movie, existing_movie):
+                    lock = current_app.lock_manager.lock(
+                        resource, current_app.config["SQL_TASK_TIMEOUT"] * 1000
+                    )
+                    if not lock:
+                        for held in locks:
+                            current_app.lock_manager.unlock(held)
+                        locks = []
+                        sleep_duration = random.randint(5, 15)
+                        current_app.logger.warning(
+                            f"'{movie.title} ({movie.year})' A file is locked "
+                            f"by another task, returning the TMDb refresh to "
+                            f"the queue after {sleep_duration} minutes"
+                        )
+                        current_app.request_scheduler.enqueue_in(
+                            timedelta(minutes=sleep_duration),
+                            "app.videos.refresh_tmdb_info",
+                            library=library,
+                            id=id,
+                            tmdb_id=tmdb_id,
+                            notify_if_missing=notify_if_missing,
+                            timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                            job_id=f"retry:refresh_tmdb_info:{library}:{id}",
+                            job_result_ttl=86400,
+                            job_description=(
+                                f"Refreshing TMDB data for "
+                                f"'{movie.title} ({movie.year})'"
+                            ),
+                        )
+                        return False
+                    locks.append(lock)
+
+                if existing_movie:
+                    movie = existing_movie
+                    current_app.logger.info(f"Existing movie: {movie}")
+                    existing_movie.tmdb_movie_query(tmdb_id)
+                    db.session.commit()
+                elif tmdb_id != None:
+                    movie.tmdb_movie_query(tmdb_id)
                 else:
                     movie.tmdb_movie_query()
 
@@ -5272,6 +5435,10 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
 
         else:
             return True
+
+        finally:
+            for held in locks:
+                current_app.lock_manager.unlock(held)
 
 
 def sanitize_s3_key(key):

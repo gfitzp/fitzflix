@@ -328,6 +328,19 @@ def create_app(config_class=Config):
         description="Scanning import directory for files",
     )
 
+    # Refresh Criterion Collection spine numbers from Wikidata monthly.
+    # Criterion announces each month's new titles around the 15th (or the
+    # nearest weekday), so the 18th leaves time for Wikidata to catch up
+
+    register_cron(
+        app.maintenance_scheduler,
+        "0 3 18 * *",
+        func="app.videos.refresh_criterion_collection_info",
+        job_id="criterion-refresh",
+        timeout="1h",
+        description="Refreshing Criterion Collection information",
+    )
+
     # Probe external services and system health every ten minutes; results
     # feed the admin page's health card, and new problems are emailed
 

@@ -22,7 +22,7 @@
 		<a class="dropdown-item" target="_blank" href="https://www.barnesandnoble.com/s/{{ title|urlencode }}/_/N-8qh" rel="noreferrer">Barnes & Noble</a>
 		<a class="dropdown-item" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ title|urlencode }}&yearfrom={{ year }}&yearto={{ year }}&sortby=releasetimestamp" rel="noreferrer">Blu-ray.com</a>
 		{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-			<a class="dropdown-item" target="_blank" href="https://www.criterion.com/search?q={{ title|urlencode }}" rel="noreferrer">Criterion.com</a>
+			<a class="dropdown-item" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ title|urlencode }}{% endif %}" rel="noreferrer">Criterion.com</a>
 		{% endif %}
         <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>

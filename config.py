@@ -137,7 +137,7 @@ class Config(object):
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"
 
-    WIKIPEDIA_CRITERION_COLLECTION_URL  = os.environ.get("WIKIPEDIA_CRITERION_COLLECTION_URL") or None
+    WIKIDATA_SPARQL_URL                 = os.environ.get("WIKIDATA_SPARQL_URL") or "https://query.wikidata.org/sparql"
 
     # Task timeouts; if specifying in the .env file, set as number of seconds
     # Note: LOCALIZATION_TASK_TIMEOUT also sets the title-lock TTL protecting

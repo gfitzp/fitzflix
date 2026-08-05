@@ -1146,6 +1146,7 @@ class Movie(db.Model, TMDBMixin, Utilities):
     tmdb_data_as_of = db.Column(db.DateTime)
 
     criterion_spine_number = db.Column(db.Integer)
+    criterion_film_id = db.Column(db.String(255))
     criterion_set_title = db.Column(db.String(512))
     criterion_in_print = db.Column(db.Boolean)
     criterion_disc_owned = db.Column(db.Boolean)
