@@ -30,16 +30,17 @@
 <hr>
 {% if series %}
 {% for tv in series %}
-<div class="media">
-	<div class="sticky-top pt-1 mt-n1" style="z-index: 100; top: 60px;">
+{# Stacked on phones (poster above the seasons), side-by-side from sm up #}
+<div class="media flex-column flex-sm-row">
+	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 	</div>
-	<div class="media-body">
-		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_title if tv.tmdb_title else tv.title }}</a></h5>
+	<div class="media-body w-100">
+		<h5 class="mt-2 mt-sm-0"><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_title if tv.tmdb_title else tv.title }}</a></h5>
 		{% if tv.seasons %}
-			<ul class="list-group col-12 col-md-8 col-lg-4">
+			<ul class="list-group col-12 col-md-8 col-lg-4 pl-0 pl-sm-3">
 			{% for season in tv.seasons %}
 				<li class="list-group-item">
 					<h6><a href="{{ url_for('main.season', series_id=tv.id, season=season.season) }}"><span class="text-body">{% if season.season == 0 %}Specials{% else %}Season {{ season.season }}{% endif %}</span></a></h6>

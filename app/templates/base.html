@@ -4,19 +4,29 @@
 	{% if title %}Fitzflix - {{ title }}{% else %}Fitzflix{% endif %}
 {% endblock %}
 
+{% macro global_search_form(extra_classes) %}
+{# The global search box, with its type-ahead dropdown; rendered twice —
+   outside the collapse for phones, inside the right-side menu for desktop —
+   so the class-based type-ahead script binds to both #}
+<form class="form-inline flex-nowrap {{ extra_classes }}" action="{{ url_for('main.search') }}" method="get" autocomplete="off" role="search">
+	<div class="position-relative" style="width: 10rem;">
+		<input class="form-control form-control-sm w-100 global-search-input" type="search" name="q" placeholder="Search library" aria-label="Search library">
+		<div class="dropdown-menu dropdown-menu-right w-100 global-search-suggestions" style="max-height: 50vh; overflow-y: auto;"></div>
+	</div>
+</form>
+{% endmacro %}
+
 {% block navbar %}
 <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
 	<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="mr-1" alt="Fitzflix logo"></a>
-	<a class="navbar-brand" href="{{ url_for('main.index') }}">Fitzflix</a>
+	{# The text brand is redundant next to the logo on phones, and hiding it
+	   keeps the brand, search box, and menu toggle on a single navbar row #}
+	<a class="navbar-brand d-none d-sm-block" href="{{ url_for('main.index') }}">Fitzflix</a>
 	{% if current_user.is_authenticated %}
-	{# Outside the collapse and ordered last on desktop, so the search box is
-	   always visible — even on a phone with the menu collapsed #}
-	<form class="form-inline ml-auto mr-2 mr-lg-0 order-lg-last" action="{{ url_for('main.search') }}" method="get" autocomplete="off" role="search">
-		<div class="position-relative">
-			<input class="form-control form-control-sm" type="search" name="q" id="global-search-input" placeholder="Search library" aria-label="Search library">
-			<div id="global-search-suggestions" class="dropdown-menu dropdown-menu-right w-100" style="max-height: 50vh; overflow-y: auto;"></div>
-		</div>
-	</form>
+	{# Phones only: outside the collapse so the search box stays visible with
+	   the menu collapsed; the explicit width in the macro keeps it on the
+	   navbar's single row #}
+	{{ global_search_form("ml-auto mr-2 d-lg-none") }}
 	{% endif %}
 	<button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
 		<span class="navbar-toggler-icon"></span>
@@ -68,6 +78,12 @@
 				<a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
 			</li>
 			{% else %}
+			{# Desktop only: the search box sits in the right-side menu, just
+			   left of Queue; phones use the always-visible copy outside the
+			   collapse instead #}
+			<li class="nav-item d-none d-lg-block align-self-center mr-2">
+				{{ global_search_form("") }}
+			</li>
 			<li class="nav-item">
 				{% set queue_count = current_user.get_queue_count() %}
 				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
@@ -125,6 +141,15 @@
 {% block scripts %}
 	{{ super() }}
     {{ moment.include_moment(version="2.29.1") }}
+	<script>
+		// Offline support (shopping list in stores with bad reception);
+		// service workers only run in secure contexts, so this is a no-op
+		// over plain http
+
+		if ("serviceWorker" in navigator && window.isSecureContext) {
+			navigator.serviceWorker.register("/sw.js").catch(function() {});
+		}
+	</script>
 	{% if current_user.is_authenticated %}
 	<script>
 		// Type-ahead for the global search box: debounced fetch against
@@ -132,51 +157,54 @@
 		// form for the full results page
 
 		(function() {
-			var input = document.getElementById("global-search-input");
-			var menu = document.getElementById("global-search-suggestions");
-			if (!input || !menu) return;
-			var timer = null;
+			var inputs = document.querySelectorAll(".global-search-input");
+			if (!inputs.length) return;
 
-			function hide() {
-				menu.classList.remove("show");
-				menu.innerHTML = "";
-			}
+			inputs.forEach(function(input) {
+				var menu = input.nextElementSibling;
+				var timer = null;
 
-			input.addEventListener("input", function() {
-				clearTimeout(timer);
-				var q = input.value.trim();
-				if (q.length < 2) {
-					hide();
-					return;
+				function hide() {
+					menu.classList.remove("show");
+					menu.innerHTML = "";
 				}
-				timer = setTimeout(function() {
-					fetch("{{ url_for('main.search_json') }}?q=" + encodeURIComponent(q))
-						.then(function(r) { return r.json(); })
-						.then(function(data) {
-							menu.innerHTML = "";
-							(data.results || []).forEach(function(item) {
-								var a = document.createElement("a");
-								a.className = "dropdown-item small text-truncate";
-								a.href = item.url;
-								a.textContent = item.title + " — " + item.detail;
-								menu.appendChild(a);
-							});
-							if (menu.children.length) {
-								menu.classList.add("show");
-							} else {
-								hide();
-							}
-						})
-						.catch(hide);
-				}, 250);
-			});
 
-			input.addEventListener("keydown", function(e) {
-				if (e.key === "Escape") hide();
-			});
+				input.addEventListener("input", function() {
+					clearTimeout(timer);
+					var q = input.value.trim();
+					if (q.length < 2) {
+						hide();
+						return;
+					}
+					timer = setTimeout(function() {
+						fetch("{{ url_for('main.search_json') }}?q=" + encodeURIComponent(q))
+							.then(function(r) { return r.json(); })
+							.then(function(data) {
+								menu.innerHTML = "";
+								(data.results || []).forEach(function(item) {
+									var a = document.createElement("a");
+									a.className = "dropdown-item small text-truncate";
+									a.href = item.url;
+									a.textContent = item.title + " — " + item.detail;
+									menu.appendChild(a);
+								});
+								if (menu.children.length) {
+									menu.classList.add("show");
+								} else {
+									hide();
+								}
+							})
+							.catch(hide);
+					}, 250);
+				});
 
-			document.addEventListener("click", function(e) {
-				if (e.target !== input && !menu.contains(e.target)) hide();
+				input.addEventListener("keydown", function(e) {
+					if (e.key === "Escape") hide();
+				});
+
+				document.addEventListener("click", function(e) {
+					if (e.target !== input && !menu.contains(e.target)) hide();
+				});
 			});
 		})();
 	</script>

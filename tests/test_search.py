@@ -232,3 +232,17 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
 def test_search_tmdb_without_api_key_explains(app, admin_client):
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "TMDB_API_KEY is not configured" in page
+
+
+def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
+    """A movie removed from the shopping list is final: green badge with an
+    'excluded' note, even when its best copy is below the quality threshold."""
+
+    with app.app_context():
+        movie = make_movie("Skip It", 2000, shopping_list_exclude=True)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
+    assert 'badge-success">DVD &mdash; excluded' in page
+    assert "upgrade candidate" not in page

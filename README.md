@@ -89,6 +89,10 @@ Season `00` marks a special, which is filed into the show's `Specials` folder:
 
 Fitzflix tracks every file's quality, so the library pages show the best copy you own of each title, and the shopping list pages show which titles could be upgraded (e.g. a full screen DVD that could be replaced with a widescreen Blu-ray). Movies are matched to TMDb for artwork, cast and crew, and review tracking; the file detail page lets you set default audio/subtitle tracks, strip unwanted tracks, transcode with HandBrake, and manage the AWS archive copy.
 
+### Using Fitzflix on a phone
+
+Fitzflix installs as a web app for shopping trips: open it in the phone's browser and use **Add to Home Screen** (iOS Safari) or **Install app** (Android Chrome). The installed app opens straight to the movie shopping list in a full-screen window, and the search box in the navigation bar is always visible for the "do I own this?" check — search results flag upgrade-candidate seasons and movies in amber. When Fitzflix is served over HTTPS, a service worker also keeps recently-viewed pages available offline, so the shopping list still opens in stores with no reception; over plain HTTP the app still installs and works, but offline caching is disabled (browsers only allow service workers in secure contexts).
+
 
 ## Importing from Sonarr and Radarr
 

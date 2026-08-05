@@ -81,3 +81,34 @@ def test_filename_tester_shows_rejection(admin_client):
     )
     assert response.status_code == 200
     assert "would be rejected" in response.get_data(as_text=True)
+
+
+def test_tv_shopping_list_renders(admin_client):
+    assert admin_client.get("/shopping-list/tv").status_code == 200
+
+
+def test_service_worker_is_served_from_root_scope(client):
+    """The PWA's offline layer: /sw.js must be at the root (not /static/)
+    so its scope covers the whole application."""
+
+    response = client.get("/sw.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["Content-Type"]
+    assert b"fitzflix-v1" in response.data
+
+
+def test_pages_register_the_service_worker(admin_client):
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'serviceWorker.register("/sw.js")' in body
+    assert "site.webmanifest" in body
+
+
+def test_manifest_declares_installable_app():
+    import json
+
+    with open("app/static/site.webmanifest") as f:
+        manifest = json.load(f)
+    assert manifest["start_url"] == "/shopping-list/movie"
+    assert manifest["scope"] == "/"
+    assert manifest["display"] == "standalone"
+    assert {icon["sizes"] for icon in manifest["icons"]} == {"192x192", "512x512"}

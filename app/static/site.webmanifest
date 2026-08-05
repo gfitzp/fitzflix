@@ -1,6 +1,9 @@
 {
     "name": "Fitzflix",
     "short_name": "Fitzflix",
+    "description": "The Fitzflix media library and shopping list",
+    "start_url": "/shopping-list/movie",
+    "scope": "/",
     "icons": [
         {
             "src": "/static/android-chrome-192x192.png",
@@ -13,7 +16,7 @@
             "type": "image/png"
         }
     ],
-    "theme_color": "#ffffff",
+    "theme_color": "#f8f9fa",
     "background_color": "#ffffff",
     "display": "standalone"
 }

@@ -183,6 +183,18 @@ def favicon():
     )
 
 
+@bp.route("/sw.js")
+def service_worker():
+    # Served from the root (rather than /static/) so the service worker's
+    # scope covers the whole application
+
+    return send_from_directory(
+        os.path.join(current_app.root_path, "static"),
+        "sw.js",
+        mimetype="application/javascript",
+    )
+
+
 @bp.route("/")
 @bp.route("/index")
 @bp.route("/recently-added")
@@ -2254,8 +2266,10 @@ def _movie_search_results(wildcard, limit=50):
                 "upgradable": bool(
                     best
                     and (best.fullscreen or best.quality.preference < upgrade_threshold)
+                    and not (movie.shopping_list_exclude == 1)
                 ),
                 "rating": review.rating if review else None,
+                "excluded": movie.shopping_list_exclude == 1,
             }
         )
     return results
