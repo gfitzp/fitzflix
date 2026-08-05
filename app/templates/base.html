@@ -244,122 +244,171 @@
 	<script>
         {%if current_user.is_authenticated %}
 
-		function set_queue_count(n) {
-            $("#queue_count").text(n);
-        }
+		// Queue badge and task progress: poll /api/queue_details, pausing
+		// while the tab is hidden (a pocketed phone shouldn't poll forever)
+		// and only scheduling the next poll once the last one finished, so
+		// slow responses can't overlap and land out of order
 
-        function flash_queue_count(color) {
-        	$("#queue_count").addClass("flash-" + color);
-            setTimeout(
-            	function() {
-            		$("#queue_count").removeClass("flash-" + color);
-            	}, 1000
-            );
-        }
+		(function() {
+			var QUEUE_URL = '{{ url_for('api.queue_details') }}';
+			var POLL_MS = 5000;
+			var pollTimer = null;
+			var lastCount = parseInt($("#queue_count").text(), 10);
+			var runningSignature = null;
+			var allSignature = null;
 
-		function current_queue() {
-			$.ajax('{{ url_for('api.queue_details') }}').done(
-				function(queue_details) {
-					console.log(queue_details);
-					current_queue_count = parseInt(document.getElementById("queue_count").textContent, 10);
-					set_queue_count(queue_details.count);
-					if (queue_details.count < current_queue_count) {
-						flash_queue_count("green");
-					} else if (queue_details.count > current_queue_count) {
-						flash_queue_count("red");
-					}
-					console.log(queue_details.running);
-					running = queue_details.running;
+			function flashQueueCount(color) {
+				$("#queue_count").addClass("flash-" + color);
+				setTimeout(function() {
+					$("#queue_count").removeClass("flash-" + color);
+				}, 1000);
+			}
 
-					oldTasks = document.getElementById("running-tasks")
-
-					while (oldTasks.firstChild) {
-						oldTasks.firstChild.remove();
-					}
-
-					for (var i = 0; i < running.length; i++) {
-						var newAlert = document.createElement("div");
-						newAlert.className = "alert alert-info mt-3";
-						newAlert.setAttribute("role", "alert");
-						newAlert.id = running[i].id;
-						var newProgress = document.createElement("div");
-						newProgress.className = "progress mt-1";
-						var newProgressBar = document.createElement("div");
-						newProgressBar.setAttribute("role", "progressbar");
-						newProgressBar.setAttribute("aria-valuemin", "0");
-						newProgressBar.setAttribute("aria-valuemax", "100");
-						if (running[i].progress >= 0) {
-							$(newAlert).text(running[i].description + "... " + running[i].progress + "%");
-							newProgressBar.className = "progress-bar bg-info";
-							newProgressBar.setAttribute("style", "width: " + running[i].progress + "%");
-							newProgressBar.setAttribute("aria-valuenow", running[i].progress);
-							console.log(running[i].id, running[i].description, running[i].progress);
-						} else {
-							$(newAlert).text(running[i].description + "...");
-							newProgressBar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
-							newProgressBar.setAttribute("style", "width: 100%");
-							newProgressBar.setAttribute("aria-valuenow", "100");
-							console.log(running[i].id, running[i].description);
-						}
-						newProgress.appendChild(newProgressBar);
-						document.getElementById("running-tasks").appendChild(newAlert);
-						document.getElementById(newAlert.id).appendChild(newProgress);
-					}
-
-					all_tasks = queue_details.all;
-
-					oldTasks = document.getElementById("all-tasks");
-					if (oldTasks) {
-						while (oldTasks.firstChild) {
-							oldTasks.firstChild.remove();
-						}
-
-						for (var i = 0; i < all_tasks.length; i++) {
-
-							var taskPosition = document.createElement("th");
-							taskPosition.setAttribute("scope", "row");
-							taskPosition.setAttribute("class", "col-1");
-							$(taskPosition).text(all_tasks[i].position);
-
-							var taskId = document.createElement("td");
-							taskId.setAttribute("class", "col-5 col-sm-5 col-lg-7");
-							$(taskId).text(all_tasks[i].description);
-
-							var enqueuedDate = document.createElement("abbr");
-							enqueuedDate.setAttribute("title", all_tasks[i].enqueued_at);
-							$(enqueuedDate).text(moment(all_tasks[i].enqueued_at).fromNow());
-
-							var taskEnqueued = document.createElement("td");
-							taskEnqueued.setAttribute("class", "col-3 col-sm-3 col-lg-2");
-							taskEnqueued.appendChild(enqueuedDate);
-
-							var startedDate = document.createElement("abbr");
-							startedDate.setAttribute("title", all_tasks[i].started_at);
-							if (all_tasks[i].started_at) {
-								$(startedDate).text(moment(all_tasks[i].started_at).fromNow());
-							}
-
-							var taskStarted = document.createElement("td");
-							taskStarted.setAttribute("class", "col-3 col-sm-3 col-lg-2");
-							taskStarted.appendChild(startedDate);
-
-							var taskRow = document.createElement("tr");
-							taskRow.setAttribute("class", "d-flex");
-							taskRow.appendChild(taskPosition);
-							taskRow.appendChild(taskId);
-							taskRow.appendChild(taskEnqueued);
-							taskRow.appendChild(taskStarted);
-
-							document.getElementById("all-tasks").appendChild(taskRow);
-
-						}
-					}
+			function setQueueCount(count) {
+				$("#queue_count").text(count);
+				if (!isNaN(lastCount)) {
+					if (count < lastCount) flashQueueCount("green");
+					else if (count > lastCount) flashQueueCount("red");
 				}
-			);
-			setTimeout(current_queue, 5000);
-		}
+				lastCount = count;
+			}
 
-        $(current_queue());
+			function applyProgress(alert, task) {
+				var label = alert.querySelector(".task-label");
+				var bar = alert.querySelector(".progress-bar");
+				if (task.progress >= 0) {
+					label.textContent = task.description + "... " + task.progress + "%";
+					bar.className = "progress-bar bg-info";
+					bar.style.width = task.progress + "%";
+					bar.setAttribute("aria-valuenow", task.progress);
+				} else {
+					label.textContent = task.description + "...";
+					bar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
+					bar.style.width = "100%";
+					bar.setAttribute("aria-valuenow", "100");
+				}
+			}
+
+			function renderRunning(running) {
+				var container = document.getElementById("running-tasks");
+				if (!container) return;
+
+				// While the same tasks are running, only their progress bars
+				// change — updating them in place lets the bar's CSS width
+				// transition animate instead of jumping
+
+				var signature = running.map(function(task) {
+					return task.id + "|" + task.description;
+				}).join("\n");
+				if (signature === runningSignature) {
+					running.forEach(function(task) {
+						var alert = document.getElementById(task.id);
+						if (alert) applyProgress(alert, task);
+					});
+					return;
+				}
+
+				container.textContent = "";
+				running.forEach(function(task) {
+					var alert = document.createElement("div");
+					alert.className = "alert alert-info mt-3";
+					alert.setAttribute("role", "alert");
+					alert.id = task.id;
+
+					var label = document.createElement("span");
+					label.className = "task-label";
+					alert.appendChild(label);
+
+					var progress = document.createElement("div");
+					progress.className = "progress mt-1";
+					var bar = document.createElement("div");
+					bar.className = "progress-bar";
+					bar.setAttribute("role", "progressbar");
+					bar.setAttribute("aria-valuemin", "0");
+					bar.setAttribute("aria-valuemax", "100");
+					progress.appendChild(bar);
+					alert.appendChild(progress);
+
+					applyProgress(alert, task);
+					container.appendChild(alert);
+				});
+				runningSignature = signature;
+			}
+
+			function renderAll(tasks) {
+				var tbody = document.getElementById("all-tasks");
+				if (!tbody) return;
+
+				var signature = tasks.map(function(task) {
+					return task.position + "|" + task.description + "|" + task.started_at;
+				}).join("\n");
+				if (signature === allSignature) return;
+
+				tbody.textContent = "";
+				tasks.forEach(function(task) {
+					var position = document.createElement("th");
+					position.setAttribute("scope", "row");
+					position.className = "col-1";
+					position.textContent = task.position;
+
+					var description = document.createElement("td");
+					description.className = "col-5 col-sm-5 col-lg-7";
+					description.textContent = task.description;
+
+					var enqueuedDate = document.createElement("abbr");
+					enqueuedDate.setAttribute("title", task.enqueued_at);
+					enqueuedDate.textContent = moment(task.enqueued_at).fromNow();
+					var enqueued = document.createElement("td");
+					enqueued.className = "col-3 col-sm-3 col-lg-2";
+					enqueued.appendChild(enqueuedDate);
+
+					var startedDate = document.createElement("abbr");
+					startedDate.setAttribute("title", task.started_at);
+					if (task.started_at) {
+						startedDate.textContent = moment(task.started_at).fromNow();
+					}
+					var started = document.createElement("td");
+					started.className = "col-3 col-sm-3 col-lg-2";
+					started.appendChild(startedDate);
+
+					var row = document.createElement("tr");
+					row.className = "d-flex";
+					row.appendChild(position);
+					row.appendChild(description);
+					row.appendChild(enqueued);
+					row.appendChild(started);
+					tbody.appendChild(row);
+				});
+				allSignature = signature;
+			}
+
+			function scheduleNext() {
+				clearTimeout(pollTimer);
+				if (document.hidden) return;
+				pollTimer = setTimeout(poll, POLL_MS);
+			}
+
+			function poll() {
+				$.ajax({ url: QUEUE_URL, dataType: "json" })
+					.done(function(queue_details) {
+						// An expired session redirects to the login page, which
+						// isn't queue data — never paint that into the badge
+
+						if (!queue_details || typeof queue_details.count !== "number") return;
+						setQueueCount(queue_details.count);
+						renderRunning(queue_details.running || []);
+						renderAll(queue_details.all || []);
+					})
+					.always(scheduleNext);
+			}
+
+			document.addEventListener("visibilitychange", function() {
+				clearTimeout(pollTimer);
+				if (!document.hidden) poll();
+			});
+
+			poll();
+		})();
 
         {% endif %}
     </script>

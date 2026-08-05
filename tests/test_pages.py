@@ -107,6 +107,10 @@ def test_pages_register_the_service_worker(admin_client):
     assert "ArrowDown" in body
     assert "ArrowUp" in body
 
+    # The queue poller pauses while the tab is hidden
+
+    assert "visibilitychange" in body
+
 
 def test_manifest_declares_installable_app():
     import json
