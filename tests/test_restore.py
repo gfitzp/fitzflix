@@ -56,7 +56,7 @@ def test_season_restore_fans_out_to_best_archived_files(app, admin_client):
         series_id = series.id
 
     page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
-    assert "Restore season from AWS" in page
+    assert "Bulk restore season from AWS" in page
 
     # The cost estimate is shown before anything is submitted
 
@@ -67,7 +67,7 @@ def test_season_restore_fans_out_to_best_archived_files(app, admin_client):
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
-            "season_restore_submit": "Restore season from AWS",
+            "season_restore_submit": "Bulk restore season from AWS",
         },
         follow_redirects=True,
     )
@@ -86,14 +86,14 @@ def test_series_restore_fans_out_across_seasons(app, admin_client):
         series_id = series.id
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
-    assert "Restore series from AWS" in page
+    assert "Bulk restore series from AWS" in page
 
     response = admin_client.post(
         f"/tv/{series_id}",
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
-            "series_restore_submit": "Restore series from AWS",
+            "series_restore_submit": "Bulk restore series from AWS",
         },
         follow_redirects=True,
     )
@@ -119,7 +119,7 @@ def test_series_restore_does_not_trigger_other_forms(app, admin_client):
         data={
             "csrf_token": csrf_token_from(page),
             "password": ADMIN_PASSWORD,
-            "series_restore_submit": "Restore series from AWS",
+            "series_restore_submit": "Bulk restore series from AWS",
         },
     )
 
@@ -144,7 +144,7 @@ def test_restore_requires_correct_password(app, admin_client):
         data={
             "csrf_token": csrf_token_from(page),
             "password": "not-the-password",
-            "series_restore_submit": "Restore series from AWS",
+            "series_restore_submit": "Bulk restore series from AWS",
         },
         follow_redirects=True,
     )
@@ -157,7 +157,39 @@ def test_restore_requires_correct_password(app, admin_client):
         f"/tv/{series_id}",
         data={
             "csrf_token": csrf_token_from(page),
-            "series_restore_submit": "Restore series from AWS",
+            "series_restore_submit": "Bulk restore series from AWS",
         },
     )
     assert restore_jobs(app) == []
+
+
+def test_estimate_prefers_recorded_aws_size_over_padded_local_size(app):
+    """The archived object's exact size wins; local sizes get the 1.25 pad."""
+
+    from types import SimpleNamespace
+
+    from app.main.routes import restore_cost_estimate
+
+    files = [
+        # Exact AWS size recorded: used as-is, local size and pad ignored
+        SimpleNamespace(
+            aws_untouched_filesize_bytes=4 * 1024**3, filesize_bytes=1 * 1024**3
+        ),
+        # No AWS size yet: local size padded by 1.25
+        SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=2 * 1024**3),
+        # No size at all: contributes nothing
+        SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=None),
+    ]
+
+    with app.app_context():
+        estimate = restore_cost_estimate(files, bulk=True)
+
+    assert estimate["count"] == 3
+    assert estimate["gigabytes"] == 4 + (2 * 1.25)
+
+    per_request = app.config["AWS_RESTORE_PER_1K_REQUEST_BULK_COST"] / 1000
+    per_gb = (
+        app.config["AWS_RESTORE_PER_GB_BULK_COST"]
+        + app.config["AWS_DOWNLOAD_PER_GB_COST"]
+    )
+    assert estimate["cost"] == (3 * per_request) + (6.5 * per_gb)

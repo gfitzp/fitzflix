@@ -537,6 +537,7 @@ def localization_task(file_path, force_upload=False, ignore_etag=False):
                 (
                     file_details["aws_untouched_key"],
                     file_details["aws_untouched_date_uploaded"],
+                    file_details["aws_untouched_filesize_bytes"],
                 ) = aws_upload(
                     file_path,
                     current_app.config["AWS_UNTOUCHED_PREFIX"],
@@ -1484,6 +1485,9 @@ def finalize_localization(
             file.aws_untouched_date_uploaded = file_details.get(
                 "aws_untouched_date_uploaded"
             )
+            file.aws_untouched_filesize_bytes = file_details.get(
+                "aws_untouched_filesize_bytes"
+            )
 
             bytes = inspection["filesize_bytes"]
             megabytes = (bytes / 1024) / 1024
@@ -2318,6 +2322,7 @@ def mkvpropedit_unlocked(
                 (
                     file.aws_untouched_key,
                     file.aws_untouched_date_uploaded,
+                    file.aws_untouched_filesize_bytes,
                 ) = aws_upload(
                     file_path,
                     current_app.config["AWS_UNTOUCHED_PREFIX"],
@@ -2557,13 +2562,17 @@ def sync_aws_s3_storage_task():
         try:
             job = get_current_job()
 
-            s3_keys = [
-                key
-                for key in get_matching_s3_keys(
+            # Map each remote key to its object size, so file records can be
+            # backfilled with the exact size that AWS bills for restores
+
+            s3_objects = {
+                object["Key"]: object["Size"]
+                for object in get_matching_s3_objects(
                     app.config["AWS_BUCKET"],
                     prefix=f"{app.config['AWS_UNTOUCHED_PREFIX']}/",
                 )
-            ]
+            }
+            s3_keys = list(s3_objects)
 
             files = File.query.all()
 
@@ -2664,6 +2673,13 @@ def sync_aws_s3_storage_task():
                         f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
                     )
 
+                    # Record the object's actual size if we don't have it yet
+                    # or if it has changed since it was recorded
+
+                    remote_size = s3_objects[file.aws_untouched_key]
+                    if file.aws_untouched_filesize_bytes != remote_size:
+                        file.aws_untouched_filesize_bytes = remote_size
+
                     if rank == 1:
                         inventory_export.append(
                             [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
@@ -2688,6 +2704,10 @@ def sync_aws_s3_storage_task():
                         f"'{file.aws_untouched_key}' has no associated files"
                     )
                     orphaned_files.append([file.id, file.untouched_basename])
+
+            # Persist any backfilled AWS object sizes
+
+            db.session.commit()
 
             current_app.logger.info(f"Orphaned files: {orphaned_files}")
 
@@ -3241,7 +3261,11 @@ def upload_task(
             # Update the File record with the remote key and date it was uploaded.
 
             if file.aws_untouched_key:
-                file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                (
+                    file.aws_untouched_key,
+                    file.aws_untouched_date_uploaded,
+                    file.aws_untouched_filesize_bytes,
+                ) = aws_upload(
                     file_path=file_path,
                     key_name=file.aws_untouched_key,
                     force_upload=force_upload,
@@ -3250,7 +3274,11 @@ def upload_task(
                 )
 
             else:
-                file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_upload(
+                (
+                    file.aws_untouched_key,
+                    file.aws_untouched_date_uploaded,
+                    file.aws_untouched_filesize_bytes,
+                ) = aws_upload(
                     file_path=file_path,
                     key_prefix=key_prefix,
                     force_upload=force_upload,
@@ -3519,7 +3547,7 @@ def aws_upload(
         )
 
         # Raise instead of returning None: every caller unpacks the return value
-        # as a (key, date_uploaded) tuple
+        # as a (key, date_uploaded, filesize_bytes) tuple
 
         raise FileNotFoundError(
             f"'{file_path}' can't be uploaded to AWS since it's not a file"
@@ -3551,10 +3579,12 @@ def aws_upload(
 
         remote_etag = None
         date_uploaded = None
+        remote_size = None
         for object in response.get("Contents") or []:
             if object.get("Key") == key:
                 remote_etag = object.get("ETag").replace('"', "")
                 date_uploaded = object.get("LastModified")
+                remote_size = object.get("Size")
 
         if remote_etag is not None:
             if ignore_etag or current_app.config["IGNORE_ETAGS"]:
@@ -3562,14 +3592,14 @@ def aws_upload(
                     f"'{file_path}' matches '{key}' and ETags are ignored, "
                     f"no need to re-upload"
                 )
-                return key, date_uploaded
+                return key, date_uploaded, remote_size
 
             local_etag = calculate_etag(file_path)
             if local_etag == remote_etag:
                 current_app.logger.info(
                     f"'{file_path}' is the same as '{key}', no need to re-upload"
                 )
-                return key, date_uploaded
+                return key, date_uploaded, remote_size
 
             current_app.logger.info(
                 f"Local ETag '{local_etag}' ('{file_path}') "
@@ -3629,7 +3659,7 @@ def aws_upload(
 
         else:
             current_app.logger.info(f"Uploaded '{file_path}' to AWS")
-            return key, datetime.now(timezone.utc)
+            return key, datetime.now(timezone.utc), os.path.getsize(file_path)
 
     current_app.logger.error(
         f"Tried to upload '{file_path}' {str(MAX_RETRY_COUNT)} times but couldn't!"
@@ -3637,7 +3667,7 @@ def aws_upload(
     move_to_rejects(file_path, "upload error")
 
     # Raise instead of falling off the end returning None: every caller unpacks
-    # the return value as a (key, date_uploaded) tuple
+    # the return value as a (key, date_uploaded, filesize_bytes) tuple
 
     raise RuntimeError(
         f"Unable to upload '{file_path}' to AWS after {MAX_RETRY_COUNT} attempts"

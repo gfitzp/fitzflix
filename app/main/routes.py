@@ -977,8 +977,9 @@ def tv_library():
 def restore_cost_estimate(files, bulk=False):
     """Estimate the AWS cost of restoring and downloading archived files.
 
-    Sizes come from the localized copies (the archived originals' sizes
-    aren't tracked), so the estimate includes a 1.25x fudge-factor.
+    Uses the archived object's exact size when it's been recorded; otherwise
+    falls back to the localized copy's size with a 1.25x fudge-factor, since
+    the archived original is typically larger than the localized copy.
     """
 
     if bulk:
@@ -991,7 +992,16 @@ def restore_cost_estimate(files, bulk=False):
             current_app.config["AWS_RESTORE_PER_1K_REQUEST_COST"] / 1000
         )
         restore_per_gb_cost = current_app.config["AWS_RESTORE_PER_GB_COST"]
-    gigabytes = (sum(file.filesize_bytes or 0 for file in files) * 1.25) / 1024**3
+    gigabytes = (
+        sum(
+            (
+                file.aws_untouched_filesize_bytes
+                if file.aws_untouched_filesize_bytes
+                else file.filesize_bytes * 1.25 if file.filesize_bytes else 0
+            )
+            for file in files
+        )
+    ) / 1024**3
     cost = (len(files) * restore_request_cost) + (
         gigabytes
         * (restore_per_gb_cost + current_app.config["AWS_DOWNLOAD_PER_GB_COST"])

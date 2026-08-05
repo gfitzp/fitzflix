@@ -1338,6 +1338,7 @@ class File(db.Model):
     date_localized = db.Column(db.DateTime, index=True)
     date_transcoded = db.Column(db.DateTime, index=True)
     aws_untouched_key = db.Column(db.String(255), index=True)
+    aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)
     aws_untouched_date_deleted = db.Column(db.DateTime)
     subtrack = db.relationship(
