@@ -1204,11 +1204,16 @@ class UserMovieReview(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
-    rating = db.Column(db.Float, nullable=False)
-    modified_rating = db.Column(db.Float, nullable=False)
-    whole_stars = db.Column(db.Integer, nullable=False)
-    half_stars = db.Column(db.Integer, nullable=False)
+
+    # Rating fields are nullable: a Letterboxd review or like can exist
+    # without a star rating
+
+    rating = db.Column(db.Float)
+    modified_rating = db.Column(db.Float)
+    whole_stars = db.Column(db.Integer)
+    half_stars = db.Column(db.Integer)
     review = db.Column(db.Text)
+    liked = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     date_watched = db.Column(db.DateTime)
     date_reviewed = db.Column(db.DateTime)
 

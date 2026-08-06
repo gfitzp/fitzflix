@@ -153,7 +153,7 @@ class ReviewExportForm(FlaskForm):
 
 class ReviewUploadForm(FlaskForm):
     file = FileField("Reviews File")
-    upload_submit = SubmitField("Upload Reviews")
+    upload_submit = SubmitField("Import Reviews")
 
 
 class S3DownloadForm(FlaskForm):

@@ -23,7 +23,7 @@ Files named like these…
 
 <img width="1208" alt="Screen Shot 2022-05-31 at 11 53 15 AM" src="https://user-images.githubusercontent.com/10539597/171219470-d5d819a0-aa6e-4dc7-a09e-3aa97881936a.png">
 
-It supports reviewing films to help keep track of what you've seen:
+It supports reviewing films to help keep track of what you've seen. Reviews interoperate with [Letterboxd](https://letterboxd.com) in both directions: the My Movie Reviews page imports a Letterboxd account-export zip as-is — combining `diary.csv` (watch dates), `ratings.csv`, `reviews.csv`, and `likes/films.csv` into review records, matching films against the library or TMDb (films you've seen but don't own are created as review-only records), and merging idempotently so re-importing a newer export updates rather than duplicates — and the export button emails a CSV in the [Letterboxd import format](https://letterboxd.com/about/importing-data/), ready to upload to Letterboxd's importer.
 
 <img width="1206" alt="Screen Shot 2022-05-31 at 11 56 40 AM" src="https://user-images.githubusercontent.com/10539597/171219852-9de3c5de-863f-4c9a-b88f-c844186e57ca.png">
 

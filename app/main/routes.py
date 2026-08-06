@@ -81,7 +81,7 @@ from app.models import (
 from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
-from app.videos import evaluate_filename, track_metadata_scan
+from app.videos import evaluate_filename, parse_letterboxd_export, track_metadata_scan
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import FailedJobRegistry, StartedJobRegistry
@@ -1873,9 +1873,13 @@ def reviews():
         url_for("main.reviews", page=reviews.prev_num) if reviews.has_prev else None
     )
 
+    # Only rated reviews feed the ratings histogram; Letterboxd imports can
+    # include unrated reviews and likes
+
     all_reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .filter(UserMovieReview.user_id == int(current_user.id))
+        .filter(UserMovieReview.rating.isnot(None))
         .order_by(UserMovieReview.date_reviewed.desc())
         .order_by(UserMovieReview.date_watched.desc())
         .all()
@@ -1888,7 +1892,8 @@ def reviews():
         review_export_form.export_submit.data
         and review_export_form.validate_on_submit()
     ):
-        # Create the header columns for the CSV
+        # Create the header columns for the CSV, per the Letterboxd import
+        # format (https://letterboxd.com/about/importing-data/)
 
         csv_export = [
             ["tmdbID", "imdbID", "Title", "Year", "Rating", "WatchedDate", "Review"]
@@ -1907,15 +1912,26 @@ def reviews():
             .all()
         )
         for r in review_export:
+            # Letterboxd accepts ratings of 0.5-5 and calendar dates only,
+            # so unrated reviews export a blank rating and watched
+            # timestamps are truncated to YYYY-MM-DD
+
+            rating = ""
+            if r.modified_rating:
+                rating = (
+                    int(r.modified_rating)
+                    if r.modified_rating == int(r.modified_rating)
+                    else r.modified_rating
+                )
             csv_export.append(
                 [
                     r.movie.tmdb_id,
                     r.movie.imdb_id,
                     r.movie.title,
                     r.movie.year,
-                    r.modified_rating,
-                    r.date_watched,
-                    r.review,
+                    rating,
+                    r.date_watched.strftime("%Y-%m-%d") if r.date_watched else "",
+                    r.review or "",
                 ]
             )
 
@@ -1951,20 +1967,46 @@ def reviews():
         review_upload_form.upload_submit.data
         and review_upload_form.validate_on_submit()
     ):
-        ratings = request.files["file"].readlines()
-        for rating in ratings:
-            movie_rating = json.loads(rating)
-            if movie_rating["rating"] >= 0:
-                current_app.sql_queue.enqueue(
-                    "app.videos.review_task",
-                    args=(
-                        current_user.id,
-                        movie_rating["name"],
-                        movie_rating["rating"],
-                    ),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=f"Reviewing {movie_rating['name']}",
+        upload = request.files["file"]
+        data = upload.read()
+
+        if data[:4] == b"PK\x03\x04" or (upload.filename or "").lower().endswith(
+            ".zip"
+        ):
+            # A Letterboxd account export, imported as-is: diary, ratings,
+            # reviews, and film likes. Parsing is local and fast; matching
+            # unowned films needs TMDb, so that runs as a task
+
+            films = parse_letterboxd_export(data)
+            if films:
+                current_app.request_queue.enqueue(
+                    "app.videos.letterboxd_import_task",
+                    args=(current_user.id, films),
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    description=f"Matching {len(films)} Letterboxd film(s)",
                 )
+                flash(f"Importing Letterboxd data for {len(films)} films", "info")
+            else:
+                flash("No importable films found in that Letterboxd export", "warning")
+
+        else:
+            # Legacy JSON-lines ratings file, one film per line
+
+            for rating in data.splitlines():
+                if not rating.strip():
+                    continue
+                movie_rating = json.loads(rating)
+                if movie_rating["rating"] >= 0:
+                    current_app.sql_queue.enqueue(
+                        "app.videos.review_task",
+                        args=(
+                            current_user.id,
+                            movie_rating["name"],
+                            movie_rating["rating"],
+                        ),
+                        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                        description=f"Reviewing {movie_rating['name']}",
+                    )
         return redirect(url_for("main.reviews"))
 
     return render_template(

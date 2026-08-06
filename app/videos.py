@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import urllib.parse
+import zipfile
 import zlib
 
 from datetime import datetime, timedelta, timezone
@@ -3146,6 +3147,332 @@ def rename_task(file_id, new_key):
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
+
+        else:
+            return True
+
+
+def star_rating_fields(rating):
+    """The UserMovieReview rating columns for a 0-5 star rating (or None)."""
+
+    if rating is None:
+        return {
+            "rating": None,
+            "modified_rating": None,
+            "whole_stars": None,
+            "half_stars": None,
+        }
+    modified_rating = round(rating * 2) / 2
+    return {
+        "rating": rating,
+        "modified_rating": modified_rating,
+        "whole_stars": math.floor(modified_rating),
+        "half_stars": 0 if modified_rating % 1 == 0 else 1,
+    }
+
+
+def parse_letterboxd_export(zip_bytes):
+    """Parse a Letterboxd account-export zip into one record per film.
+
+    Combines diary.csv (watch dates and per-watch ratings), ratings.csv
+    (each film's current rating), reviews.csv (review text), and
+    likes/films.csv (hearts). Returns a list of films, each with a list of
+    entries mirroring how Letterboxd's own importer treats rows: one entry
+    per watched date, plus a dateless entry for films that were only rated
+    or liked.
+    """
+
+    def rows(zf, name):
+        if name not in zf.namelist():
+            return []
+        with zf.open(name) as f:
+            return list(csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")))
+
+    def film_key(row):
+        title = (row.get("Name") or "").strip()
+        year = (row.get("Year") or "").strip()
+        if not title or not year.isdigit():
+            return None
+        return (title, int(year))
+
+    films = {}
+
+    def film(key):
+        if key not in films:
+            films[key] = {
+                "title": key[0],
+                "year": key[1],
+                "rating": None,
+                "liked": False,
+                "entries": {},
+            }
+        return films[key]
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for row in rows(zf, "ratings.csv"):
+            key = film_key(row)
+            if key and row.get("Rating"):
+                film(key)["rating"] = float(row["Rating"])
+
+        for row in rows(zf, "likes/films.csv"):
+            key = film_key(row)
+            if key:
+                film(key)["liked"] = True
+
+        # Diary rows and review rows describe the same watch when they
+        # share a watched date, so entries are keyed by that date
+
+        for name in ("diary.csv", "reviews.csv"):
+            for row in rows(zf, name):
+                key = film_key(row)
+                if not key:
+                    continue
+                watched = (row.get("Watched Date") or "").strip() or None
+                entry = film(key)["entries"].setdefault(
+                    watched,
+                    {
+                        "watched": watched,
+                        "logged": None,
+                        "rating": None,
+                        "review": None,
+                    },
+                )
+                if row.get("Date"):
+                    entry["logged"] = entry["logged"] or row["Date"].strip()
+                if row.get("Rating"):
+                    entry["rating"] = float(row["Rating"])
+                if row.get("Review"):
+                    entry["review"] = row["Review"]
+
+    results = []
+    for f in films.values():
+        f["entries"] = sorted(
+            f["entries"].values(), key=lambda e: (e["watched"] is None, e["watched"])
+        )
+        if not f["entries"] and (f["rating"] is not None or f["liked"]):
+            f["entries"] = [
+                {"watched": None, "logged": None, "rating": None, "review": None}
+            ]
+        if f["entries"]:
+            results.append(f)
+    return results
+
+
+def letterboxd_import_task(user_id, films):
+    """Network phase of a Letterboxd import: match each film to the library
+    or to TMDb, then hand the resolved list to apply_letterboxd_import on
+    the sql queue.
+
+    Runs on the user-request queue since resolving unowned films means
+    TMDb searches; nothing here writes to the database.
+    """
+
+    with app.app_context():
+        try:
+            tmdb_api_key = current_app.config["TMDB_API_KEY"]
+            tmdb_api_url = current_app.config["TMDB_API_URL"]
+            resolved = []
+            skipped = []
+
+            for film in films:
+                title, year = film["title"], film["year"]
+
+                movie = Movie.query.filter_by(title=title, year=year).first()
+                if movie:
+                    film["movie_id"] = movie.id
+                    resolved.append(film)
+                    continue
+
+                if not tmdb_api_key:
+                    skipped.append(f"{title} ({year})")
+                    continue
+
+                # Search with the year first; Letterboxd and TMDb years can
+                # disagree by one, so fall back to a title-only search and
+                # accept a close match
+
+                result = None
+                r = tmdb_get(
+                    tmdb_api_url + "/search/movie",
+                    params={
+                        "api_key": tmdb_api_key,
+                        "query": title,
+                        "primary_release_year": year,
+                    },
+                )
+                r.raise_for_status()
+                matches = r.json().get("results") or []
+                if matches:
+                    result = matches[0]
+                else:
+                    r = tmdb_get(
+                        tmdb_api_url + "/search/movie",
+                        params={"api_key": tmdb_api_key, "query": title},
+                    )
+                    r.raise_for_status()
+                    for candidate in r.json().get("results") or []:
+                        candidate_year = (candidate.get("release_date") or "")[:4]
+                        if (
+                            (candidate.get("title") or "").lower() == title.lower()
+                            and candidate_year.isdigit()
+                            and abs(int(candidate_year) - year) <= 1
+                        ):
+                            result = candidate
+                            break
+
+                if not result:
+                    skipped.append(f"{title} ({year})")
+                    continue
+
+                existing = Movie.query.filter_by(tmdb_id=result.get("id")).first()
+                if existing:
+                    film["movie_id"] = existing.id
+                else:
+                    film["tmdb_id"] = result.get("id")
+                    film["canonical_title"] = result.get("title") or title
+                    release_year = (result.get("release_date") or "")[:4]
+                    film["canonical_year"] = (
+                        int(release_year) if release_year.isdigit() else year
+                    )
+                resolved.append(film)
+
+            if skipped:
+                current_app.logger.warning(
+                    f"Letterboxd import: no match for {len(skipped)} film(s): "
+                    f"{', '.join(skipped)}"
+                )
+
+            if resolved:
+                current_app.sql_queue.enqueue(
+                    "app.videos.apply_letterboxd_import",
+                    args=(user_id, resolved),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=(
+                        f"Importing Letterboxd data for {len(resolved)} film(s)"
+                    ),
+                )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            return False
+
+        else:
+            return True
+
+
+def apply_letterboxd_import(user_id, films):
+    """Database phase of a Letterboxd import: create any missing movie
+    records, then insert or update one review row per watch entry.
+
+    Mirrors Letterboxd's own importer semantics: an entry updates the
+    existing review with the same film and watched date instead of
+    duplicating it, so re-importing the same export is idempotent. Movies
+    created here are enriched afterwards through the standard TMDb
+    refresh pipeline.
+    """
+
+    with app.app_context():
+        try:
+            created_movie_ids = []
+            imported = 0
+
+            for film in films:
+                movie = None
+                if film.get("movie_id"):
+                    movie = Movie.query.filter_by(id=film["movie_id"]).first()
+                elif film.get("tmdb_id") is not None:
+                    movie = Movie.query.filter_by(tmdb_id=film["tmdb_id"]).first()
+                    if movie is None:
+                        # The canonical name may collide with an existing
+                        # record; reuse it rather than violating the unique
+                        # title + year constraint
+
+                        movie = Movie.query.filter_by(
+                            title=film["canonical_title"],
+                            year=film["canonical_year"],
+                        ).first()
+                        if movie is not None and movie.tmdb_id is None:
+                            movie.tmdb_id = film["tmdb_id"]
+                    if movie is None:
+                        movie = Movie(
+                            title=film["canonical_title"],
+                            year=film["canonical_year"],
+                            tmdb_id=film["tmdb_id"],
+                        )
+                        db.session.add(movie)
+                        db.session.flush()
+                        created_movie_ids.append(movie.id)
+
+                if movie is None:
+                    continue
+
+                for entry in film["entries"]:
+                    date_watched = (
+                        datetime.strptime(entry["watched"], "%Y-%m-%d")
+                        if entry["watched"]
+                        else None
+                    )
+                    date_reviewed = (
+                        datetime.strptime(entry["logged"], "%Y-%m-%d")
+                        if entry["logged"]
+                        else None
+                    )
+                    rating = (
+                        entry["rating"]
+                        if entry["rating"] is not None
+                        else film["rating"]
+                    )
+
+                    review = UserMovieReview.query.filter_by(
+                        user_id=user_id, movie_id=movie.id, date_watched=date_watched
+                    ).first()
+                    if review is None:
+                        review = UserMovieReview(
+                            user_id=user_id,
+                            movie_id=movie.id,
+                            review=entry["review"] or "",
+                            date_watched=date_watched,
+                            date_reviewed=date_reviewed,
+                            **star_rating_fields(rating),
+                        )
+                        db.session.add(review)
+                    else:
+                        if rating is not None:
+                            for field, value in star_rating_fields(rating).items():
+                                setattr(review, field, value)
+                        if entry["review"]:
+                            review.review = entry["review"]
+                        if date_reviewed and not review.date_reviewed:
+                            review.date_reviewed = date_reviewed
+                    review.liked = review.liked or film["liked"]
+                    imported += 1
+
+            db.session.commit()
+
+            # Enrich the newly created movies through the standard two-phase
+            # refresh pipeline (TMDb fetch on the request queue, database
+            # apply back on this queue)
+
+            for movie_id in created_movie_ids:
+                movie = Movie.query.filter_by(id=movie_id).first()
+                current_app.request_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=("Movies", movie_id, movie.tmdb_id),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=(
+                        f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                    ),
+                )
+
+            current_app.logger.info(
+                f"Letterboxd import: {imported} review entries across "
+                f"{len(films)} films ({len(created_movie_ids)} new movie records)"
+            )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            return False
 
         else:
             return True
