@@ -162,7 +162,10 @@ class TMDBMixin(object):
             return None
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
-        requested_info = "credits,external_ids,images,keywords,release_dates,videos"
+
+        # Request only the appended blocks tmdb_movie_apply reads
+
+        requested_info = "credits,external_ids,keywords,release_dates"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
             r = tmdb_get(
@@ -211,13 +214,6 @@ class TMDBMixin(object):
                 return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
-
-            # The appended images/videos blocks aren't read by the apply
-            # phase, and they dominate the payload's size; drop them before
-            # the payload travels between tasks through Redis
-
-            tmdb_info.pop("images", None)
-            tmdb_info.pop("videos", None)
 
         return tmdb_info or None
 
@@ -545,7 +541,11 @@ class TMDBMixin(object):
             return None
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
-        requested_info = "credits,external_ids,images,keywords,release_dates,videos"
+
+        # Request only the appended blocks tmdb_tv_apply reads (networks,
+        # companies, genres, and seasons arrive in the base payload)
+
+        requested_info = "external_ids,keywords"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
             r = tmdb_get(
@@ -593,12 +593,6 @@ class TMDBMixin(object):
                 return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
-
-            # As with movies, drop the unread appended blocks before the
-            # payload travels between tasks through Redis
-
-            tmdb_info.pop("images", None)
-            tmdb_info.pop("videos", None)
 
         return tmdb_info or None
 

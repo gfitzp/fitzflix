@@ -3505,9 +3505,6 @@ def review_task(user_id, title, rating):
                     return False
                 tmdb_api_key = current_app.config["TMDB_API_KEY"]
                 tmdb_api_url = current_app.config["TMDB_API_URL"]
-                requested_info = (
-                    "credits,external_ids,images,keywords,release_dates,videos"
-                )
                 current_app.logger.info(f"'{title}' not in database, searching in TMDB")
                 r = tmdb_get(
                     tmdb_api_url + "/search/movie",
@@ -3524,12 +3521,14 @@ def review_task(user_id, title, rating):
 
                     if tmdb_id and title == first_result.get("title"):
                         current_app.logger.info(f"'{title}' Getting details from TMDB")
+
+                        # Only the canonical title and release date are read
+                        # here — the movie's full enrichment happens in
+                        # tmdb_movie_query below
+
                         r = tmdb_get(
                             tmdb_api_url + "/movie/" + str(tmdb_id),
-                            params={
-                                "api_key": tmdb_api_key,
-                                "append_to_response": requested_info,
-                            },
+                            params={"api_key": tmdb_api_key},
                         )
                         r.raise_for_status()
                         current_app.logger.debug(f"{r.url}: {r.json()}")
@@ -4525,9 +4524,10 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
         try:
             if tmdb_id:
+                # Only the id, title, and release date are read here, so no
+                # appended blocks are requested
                 params = {
                     "api_key": current_app.config["TMDB_API_KEY"],
-                    "append_to_response": "credits,external_ids,images,keywords,release_dates,videos",
                 }
                 url = "/movie/" + str(tmdb_id)
             else:
@@ -5502,8 +5502,8 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 return False
 
             # Compress the payload for its trip through Redis; a details
-            # response stripped of its unused blocks is small, but a bulk
-            # refresh can have thousands of these queued at once
+            # response is small, but a bulk refresh can have thousands of
+            # these queued at once
 
             tmdb_payload = None
             if tmdb_info:
