@@ -3006,6 +3006,9 @@ def movie_shopping():
             ),
             "Buy Criterion edition on DVD",
         ),
+        # A liked movie with no files (possible since the Letterboxd
+        # import) is wanted but entirely unowned
+        (File.id == None, "Buy on Blu-Ray"),
         (File.fullscreen == True, "Buy any non-fullscreen release"),
         (
             RefQuality.preference < dvd_quality,
@@ -3018,6 +3021,7 @@ def movie_shopping():
     shopping_urgency_order_case = db.case(
         (Movie.criterion_disc_owned == True, -1),
         (Movie.shopping_list_exclude == True, -1),
+        (File.id == None, 1),
         (RefQuality.preference < bluray_quality, 1),
         (
             db.and_(
@@ -3037,6 +3041,16 @@ def movie_shopping():
 
     cart_priority_order_case = db.case(
         (Movie.criterion_disc_owned == True, 0),
+        (
+            db.and_(
+                File.id == None,
+                db.or_(
+                    Movie.shopping_list_exclude == False,
+                    Movie.shopping_list_exclude == None,
+                ),
+            ),
+            Movie.shopping_cart_priority,
+        ),
         (
             db.and_(
                 db.or_(
@@ -3065,6 +3079,17 @@ def movie_shopping():
 
     quality_order_case = db.case(
         (Movie.criterion_disc_owned == True, 99),
+        # Nothing owned at all sorts ahead of even the worst owned quality
+        (
+            db.and_(
+                File.id == None,
+                db.or_(
+                    Movie.shopping_list_exclude == False,
+                    Movie.shopping_list_exclude == None,
+                ),
+            ),
+            0,
+        ),
         (
             db.and_(
                 db.or_(
@@ -3095,6 +3120,16 @@ def movie_shopping():
         (Movie.criterion_disc_owned == True, 0),
         (
             db.and_(
+                File.id == None,
+                db.or_(
+                    Movie.shopping_list_exclude == False,
+                    Movie.shopping_list_exclude == None,
+                ),
+            ),
+            Movie.shopping_cart_add_date,
+        ),
+        (
+            db.and_(
                 db.or_(
                     Movie.shopping_list_exclude == False,
                     Movie.shopping_list_exclude == None,
@@ -3118,6 +3153,50 @@ def movie_shopping():
         ),
         else_=(0),
     )
+
+    # Movies with a liked review but no files (possible since the
+    # Letterboxd import) belong on the shopping list too: they're wanted
+    # films not owned in any form. Selecting File and RefQuality through
+    # always-false outer joins yields NULL columns for them, so these rows
+    # take the same shape as owned titles and can be UNIONed in below.
+
+    liked_movie_ids = db.session.query(UserMovieReview.movie_id).filter(
+        UserMovieReview.user_id == int(current_user.id),
+        UserMovieReview.liked == True,
+    )
+
+    # TV episode files carry a NULL movie_id, and a single NULL in a NOT IN
+    # subquery makes the predicate false for every row — filter them out
+
+    owned_movie_ids = db.session.query(File.movie_id).filter(
+        File.feature_type_id == None, File.movie_id != None
+    )
+
+    def liked_unowned_query():
+        return (
+            db.session.query(
+                File,
+                Movie,
+                RefQuality,
+                rating.c.rating,
+                rating.c.modified_rating,
+                rating.c.whole_stars,
+                rating.c.half_stars,
+                shopping_instruction_case.label("instruction"),
+            )
+            .select_from(Movie)
+            .outerjoin(File, db.and_(File.movie_id == Movie.id, File.id == None))
+            .outerjoin(RefQuality, RefQuality.id == File.quality_id)
+            .outerjoin(
+                CriterionQuality, (CriterionQuality.id == Movie.criterion_quality_id)
+            )
+            .outerjoin(
+                rating,
+                (rating.c.movie_id == Movie.id) & (rating.c.user_id == current_user.id),
+            )
+            .filter(Movie.id.in_(liked_movie_ids))
+            .filter(Movie.id.not_in(owned_movie_ids))
+        )
 
     if q:
         if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
@@ -3167,7 +3246,7 @@ def movie_shopping():
 
         else:
             title = f"Movies to upgrade matching '{q}'"
-            movies = (
+            owned_matches = (
                 db.session.query(
                     File,
                     Movie,
@@ -3199,6 +3278,12 @@ def movie_shopping():
                         Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%")
                     )
                 )
+            )
+            liked_matches = liked_unowned_query().filter(
+                db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
+            )
+            movies = (
+                owned_matches.union_all(liked_matches)
                 .order_by(
                     db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
                     Movie.year.asc(),
@@ -3251,7 +3336,7 @@ def movie_shopping():
             .filter(ranked_files.c.rank == 1)
             .filter(RefQuality.preference >= min_preference)
             .filter(RefQuality.preference <= max_preference)
-            .filter(Movie.id.not_in(physical_media))
+            .filter(Movie.id.not_in(db.select(physical_media.c.movie_id)))
             .filter(
                 db.or_(
                     db.and_(
@@ -3280,7 +3365,7 @@ def movie_shopping():
         )
 
     else:
-        movies = (
+        owned_titles = (
             db.session.query(
                 File,
                 Movie,
@@ -3319,6 +3404,21 @@ def movie_shopping():
                     criterion_release != True,
                 ),
             )
+        )
+        liked_titles = liked_unowned_query().filter(
+            db.or_(
+                db.and_(
+                    criterion_release == True,
+                    db.or_(
+                        Movie.criterion_spine_number != None,
+                        Movie.criterion_set_title != None,
+                    ),
+                ),
+                criterion_release != True,
+            ),
+        )
+        movies = (
+            owned_titles.union_all(liked_titles)
             .order_by(
                 shopping_urgency_order_case.desc(),
                 cart_priority_order_case.desc(),

@@ -119,8 +119,15 @@ def _register_mysql_compat_functions(engine):
     appear in route queries, and utc_timestamp is the models' insert default.
     """
 
+    import math as _math
     import re as _re
+    import sqlite3 as _sqlite3
     from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
+
+    # Surface the real exception when a compat function fails, instead of
+    # sqlite's generic "user-defined function raised exception"
+
+    _sqlite3.enable_callback_tracebacks(True)
 
     from sqlalchemy import event
 
@@ -131,12 +138,19 @@ def _register_mysql_compat_functions(engine):
     def _regexp_replace(value, pattern, replacement):
         return _re.sub(pattern, replacement, value) if value is not None else None
 
+    def _floor(value):
+        # SQLAlchemy's SQLite dialect registers an unguarded math.floor;
+        # MariaDB's floor(NULL) is NULL, which matters now that review
+        # ratings are nullable
+        return _math.floor(value) if value is not None else None
+
     def _utc_timestamp():
         return _datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
     @event.listens_for(engine, "connect")
     def _register(dbapi_connection, _record):
         dbapi_connection.create_function("adddate", 2, _adddate)
+        dbapi_connection.create_function("floor", 1, _floor)
         dbapi_connection.create_function("regexp_replace", 3, _regexp_replace)
         dbapi_connection.create_function("utc_timestamp", 0, _utc_timestamp)
 
