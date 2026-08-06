@@ -197,6 +197,7 @@ def download_movie_artwork(tmdb_info, images_config):
     """
 
     base_url = images_config["secure_base_url"]
+    current_app.logger.info(f"'{tmdb_info.get('title')}' Downloading artwork")
 
     credits = tmdb_info.get("credits") or {}
     for person in (credits.get("cast") or []) + (credits.get("crew") or []):
@@ -222,6 +223,7 @@ def download_tv_artwork(tmdb_info, images_config):
     the series poster; see download_movie_artwork."""
 
     base_url = images_config["secure_base_url"]
+    current_app.logger.info(f"'{tmdb_info.get('name')}' Downloading artwork")
 
     TMDBMixin.get_tmdb_images(
         SimpleNamespace(tmdb_poster_path=tmdb_info.get("poster_path")),
@@ -867,7 +869,6 @@ class TMDBMixin(object):
         return self.tmdb_tv_apply(self.tmdb_tv_fetch(tmdb_id))
 
     def get_tmdb_images(self, directory, record_id, base_url, image_types=[]):
-        current_app.logger.info(f"{self} Downloading images")
         base_dir = os.path.abspath(os.path.dirname(__file__))
         for type in image_types:
             if "backdrop" in type and hasattr(self, "tmdb_backdrop_path"):
