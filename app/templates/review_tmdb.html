@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+<div class="row">
+	{% if poster_path %}
+	<div class="col-sm-3 col-md-2 mb-3">
+		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ poster_path }}" loading="lazy" class="border" alt="{{ film_title }} ({{ year }})" style="width: 100%;">
+	</div>
+	{% endif %}
+	<div class="col-sm-9 col-md-8">
+		{% if overview %}
+		<p>{{ overview }}</p>
+		{% endif %}
+		<p class="small text-muted">This film isn't in the library; logging a review adds it as a seen-but-unowned title.</p>
+		<form action="" method="post">
+			{{ movie_review_form.hidden_tag() }}
+			<div class="row">
+				<div class="form-group col-sm-4">
+					{{ movie_review_form.rating.label }}
+					{{ movie_review_form.rating(size=10, class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.rating.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+				<div class="form-group col-sm-4">
+					{{ movie_review_form.date_watched.label }}
+					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.date_watched.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+				<div class="form-group col-sm-2">
+					<div class="form-check mt-4 pt-2">
+						{{ movie_review_form.liked(class_="form-check-input") }}
+						{{ movie_review_form.liked.label(class_="form-check-label") }}
+					</div>
+				</div>
+			</div>
+			<div class="form-group">
+				{{ movie_review_form.review.label }}
+				{{ movie_review_form.review(class_="form-control form-control-sm") }}
+				{% for error in movie_review_form.review.errors %}
+				<div class="text-danger small">{{ error }}</div>
+				{% endfor %}
+			</div>
+			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+		</form>
+	</div>
+</div>
+{% endblock %}

@@ -4,6 +4,12 @@
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto mr-auto mb-n1">My Movie Reviews</h2>
 	<div class="col-12 col-sm-auto mt-2">
+		<form class="form-inline float-sm-right mb-2" action="{{ url_for('main.search_tmdb') }}" method="get">
+			<input type="search" name="q" class="form-control form-control-sm mr-2" placeholder="Log a film&hellip;" aria-label="Search TMDb for a film to review">
+			<button type="submit" class="btn btn-sm btn-primary">Search</button>
+		</form>
+	</div>
+	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="" enctype="multipart/form-data" method="post">
 			{{ review_upload_form.hidden_tag() }}
 			{{ review_upload_form.file(class_="form-control-sm mr-2", accept=".zip,.json,.txt") }}

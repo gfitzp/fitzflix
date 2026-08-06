@@ -21,7 +21,6 @@ from wtforms.validators import (
     DataRequired,
     Email,
     EqualTo,
-    InputRequired,
     Optional,
     ValidationError,
 )
@@ -56,14 +55,32 @@ class ImportForm(FlaskForm):
 
 
 class MovieReviewForm(FlaskForm):
-    rating = DecimalField("Rating (out of 5)", places=1, validators=[InputRequired()])
+    rating = DecimalField("Rating (out of 5)", places=1, validators=[Optional()])
+    liked = BooleanField("Liked")
     review = TextAreaField("Review")
     date_watched = DateField("Date Watched", format="%Y-%m-%d", validators=[Optional()])
     review_submit = SubmitField("Rate Movie")
 
     def validate_rating(self, rating):
-        if rating.data < 0 or rating.data > 5:
+        if rating.data is not None and (rating.data < 0 or rating.data > 5):
             raise ValidationError("Please enter a rating between 0 and 5 stars.")
+
+    def validate(self, extra_validators=None):
+        # A star rating is optional — a review can be just a like and/or
+        # text — but an empty submission is probably a misclick. This can't
+        # live in validate_rating: Optional() stops that field's validator
+        # chain before it runs on empty input.
+
+        if not super().validate(extra_validators):
+            return False
+        if (
+            self.rating.data is None
+            and not self.liked.data
+            and not (self.review.data or "").strip()
+        ):
+            self.rating.errors.append("Add a rating, mark it liked, or write a review.")
+            return False
+        return True
 
     def validate_date_watched(self, date_watched):
         if datetime.strptime(str(date_watched.data), "%Y-%m-%d") > datetime.now():

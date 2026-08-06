@@ -82,6 +82,12 @@
 					<div class="text-danger small">{{ error }}</div>
 					{% endfor %}
 				</div>
+				<div class="form-group col-sm-2">
+					<div class="form-check mt-4 pt-2">
+						{{ movie_review_form.liked(class_="form-check-input") }}
+						{{ movie_review_form.liked.label(class_="form-check-label") }}
+					</div>
+				</div>
 			</div>
 			<div class="form-group">
 				{{ movie_review_form.review.label }}

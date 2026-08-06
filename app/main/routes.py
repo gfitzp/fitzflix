@@ -1,7 +1,6 @@
 import csv
 import io
 import json
-import math
 import os
 import re
 import secrets
@@ -81,7 +80,12 @@ from app.models import (
 from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
-from app.videos import evaluate_filename, parse_letterboxd_export, track_metadata_scan
+from app.videos import (
+    evaluate_filename,
+    parse_letterboxd_export,
+    star_rating_fields,
+    track_metadata_scan,
+)
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import FailedJobRegistry, StartedJobRegistry
@@ -667,34 +671,30 @@ def movie(movie_id):
 
     movie_review_form = MovieReviewForm(date_watched=datetime.now())
     if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
-        # Users can rate a movie from 0-5. While a user can use decimals, we can only
-        # able to display their review with whole or half stars, so here round the rating
-        # to the nearest 0.5, and use that to determine the number of whole stars to
-        # display, and the number of half stars to display.
+        # The rating is optional — a review can be just a like and/or text.
+        # star_rating_fields rounds a given rating to the nearest half star
+        # for display.
 
-        modified_rating = round(movie_review_form.rating.data * 2) / 2
-        whole_stars = math.floor(modified_rating)
-        if modified_rating % 1 == 0:
-            half_stars = 0
-        else:
-            half_stars = 1
-
+        rating = (
+            float(movie_review_form.rating.data)
+            if movie_review_form.rating.data is not None
+            else None
+        )
         review = UserMovieReview(
             user_id=current_user.id,
             movie_id=movie.id,
-            rating=movie_review_form.rating.data,
-            modified_rating=modified_rating,
-            whole_stars=whole_stars,
-            half_stars=half_stars,
             review=movie_review_form.review.data,
+            liked=movie_review_form.liked.data,
             date_watched=movie_review_form.date_watched.data,
             date_reviewed=datetime.now(timezone.utc),
+            **star_rating_fields(rating),
         )
         db.session.add(review)
         db.session.commit()
-        flash(
-            f"Rated '{title}' {movie_review_form.rating.data} out of 5 stars", "success"
-        )
+        if rating is not None:
+            flash(f"Rated '{title}' {rating:g} out of 5 stars", "success")
+        else:
+            flash(f"Logged review for '{title}'", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     # Form to request all the files for this movie to be transcoded
@@ -2728,6 +2728,109 @@ def search_tmdb():
         movie_matches=movie_matches,
         tv_matches=tv_matches,
         error=error,
+    )
+
+
+@bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
+@login_required
+def review_tmdb(tmdb_id):
+    """Review a film that isn't in the library, looked up on TMDb.
+
+    Reviewing creates a review-only movie record — enriched afterwards
+    through the standard TMDb refresh pipeline — so the film shows up in
+    search and filmographies like any other seen-but-unowned title. Films
+    already in the library redirect to their movie page, which has the
+    same review form.
+    """
+
+    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    if movie:
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    if not current_app.config["TMDB_API_KEY"]:
+        flash("TMDB_API_KEY is not configured, so TMDb can't be queried.", "warning")
+        return redirect(url_for("main.reviews"))
+
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
+            params={"api_key": current_app.config["TMDB_API_KEY"]},
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        flash("TMDb could not be reached; try again in a moment.", "warning")
+        return redirect(url_for("main.reviews"))
+
+    details = r.json()
+    film_title = details.get("title")
+    release_year = (details.get("release_date") or "")[:4]
+    if not film_title or not release_year.isdigit():
+        flash(
+            "TMDb has no title or release year for that film yet, so it "
+            "can't be reviewed.",
+            "warning",
+        )
+        return redirect(url_for("main.reviews"))
+    year = int(release_year)
+
+    movie_review_form = MovieReviewForm(date_watched=datetime.now())
+    if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
+        # The movie may have appeared since the redirect check above (an
+        # import or concurrent review), and the canonical name may collide
+        # with an existing record — reuse rather than violating the unique
+        # title + year constraint
+
+        movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+        if movie is None:
+            movie = Movie.query.filter_by(title=film_title, year=year).first()
+            if movie is not None and movie.tmdb_id is None:
+                movie.tmdb_id = tmdb_id
+        created = movie is None
+        if created:
+            movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
+            db.session.add(movie)
+            db.session.flush()
+
+        rating = (
+            float(movie_review_form.rating.data)
+            if movie_review_form.rating.data is not None
+            else None
+        )
+        review = UserMovieReview(
+            user_id=current_user.id,
+            movie_id=movie.id,
+            review=movie_review_form.review.data,
+            liked=movie_review_form.liked.data,
+            date_watched=movie_review_form.date_watched.data,
+            date_reviewed=datetime.now(timezone.utc),
+            **star_rating_fields(rating),
+        )
+        db.session.add(review)
+        db.session.commit()
+
+        if created:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("Movies", movie.id, tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=(
+                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                ),
+            )
+
+        flash(f"Logged review for '{film_title} ({year})'", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    return render_template(
+        "review_tmdb.html",
+        title=f'Review "{film_title} ({year})"',
+        film_title=film_title,
+        year=year,
+        overview=details.get("overview"),
+        poster_path=details.get("poster_path"),
+        movie_review_form=movie_review_form,
     )
 
 

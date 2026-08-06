@@ -369,3 +369,161 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
     assert response.status_code == 200
     assert b"bi-heart-fill" in response.data
     assert b"bi-star-fill" not in response.data
+
+
+class FakeTMDbDetails:
+    """A canned TMDb movie-details response."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+JAWS_2_DETAILS = {
+    "id": 579,
+    "title": "Jaws 2",
+    "release_date": "1978-06-16",
+    "overview": "The shark is back.",
+    "poster_path": "/jaws2.jpg",
+}
+
+
+def test_movie_page_review_accepts_like_without_rating(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Like Only Film", 1994)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review_submit": "Rate Movie",
+            "rating": "",
+            "liked": "y",
+            "review": "",
+            "date_watched": "",
+        },
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=movie_id
+        ).one()
+        assert review.liked is True
+        assert review.rating is None
+        assert review.whole_stars is None
+
+
+def test_movie_page_review_rejects_empty_submission(app, admin_client):
+    from app import db
+    from app.models import UserMovieReview
+
+    with app.app_context():
+        movie = make_movie("Empty Review Film", 1995)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review_submit": "Rate Movie",
+            "rating": "",
+            "review": "",
+            "date_watched": "",
+        },
+    )
+    assert response.status_code == 200
+    assert "Add a rating, mark it liked, or write a review." in response.get_data(
+        as_text=True
+    )
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 0
+
+
+def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatch):
+    import app.main.routes as main_routes
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+    )
+
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    assert "Jaws 2 (1978)" in page
+    assert "isn&#39;t in the library" in page or "isn't in the library" in page
+    assert 'name="liked"' in page
+
+
+def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):
+    from app.models import Movie, User, UserMovieReview
+
+    import app.main.routes as main_routes
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+    )
+
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    response = admin_client.post(
+        "/review/tmdb/579",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review_submit": "Rate Movie",
+            "rating": "3.5",
+            "liked": "y",
+            "review": "Still a decent shark.",
+            "date_watched": "2026-08-01",
+        },
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        movie = Movie.query.filter_by(tmdb_id=579).one()
+        assert movie.title == "Jaws 2" and movie.year == 1978
+        assert response.headers["Location"].endswith(f"/movie/{movie.id}")
+
+        user_id = User.query.first().id
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=movie.id
+        ).one()
+        assert review.rating == 3.5
+        assert review.whole_stars == 3 and review.half_stars == 1
+        assert review.liked is True
+        assert review.review == "Still a decent shark."
+        assert review.date_watched == datetime(2026, 8, 1)
+
+        refresh_jobs = [
+            job
+            for job in app.request_queue.jobs
+            if job.func_name == "app.videos.refresh_tmdb_info"
+            and job.args[1] == movie.id
+        ]
+        assert len(refresh_jobs) == 1
+
+
+def test_review_tmdb_redirects_when_film_in_library(app, admin_client):
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Already Here", 1980, tmdb_id=8888)
+        db.session.commit()
+        movie_id = movie.id
+
+    response = admin_client.get("/review/tmdb/8888")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/movie/{movie_id}")
