@@ -3,8 +3,6 @@ import os
 
 from datetime import datetime, timezone
 from time import sleep, time
-from types import SimpleNamespace
-from urllib.parse import urlparse
 
 import jwt
 import requests
@@ -128,7 +126,7 @@ class Utilities(object):
 
 
 def tmdb_get(url, **kwargs):
-    """GET a TMDb resource (API or image CDN) through a shared rate limiter.
+    """GET a TMDb API resource through a shared rate limiter.
 
     TMDb rate-limits at roughly 40-50 requests per second per IP
     (https://developer.themoviedb.org/docs/rate-limiting). A Redis counter
@@ -151,95 +149,13 @@ def tmdb_get(url, **kwargs):
     return requests.get(url, **kwargs)
 
 
-def tmdb_images_config():
-    """The images block of TMDb's /configuration response, cached for a day.
-
-    TMDb asks integrators to cache this endpoint for a few days instead of
-    fetching it alongside every request; returns None if it's unavailable
-    and nothing is cached.
-    """
-
-    cached = current_app.redis.get("fitzflix:tmdb:configuration")
-    if cached:
-        return json.loads(cached)
-    r = tmdb_get(
-        current_app.config["TMDB_API_URL"] + "/configuration",
-        params={"api_key": current_app.config["TMDB_API_KEY"]},
-    )
-    r.raise_for_status()
-    images = r.json().get("images")
-    if images:
-        current_app.redis.setex(
-            "fitzflix:tmdb:configuration", 86400, json.dumps(images)
-        )
-    return images
-
-
-# The artwork the templates actually serve: title posters at w185 (list
-# rows) and w500 (detail pages), cast headshots at w185. TMDb's
-# configuration offers many more sizes and image types (backdrops, logos,
-# every size up to original), but downloading them multiplied CDN requests
-# and disk usage several-fold for images nothing renders; anything needed
-# later comes back with a refresh.
-
-TMDB_POSTER_SIZES = ["w185", "w500"]
-TMDB_PROFILE_SIZES = ["w185"]
-
-
-def download_movie_artwork(tmdb_info, images_config):
-    """Download the served artwork a movie details payload references:
-    the movie's poster and its cast and crew headshots.
-
-    Driven by the raw payload rather than ORM records, so it can run in
-    the network phase of a refresh before any database rows change; the
-    SimpleNamespace shims reuse get_tmdb_images so the on-disk layout has
-    a single source of truth.
-    """
-
-    base_url = images_config["secure_base_url"]
-    current_app.logger.info(f"'{tmdb_info.get('title')}' Downloading artwork")
-
-    credits = tmdb_info.get("credits") or {}
-    for person in (credits.get("cast") or []) + (credits.get("crew") or []):
-        TMDBMixin.get_tmdb_images(
-            SimpleNamespace(tmdb_profile_path=person.get("profile_path")),
-            "person",
-            person.get("id"),
-            base_url,
-            [{"profile": TMDB_PROFILE_SIZES}],
-        )
-
-    TMDBMixin.get_tmdb_images(
-        SimpleNamespace(tmdb_poster_path=tmdb_info.get("poster_path")),
-        "movie",
-        tmdb_info.get("id"),
-        base_url,
-        [{"poster": TMDB_POSTER_SIZES}],
-    )
-
-
-def download_tv_artwork(tmdb_info, images_config):
-    """Download the served artwork a TV details payload references — just
-    the series poster; see download_movie_artwork."""
-
-    base_url = images_config["secure_base_url"]
-    current_app.logger.info(f"'{tmdb_info.get('name')}' Downloading artwork")
-
-    TMDBMixin.get_tmdb_images(
-        SimpleNamespace(tmdb_poster_path=tmdb_info.get("poster_path")),
-        "tv",
-        tmdb_info.get("id"),
-        base_url,
-        [{"poster": TMDB_POSTER_SIZES}],
-    )
-
-
 class TMDBMixin(object):
     def tmdb_movie_fetch(self, tmdb_id=None):
         """Network half of a TMDb movie refresh: search (when no id is
-        given), pull the movie details, and download artwork. Writes
-        nothing to the database, so concurrent fetches are safe; returns
-        the details payload for tmdb_movie_apply, or None with no match."""
+        given) and pull the movie details. Writes nothing to the database,
+        so concurrent fetches are safe; returns the details payload for
+        tmdb_movie_apply, or None with no match. Artwork isn't stored —
+        the templates hotlink TMDb's image CDN."""
 
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
@@ -302,15 +218,6 @@ class TMDBMixin(object):
 
             tmdb_info.pop("images", None)
             tmdb_info.pop("videos", None)
-
-            images_config = tmdb_images_config()
-            if images_config:
-                download_movie_artwork(tmdb_info, images_config)
-
-            else:
-                current_app.logger.warning(
-                    "Unable to get image configuration info from TMDB!"
-                )
 
         return tmdb_info or None
 
@@ -693,15 +600,6 @@ class TMDBMixin(object):
             tmdb_info.pop("images", None)
             tmdb_info.pop("videos", None)
 
-            images_config = tmdb_images_config()
-            if images_config:
-                download_tv_artwork(tmdb_info, images_config)
-
-            else:
-                current_app.logger.warning(
-                    "Unable to get image configuration info from TMDB!"
-                )
-
         return tmdb_info or None
 
     def tmdb_tv_apply(self, tmdb_info):
@@ -867,111 +765,6 @@ class TMDBMixin(object):
         tmdb_movie_query."""
 
         return self.tmdb_tv_apply(self.tmdb_tv_fetch(tmdb_id))
-
-    def get_tmdb_images(self, directory, record_id, base_url, image_types=[]):
-        base_dir = os.path.abspath(os.path.dirname(__file__))
-        for type in image_types:
-            if "backdrop" in type and hasattr(self, "tmdb_backdrop_path"):
-                if self.tmdb_backdrop_path:
-                    for size in type.get("backdrop"):
-                        destination_dir = os.path.join(
-                            base_dir,
-                            "static",
-                            "tmdb",
-                            directory,
-                            str(record_id),
-                            "backdrop",
-                            size,
-                        )
-                        os.makedirs(destination_dir, exist_ok=True)
-                        image_url = base_url + size + self.tmdb_backdrop_path
-                        backdrop = urlparse(image_url)
-                        if not os.path.isfile(
-                            os.path.join(
-                                destination_dir, os.path.basename(backdrop.path)
-                            )
-                        ):
-                            TMDBMixin.download_tmdb_image(image_url, destination_dir)
-
-            if "logo" in type and hasattr(self, "tmdb_logo_path"):
-                if self.tmdb_logo_path:
-                    for size in type.get("logo"):
-                        destination_dir = os.path.join(
-                            base_dir, "static", "tmdb", directory, str(record_id), size
-                        )
-                        os.makedirs(destination_dir, exist_ok=True)
-                        image_url = base_url + size + self.tmdb_logo_path
-                        logo = urlparse(image_url)
-                        if not os.path.isfile(
-                            os.path.join(destination_dir, os.path.basename(logo.path))
-                        ):
-                            TMDBMixin.download_tmdb_image(image_url, destination_dir)
-
-            if "poster" in type and hasattr(self, "tmdb_poster_path"):
-                if self.tmdb_poster_path:
-                    for size in type.get("poster"):
-                        destination_dir = os.path.join(
-                            base_dir,
-                            "static",
-                            "tmdb",
-                            directory,
-                            str(record_id),
-                            "poster",
-                            size,
-                        )
-                        os.makedirs(destination_dir, exist_ok=True)
-                        image_url = base_url + size + self.tmdb_poster_path
-                        poster = urlparse(image_url)
-                        if not os.path.isfile(
-                            os.path.join(destination_dir, os.path.basename(poster.path))
-                        ):
-                            TMDBMixin.download_tmdb_image(image_url, destination_dir)
-
-            if "profile" in type and hasattr(self, "tmdb_profile_path"):
-                if self.tmdb_profile_path:
-                    for size in type.get("profile"):
-                        destination_dir = os.path.join(
-                            base_dir, "static", "tmdb", directory, str(record_id), size
-                        )
-                        os.makedirs(destination_dir, exist_ok=True)
-                        image_url = base_url + size + self.tmdb_profile_path
-                        profile = urlparse(image_url)
-                        if not os.path.isfile(
-                            os.path.join(
-                                destination_dir, os.path.basename(profile.path)
-                            )
-                        ):
-                            TMDBMixin.download_tmdb_image(image_url, destination_dir)
-
-            if "still" in type and hasattr(self, "tmdb_still_path"):
-                if self.tmdb_still_path:
-                    for size in type.get("still"):
-                        destination_dir = os.path.join(
-                            base_dir,
-                            "static",
-                            "tmdb",
-                            directory,
-                            str(record_id),
-                            "still",
-                        )
-                        os.makedirs(destination_dir, exist_ok=True)
-                        image_url = base_url + size + self.tmdb_still_path
-                        still = urlparse(image_url)
-                        if not os.path.isfile(
-                            os.path.join(destination_dir, os.path.basename(still.path))
-                        ):
-                            TMDBMixin.download_tmdb_image(image_url, destination_dir)
-
-        return True
-
-    @staticmethod
-    def download_tmdb_image(image_url, destination_directory):
-        file_name = os.path.basename(urlparse(image_url).path)
-        r = tmdb_get(image_url)
-        with open(os.path.join(destination_directory, file_name), "wb") as f:
-            f.write(r.content)
-
-        return True
 
 
 class User(UserMixin, db.Model):

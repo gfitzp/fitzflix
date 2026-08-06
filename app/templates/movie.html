@@ -49,7 +49,7 @@
 						<figure class="figure text-center">
 							<a href="{{ url_for('main.movie_library', credit=role.starring.id) }}">
 								{% if role.starring.tmdb_profile_path %}
-									<img src="{{ url_for('static', filename='tmdb/person/' + role.starring.id|string +'/w185/' + role.starring.tmdb_profile_path) }}" alt="{{ role.starring.name }}" class="rounded mx-3" style="width: 92px;">
+									<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ role.starring.tmdb_profile_path }}" alt="{{ role.starring.name }}" class="rounded mx-3" style="width: 92px;">
 								{% else %}
 									<div class="border rounded d-flex justify-content-center align-items-center text-secondary mx-3" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
 								{% endif %}

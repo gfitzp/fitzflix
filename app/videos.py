@@ -1821,11 +1821,10 @@ def finalize_localization(
                 except FileNotFoundError:
                     pass
 
-            # TMDb enrichment (API queries and artwork downloads) runs as its
-            # own task after the commit, so this task never waits on the
-            # network; it emails if the movie still can't be matched. The
-            # fetch runs on the request queue and hands its payload to the
-            # sql queue for the database writes.
+            # TMDb enrichment runs as its own task after the commit, so this
+            # task never waits on the network; it emails if the movie still
+            # can't be matched. The fetch runs on the request queue and
+            # hands its payload to the sql queue for the database writes.
 
             if file.movie_id and movie.tmdb_id == None:
                 current_app.request_queue.enqueue(
@@ -5454,8 +5453,8 @@ def _movie_refresh_lock_resources(*movies):
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
-    """Network phase of a TMDb refresh: query TMDb and download artwork,
-    then hand the payload to apply_tmdb_refresh on the sql queue.
+    """Network phase of a TMDb refresh: query TMDb, then hand the payload
+    to apply_tmdb_refresh on the sql queue.
 
     This phase runs on the user-request queue, where several jobs may run
     concurrently — safe, because it writes nothing to the database. Every

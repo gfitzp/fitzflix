@@ -215,7 +215,7 @@ Background work is split across six Redis queues; the supervisor config and the 
 | `fitzflix-sql` | Database writes, including the database half of TMDb refreshes — run exactly one worker so they're serialized |
 | `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling, and the network half of TMDb refreshes |
 
-A TMDb refresh runs in two phases: the API queries and artwork downloads happen on `fitzflix-user-request` (safe to run several at once, since nothing touches the database), and the fetched payload is then applied — record updates, file renames, duplicate merges — on the single-worker `fitzflix-sql` queue, so database writes never run concurrently. All TMDb traffic (API and image CDN alike) flows through a shared Redis rate limiter capped at `TMDB_REQUESTS_PER_SECOND` (default 10) across every process, keeping Fitzflix well under [TMDb's ~40–50 requests/second limit](https://developer.themoviedb.org/docs/rate-limiting); the `/configuration` endpoint is cached for a day, as TMDb recommends.
+A TMDb refresh runs in two phases: the API queries happen on `fitzflix-user-request` (safe to run several at once, since nothing touches the database), and the fetched payload is then applied — record updates, file renames, duplicate merges — on the single-worker `fitzflix-sql` queue, so database writes never run concurrently. All TMDb API traffic flows through a shared Redis rate limiter capped at `TMDB_REQUESTS_PER_SECOND` (default 10) across every process, keeping Fitzflix well under [TMDb's ~40–50 requests/second limit](https://developer.themoviedb.org/docs/rate-limiting). Poster and cast artwork isn't stored locally at all — the pages hotlink [TMDb's image CDN](https://developer.themoviedb.org/docs/image-basics) directly (base URL configurable via `TMDB_IMAGE_URL`), and the service worker's cross-origin caching keeps recently viewed artwork available offline.
 | `fitzflix-maintenance` | Scheduled application upkeep, such as nightly log rotation — one worker |
 
 ## Running Manually
@@ -319,7 +319,7 @@ Everything needed to rebuild Fitzflix on a fresh machine derives from three thin
    ```
 
    then bring the schema up to the current code with `flask db upgrade` (a no-op unless the code is newer than the dump).
-5. **Restore the custom posters**: copy the bucket's `custom-posters/` prefix back to `app/static/custom/` (e.g. `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`). TMDb artwork doesn't need restoring — a TMDb refresh re-downloads it.
+5. **Restore the custom posters**: copy the bucket's `custom-posters/` prefix back to `app/static/custom/` (e.g. `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`). TMDb artwork doesn't need restoring — it's hotlinked from TMDb's image CDN and never stored locally.
 6. **Mount the NAS volumes** (see the SMB notes: pin the NAS hostname in `/etc/hosts`, and `protocol_vers_map`/signing settings in `/etc/nsmb.conf`), and recreate the staging directory on local disk.
 7. **Start the workers** via supervisor and confirm the Admin page's health card is green. Scheduled jobs re-register themselves on startup; Redis needs no restoration.
 8. **Only if the NAS was also lost**: the localized library can be rebuilt from the untouched archives — the S3 sync task queues Bulk restores for every rank-1 file missing locally, and `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of everything at once.
