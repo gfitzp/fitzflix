@@ -26,7 +26,7 @@
 <hr>
 {% if reviews %}
 {% if rated_count %}
-{# Letterboxd-style rating distribution: ten half-star buckets rendered
+{# Letterboxd-style rating distribution: five whole-star bins rendered
    locally as CSS bars — no charting library, no external requests #}
 <div class="mb-3 col-12 col-sm-6" id="rating-distribution">
 	<div class="d-flex align-items-end" style="height: 90px; gap: 2px;">
@@ -79,7 +79,9 @@
 {% for review in reviews %}
 {% set movie = review.movie %}
 <div class="media mb-2">
-	{% include "_movie_poster_small.html" %}
+	<a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">
+		{% include "_movie_poster_small.html" %}
+	</a>
 	<div class="media-body">
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">{{ review.movie.tmdb_title if review.movie.tmdb_title else review.movie.title }} ({{ review.movie.tmdb_release_date.strftime("%Y") if (review.movie.tmdb_title and review.movie.tmdb_release_date) else review.movie.year }})</a></h5>
 		{% if review.liked %}
