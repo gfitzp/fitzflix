@@ -390,6 +390,28 @@ JAWS_2_DETAILS = {
     "release_date": "1978-06-16",
     "overview": "The shark is back.",
     "poster_path": "/jaws2.jpg",
+    "imdb_id": "tt0077766",
+    "runtime": 116,
+    "genres": [{"id": 27, "name": "Horror"}, {"id": 53, "name": "Thriller"}],
+    "release_dates": {
+        "results": [
+            {
+                "iso_3166_1": "US",
+                "release_dates": [{"certification": "PG"}],
+            }
+        ]
+    },
+    "credits": {
+        "cast": [
+            {
+                "id": 4430,
+                "name": "Roy Scheider",
+                "order": 0,
+                "profile_path": "/scheider.jpg",
+            },
+            {"id": 999888777, "name": "Unknown Costar", "order": 1},
+        ]
+    },
 }
 
 
@@ -462,10 +484,36 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
         main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
+    from app import db
+    from app.models import TMDBCredit
+
+    with app.app_context():
+        db.session.add(TMDBCredit(id=4430, name="Roy Scheider"))
+        db.session.commit()
+
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Jaws 2 (1978)" in page
     assert "isn&#39;t in the library" in page or "isn't in the library" in page
     assert 'name="liked"' in page
+    # Runtime, genres, and the US certification badge, like the movie page
+    assert "116&nbsp;minutes" in page
+    assert "Horror" in page and "Thriller" in page
+    assert ">PG</span>" in page
+    # Top billing: locally known people link to their filmography, others
+    # render unlinked
+    assert "Roy Scheider" in page
+    assert "credit=4430" in page
+    assert "Unknown Costar" in page
+    assert "credit=999888777" not in page
+    # The store-search dropdown and external links render for the film,
+    # but there's no Files button or shopping-list toggle
+    assert "blu-ray.com/movies/search.php" in page
+    assert ">Amazon</a>" in page and ">eBay</a>" in page
+    assert "imdb.com/title/tt0077766" in page
+    assert "themoviedb.org/movie/579" in page
+    assert "letterboxd.com/tmdb/579" in page
+    assert re.search(r"/movie/\d+/files", page) is None
+    assert "exclude_submit" not in page
 
 
 def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):

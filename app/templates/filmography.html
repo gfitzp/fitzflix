@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+{% if tmdb_unavailable %}
+<div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
+{% endif %}
+<div class="list-group">
+	{% for row in filmography %}
+	<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="list-group-item list-group-item-action">
+		<div class="media">
+			{% if row.movie and row.movie.custom_poster %}
+				<img src="{{ url_for('static', filename='custom/movie/' + row.movie.id|string + '/w185/' + row.movie.custom_poster) }}" loading="lazy" class="mr-3 border" alt="{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}" style="width: 60px;">
+			{% elif row.poster_path %}
+				<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ row.poster_path }}" loading="lazy" class="mr-3 border" alt="{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}" style="width: 60px;">
+			{% else %}
+				<div class="rounded mr-3 border d-flex justify-content-center align-items-center text-secondary" style="height: 90px; width: 60px; flex-shrink: 0;">
+					<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+						<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
+					</svg>
+				</div>
+			{% endif %}
+			<div class="media-body">
+				<div class="d-flex w-100 justify-content-between">
+					<h6 class="mb-1"><span class="text-body">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</span></h6>
+					<span class="text-nowrap ml-2">
+						{% if row.liked %}
+							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+								<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
+							</svg>
+						{% endif %}
+						{% if row.quality %}
+							<span class="badge badge-{{ 'success' if (row.movie.shopping_list_exclude or (not row.file.fullscreen and row.quality.preference >= upgrade_threshold)) else 'warning' }}">{% if row.file.fullscreen %}Full Screen {% endif %}{{ row.quality.quality_title }}</span>
+						{% elif row.seen %}
+							<span class="badge badge-info">Seen</span>
+						{% else %}
+							<span class="badge badge-secondary">Not in library</span>
+						{% endif %}
+					</span>
+				</div>
+				{% if row.characters %}
+				<p class="mb-0 small text-muted">as {{ row.characters | join(", ") }}</p>
+				{% endif %}
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
+{% if not filmography %}
+<p class="lead">No films found for this person.</p>
+{% endif %}
+{% endblock %}

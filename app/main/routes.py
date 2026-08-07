@@ -8,6 +8,8 @@ import shutil
 import time
 import traceback
 
+from types import SimpleNamespace
+
 from datetime import datetime, timezone
 from PIL import Image
 
@@ -360,27 +362,144 @@ def movie_library():
 
     if credit:
         person = TMDBCredit.query.filter_by(id=int(credit)).first_or_404()
-        title = f"Movies starring {person.name}"
-        movies = (
+
+        # The filmography shows the person's entire TMDb career, whether
+        # or not a film has any local record. Local rows attach the best
+        # owned file through an outer join (the rank condition has to live
+        # in the join, not the WHERE clause, or file-less review-only
+        # records would be filtered away); the full credit list comes from
+        # TMDb, cached for a day.
+
+        best_file_ids = db.session.query(ranked_files.c.id).filter(
+            ranked_files.c.rank == 1
+        )
+        local_rows = (
             db.session.query(File, Movie, RefQuality)
-            .join(Movie, (Movie.id == File.movie_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .join(ranked_files, (ranked_files.c.id == File.id))
+            .select_from(Movie)
             .join(MovieCast, (MovieCast.movie_id == Movie.id))
-            .filter(File.feature_type_id == None)
-            .filter(ranked_files.c.rank == 1)
-            .filter(MovieCast.credit_id == int(credit))
-            .order_by(
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_release_date),
-                    else_=Movie.year,
-                ).asc(),
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_title), else_=Movie.title
-                ).asc(),
-                File.edition.asc(),
+            .outerjoin(
+                File,
+                db.and_(
+                    File.movie_id == Movie.id,
+                    File.feature_type_id == None,
+                    File.id.in_(best_file_ids),
+                ),
             )
-            .paginate(page=page, per_page=120, error_out=False)
+            .outerjoin(RefQuality, (RefQuality.id == File.quality_id))
+            .filter(MovieCast.credit_id == int(credit))
+            .all()
+        )
+
+        # Best owned copy per movie (a movie can have several rank-1
+        # editions; the filmography shows one entry per film)
+
+        local = {}
+        for file, film, quality in local_rows:
+            existing = local.get(film.id)
+            if (
+                existing is None
+                or (quality is not None and existing["quality"] is None)
+                or (
+                    quality is not None
+                    and existing["quality"] is not None
+                    and quality.preference > existing["quality"].preference
+                )
+            ):
+                local[film.id] = {"movie": film, "file": file, "quality": quality}
+
+        reviewed = {
+            movie_id: bool(liked)
+            for movie_id, liked in db.session.query(
+                UserMovieReview.movie_id,
+                db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
+            )
+            .filter(UserMovieReview.user_id == int(current_user.id))
+            .filter(UserMovieReview.movie_id.in_(list(local.keys()) or [0]))
+            .group_by(UserMovieReview.movie_id)
+            .all()
+        }
+
+        # The person's full TMDb credit list, cached for a day
+
+        tmdb_credits = None
+        if current_app.config["TMDB_API_KEY"]:
+            cache_key = f"fitzflix:tmdb:person:{person.id}:credits"
+            cached = current_app.redis.get(cache_key)
+            if cached:
+                tmdb_credits = json.loads(cached)
+            else:
+                try:
+                    r = tmdb_get(
+                        current_app.config["TMDB_API_URL"]
+                        + f"/person/{person.id}/movie_credits",
+                        params={"api_key": current_app.config["TMDB_API_KEY"]},
+                        timeout=10,
+                    )
+                    r.raise_for_status()
+                    tmdb_credits = r.json().get("cast") or []
+                    current_app.redis.setex(cache_key, 86400, json.dumps(tmdb_credits))
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
+
+        # Merge: one row per film, TMDb credits first (deduped by film,
+        # combining characters), then any local credits TMDb didn't list
+
+        local_by_tmdb_id = {
+            entry["movie"].tmdb_id: entry
+            for entry in local.values()
+            if entry["movie"].tmdb_id is not None
+        }
+        rows = {}
+        for cast_credit in tmdb_credits or []:
+            tmdb_id = cast_credit.get("id")
+            if tmdb_id is None:
+                continue
+            release_year = (cast_credit.get("release_date") or "")[:4]
+            row = rows.get(tmdb_id)
+            if row is None:
+                entry = local_by_tmdb_id.get(tmdb_id)
+                row = rows[tmdb_id] = {
+                    "tmdb_id": tmdb_id,
+                    "title": cast_credit.get("title"),
+                    "year": int(release_year) if release_year.isdigit() else None,
+                    "poster_path": cast_credit.get("poster_path"),
+                    "characters": [],
+                    "movie": entry["movie"] if entry else None,
+                    "file": entry["file"] if entry else None,
+                    "quality": entry["quality"] if entry else None,
+                }
+            if cast_credit.get("character"):
+                row["characters"].append(cast_credit["character"])
+
+        matched_tmdb_ids = set(rows.keys())
+        for entry in local.values():
+            if entry["movie"].tmdb_id in matched_tmdb_ids:
+                continue
+            rows[f"local:{entry['movie'].id}"] = {
+                "tmdb_id": entry["movie"].tmdb_id,
+                "title": entry["movie"].tmdb_title or entry["movie"].title,
+                "year": entry["movie"].year,
+                "poster_path": entry["movie"].tmdb_poster_path,
+                "characters": [],
+                "movie": entry["movie"],
+                "file": entry["file"],
+                "quality": entry["quality"],
+            }
+
+        filmography = sorted(
+            rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
+        )
+        for row in filmography:
+            row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
+            row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
+
+        return render_template(
+            "filmography.html",
+            title=f"Movies starring {person.name}",
+            person=person,
+            filmography=filmography,
+            tmdb_unavailable=tmdb_credits is None,
+            upgrade_threshold=_upgrade_threshold(),
         )
 
     elif q:
@@ -521,6 +640,7 @@ def movie_library():
         pages=movies,
         filter_form=filter_form,
         library_search_form=library_search_form,
+        upgrade_threshold=_upgrade_threshold(),
     )
 
 
@@ -2785,7 +2905,10 @@ def review_tmdb(tmdb_id):
     try:
         r = tmdb_get(
             current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
-            params={"api_key": current_app.config["TMDB_API_KEY"]},
+            params={
+                "api_key": current_app.config["TMDB_API_KEY"],
+                "append_to_response": "credits,release_dates",
+            },
             timeout=10,
         )
         r.raise_for_status()
@@ -2795,6 +2918,44 @@ def review_tmdb(tmdb_id):
         return redirect(url_for("main.reviews"))
 
     details = r.json()
+
+    # Runtime, genres, US certification, and top billing, mirroring what
+    # the movie page shows for library films
+
+    genres = [g.get("name") for g in details.get("genres") or [] if g.get("name")]
+    certification = None
+    for country_release in (details.get("release_dates") or {}).get("results") or []:
+        if country_release.get("iso_3166_1") == "US":
+            for release in country_release.get("release_dates") or []:
+                if release.get("certification"):
+                    certification = release["certification"]
+                    break
+            break
+
+    top_billed = [
+        person
+        for person in (details.get("credits") or {}).get("cast") or []
+        if person.get("order", 99) <= 2
+    ][:3]
+
+    # Only people with local credit records get filmography links; the
+    # filmography page 404s on ids it has never seen
+
+    known_people = {
+        credit.id
+        for credit in TMDBCredit.query.filter(
+            TMDBCredit.id.in_([p.get("id") for p in top_billed] or [0])
+        ).all()
+    }
+    starring = [
+        {
+            "id": person.get("id"),
+            "name": person.get("name"),
+            "profile_path": person.get("profile_path"),
+            "known": person.get("id") in known_people,
+        }
+        for person in top_billed
+    ]
     film_title = details.get("title")
     release_year = (details.get("release_date") or "")[:4]
     if not film_title or not release_year.isdigit():
@@ -2854,6 +3015,22 @@ def review_tmdb(tmdb_id):
         flash(f"Logged review for '{film_title} ({year})'", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
+    # A movie-shaped stand-in so the shared store-search dropdown and the
+    # external-site links render for a film with no local record
+
+    store_lookup = SimpleNamespace(
+        title=film_title,
+        year=year,
+        tmdb_title=None,
+        tmdb_release_date=None,
+        tmdb_id=tmdb_id,
+        imdb_id=details.get("imdb_id"),
+        criterion_spine_number=None,
+        criterion_set_title=None,
+        criterion_in_print=None,
+        criterion_film_id=None,
+    )
+
     return render_template(
         "review_tmdb.html",
         title=f'Review "{film_title} ({year})"',
@@ -2861,7 +3038,13 @@ def review_tmdb(tmdb_id):
         year=year,
         overview=details.get("overview"),
         poster_path=details.get("poster_path"),
+        runtime=details.get("runtime"),
+        genres=genres,
+        certification=certification,
+        starring=starring,
         movie_review_form=movie_review_form,
+        movie=store_lookup,
+        radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
 
