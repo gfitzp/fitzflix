@@ -1873,16 +1873,44 @@ def reviews():
         url_for("main.reviews", page=reviews.prev_num) if reviews.has_prev else None
     )
 
-    # Only rated reviews feed the ratings histogram; Letterboxd imports can
-    # include unrated reviews and likes
+    # The ratings distribution: five whole-star bins, each absorbing the
+    # half-step below it (2.5 and 3.0 both bin as "about 3 stars") — most
+    # ratings are whole stars, so ten half-star buckets rendered as
+    # near-empty slivers. Only rated reviews count — Letterboxd-era
+    # reviews can be unrated likes or text-only.
 
-    all_reviews = (
-        UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
+    rating_counts = dict(
+        db.session.query(UserMovieReview.modified_rating, db.func.count())
         .filter(UserMovieReview.user_id == int(current_user.id))
-        .filter(UserMovieReview.rating.isnot(None))
-        .order_by(UserMovieReview.date_reviewed.desc())
-        .order_by(UserMovieReview.date_watched.desc())
+        .filter(UserMovieReview.modified_rating.isnot(None))
+        .group_by(UserMovieReview.modified_rating)
         .all()
+    )
+    star_bins = {star: 0 for star in range(1, 6)}
+    for value, count in rating_counts.items():
+        star_bins[min(5, max(1, int(value + 0.5)))] += count
+    max_count = max(star_bins.values(), default=0)
+    rating_distribution = [
+        {
+            "stars": star,
+            "count": star_bins[star],
+            "percent": round(star_bins[star] / max_count * 100) if max_count else 0,
+        }
+        for star in range(1, 6)
+    ]
+    rating_summary = (
+        db.session.query(
+            db.func.count(UserMovieReview.rating),
+            db.func.avg(UserMovieReview.rating),
+            db.func.sum(db.case((UserMovieReview.liked == True, 1), else_=0)),
+        )
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .one()
+    )
+    rated_count, rating_average, liked_count = (
+        rating_summary[0],
+        float(rating_summary[1]) if rating_summary[1] is not None else None,
+        int(rating_summary[2] or 0),
     )
 
     # Form to request an export of all of this user's movie reviews as a CSV file
@@ -2018,7 +2046,10 @@ def reviews():
         next_url=next_url,
         prev_url=prev_url,
         pages=reviews,
-        all_reviews=all_reviews,
+        rating_distribution=rating_distribution,
+        rated_count=rated_count,
+        rating_average=rating_average,
+        liked_count=liked_count,
     )
 
 

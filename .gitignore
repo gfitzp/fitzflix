@@ -9,3 +9,4 @@ app.db
 /*.sql
 /backups
 .pytest_cache/
+.claude/launch.json

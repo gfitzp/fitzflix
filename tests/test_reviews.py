@@ -527,3 +527,46 @@ def test_review_tmdb_redirects_when_film_in_library(app, admin_client):
     response = admin_client.get("/review/tmdb/8888")
     assert response.status_code == 302
     assert response.headers["Location"].endswith(f"/movie/{movie_id}")
+
+
+def test_reviews_page_renders_local_rating_distribution(app, admin_client):
+    """The ratings chart is ten locally rendered half-star buckets — no
+    Google Charts, no review titles serialized into page JavaScript."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        for title, year, rating, liked in (
+            ("Distribution One", 1971, 4.0, True),
+            ("Distribution Two", 1972, 4.0, False),
+            ("Distribution Three", 1973, 1.5, False),
+        ):
+            movie = make_movie(title, year)
+            db.session.add(
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=movie.id,
+                    review="",
+                    liked=liked,
+                    **star_rating_fields(rating),
+                )
+            )
+        db.session.commit()
+
+    page = admin_client.get("/reviews").get_data(as_text=True)
+    assert "charts/loader.js" not in page
+    assert 'id="rating-distribution"' in page
+    # Five whole-star bins, each absorbing the half-step below it: the
+    # 1.5-star review bins as "about 2 stars"
+    assert 'title="2 reviews rated about 4 stars"' in page
+    assert 'title="1 review rated about 2 stars"' in page
+    # The tallest bin fills the chart; empty bins keep a 1% baseline
+    assert 'style="height: 100%;"' in page
+    assert 'style="height: 50%;"' in page
+    assert 'style="height: 1%;"' in page
+    assert "3 ratings" in page
+    # Review titles are no longer inlined into the page's JavaScript
+    assert "arrayToDataTable" not in page
