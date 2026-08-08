@@ -329,6 +329,7 @@ def index():
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,
+        upgrade_threshold=_upgrade_threshold(),
     )
 
 

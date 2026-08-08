@@ -132,3 +132,36 @@ def test_manifest_declares_installable_app():
         "/shopping-list/tv",
         "/search",
     }
+
+
+def test_recently_added_badges_quality_by_upgradability(app, admin_client):
+    """Recently Added shows quality as badges colored by upgrade
+    eligibility: movie rules match the library page, and physical-media
+    TV seasons count as final."""
+
+    from app import db
+    from tests.factories import (
+        make_movie,
+        make_movie_file,
+        make_tv_file,
+        make_tv_series,
+    )
+
+    with app.app_context():
+        upgradable = make_movie("Recent Upgradable Film", 2010)
+        make_movie_file(upgradable, "DVD")
+        final = make_movie("Recent Final Film", 2011)
+        make_movie_file(final, "Bluray-1080p")
+        dvd_show = make_tv_series("Recent DVD Show")
+        make_tv_file(dvd_show, 1, 1, "DVD", last_episode=1)
+        sd_show = make_tv_series("Recent SD Show")
+        make_tv_file(sd_show, 1, 2, "SDTV", last_episode=2)
+        db.session.commit()
+
+    page = admin_client.get("/recently-added").get_data(as_text=True)
+    # Movie rules: DVD is an upgrade candidate, Blu-ray is final
+    assert 'badge-warning">DVD' in page
+    assert 'badge-success">Bluray-1080p' in page
+    # TV rules: a physical-media DVD season is final; SDTV is not
+    assert 'badge-success">DVD' in page
+    assert 'badge-warning">SDTV' in page
