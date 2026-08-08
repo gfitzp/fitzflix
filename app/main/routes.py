@@ -3107,12 +3107,14 @@ def movie_shopping():
     filter_form.min_quality.choices = [(str(id), title) for (id, title) in qualities]
     filter_form.max_quality.choices = [(str(id), title) for (id, title) in qualities]
 
-    # If the min_quality ID doesn't exist in our RefQuality table, default to "Unknown"
+    # If the min_quality ID doesn't exist in our RefQuality table, default
+    # to "Not in library" — the virtual bottom of the scale, so the default view
+    # includes liked-but-unowned films
 
     if not RefQuality.query.filter_by(id=int(min_quality)).first():
         min_quality = int(
             db.session.query(RefQuality.id)
-            .filter(RefQuality.quality_title == "Unknown")
+            .filter(RefQuality.quality_title == "Not in library")
             .scalar()
         )
 
@@ -3126,11 +3128,6 @@ def movie_shopping():
             .scalar()
         )
 
-    # If the minimum quality is greater than the maximum quality, set them to be the same
-
-    if int(min_quality) > int(max_quality):
-        max_quality = int(min_quality)
-
     # Find the preference associated with the quality ID, and set as the dropdown default
 
     min_preference = (
@@ -3139,6 +3136,15 @@ def movie_shopping():
     max_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
     )
+
+    # If the minimum quality outranks the maximum, collapse the range to
+    # just the minimum. Compared by preference — quality ids don't
+    # reliably follow quality order
+
+    if min_preference > max_preference:
+        max_quality = int(min_quality)
+        max_preference = min_preference
+
     filter_form.min_quality.default = min_quality
     filter_form.max_quality.default = max_quality
 
@@ -3152,9 +3158,9 @@ def movie_shopping():
     else:
         title = "Movies to upgrade"
 
-    bottom_quality = (
+    not_in_library_quality = bottom_quality = (
         db.session.query(RefQuality.preference)
-        .filter(RefQuality.quality_title == "Unknown")
+        .filter(RefQuality.quality_title == "Not in library")
         .scalar()
     )
     top_quality = (
@@ -3172,12 +3178,18 @@ def movie_shopping():
         .filter_by(id=int(max_quality))
         .scalar()
     )
-    if min_preference > bottom_quality and max_preference < top_quality:
-        title = f"{title} ({min_quality_title} to {max_quality_title})"
+    if min_quality_title == max_quality_title:
+        # Equal titles mean equal preferences, so testing one bound suffices
+        if min_preference == not_in_library_quality:
+            title = f"{title} that have been liked but aren't in the library"
+        else:
+            title = f"{title} ({min_quality_title} quality)"
+    elif min_preference > bottom_quality and max_preference < top_quality:
+        title = f"{title} (between {min_quality_title} and {max_quality_title} quality)"
     elif max_preference < top_quality:
-        title = f"{title} ({max_quality_title} and below)"
+        title = f"{title} ({max_quality_title} quality and below)"
     elif min_preference > bottom_quality:
-        title = f"{title} ({min_quality_title} and above)"
+        title = f"{title} ({min_quality_title} quality and above)"
 
     # Form to filter the shopping list by a particular substring
 
@@ -3635,17 +3647,22 @@ def movie_shopping():
             liked_matches = liked_unowned_query().filter(
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
-            movies = (
+
+            # Films with no local copy count as the virtual bottom quality, so they
+            # only appear when the range's minimum reaches down to "Not in library"
+
+            candidates = (
                 owned_matches.union_all(liked_matches)
-                .order_by(
-                    db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
-                    Movie.year.asc(),
-                    File.edition.asc(),
-                    RefQuality.preference.asc(),
-                    File.date_added.asc(),
-                )
-                .paginate(page=page, per_page=100, error_out=False)
+                if min_preference <= bottom_quality
+                else owned_matches
             )
+            movies = candidates.order_by(
+                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+                Movie.year.asc(),
+                File.edition.asc(),
+                RefQuality.preference.asc(),
+                File.date_added.asc(),
+            ).paginate(page=page, per_page=100, error_out=False)
 
     elif media == "digital":
         physical_media = (
@@ -3770,20 +3787,24 @@ def movie_shopping():
                 criterion_release != True,
             ),
         )
-        movies = (
+        # Films with no local copy count as the virtual bottom quality, so they only
+        # appear when the range's minimum reaches down to "Not in library"
+
+        candidates = (
             owned_titles.union_all(liked_titles)
-            .order_by(
-                shopping_urgency_order_case.desc(),
-                cart_priority_order_case.desc(),
-                quality_order_case.asc(),
-                cart_age_order_case.desc(),
-                db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
-                Movie.year.asc(),
-                File.edition.asc(),
-                File.date_added.asc(),
-            )
-            .paginate(page=page, per_page=100, error_out=False)
+            if min_preference <= bottom_quality
+            else owned_titles
         )
+        movies = candidates.order_by(
+            shopping_urgency_order_case.desc(),
+            cart_priority_order_case.desc(),
+            quality_order_case.asc(),
+            cart_age_order_case.desc(),
+            db.func.regexp_replace(Movie.title, "^(The|A|An) ", "").asc(),
+            Movie.year.asc(),
+            File.edition.asc(),
+            File.date_added.asc(),
+        ).paginate(page=page, per_page=100, error_out=False)
 
     movie_shopping_exclude_form = MovieShoppingExcludeForm()
 
@@ -3901,8 +3922,12 @@ def tv_shopping():
 
     # Create the list of qualities for the dropdown filter
 
+    # "Not in library" is the movie shopping list's virtual quality; TV has no
+    # unowned rows, so it stays out of this dropdown
+
     qualities = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
+        .filter(RefQuality.quality_title != "Not in library")
         .order_by(RefQuality.preference.asc())
         .all()
     )
@@ -3927,11 +3952,6 @@ def tv_shopping():
             .scalar()
         )
 
-    # If the minimum quality is greater than the maximum quality, set them to be the same
-
-    if int(min_quality) > int(max_quality):
-        min_quality = int(max_quality)
-
     # Find the preference associated with the quality ID, and set as the dropdown default
 
     min_preference = (
@@ -3940,6 +3960,15 @@ def tv_shopping():
     max_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(max_quality)).scalar()
     )
+
+    # If the minimum quality outranks the maximum, collapse the range to
+    # the maximum. Compared by preference — quality ids don't reliably
+    # follow quality order
+
+    if min_preference > max_preference:
+        min_quality = int(max_quality)
+        min_preference = max_preference
+
     filter_form.quality.default = max_quality
 
     # Form to filter the shopping list by a particular substring

@@ -130,9 +130,85 @@ def test_shopping_titles_derive_from_filters_not_url(app, admin_client):
     page = admin_client.get(f"/shopping-list/movie?max_quality={webrip}").get_data(
         as_text=True
     )
-    assert "Movies to upgrade (WEBRip-1080p and below)" in page
+    assert "Movies to upgrade (WEBRip-1080p quality and below)" in page
 
     page = admin_client.get(f"/shopping-list/movie?min_quality={hdtv}").get_data(
         as_text=True
     )
-    assert "Movies to upgrade (HDTV-720p and above)" in page
+    assert "Movies to upgrade (HDTV-720p quality and above)" in page
+
+
+def test_unowned_quality_gates_liked_unowned_films(app, admin_client):
+    """Unowned films sit at the virtual bottom of the quality scale: on
+    the list by default, excluded when the minimum rises, and alone when
+    the range pins to "Not in library"."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        wanted = make_movie("Unowned Gate Film", 1969)
+        make_liked_review(user_id, wanted)
+        owned = make_movie("Owned Gate Film", 1970)
+        make_movie_file(owned, "DVD")
+        db.session.commit()
+
+        from app.models import RefQuality
+
+        unowned_id = RefQuality.query.filter_by(quality_title="Not in library").one().id
+        sdtv_id = RefQuality.query.filter_by(quality_title="SDTV").one().id
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    assert "Unowned Gate Film" in page
+
+    page = admin_client.get(f"/shopping-list/movie?min_quality={sdtv_id}").get_data(
+        as_text=True
+    )
+    assert "Unowned Gate Film" not in page
+    assert "Owned Gate Film" in page
+
+    page = admin_client.get(
+        f"/shopping-list/movie?min_quality={unowned_id}&max_quality={unowned_id}"
+    ).get_data(as_text=True)
+    assert "Unowned Gate Film" in page
+    assert "Owned Gate Film" not in page
+
+
+def test_inverted_quality_range_clamps_by_preference(app, admin_client):
+    """A minimum above the maximum collapses the range to the minimum
+    quality only — and no longer drags unowned films along."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        bluray = make_movie("Clamp Bluray Film", 1980)
+        make_movie_file(bluray, "Bluray-1080p")
+        dvd = make_movie("Clamp DVD Film", 1981)
+        make_movie_file(dvd, "DVD")
+        liked = make_movie("Clamp Unowned Film", 1982)
+        make_liked_review(user_id, liked)
+        db.session.commit()
+
+        from app.models import RefQuality
+
+        bluray_id = RefQuality.query.filter_by(quality_title="Bluray-1080p").one().id
+        dvd_id = RefQuality.query.filter_by(quality_title="DVD").one().id
+
+    page = admin_client.get(
+        f"/shopping-list/movie?min_quality={bluray_id}&max_quality={dvd_id}"
+    ).get_data(as_text=True)
+    assert "Clamp Bluray Film" in page
+    assert "Clamp DVD Film" not in page
+    assert "Clamp Unowned Film" not in page
+
+
+def test_not_in_library_pin_gets_descriptive_heading(app, admin_client):
+    with app.app_context():
+        from app.models import RefQuality
+
+        nil_id = RefQuality.query.filter_by(quality_title="Not in library").one().id
+
+    page = admin_client.get(
+        f"/shopping-list/movie?min_quality={nil_id}&max_quality={nil_id}"
+    ).get_data(as_text=True)
+    assert (
+        "Movies to upgrade that have been liked but aren&#39;t in the library" in page
+        or ("Movies to upgrade that have been liked but aren't in the library" in page)
+    )
