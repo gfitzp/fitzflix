@@ -1,5 +1,5 @@
-"""Page smoke tests: routes render, auth gates hold, and the audit page's
-filename tester works end-to-end without writing log lines.
+"""Page smoke tests: routes render, auth gates hold, and the maintenance
+page's filename tester works end-to-end without writing log lines.
 """
 
 import logging
@@ -34,27 +34,106 @@ def test_movie_shopping_list_renders(admin_client):
     assert admin_client.get("/shopping-list/movie").status_code == 200
 
 
-def test_system_page_shows_health_schedules_and_bulk_ops(admin_client):
+def test_system_page_is_monitoring_only(admin_client):
+    """The System page shows health and schedules; the bulk operations
+    live on the Library Maintenance page."""
+
     response = admin_client.get("/system")
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "System health" in body
     assert "Scheduled tasks" in body
-    assert "Bulk operations" in body
+    assert "Bulk operations" not in body
 
 
-def test_audit_page_shows_file_tools(admin_client):
-    response = admin_client.get("/audit")
+def test_relative_time_covers_past_and_future():
+    from datetime import datetime, timedelta, timezone
+
+    from app.main.routes import _relative_time
+
+    now = datetime.now(timezone.utc)
+    assert _relative_time(now - timedelta(seconds=30)) == "under a minute ago"
+    assert _relative_time(now - timedelta(minutes=5)) == "5 minutes ago"
+    assert _relative_time(now - timedelta(hours=14)) == "14 hours ago"
+    assert _relative_time(now + timedelta(seconds=45)) == "in under a minute"
+    assert _relative_time(now + timedelta(minutes=10, seconds=30)) == "in 10 minutes"
+    assert _relative_time(now + timedelta(days=3)) == "in 3 days"
+    # Naive datetimes (rq job timestamps) are treated as UTC
+    assert _relative_time(datetime.utcnow() - timedelta(hours=2)) == "2 hours ago"
+
+
+def test_next_run_never_renders_as_the_past():
+    """A due job's stored next-run sits in the past until the scheduler's
+    60s tick re-queues it; that window is "due now", not "...ago", and
+    anything older means the scheduler has stalled."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from app.main.routes import _next_run_text
+
+    now = datetime.now(timezone.utc)
+    assert _next_run_text(now + timedelta(minutes=8)) == "in 8 minutes"
+    assert _next_run_text(now - timedelta(seconds=30)) == "due now"
+    assert _next_run_text(now - timedelta(seconds=110)) == "due now"
+    assert _next_run_text(now - timedelta(minutes=10)) == "overdue"
+    # Naive datetimes (what rq-scheduler returns) are treated as UTC
+    assert _next_run_text(datetime.utcnow() - timedelta(seconds=30)) == "due now"
+
+
+def test_system_page_includes_health_poller(admin_client):
+    body = admin_client.get("/system").get_data(as_text=True)
+    assert 'id="system-health"' in body
+    assert "/system/metrics" in body
+    assert "visibilitychange" in body
+
+
+def test_system_metrics_returns_uncached_fragment(admin_client):
+    """/system/metrics serves just the health card for the poller to swap
+    in: no page chrome, backlog column included, never cached."""
+
+    response = admin_client.get("/system/metrics")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.get_data(as_text=True)
+    assert "navbar" not in body
+    assert "Queued" in body
+    assert "Database" in body
+    assert "Scheduled tasks" in body
+
+
+def test_system_metrics_shows_queue_backlog(app, admin_client):
+    with app.app_context():
+        app.request_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=("Movies", 1, 1),
+            description="Backlogged job",
+        )
+
+    body = admin_client.get("/system/metrics").get_data(as_text=True)
+    row = re.search(r"<td>user-request</td>.*?</tr>", body, re.S)
+    assert row is not None
+    assert ">1<" in row.group(0)
+
+
+def test_system_metrics_requires_admin(user_client):
+    response = user_client.get("/system/metrics")
+    assert response.status_code == 302
+
+
+def test_maintenance_page_shows_file_tools_and_bulk_ops(admin_client):
+    response = admin_client.get("/maintenance")
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Rejected files" in body
     assert "Duplicate movies" in body
     assert "Filename tester" in body
+    assert "Bulk operations" in body
+    assert "VERY SURE" in body  # the S3 sync form moved along too
 
 
 def test_profile_page_holds_only_the_profile_forms(admin_client):
     """The old all-in-one Admin page became /profile and only holds the
-    profile forms; everything else moved to /audit and /system."""
+    profile forms; everything else moved to /maintenance and /system."""
 
     response = admin_client.get("/profile")
     assert response.status_code == 200
@@ -65,36 +144,30 @@ def test_profile_page_holds_only_the_profile_forms(admin_client):
     assert "Filename tester" not in body
 
 
-def test_old_admin_url_redirects_to_profile(admin_client):
-    response = admin_client.get("/admin")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/profile")
-
-
 def test_admin_nav_shows_the_admin_dropdown(admin_client):
     body = admin_client.get("/").get_data(as_text=True)
-    assert 'href="/audit"' in body
+    assert 'href="/maintenance"' in body
     assert 'href="/system"' in body
     assert 'href="/profile"' in body
 
 
 def test_nonadmin_nav_shows_profile_link_instead_of_admin_dropdown(user_client):
     body = user_client.get("/").get_data(as_text=True)
-    assert 'href="/audit"' not in body
+    assert 'href="/maintenance"' not in body
     assert 'href="/system"' not in body
     assert 'href="/profile">Profile</a>' in body
 
 
-def test_audit_system_and_rejects_require_admin(user_client):
+def test_maintenance_system_and_rejects_require_admin(user_client):
     """Non-admin users are flashed back to the home page; the profile at
     /profile stays open to them."""
 
-    for path in ("/audit", "/system", "/rejects"):
+    for path in ("/maintenance", "/system", "/rejects"):
         response = user_client.get(path)
         assert response.status_code == 302, path
         assert response.headers["Location"].endswith("/recently-added"), path
 
-    response = user_client.get("/audit", follow_redirects=True)
+    response = user_client.get("/maintenance", follow_redirects=True)
     assert "Need to be an admin user to view this page!" in response.get_data(
         as_text=True
     )
@@ -107,12 +180,12 @@ def test_audit_system_and_rejects_require_admin(user_client):
 def test_filename_tester_previews_without_logging(
     app, admin_client, fake_tmdb, log_capture
 ):
-    page = admin_client.get("/audit").get_data(as_text=True)
+    page = admin_client.get("/maintenance").get_data(as_text=True)
     token = csrf_token_from(page)
 
     log_capture.clear()
     response = admin_client.post(
-        "/audit",
+        "/maintenance",
         data={
             "csrf_token": token,
             "test_filename": "Jaws (1975) - [Bluray-1080p].mkv",
@@ -129,11 +202,11 @@ def test_filename_tester_previews_without_logging(
 
 
 def test_filename_tester_shows_rejection(admin_client):
-    page = admin_client.get("/audit").get_data(as_text=True)
+    page = admin_client.get("/maintenance").get_data(as_text=True)
     token = csrf_token_from(page)
 
     response = admin_client.post(
-        "/audit",
+        "/maintenance",
         data={
             "csrf_token": token,
             "test_filename": "Jaws (1975) - [Betamax].mkv",

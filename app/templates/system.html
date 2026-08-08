@@ -4,119 +4,73 @@
 <h2 class="mt-2 mb-n2">System</h2>
 <hr>
 <h3>System health</h3>
-<div class="mb-2">
-	<span class="badge badge-success mr-1">Database {{ health.db_ms }} ms</span>
-	<span class="badge badge-success mr-1">Redis {{ health.redis_ms }} ms</span>
-	<span class="badge badge-{{ 'success' if health.scheduler.ok else 'danger' }} mr-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
-	<span class="badge badge-{{ 'success' if health.observer.ok else 'danger' }} mr-1">Import watcher{% if health.observer.ok %} &times;{{ health.observer.watchers }}{% else %} down{% endif %}</span>
-	<span class="badge badge-{{ 'success' if health.backup.ok else 'danger' }} mr-1">DB backup {% if health.backup.last %}{{ moment(health.backup.last).fromNow(refresh=True) }}{% else %}never{% endif %}</span>
-	{% for mount in health.missing_mounts %}
-	<span class="badge badge-danger mr-1">{{ mount }} not mounted</span>
-	{% endfor %}
-	{% for probe in health.probes %}
-	<span class="badge badge-{{ 'success' if probe.ok else 'danger' }} mr-1" title="{{ probe.detail }}">{{ probe.service }} {{ probe.latency_ms }} ms</span>
-	{% endfor %}
-	{% if health.probes %}
-	<div><span class="small text-muted">external services probed {{ moment(health.probes[0].checked).fromNow(refresh=True) }}</span></div>
-	{% else %}
-	<span class="badge badge-secondary mr-1" title="Results appear after the first scheduled probe runs">External probes pending</span>
-	{% endif %}
+<div id="system-health">
+	{% include "_system_health.html" %}
 </div>
-<div class="row my-2">
-	<div class="col-md-6">
-		<table class="table table-sm mb-2">
-			<thead class="thead-light">
-				<tr>
-					<th scope="col">Queue</th>
-					<th scope="col">Workers</th>
-					<th scope="col">Activity</th>
-				</tr>
-			</thead>
-			<tbody>
-				{% for entry in health.workers %}
-				<tr>
-					<td>{{ entry.queue|replace('fitzflix-', '') }}</td>
-					<td><span class="badge badge-{{ 'success' if entry.ok else 'danger' }}">{{ entry.live }}{% if entry.expected %} / {{ entry.expected }}{% endif %}</span></td>
-					<td class="small">{% if entry.busy %}{{ entry.busy|join(', ') }}{% else %}<span class="text-muted">idle</span>{% endif %}</td>
-				</tr>
-				{% endfor %}
-			</tbody>
-		</table>
-	</div>
-	<div class="col-md-6">
-		{% for disk in health.disks %}
-		<div class="small d-flex justify-content-between">
-			<span>{{ disk.mount }}</span>
-			<span>{{ disk.free }} free of {{ disk.total }} ({{ disk.percent }}%)</span>
-		</div>
-		<div class="progress mb-2" style="height: 6px;">
-			<div class="progress-bar bg-{{ disk.color }}" role="progressbar" style="width: {{ disk.percent }}%" aria-valuenow="{{ disk.percent }}" aria-valuemin="0" aria-valuemax="100"></div>
-		</div>
-		{% endfor %}
-	</div>
-</div>
-<hr>
-<h3>Bulk operations</h3>
-<div class="row my-2">
-    <div class="col-md-3">
-    	<form action="" method="post">
-    		{{ criterion_refresh_form.hidden_tag() }}
-    		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-sm btn-warning") }}
-    	</form>
-    </div>
-    <div class="col-md-3">
-    	<form action="" method="post">
-    		{{ tmdb_refresh_form.hidden_tag() }}
-    		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-sm btn-warning") }}
-    	</form>
-    </div>
-    <div class="col-md-3">
-    	<form action="" method="post">
-    		{{ metadata_scan_form.hidden_tag() }}
-    		{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
-    	</form>
-    </div>
-    <div class="col-md-3">
-    	<form action="" method="post">
-    		{{ import_form.hidden_tag() }}
-    		{{ import_form.submit(class_="btn btn-sm btn-success") }}
-    	</form>
-    </div>
-</div>
-<hr>
-<div class="row my-2">
-    <div class="col-md-4">
-    	<form action="" method="post">
-    		{{ sync_form.hidden_tag() }}
-    		{{ sync_form.password.label }}
-    		{{ sync_form.password(class_="form-control form-control-sm mb-2") }}
-    		{{ sync_form.sync_submit(class_="btn btn-sm btn-danger") }}
-    	</form>
-    	<em class="small">This will delete all files that aren't in the Fitzflix database from AWS. Be <b>VERY SURE</b> you want to delete them before you click!</em>
-    </div>
-</div>
-<hr>
-<h3>Scheduled tasks</h3>
-<table class="table table-sm mt-3">
-	<thead class="thead-light">
-		<tr>
-			<th scope="col">Task</th>
-			<th scope="col">Schedule</th>
-			<th scope="col">Last ran</th>
-			<th scope="col">Next run</th>
-		</tr>
-	</thead>
-	<tbody>
-		{% for task in scheduled_tasks %}
-		<tr>
-			<td>{{ task.name }}</td>
-			<td>{{ task.schedule }}</td>
-			<td>{% if task.last_run %}{{ moment(task.last_run).fromNow(refresh=True) }}{% else %}&mdash;{% endif %}</td>
-			<td>{{ moment(task.next_run).fromNow(refresh=True) }}</td>
-		</tr>
-		{% endfor %}
-	</tbody>
-</table>
+<p class="small text-muted" id="system-health-stale" hidden>Live updates interrupted &mdash; showing data from <span id="system-health-age"></span> ago.</p>
+<script>
+	// Poll the health fragment while the page is visible. setTimeout
+	// chaining (not setInterval) so a slow response — e.g. a dead network
+	// mount holding system_health() for its 10s probe timeout — never
+	// stacks overlapping requests.
+	(function() {
+		var container = document.getElementById("system-health");
+		var stale = document.getElementById("system-health-stale");
+		var age = document.getElementById("system-health-age");
+		var lastSuccess = Date.now();
+		var timer = null;
+
+		function markStaleness() {
+			var seconds = Math.round((Date.now() - lastSuccess) / 1000);
+			if (seconds >= 30) {
+				container.style.opacity = "0.5";
+				age.textContent = seconds < 120 ? seconds + " seconds" : Math.round(seconds / 60) + " minutes";
+				stale.hidden = false;
+			} else {
+				container.style.opacity = "";
+				stale.hidden = true;
+			}
+		}
+
+		function schedule() {
+			window.clearTimeout(timer);
+			timer = window.setTimeout(poll, 5000);
+		}
+
+		function poll() {
+			// While hidden, stop entirely; the visibilitychange handler
+			// resumes with a fresh poll on return
+			if (document.hidden) {
+				return;
+			}
+			fetch("{{ url_for('main.system_metrics') }}", {cache: "no-store"})
+				.then(function(response) {
+					// A redirect means the session or admin gate lapsed;
+					// treat it as a failure rather than swapping in a page
+					if (!response.ok || response.redirected) {
+						throw new Error(response.status);
+					}
+					return response.text();
+				})
+				.then(function(fragment) {
+					container.innerHTML = fragment;
+					lastSuccess = Date.now();
+				})
+				.catch(function() {})
+				.finally(function() {
+					markStaleness();
+					schedule();
+				});
+		}
+
+		document.addEventListener("visibilitychange", function() {
+			if (!document.hidden) {
+				poll();
+			}
+		});
+		schedule();
+	})();
+</script>
 {% if failed_jobs %}
 <hr>
 <h3>Failed tasks</h3>

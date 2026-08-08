@@ -147,9 +147,9 @@ def test_path_traversal_is_rejected(app, admin_client):
         os.remove(outside)
 
 
-def test_audit_page_links_to_rejects(app, admin_client):
+def test_maintenance_page_links_to_rejects(app, admin_client):
     reject_a_file(app, "exception", "Counted (2021) - [DVD].mkv")
 
-    page = admin_client.get("/audit").get_data(as_text=True)
+    page = admin_client.get("/maintenance").get_data(as_text=True)
     assert "Triage rejected files" in page
     assert "/rejects" in page

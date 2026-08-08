@@ -178,7 +178,11 @@ def app():
     from app import create_app, db
     from app.models import RefFeatureType, RefQuality, User
 
-    application = create_app(TestConfig)
+    # watch_import_dir: the watchdog test drops files into IMPORT_DIR and
+    # expects them noticed, so the test app opts into the observer that
+    # production scopes to the import workers
+
+    application = create_app(TestConfig, watch_import_dir=True)
 
     # Refuse to run against anything but the isolated stores
 

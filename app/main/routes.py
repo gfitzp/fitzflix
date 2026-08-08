@@ -16,6 +16,7 @@ from PIL import Image
 from flask import (
     current_app,
     jsonify,
+    make_response,
     render_template,
     flash,
     redirect,
@@ -2225,119 +2226,11 @@ def profile():
     )
 
 
-@bp.route("/admin")
-@login_required
-def admin():
-    """The profile page's old address; kept as a redirect for stale links."""
-
-    return redirect(url_for("main.profile"))
-
-
 @bp.route("/system", methods=["GET", "POST"])
 @login_required
 @admin_required
 def system():
-    """System status and library-wide operations: health, worker and
-    scheduler state, failed jobs, and the bulk refresh/scan tasks."""
-
-    # Form to update the Criterion Collection information for the entire movie library
-
-    criterion_refresh_form = CriterionRefreshForm()
-    if (
-        criterion_refresh_form.criterion_refresh.data
-        and criterion_refresh_form.validate_on_submit()
-    ):
-        # On the user-request queue, like the monthly scheduled refresh runs
-        # on maintenance: the forced Wikidata fetch would otherwise block
-        # the single sql worker on network I/O
-
-        current_app.request_queue.enqueue(
-            "app.videos.refresh_criterion_collection_info",
-            args=None,
-            job_timeout="1h",
-            description="Refreshing Criterion Collection information for all movies in library",
-            at_front=True,
-        )
-        flash(
-            "Refreshing Criterion Collection information for all movies in library",
-            "info",
-        )
-        return redirect(url_for("main.system"))
-
-    # Form to update the TMDb data for the entire library, both movies and TV shows
-
-    tmdb_refresh_form = TMDBRefreshForm()
-    if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
-        movies = Movie.query.order_by(Movie.title.asc(), Movie.year.asc()).all()
-        tv_shows = TVSeries.query.order_by(TVSeries.title.asc()).all()
-
-        # On the user-request queue: each job is a TMDb API call plus
-        # artwork downloads, and thousands of them would starve the single
-        # sql worker of import work for the whole run
-
-        for movie in movies:
-            current_app.request_queue.enqueue(
-                "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, movie.tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
-            )
-
-        for tv in tv_shows:
-            current_app.request_queue.enqueue(
-                "app.videos.refresh_tmdb_info",
-                args=("TV Shows", tv.id, tv.tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=f"Refreshing TMDB data for '{tv.title}'",
-            )
-
-        flash("Refreshing TMDb information for entire library", "info")
-        return redirect(url_for("main.system"))
-
-    sync_form = SyncAWSStorageForm()
-    if sync_form.sync_submit.data and sync_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user for this task!", "danger")
-
-        elif current_user.check_password(sync_form.password.data):
-            current_app.sql_queue.enqueue(
-                "app.videos.sync_aws_s3_storage_task",
-                args=None,
-                job_timeout="24h",
-                description="Syncing files from AWS S3 storage",
-                at_front=True,
-            )
-            flash("Syncing files with AWS S3 storage", "info")
-
-        else:
-            flash("Incorrect password provided!", "danger")
-
-        return redirect(url_for("main.system"))
-
-    # Form to rescan metadata for all the files
-
-    metadata_scan_form = TrackMetadataScanForm()
-
-    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
-        current_app.sql_queue.enqueue(
-            "app.videos.track_metadata_scan_library",
-            args=(),
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description="Scanning track metadata for all files in the library",
-        )
-        flash("Scanning track metadata for all files in the library", "info")
-        return redirect(url_for("main.system"))
-
-    import_form = ImportForm()
-    if import_form.submit.data and import_form.validate_on_submit():
-        enqueue_import_scan(
-            current_app.request_queue,
-            description="Manually scanning import directory for files",
-            at_front=True,
-        )
-        current_app.logger.info("Manually scanning import directory for files")
-        flash("Manually scanning import directory for files", "info")
-        return redirect(url_for("main.system"))
+    """System status: health, worker and scheduler state, and failed jobs."""
 
     queues_by_name = {
         queue.name: queue
@@ -2396,8 +2289,23 @@ def system():
             )
     failed_jobs.sort(key=lambda job: job["failed_at"] or datetime.min, reverse=True)
 
-    # Status of the recurring scheduled tasks; the schedulers share one
-    # scheduled-jobs set, so filter each scheduler's results to its own queue
+    return render_template(
+        "system.html",
+        title="System",
+        health=system_health(current_app),
+        scheduled_tasks=_scheduled_tasks(),
+        relative_time=_relative_time,
+        failed_jobs=failed_jobs,
+        failed_job_form=failed_job_form,
+    )
+
+
+def _scheduled_tasks():
+    """Status of the recurring scheduled tasks, for the polled fragment.
+
+    The schedulers share one scheduled-jobs set, so each scheduler's
+    results are filtered to its own queue.
+    """
 
     cron_descriptions = {
         "0 0 * * *": "Daily at midnight",
@@ -2420,33 +2328,189 @@ def system():
                     "name": job.description or job.id,
                     "schedule": cron_descriptions.get(cron_string, cron_string),
                     "last_run": job.ended_at,
-                    "next_run": next_run,
+                    "next_run_text": _next_run_text(next_run),
                 }
             )
-
-    health = system_health(current_app)
-
-    return render_template(
-        "system.html",
-        title="System",
-        health=health,
-        criterion_refresh_form=criterion_refresh_form,
-        tmdb_refresh_form=tmdb_refresh_form,
-        sync_form=sync_form,
-        metadata_scan_form=metadata_scan_form,
-        import_form=import_form,
-        scheduled_tasks=scheduled_tasks,
-        failed_jobs=failed_jobs,
-        failed_job_form=failed_job_form,
-    )
+    return scheduled_tasks
 
 
-@bp.route("/audit", methods=["GET", "POST"])
+def _next_run_text(next_run):
+    """Render a task's next-run time without ever calling it the past.
+
+    A due job's stored time sits in the past until the scheduler's next
+    tick (60s interval) moves it onto the queue and re-computes the
+    following run, so the 5s poll routinely catches slightly-past values:
+    those are "due now". Older than a couple of ticks means the scheduler
+    has actually stalled, which the health card's badge also shows.
+    """
+
+    if next_run.tzinfo is None:
+        next_run = next_run.replace(tzinfo=timezone.utc)
+    lateness = (datetime.now(timezone.utc) - next_run).total_seconds()
+    if lateness <= 0:
+        return _relative_time(next_run)
+    if lateness <= 120:
+        return "due now"
+    return "overdue"
+
+
+def _relative_time(moment_dt):
+    """Coarse relative-time text: '4 minutes ago', or 'in 4 minutes' for
+    future times like a task's next run.
+
+    The health fragment is re-rendered by every poll, so server-side text
+    stays current without flask-moment — whose scripts wouldn't re-run
+    inside swapped-in HTML anyway.
+    """
+
+    if moment_dt.tzinfo is None:
+        moment_dt = moment_dt.replace(tzinfo=timezone.utc)
+    # round(), not int(): truncation toward zero would undercount future
+    # spans ("in 3 days" minus a microsecond is still 3 days, not 2)
+    seconds = round((datetime.now(timezone.utc) - moment_dt).total_seconds())
+    future = seconds < 0
+    seconds = abs(seconds)
+    minutes = seconds // 60
+    hours = minutes // 60
+    if seconds < 60:
+        text = "under a minute"
+    elif minutes < 60:
+        text = f"{minutes} minute{'s' if minutes != 1 else ''}"
+    elif hours < 24:
+        text = f"{hours} hour{'s' if hours != 1 else ''}"
+    else:
+        days = hours // 24
+        text = f"{days} day{'s' if days != 1 else ''}"
+    return f"in {text}" if future else f"{text} ago"
+
+
+@bp.route("/system/metrics")
 @login_required
 @admin_required
-def audit():
-    """File audit: rejected-file triage, duplicate movies, and the
-    filename tester."""
+def system_metrics():
+    """The live health fragment the System page's poller swaps in.
+
+    Everything rendered here reads Redis or the local filesystem; the
+    external-service badges come from the health_probe task's snapshot, so
+    polling generates no external traffic.
+    """
+
+    fragment = render_template(
+        "_system_health.html",
+        health=system_health(current_app),
+        scheduled_tasks=_scheduled_tasks(),
+        relative_time=_relative_time,
+    )
+    response = make_response(fragment)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@bp.route("/maintenance", methods=["GET", "POST"])
+@login_required
+@admin_required
+def maintenance():
+    """Library maintenance: rejected-file triage, duplicate movies, the
+    filename tester, and the library-wide bulk operations."""
+
+    # Form to update the Criterion Collection information for the entire movie library
+
+    criterion_refresh_form = CriterionRefreshForm()
+    if (
+        criterion_refresh_form.criterion_refresh.data
+        and criterion_refresh_form.validate_on_submit()
+    ):
+        # On the user-request queue, like the monthly scheduled refresh runs
+        # on maintenance: the forced Wikidata fetch would otherwise block
+        # the single sql worker on network I/O
+
+        current_app.request_queue.enqueue(
+            "app.videos.refresh_criterion_collection_info",
+            args=None,
+            job_timeout="1h",
+            description="Refreshing Criterion Collection information for all movies in library",
+            at_front=True,
+        )
+        flash(
+            "Refreshing Criterion Collection information for all movies in library",
+            "info",
+        )
+        return redirect(url_for("main.maintenance"))
+
+    # Form to update the TMDb data for the entire library, both movies and TV shows
+
+    tmdb_refresh_form = TMDBRefreshForm()
+    if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
+        movies = Movie.query.order_by(Movie.title.asc(), Movie.year.asc()).all()
+        tv_shows = TVSeries.query.order_by(TVSeries.title.asc()).all()
+
+        # On the user-request queue: each job is a TMDb API call plus
+        # artwork downloads, and thousands of them would starve the single
+        # sql worker of import work for the whole run
+
+        for movie in movies:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("Movies", movie.id, movie.tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+            )
+
+        for tv in tv_shows:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("TV Shows", tv.id, tv.tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Refreshing TMDB data for '{tv.title}'",
+            )
+
+        flash("Refreshing TMDb information for entire library", "info")
+        return redirect(url_for("main.maintenance"))
+
+    sync_form = SyncAWSStorageForm()
+    if sync_form.sync_submit.data and sync_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user for this task!", "danger")
+
+        elif current_user.check_password(sync_form.password.data):
+            current_app.sql_queue.enqueue(
+                "app.videos.sync_aws_s3_storage_task",
+                args=None,
+                job_timeout="24h",
+                description="Syncing files from AWS S3 storage",
+                at_front=True,
+            )
+            flash("Syncing files with AWS S3 storage", "info")
+
+        else:
+            flash("Incorrect password provided!", "danger")
+
+        return redirect(url_for("main.maintenance"))
+
+    # Form to rescan metadata for all the files
+
+    metadata_scan_form = TrackMetadataScanForm()
+
+    if metadata_scan_form.scan_submit.data and metadata_scan_form.validate_on_submit():
+        current_app.sql_queue.enqueue(
+            "app.videos.track_metadata_scan_library",
+            args=(),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description="Scanning track metadata for all files in the library",
+        )
+        flash("Scanning track metadata for all files in the library", "info")
+        return redirect(url_for("main.maintenance"))
+
+    import_form = ImportForm()
+    if import_form.submit.data and import_form.validate_on_submit():
+        enqueue_import_scan(
+            current_app.request_queue,
+            description="Manually scanning import directory for files",
+            at_front=True,
+        )
+        current_app.logger.info("Manually scanning import directory for files")
+        flash("Manually scanning import directory for files", "info")
+        return redirect(url_for("main.maintenance"))
 
     # Form to merge a group of movies that share a TMDb id: each duplicate
     # is fed through refresh_tmdb_info, whose merge path (serialized with
@@ -2481,7 +2545,7 @@ def audit():
                 f"'{canonical.title} ({canonical.year})'",
                 "info",
             )
-        return redirect(url_for("main.audit"))
+        return redirect(url_for("main.maintenance"))
 
     # Form to preview how a filename would be parsed and filed on import
 
@@ -2498,13 +2562,18 @@ def audit():
         }
 
     return render_template(
-        "audit.html",
-        title="File Audit",
+        "maintenance.html",
+        title="Library Maintenance",
         rejected_count=len(_rejected_files()),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
         filename_test_result=filename_test_result,
+        criterion_refresh_form=criterion_refresh_form,
+        tmdb_refresh_form=tmdb_refresh_form,
+        sync_form=sync_form,
+        metadata_scan_form=metadata_scan_form,
+        import_form=import_form,
     )
 
 

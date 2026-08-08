@@ -21,7 +21,9 @@ def health_env(app, monkeypatch):
     """
 
     app.redis.set("rq:scheduler_instance:test", "1", ex=600)
-    app.redis.set("fitzflix:observer:test", "1", ex=600)
+    # Two observer heartbeats: observer_health expects one per import worker
+    app.redis.set("fitzflix:observer:test-1", "1", ex=600)
+    app.redis.set("fitzflix:observer:test-2", "1", ex=600)
     monkeypatch.setattr(maintenance, "EXPECTED_WORKERS", {})
 
     # A fresh backup file, so the backup-staleness check starts healthy
@@ -127,11 +129,38 @@ def test_disk_floor_alerts_and_recovers(app, health_env, monkeypatch):
 
 def test_missing_scheduler_and_observer_are_reported(health_env):
     health_env.redis.delete("rq:scheduler_instance:test")
-    health_env.redis.delete("fitzflix:observer:test")
+    health_env.redis.delete("fitzflix:observer:test-1")
+    health_env.redis.delete("fitzflix:observer:test-2")
     emails = health_env.run()
     assert len(emails) == 1
-    assert "No process is watching the import directory" in emails[0]["body"]
+    assert "0 of 2 import-directory watchers are alive" in emails[0]["body"]
     assert "scheduler is not running" in emails[0]["body"]
+
+
+def test_observer_health_expects_one_watcher_per_import_worker(app):
+    """The observer is scoped to the import workers, so anything short of
+    that program's two processes is unhealthy — including the one-watcher
+    state the old any-heartbeat check would have called fine."""
+
+    import os
+
+    # The test app itself runs an observer whose keeper rewrites this key
+    # every 60s; drop it just before the counting asserts so a mid-test
+    # tick can't inflate the tally
+
+    own_heartbeat = f"fitzflix:observer:{os.getpid()}"
+
+    app.redis.delete(own_heartbeat)
+    health = maintenance.observer_health(app.redis)
+    assert health["expected"] == 2
+    assert health["ok"] is False
+
+    app.redis.set("fitzflix:observer:one", "1", ex=600)
+    app.redis.delete(own_heartbeat)
+    assert maintenance.observer_health(app.redis)["ok"] is False
+
+    app.redis.set("fitzflix:observer:two", "1", ex=600)
+    assert maintenance.observer_health(app.redis)["ok"] is True
 
 
 def _worker(state, queues, heartbeat_age_seconds=0, job=None):

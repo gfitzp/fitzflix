@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from flask import current_app
-from rq import Worker, get_current_job
+from rq import Queue, Worker, get_current_job
 from rq.registry import StartedJobRegistry
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
@@ -152,6 +152,7 @@ def worker_health(connection):
     for entry in queues.values():
         entry["expected"] = EXPECTED_WORKERS.get(entry["queue"])
         entry["ok"] = entry["expected"] is None or entry["live"] >= entry["expected"]
+        entry["queued"] = Queue(entry["queue"], connection=connection).count
 
     return [queues[name] for name in sorted(queues)]
 
@@ -268,10 +269,15 @@ def backup_health(config):
 
 
 def observer_health(connection):
-    """Count the processes with a live import-directory observer heartbeat."""
+    """Count the processes with a live import-directory observer heartbeat.
+
+    Only the import-program workers watch (supervisor.py scopes the
+    observer to them), so the expected count is that program's numprocs.
+    """
 
     watchers = sum(1 for _ in connection.scan_iter(f"{OBSERVER_KEY_PREFIX}*"))
-    return {"ok": watchers > 0, "watchers": watchers}
+    expected = PROGRAM_COUNTS.get("fitzflix-import", 1)
+    return {"ok": watchers >= expected, "watchers": watchers, "expected": expected}
 
 
 def scheduler_health(connection):
@@ -1080,8 +1086,12 @@ def health_probe():
         for action in heal_actions:
             current_app.logger.warning(f"Health self-heal: {action}")
 
-        if not observer_health(redis)["ok"]:
-            issues["observer"] = "No process is watching the import directory"
+        observers = observer_health(redis)
+        if not observers["ok"]:
+            issues["observer"] = (
+                f"Only {observers['watchers']} of {observers['expected']} "
+                f"import-directory watchers are alive"
+            )
 
         if not scheduler_health(redis)["ok"]:
             issues["scheduler"] = "The rq scheduler is not running"

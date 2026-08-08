@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">File Audit</h2>
+<h2 class="mt-2 mb-n2">Library Maintenance</h2>
 <hr>
 <h3>Rejected files</h3>
 <p class="small text-muted">Files that couldn't be imported, sorted by the reason they were rejected.</p>
@@ -75,4 +75,44 @@
 	</div>
 	{% endif %}
 {% endif %}
+<hr>
+<h3>Bulk operations</h3>
+<div class="row my-2">
+    <div class="col-md-3">
+    	<form action="" method="post">
+    		{{ criterion_refresh_form.hidden_tag() }}
+    		{{ criterion_refresh_form.criterion_refresh(class_="btn btn-sm btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-3">
+    	<form action="" method="post">
+    		{{ tmdb_refresh_form.hidden_tag() }}
+    		{{ tmdb_refresh_form.tmdb_refresh(class_="btn btn-sm btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-3">
+    	<form action="" method="post">
+    		{{ metadata_scan_form.hidden_tag() }}
+    		{{ metadata_scan_form.scan_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    </div>
+    <div class="col-md-3">
+    	<form action="" method="post">
+    		{{ import_form.hidden_tag() }}
+    		{{ import_form.submit(class_="btn btn-sm btn-success") }}
+    	</form>
+    </div>
+</div>
+<hr>
+<div class="row my-2">
+    <div class="col-md-4">
+    	<form action="" method="post">
+    		{{ sync_form.hidden_tag() }}
+    		{{ sync_form.password.label }}
+    		{{ sync_form.password(class_="form-control form-control-sm mb-2") }}
+    		{{ sync_form.sync_submit(class_="btn btn-sm btn-danger") }}
+    	</form>
+    	<em class="small">This will delete all files that aren't in the Fitzflix database from AWS. Be <b>VERY SURE</b> you want to delete them before you click!</em>
+    </div>
+</div>
 {% endblock %}

@@ -85,18 +85,19 @@ def register_cron(scheduler, cron_string, func, job_id, timeout, description):
     )
 
 
-def get_app():
+def get_app(watch_import_dir=False):
     """Return this process's application instance, creating it if needed.
 
     Task modules resolve their app through this instead of calling
     create_app() at import time, so importing them from a process that
     already has an application (e.g. the web process importing app.videos)
-    doesn't build a second one.
+    doesn't build a second one. watch_import_dir only matters on the call
+    that actually creates the instance (supervisor.py's eager startup one).
     """
 
     global _app
     if _app is None:
-        _app = create_app()
+        _app = create_app(watch_import_dir=watch_import_dir)
     return _app
 
 
@@ -194,7 +195,7 @@ def check_config(app):
         )
 
 
-def create_app(config_class=Config):
+def create_app(config_class=Config, watch_import_dir=False):
     class MyHandler(FileSystemEventHandler):
         """Handlers for watchdog to fire when filesystem events occur."""
 
@@ -488,71 +489,80 @@ def create_app(config_class=Config):
             f"STAGING_DIR '{app.config['STAGING_DIR']}' could not be created"
         )
 
-    # Watch the import directory for file changes. The polling emitter shuts
-    # itself down permanently on any OSError from the (network-mounted)
-    # import directory, so a keeper thread rebuilds the observer whenever it
-    # dies, then sweeps the directory for anything that arrived while blind
+    # Watch the import directory for file changes — but only when asked:
+    # supervisor.py enables this for the import-program workers alone, so
+    # the other workers and the web process don't each poll the (network-
+    # mounted) directory for no benefit. The polling emitter shuts itself
+    # down permanently on any OSError from that mount, so a keeper thread
+    # rebuilds the observer whenever it dies, then sweeps the directory for
+    # anything that arrived while blind
 
-    event_handler = MyHandler()
+    if watch_import_dir:
+        event_handler = MyHandler()
 
-    def start_observer():
-        observer = PollingObserver()
-        observer.schedule(event_handler, path=app.config["IMPORT_DIR"], recursive=False)
-        observer.start()
-        return observer
+        def start_observer():
+            observer = PollingObserver()
+            observer.schedule(
+                event_handler, path=app.config["IMPORT_DIR"], recursive=False
+            )
+            observer.start()
+            return observer
 
-    def enqueue_import_sweep():
-        enqueue_import_scan(app.import_queue)
+        def enqueue_import_sweep():
+            enqueue_import_scan(app.import_queue)
 
-    def write_observer_heartbeat():
-        # Expiring per-process heartbeat: the admin health card counts these
-        # keys to show how many processes are actually watching the import
-        # directory, and a dead or wedged process simply stops refreshing
+        def write_observer_heartbeat():
+            # Expiring per-process heartbeat: the admin health card counts
+            # these keys to show how many processes are actually watching the
+            # import directory, and a dead or wedged process simply stops
+            # refreshing
 
-        try:
-            app.redis.set(f"fitzflix:observer:{os.getpid()}", int(time.time()), ex=180)
-        except Exception:
-            pass
-
-    def keep_observer_alive(observer):
-        while True:
-            time.sleep(60)
             try:
-                # The failed emitter thread stays in the emitters set after it
-                # dies, so check liveness rather than presence
-
-                healthy = (
-                    observer.is_alive()
-                    and observer.emitters
-                    and all(emitter.is_alive() for emitter in observer.emitters)
+                app.redis.set(
+                    f"fitzflix:observer:{os.getpid()}", int(time.time()), ex=180
                 )
-                if not healthy:
-                    app.logger.warning(
-                        "Import directory observer died; "
-                        "rebuilding it and sweeping for missed files"
-                    )
-                    try:
-                        observer.stop()
-                    except Exception:
-                        pass
-                    observer = start_observer()
-                    enqueue_import_sweep()
-                write_observer_heartbeat()
             except Exception:
-                app.logger.error(traceback.format_exc())
+                pass
 
-    observer = start_observer()
-    write_observer_heartbeat()
-    threading.Thread(
-        target=keep_observer_alive,
-        args=(observer,),
-        daemon=True,
-        name="import-observer-keeper",
-    ).start()
+        def keep_observer_alive(observer):
+            while True:
+                time.sleep(60)
+                try:
+                    # The failed emitter thread stays in the emitters set after
+                    # it dies, so check liveness rather than presence
 
-    # Process anything that arrived while the application wasn't watching
+                    healthy = (
+                        observer.is_alive()
+                        and observer.emitters
+                        and all(emitter.is_alive() for emitter in observer.emitters)
+                    )
+                    if not healthy:
+                        app.logger.warning(
+                            "Import directory observer died; "
+                            "rebuilding it and sweeping for missed files"
+                        )
+                        try:
+                            observer.stop()
+                        except Exception:
+                            pass
+                        observer = start_observer()
+                        enqueue_import_sweep()
+                    write_observer_heartbeat()
+                except Exception:
+                    app.logger.error(traceback.format_exc())
 
-    enqueue_import_sweep()
+        observer = start_observer()
+        write_observer_heartbeat()
+        threading.Thread(
+            target=keep_observer_alive,
+            args=(observer,),
+            daemon=True,
+            name="import-observer-keeper",
+        ).start()
+
+        # Process anything that arrived while the application wasn't watching
+
+        enqueue_import_sweep()
 
     # The first application created becomes this process's instance for
     # modules that resolve their app through get_app()

@@ -5,13 +5,16 @@ from rq import Connection, SimpleWorker
 
 from app import db, get_app, videos
 
-# Build the worker's app at startup rather than at first task, so the
-# import-directory observer begins watching immediately
+qs = sys.argv[1:] or ["default"]
 
-get_app()
+# Build the worker's app at startup rather than at first task. Only the
+# import-program workers (their primary queue is first on the command line)
+# watch the import directory; the other programs that merely drain the
+# import queue don't need their own filesystem observer.
+
+get_app(watch_import_dir=qs[0] == "fitzflix-import")
 
 with Connection():
     db.configure_mappers()
-    qs = sys.argv[1:] or ["default"]
     w = SimpleWorker(qs)
     w.work()
