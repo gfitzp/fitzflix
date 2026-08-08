@@ -19,6 +19,10 @@ ADMIN_EMAIL = "admin@example.test"
 ADMIN_PASSWORD = "test-password"
 ADMIN_API_KEY = "0123456789abcdef0123456789abcdef"
 
+MEMBER_EMAIL = "member@example.test"
+MEMBER_PASSWORD = "member-password"
+MEMBER_API_KEY = "fedcba9876543210fedcba9876543210"
+
 # quality_title, preference, physical_media — mirrors the production table
 
 QUALITIES = [
@@ -195,6 +199,9 @@ def app():
         admin = User(email=ADMIN_EMAIL, admin=True, api_key=ADMIN_API_KEY)
         admin.set_password(ADMIN_PASSWORD)
         db.session.add(admin)
+        member = User(email=MEMBER_EMAIL, admin=False, api_key=MEMBER_API_KEY)
+        member.set_password(MEMBER_PASSWORD)
+        db.session.add(member)
         db.session.commit()
 
     yield application
@@ -222,14 +229,13 @@ def client(app):
     return app.test_client()
 
 
-@pytest.fixture
-def admin_client(app):
-    """A test client whose session is logged in as the admin user."""
+def _signed_in_client(app, email):
+    """A test client whose session is logged in as the given user."""
 
     from app.models import User
 
     with app.app_context():
-        user_id = User.query.filter_by(email=ADMIN_EMAIL).one().id
+        user_id = User.query.filter_by(email=email).one().id
 
     test_client = app.test_client()
     serializer = app.session_interface.get_signing_serializer(app)
@@ -239,6 +245,20 @@ def admin_client(app):
         domain="localhost",
     )
     return test_client
+
+
+@pytest.fixture
+def admin_client(app):
+    """A test client logged in as the admin user."""
+
+    return _signed_in_client(app, ADMIN_EMAIL)
+
+
+@pytest.fixture
+def user_client(app):
+    """A test client logged in as a regular (non-admin) user."""
+
+    return _signed_in_client(app, MEMBER_EMAIL)
 
 
 @pytest.fixture

@@ -1,5 +1,5 @@
-"""Duplicate-movie detection on the Admin page: grouping by shared TMDb id,
-oldest-record-wins ordering, and the one-click merge enqueue.
+"""Duplicate-movie detection on the File Audit page: grouping by shared TMDb
+id, oldest-record-wins ordering, and the one-click merge enqueue.
 """
 
 import re
@@ -30,11 +30,11 @@ def build_duplicates(app):
     return older, newer
 
 
-def test_admin_lists_duplicate_groups_oldest_first(app, admin_client):
+def test_audit_lists_duplicate_groups_oldest_first(app, admin_client):
     with app.app_context():
         build_duplicates(app)
 
-    page = admin_client.get("/admin").get_data(as_text=True)
+    page = admin_client.get("/audit").get_data(as_text=True)
     assert "Duplicate movies" in page
     assert "Jaws (1975)" in page
     assert "Jaws! (1975)" in page
@@ -53,9 +53,9 @@ def test_merge_enqueues_refresh_for_each_duplicate(app, admin_client):
         older, newer = build_duplicates(app)
         older_id, newer_id = older.id, newer.id
 
-    page = admin_client.get("/admin").get_data(as_text=True)
+    page = admin_client.get("/audit").get_data(as_text=True)
     response = admin_client.post(
-        "/admin",
+        "/audit",
         data={
             "csrf_token": csrf_token_from(page),
             "merge_tmdb_id": "578",
@@ -79,6 +79,6 @@ def test_merge_enqueues_refresh_for_each_duplicate(app, admin_client):
     assert newer_id != older_id
 
 
-def test_admin_shows_empty_state_without_duplicates(app, admin_client):
-    page = admin_client.get("/admin").get_data(as_text=True)
+def test_audit_shows_empty_state_without_duplicates(app, admin_client):
+    page = admin_client.get("/audit").get_data(as_text=True)
     assert "No two movies share a TMDb id." in page

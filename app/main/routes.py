@@ -92,6 +92,23 @@ from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import FailedJobRegistry, StartedJobRegistry
 
+from functools import wraps
+
+
+def admin_required(view):
+    """Allow only admin users through; everyone else bounces to the home
+    page. Stack under @login_required so anonymous visitors still get the
+    login redirect."""
+
+    @wraps(view)
+    def wrapped_view(*args, **kwargs):
+        if not current_user.admin:
+            flash("Need to be an admin user to view this page!", "danger")
+            return redirect(url_for("main.index"))
+        return view(*args, **kwargs)
+
+    return wrapped_view
+
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
     """Validate an uploaded poster, then write the original and its thumbnails.
@@ -2174,10 +2191,10 @@ def reviews():
     )
 
 
-@bp.route("/admin", methods=["GET", "POST"])
+@bp.route("/profile", methods=["GET", "POST"])
 @login_required
-def admin():
-    """User's adminstration page."""
+def profile():
+    """User profile: email address and API key."""
 
     # Form to update the user's email address
 
@@ -2186,7 +2203,7 @@ def admin():
         current_user.email = email_form.email.data
         db.session.commit()
         flash("Your email address has been changed.", "success")
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.profile"))
 
     # Form to generate a new API key
 
@@ -2198,7 +2215,30 @@ def admin():
         current_user.api_key = secrets.token_hex(16)
         db.session.commit()
         flash("Regenerated the API key.", "success")
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.profile"))
+
+    return render_template(
+        "profile.html",
+        title="Profile",
+        email_form=email_form,
+        api_refresh_form=api_refresh_form,
+    )
+
+
+@bp.route("/admin")
+@login_required
+def admin():
+    """The profile page's old address; kept as a redirect for stale links."""
+
+    return redirect(url_for("main.profile"))
+
+
+@bp.route("/system", methods=["GET", "POST"])
+@login_required
+@admin_required
+def system():
+    """System status and library-wide operations: health, worker and
+    scheduler state, failed jobs, and the bulk refresh/scan tasks."""
 
     # Form to update the Criterion Collection information for the entire movie library
 
@@ -2222,42 +2262,7 @@ def admin():
             "Refreshing Criterion Collection information for all movies in library",
             "info",
         )
-        return redirect(url_for("main.admin"))
-
-    # Form to merge a group of movies that share a TMDb id: each duplicate
-    # is fed through refresh_tmdb_info, whose merge path (serialized with
-    # the import pipeline by title locks) moves files and reviews to the
-    # oldest record and deletes the duplicate
-
-    movie_merge_form = MovieMergeForm()
-    if movie_merge_form.merge_submit.data and movie_merge_form.validate_on_submit():
-        merge_tmdb_id = int(movie_merge_form.merge_tmdb_id.data)
-        group = (
-            Movie.query.filter_by(tmdb_id=merge_tmdb_id)
-            .order_by(Movie.date_created.asc())
-            .all()
-        )
-        if len(group) < 2:
-            flash("No duplicates found for that TMDb id.", "danger")
-
-        else:
-            canonical = group[0]
-            for duplicate in group[1:]:
-                current_app.request_queue.enqueue(
-                    "app.videos.refresh_tmdb_info",
-                    args=("Movies", duplicate.id, merge_tmdb_id),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Merging '{duplicate.title} ({duplicate.year})' into "
-                        f"'{canonical.title} ({canonical.year})'"
-                    ),
-                )
-            flash(
-                f"Merging {len(group) - 1} duplicate(s) into "
-                f"'{canonical.title} ({canonical.year})'",
-                "info",
-            )
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     # Form to update the TMDb data for the entire library, both movies and TV shows
 
@@ -2287,7 +2292,7 @@ def admin():
             )
 
         flash("Refreshing TMDb information for entire library", "info")
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     sync_form = SyncAWSStorageForm()
     if sync_form.sync_submit.data and sync_form.validate_on_submit():
@@ -2307,7 +2312,7 @@ def admin():
         else:
             flash("Incorrect password provided!", "danger")
 
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     # Form to rescan metadata for all the files
 
@@ -2321,7 +2326,7 @@ def admin():
             description="Scanning track metadata for all files in the library",
         )
         flash("Scanning track metadata for all files in the library", "info")
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     import_form = ImportForm()
     if import_form.submit.data and import_form.validate_on_submit():
@@ -2332,7 +2337,7 @@ def admin():
         )
         current_app.logger.info("Manually scanning import directory for files")
         flash("Manually scanning import directory for files", "info")
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     queues_by_name = {
         queue.name: queue
@@ -2370,7 +2375,7 @@ def admin():
         else:
             flash("That failed job no longer exists.", "warning")
 
-        return redirect(url_for("main.admin"))
+        return redirect(url_for("main.system"))
 
     failed_jobs = []
     for queue_name, queue in queues_by_name.items():
@@ -2390,20 +2395,6 @@ def admin():
                 }
             )
     failed_jobs.sort(key=lambda job: job["failed_at"] or datetime.min, reverse=True)
-
-    # Form to preview how a filename would be parsed and filed on import
-
-    filename_test_form = FilenameTestForm()
-    filename_test_result = None
-    if (
-        filename_test_form.filename_test_submit.data
-        and filename_test_form.validate_on_submit()
-    ):
-        test_filename = filename_test_form.test_filename.data.strip()
-        filename_test_result = {
-            "filename": test_filename,
-            "details": evaluate_filename(test_filename, log=False),
-        }
 
     # Status of the recurring scheduled tasks; the schedulers share one
     # scheduled-jobs set, so filter each scheduler's results to its own queue
@@ -2436,14 +2427,9 @@ def admin():
     health = system_health(current_app)
 
     return render_template(
-        "admin.html",
-        title="Admin",
+        "system.html",
+        title="System",
         health=health,
-        rejected_count=len(_rejected_files()),
-        duplicate_groups=_duplicate_movie_groups(),
-        movie_merge_form=movie_merge_form,
-        email_form=email_form,
-        api_refresh_form=api_refresh_form,
         criterion_refresh_form=criterion_refresh_form,
         tmdb_refresh_form=tmdb_refresh_form,
         sync_form=sync_form,
@@ -2452,6 +2438,71 @@ def admin():
         scheduled_tasks=scheduled_tasks,
         failed_jobs=failed_jobs,
         failed_job_form=failed_job_form,
+    )
+
+
+@bp.route("/audit", methods=["GET", "POST"])
+@login_required
+@admin_required
+def audit():
+    """File audit: rejected-file triage, duplicate movies, and the
+    filename tester."""
+
+    # Form to merge a group of movies that share a TMDb id: each duplicate
+    # is fed through refresh_tmdb_info, whose merge path (serialized with
+    # the import pipeline by title locks) moves files and reviews to the
+    # oldest record and deletes the duplicate
+
+    movie_merge_form = MovieMergeForm()
+    if movie_merge_form.merge_submit.data and movie_merge_form.validate_on_submit():
+        merge_tmdb_id = int(movie_merge_form.merge_tmdb_id.data)
+        group = (
+            Movie.query.filter_by(tmdb_id=merge_tmdb_id)
+            .order_by(Movie.date_created.asc())
+            .all()
+        )
+        if len(group) < 2:
+            flash("No duplicates found for that TMDb id.", "danger")
+
+        else:
+            canonical = group[0]
+            for duplicate in group[1:]:
+                current_app.request_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=("Movies", duplicate.id, merge_tmdb_id),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=(
+                        f"Merging '{duplicate.title} ({duplicate.year})' into "
+                        f"'{canonical.title} ({canonical.year})'"
+                    ),
+                )
+            flash(
+                f"Merging {len(group) - 1} duplicate(s) into "
+                f"'{canonical.title} ({canonical.year})'",
+                "info",
+            )
+        return redirect(url_for("main.audit"))
+
+    # Form to preview how a filename would be parsed and filed on import
+
+    filename_test_form = FilenameTestForm()
+    filename_test_result = None
+    if (
+        filename_test_form.filename_test_submit.data
+        and filename_test_form.validate_on_submit()
+    ):
+        test_filename = filename_test_form.test_filename.data.strip()
+        filename_test_result = {
+            "filename": test_filename,
+            "details": evaluate_filename(test_filename, log=False),
+        }
+
+    return render_template(
+        "audit.html",
+        title="File Audit",
+        rejected_count=len(_rejected_files()),
+        duplicate_groups=_duplicate_movie_groups(),
+        movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
         filename_test_result=filename_test_result,
     )
@@ -2516,6 +2567,7 @@ def _rejected_files():
 
 @bp.route("/rejects", methods=["GET", "POST"])
 @login_required
+@admin_required
 def rejects():
     """Triage rejected files: send them back for re-import, or delete them.
 

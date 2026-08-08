@@ -88,9 +88,23 @@
 				{% set queue_count = current_user.get_queue_count() %}
 				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
 			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.admin') }}">Admin</a>
+			{% if current_user.admin %}
+			<li class="nav-item dropdown">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					Admin
+				</a>
+				<div class="dropdown-menu dropdown-menu-right" aria-labeledby="navbarDropdownMenuLink">
+					<a class="dropdown-item" href="{{ url_for('main.audit') }}">File Audit</a>
+					<a class="dropdown-item" href="{{ url_for('main.system') }}">System</a>
+					<div class="dropdown-divider"></div>
+					<a class="dropdown-item" href="{{ url_for('main.profile') }}">Profile</a>
+				</div>
 			</li>
+			{% else %}
+			<li class="nav-item">
+				<a class="nav-link" href="{{ url_for('main.profile') }}">Profile</a>
+			</li>
+			{% endif %}
 			<li class="nav-item">
 				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
 			</li>

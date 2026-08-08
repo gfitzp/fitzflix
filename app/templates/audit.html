@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-2 mb-n2">File Audit</h2>
+<hr>
+<h3>Rejected files</h3>
+<p class="small text-muted">Files that couldn't be imported, sorted by the reason they were rejected.</p>
+<a class="btn btn-sm btn-{{ "warning" if rejected_count else "outline-secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge badge-light">{{ rejected_count }}</span></a>
+<hr>
+<h3>Duplicate movies</h3>
+{% if duplicate_groups %}
+<p class="small text-muted">These movies share a TMDb id. Merging moves each duplicate's files and reviews to the oldest record (marked kept) and deletes the duplicate.</p>
+<table class="table table-sm mt-3">
+	<thead class="thead-light">
+		<tr>
+			<th scope="col">TMDb id</th>
+			<th scope="col">Movies</th>
+			<th scope="col"></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for group in duplicate_groups %}
+		<tr>
+			<td><a href="https://www.themoviedb.org/movie/{{ group[0].tmdb_id }}" target="_blank" rel="noreferrer">{{ group[0].tmdb_id }}</a></td>
+			<td>
+				{% for movie in group %}
+				{% set file_count = movie.files.count() %}
+				<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.title }} ({{ movie.year }})</a>
+				<span class="text-muted small">{{ file_count }} file{{ "s" if file_count != 1 }}{% if loop.first %} &mdash; kept{% endif %}</span><br>
+				{% endfor %}
+			</td>
+			<td>
+				<form action="" method="post">
+					{{ movie_merge_form.csrf_token }}
+					{{ movie_merge_form.merge_tmdb_id(value=group[0].tmdb_id) }}
+					{{ movie_merge_form.merge_submit(class_="btn btn-sm btn-warning") }}
+				</form>
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+{% else %}
+<p class="small text-muted">No two movies share a TMDb id.</p>
+{% endif %}
+<hr>
+<h3>Filename tester</h3>
+<p class="small text-muted">Preview how a filename would be parsed and filed on import, without importing anything.</p>
+<form action="" method="post" class="form-inline">
+	{{ filename_test_form.hidden_tag() }}
+	{{ filename_test_form.test_filename(class_="form-control form-control-sm mr-2", size=60, placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
+	{{ filename_test_form.filename_test_submit(class_="btn btn-sm btn-primary") }}
+</form>
+{% if filename_test_result %}
+	{% if filename_test_result.details %}
+	<div class="alert alert-success mt-3">
+		<code>{{ filename_test_result.filename }}</code> would import as<br>
+		<code>{{ filename_test_result.details.file_path }}</code>
+		<hr class="my-2">
+		<span class="small">
+			{{ filename_test_result.details.media_library }}:
+			<b>{{ filename_test_result.details.title }}</b>
+			{%- if filename_test_result.details.year %} ({{ filename_test_result.details.year }}){% endif %}
+			{%- if filename_test_result.details.season is defined and filename_test_result.details.season is not none %},
+				season {{ filename_test_result.details.season }}, episode {{ filename_test_result.details.episode }}{% endif %}
+			&middot; {{ filename_test_result.details.quality_title }}
+			{%- if filename_test_result.details.feature_type_name %} &middot; {{ filename_test_result.details.feature_type_name }}{% endif %}
+			{%- if filename_test_result.details.edition %} &middot; {{ filename_test_result.details.edition }}{% endif %}
+			{%- if filename_test_result.details.fullscreen %} &middot; Full Screen{% endif %}
+		</span>
+	</div>
+	{% else %}
+	<div class="alert alert-danger mt-3">
+		<code>{{ filename_test_result.filename }}</code> would be rejected: the name doesn't match the expected formats, or its quality tag isn't a known quality title.
+	</div>
+	{% endif %}
+{% endif %}
+{% endblock %}

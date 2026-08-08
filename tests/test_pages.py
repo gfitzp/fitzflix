@@ -1,5 +1,5 @@
-"""Page smoke tests: routes render, auth gates hold, and the admin filename
-tester works end-to-end without writing log lines.
+"""Page smoke tests: routes render, auth gates hold, and the audit page's
+filename tester works end-to-end without writing log lines.
 """
 
 import logging
@@ -34,24 +34,85 @@ def test_movie_shopping_list_renders(admin_client):
     assert admin_client.get("/shopping-list/movie").status_code == 200
 
 
-def test_admin_page_shows_health_card_and_tools(admin_client):
-    response = admin_client.get("/admin")
+def test_system_page_shows_health_schedules_and_bulk_ops(admin_client):
+    response = admin_client.get("/system")
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "System health" in body
-    assert "Filename tester" in body
     assert "Scheduled tasks" in body
+    assert "Bulk operations" in body
+
+
+def test_audit_page_shows_file_tools(admin_client):
+    response = admin_client.get("/audit")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Rejected files" in body
+    assert "Duplicate movies" in body
+    assert "Filename tester" in body
+
+
+def test_profile_page_holds_only_the_profile_forms(admin_client):
+    """The old all-in-one Admin page became /profile and only holds the
+    profile forms; everything else moved to /audit and /system."""
+
+    response = admin_client.get("/profile")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Profile" in body
+    assert "API key" in body
+    assert "System health" not in body
+    assert "Filename tester" not in body
+
+
+def test_old_admin_url_redirects_to_profile(admin_client):
+    response = admin_client.get("/admin")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/profile")
+
+
+def test_admin_nav_shows_the_admin_dropdown(admin_client):
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'href="/audit"' in body
+    assert 'href="/system"' in body
+    assert 'href="/profile"' in body
+
+
+def test_nonadmin_nav_shows_profile_link_instead_of_admin_dropdown(user_client):
+    body = user_client.get("/").get_data(as_text=True)
+    assert 'href="/audit"' not in body
+    assert 'href="/system"' not in body
+    assert 'href="/profile">Profile</a>' in body
+
+
+def test_audit_system_and_rejects_require_admin(user_client):
+    """Non-admin users are flashed back to the home page; the profile at
+    /profile stays open to them."""
+
+    for path in ("/audit", "/system", "/rejects"):
+        response = user_client.get(path)
+        assert response.status_code == 302, path
+        assert response.headers["Location"].endswith("/recently-added"), path
+
+    response = user_client.get("/audit", follow_redirects=True)
+    assert "Need to be an admin user to view this page!" in response.get_data(
+        as_text=True
+    )
+
+    response = user_client.get("/profile")
+    assert response.status_code == 200
+    assert "API key" in response.get_data(as_text=True)
 
 
 def test_filename_tester_previews_without_logging(
     app, admin_client, fake_tmdb, log_capture
 ):
-    page = admin_client.get("/admin").get_data(as_text=True)
+    page = admin_client.get("/audit").get_data(as_text=True)
     token = csrf_token_from(page)
 
     log_capture.clear()
     response = admin_client.post(
-        "/admin",
+        "/audit",
         data={
             "csrf_token": token,
             "test_filename": "Jaws (1975) - [Bluray-1080p].mkv",
@@ -68,11 +129,11 @@ def test_filename_tester_previews_without_logging(
 
 
 def test_filename_tester_shows_rejection(admin_client):
-    page = admin_client.get("/admin").get_data(as_text=True)
+    page = admin_client.get("/audit").get_data(as_text=True)
     token = csrf_token_from(page)
 
     response = admin_client.post(
-        "/admin",
+        "/audit",
         data={
             "csrf_token": token,
             "test_filename": "Jaws (1975) - [Betamax].mkv",
