@@ -3075,10 +3075,10 @@ def movie_shopping():
         type=str,
     )
 
-    # Dynamically set the page title, so we can create different pages that all link to
-    # the same shopping list, but using different filter presets
-
-    title = request.args.get("title", "Movies to upgrade", type=str)
+    # The page heading is derived from the active filters (below, once the
+    # quality bounds are normalized) rather than read from a ?title= query
+    # parameter — the old approach let any crafted URL put arbitrary text
+    # in the heading
 
     # Form to filter the shopping list by Criterion release or quality
 
@@ -3142,6 +3142,43 @@ def movie_shopping():
     filter_form.min_quality.default = min_quality
     filter_form.max_quality.default = max_quality
 
+    # Derive the heading from the filter state; the search branches below
+    # override it with their own more specific titles
+
+    if library == "criterion":
+        title = "Criterion Collection movies to upgrade"
+    elif media == "digital":
+        title = "Digital downloads to get as physical media"
+    else:
+        title = "Movies to upgrade"
+
+    bottom_quality = (
+        db.session.query(RefQuality.preference)
+        .filter(RefQuality.quality_title == "Unknown")
+        .scalar()
+    )
+    top_quality = (
+        db.session.query(RefQuality.preference)
+        .filter(RefQuality.quality_title == "Bluray-2160p Remux")
+        .scalar()
+    )
+    min_quality_title = (
+        db.session.query(RefQuality.quality_title)
+        .filter_by(id=int(min_quality))
+        .scalar()
+    )
+    max_quality_title = (
+        db.session.query(RefQuality.quality_title)
+        .filter_by(id=int(max_quality))
+        .scalar()
+    )
+    if min_preference > bottom_quality and max_preference < top_quality:
+        title = f"{title} ({min_quality_title} to {max_quality_title})"
+    elif max_preference < top_quality:
+        title = f"{title} ({max_quality_title} and below)"
+    elif min_preference > bottom_quality:
+        title = f"{title} ({min_quality_title} and above)"
+
     # Form to filter the shopping list by a particular substring
 
     library_search_form = LibrarySearchForm()
@@ -3149,7 +3186,6 @@ def movie_shopping():
         return redirect(
             url_for(
                 "main.movie_shopping",
-                title=title,
                 library=filter_form.filter_status.data,
                 media=filter_form.media.data,
                 min_quality=filter_form.min_quality.data,
@@ -3171,7 +3207,6 @@ def movie_shopping():
         return redirect(
             url_for(
                 "main.movie_shopping",
-                title=title,
                 library=library,
                 media=media,
                 min_quality=min_quality,
@@ -3756,7 +3791,6 @@ def movie_shopping():
         url_for(
             "main.movie_shopping",
             page=movies.next_num,
-            title=title,
             q=q,
             media=media,
             library=library,
@@ -3770,7 +3804,6 @@ def movie_shopping():
         url_for(
             "main.movie_shopping",
             page=movies.prev_num,
-            title=title,
             q=q,
             media=media,
             library=library,

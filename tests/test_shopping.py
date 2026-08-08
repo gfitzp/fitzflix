@@ -101,3 +101,38 @@ def test_unliked_unowned_review_stays_off_shopping_list(app, admin_client):
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
     assert "Seen but Unliked" not in page
+
+
+def test_shopping_titles_derive_from_filters_not_url(app, admin_client):
+    """The heading comes from the active filters; a crafted ?title= query
+    parameter can no longer put arbitrary text on the page."""
+
+    page = admin_client.get("/shopping-list/movie?title=Totally+Fake+Heading").get_data(
+        as_text=True
+    )
+    assert "Totally Fake Heading" not in page
+    assert "Movies to upgrade" in page
+
+    page = admin_client.get("/shopping-list/movie?library=criterion").get_data(
+        as_text=True
+    )
+    assert "Criterion Collection movies to upgrade" in page
+
+    page = admin_client.get("/shopping-list/movie?media=digital").get_data(as_text=True)
+    assert "Digital downloads to get as physical media" in page
+
+    with app.app_context():
+        from app.models import RefQuality
+
+        webrip = RefQuality.query.filter_by(quality_title="WEBRip-1080p").one().id
+        hdtv = RefQuality.query.filter_by(quality_title="HDTV-720p").one().id
+
+    page = admin_client.get(f"/shopping-list/movie?max_quality={webrip}").get_data(
+        as_text=True
+    )
+    assert "Movies to upgrade (WEBRip-1080p and below)" in page
+
+    page = admin_client.get(f"/shopping-list/movie?min_quality={hdtv}").get_data(
+        as_text=True
+    )
+    assert "Movies to upgrade (HDTV-720p and above)" in page
