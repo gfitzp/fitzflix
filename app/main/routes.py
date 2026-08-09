@@ -25,9 +25,12 @@ from flask import (
     send_from_directory,
 )
 
+import requests
+
 # flask.Markup was removed in Flask 2.4; import from its actual home
 from markupsafe import Markup
 from flask_login import current_user, login_required
+from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
 from app import db, enqueue_import_scan
@@ -35,6 +38,7 @@ from app.main.forms import (
     CriterionFilterForm,
     CriterionForm,
     CriterionRefreshForm,
+    CustomPosterRemoveForm,
     CustomPosterUploadForm,
     EditProfileForm,
     FileDeleteForm,
@@ -59,6 +63,7 @@ from app.main.forms import (
     S3UploadForm,
     SeriesDeleteForm,
     TMDBLookupForm,
+    TMDBPosterSelectForm,
     TMDBRefreshForm,
     TrackMetadataScanForm,
     TranscodeForm,
@@ -941,54 +946,6 @@ def movie(movie_id):
         return redirect(url_for("main.movie", movie_id=movie.id))
     criterion_form.process()
 
-    custom_poster_form = CustomPosterUploadForm()
-    if custom_poster_form.validate_on_submit():
-        uploaded_data = custom_poster_form.custom_poster.data
-        file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
-        poster_filename = f"poster{file_ext}"
-
-        movie_files = (
-            File.query.filter(File.movie_id == movie.id)
-            .filter(File.feature_type_id == None)
-            .all()
-        )
-
-        if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-            flash(
-                f"'{poster_filename}' is an invalid movie poster file type!", "danger"
-            )
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        try:
-            try:
-                original_file = save_custom_poster(
-                    uploaded_data,
-                    poster_filename,
-                    os.path.join("app", "static", "custom", "movie", str(movie.id)),
-                )
-            except ValueError as error:
-                flash(str(error), "danger")
-                return redirect(url_for("main.movie", movie_id=movie.id))
-
-            for file in movie_files:
-                replace_library_poster(
-                    os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
-                    original_file,
-                    poster_filename,
-                )
-
-            movie.custom_poster = poster_filename
-            db.session.commit()
-
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
-            flash(f"Unable to assign a custom poster to '{title}'!", "danger")
-            return redirect(url_for("main.movie", movie_id=movie.id))
-
-        flash(f"Uploaded a custom poster for '{title}'", "success")
-        return redirect(url_for("main.movie", movie_id=movie.id))
-
     return render_template(
         "movie.html",
         title=title,
@@ -1003,8 +960,346 @@ def movie(movie_id):
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
         criterion_form=criterion_form,
-        custom_poster_form=custom_poster_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
+    )
+
+
+def _custom_poster_dir(scope, record_id):
+    """Where a movie's or file's custom poster tree lives.
+
+    CUSTOM_ARTWORK_DIR is app/static/custom in production, so these files
+    are served by url_for('static', ...) and mirrored to S3 by the nightly
+    backup (which also propagates deletions).
+    """
+
+    return os.path.join(current_app.config["CUSTOM_ARTWORK_DIR"], scope, str(record_id))
+
+
+def _assign_movie_poster(movie, uploaded_data):
+    """Run a poster image through the custom-poster pipeline for a movie:
+    thumbnails, a copy beside each main-feature file, precedence column.
+
+    Returns a message to flash on failure, or None on success.
+    """
+
+    file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
+    poster_filename = f"poster{file_ext}"
+
+    if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
+        return f"'{poster_filename}' is an invalid movie poster file type!"
+
+    movie_files = (
+        File.query.filter(File.movie_id == movie.id)
+        .filter(File.feature_type_id == None)
+        .all()
+    )
+
+    try:
+        try:
+            original_file = save_custom_poster(
+                uploaded_data,
+                poster_filename,
+                _custom_poster_dir("movie", movie.id),
+            )
+        except ValueError as error:
+            return str(error)
+
+        for file in movie_files:
+            replace_library_poster(
+                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
+                original_file,
+                poster_filename,
+            )
+
+        movie.custom_poster = poster_filename
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        return f"Unable to assign a custom poster to '{movie.title}'!"
+
+    return None
+
+
+def _assign_file_poster(file, uploaded_data):
+    """The file-scoped twin of _assign_movie_poster: one file's custom
+    poster, replacing the library copy only for a main feature."""
+
+    file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
+    poster_filename = f"poster{file_ext}"
+
+    if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
+        return f"'{poster_filename}' is an invalid movie poster file type!"
+
+    try:
+        try:
+            original_file = save_custom_poster(
+                uploaded_data,
+                poster_filename,
+                _custom_poster_dir("file", file.id),
+            )
+        except ValueError as error:
+            return str(error)
+
+        if file.feature_type_id == None:
+            replace_library_poster(
+                os.path.join(current_app.config["LIBRARY_DIR"], file.dirname),
+                original_file,
+                poster_filename,
+            )
+
+        file.custom_poster = poster_filename
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        return f"Unable to assign a custom poster to '{file.basename}'!"
+
+    return None
+
+
+def _remove_movie_poster(movie):
+    """Delete a movie's custom poster: the custom-artwork tree, the copies
+    beside its library files, and the precedence column.
+
+    A main-feature file with its own custom poster keeps that art — the
+    file-over-movie precedence means its library copy gets restored from
+    the file-scoped original rather than deleted.
+
+    Returns a message to flash on failure, or None on success.
+    """
+
+    poster_filename = movie.custom_poster
+    try:
+        movie_files = (
+            File.query.filter(File.movie_id == movie.id)
+            .filter(File.feature_type_id == None)
+            .all()
+        )
+        for file in movie_files:
+            library_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file.dirname
+            )
+            if not os.path.isdir(library_directory):
+                continue
+            if file.custom_poster:
+                file_original = os.path.join(
+                    _custom_poster_dir("file", file.id), "original", file.custom_poster
+                )
+                if os.path.isfile(file_original):
+                    replace_library_poster(
+                        library_directory, file_original, file.custom_poster
+                    )
+                    continue
+            library_copy = os.path.join(library_directory, poster_filename)
+            if os.path.isfile(library_copy):
+                os.remove(library_copy)
+                current_app.logger.info(f"Deleted '{library_copy}'")
+
+        shutil.rmtree(_custom_poster_dir("movie", movie.id), ignore_errors=True)
+        movie.custom_poster = None
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        return f"Unable to remove the custom poster for '{movie.title}'!"
+
+    return None
+
+
+def _remove_file_poster(file):
+    """The file-scoped twin of _remove_movie_poster.
+
+    When the movie still has its own custom poster, that art is restored
+    to the library directory; otherwise the poster copy is deleted.
+    """
+
+    poster_filename = file.custom_poster
+    try:
+        if file.feature_type_id == None:
+            library_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file.dirname
+            )
+            if os.path.isdir(library_directory):
+                movie = file.movie
+                movie_original = (
+                    os.path.join(
+                        _custom_poster_dir("movie", movie.id),
+                        "original",
+                        movie.custom_poster,
+                    )
+                    if movie and movie.custom_poster
+                    else None
+                )
+                if movie_original and os.path.isfile(movie_original):
+                    replace_library_poster(
+                        library_directory, movie_original, movie.custom_poster
+                    )
+                else:
+                    library_copy = os.path.join(library_directory, poster_filename)
+                    if os.path.isfile(library_copy):
+                        os.remove(library_copy)
+                        current_app.logger.info(f"Deleted '{library_copy}'")
+
+        shutil.rmtree(_custom_poster_dir("file", file.id), ignore_errors=True)
+        file.custom_poster = None
+        db.session.commit()
+
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        return f"Unable to remove the custom poster for '{file.basename}'!"
+
+    return None
+
+
+def _tmdb_poster_gallery(tmdb_id):
+    """The TMDb poster gallery for a movie, cached for a day.
+
+    Returns the /movie/{id}/images posters list, or None when the gallery
+    is unavailable (no TMDb id, no API key, or the fetch failed).
+    """
+
+    if not tmdb_id:
+        return None
+    cache_key = f"fitzflix:tmdb:movie:{tmdb_id}:posters"
+    cached = current_app.redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    if not current_app.config["TMDB_API_KEY"]:
+        return None
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + f"/movie/{tmdb_id}/images",
+            params={"api_key": current_app.config["TMDB_API_KEY"]},
+            timeout=10,
+        )
+        r.raise_for_status()
+        posters = r.json().get("posters") or []
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None
+    current_app.redis.setex(cache_key, 86400, json.dumps(posters))
+    return posters
+
+
+def _fetch_tmdb_poster(poster_path):
+    """Download a TMDb poster and wrap it like a form upload, so a picked
+    poster flows through the exact same pipeline as an uploaded one.
+
+    Returns (file_storage, error_message).
+    """
+
+    if not re.fullmatch(r"/[A-Za-z0-9]+\.(?:jpg|jpeg|png)", poster_path or ""):
+        return None, "That isn't a TMDb poster path."
+    try:
+        r = requests.get(
+            f"{current_app.config['TMDB_IMAGE_URL']}/original{poster_path}",
+            timeout=30,
+        )
+        r.raise_for_status()
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        return None, "Couldn't download that poster from TMDb."
+    return (
+        FileStorage(
+            stream=io.BytesIO(r.content), filename=os.path.basename(poster_path)
+        ),
+        None,
+    )
+
+
+def _poster_gallery_context(posters):
+    """Split a poster gallery into the languages present and the subset to
+    show for the request's ?language= filter."""
+
+    languages = sorted({p.get("iso_639_1") or "none" for p in posters or []})
+    active = request.args.get("language")
+    if active not in languages and active != "all":
+        # Default to English posters when any exist, otherwise show all
+        active = "en" if "en" in languages else "all"
+    if posters and active != "all":
+        shown = [p for p in posters if (p.get("iso_639_1") or "none") == active]
+    else:
+        shown = posters
+    return shown, languages, active
+
+
+@bp.route("/movie/<int:movie_id>/poster", methods=["GET", "POST"])
+@login_required
+def movie_poster(movie_id):
+    """Poster picker: choose from the TMDb gallery or upload an image."""
+
+    movie = Movie.query.filter_by(id=movie_id).first_or_404()
+    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
+
+    custom_poster_form = CustomPosterUploadForm()
+    poster_select_form = TMDBPosterSelectForm()
+    poster_remove_form = CustomPosterRemoveForm()
+
+    if (
+        poster_remove_form.poster_remove_submit.data
+        and poster_remove_form.validate_on_submit()
+    ):
+        if not movie.custom_poster:
+            flash(f"'{title}' has no custom poster to remove.", "warning")
+            return redirect(url_for("main.movie_poster", movie_id=movie.id))
+        error = _remove_movie_poster(movie)
+        if error:
+            flash(error, "danger")
+        else:
+            flash(f"Removed the custom poster for '{title}'", "success")
+        return redirect(url_for("main.movie_poster", movie_id=movie.id))
+
+    if (
+        custom_poster_form.poster_submit.data
+        and custom_poster_form.validate_on_submit()
+    ):
+        error = _assign_movie_poster(movie, custom_poster_form.custom_poster.data)
+        if error:
+            flash(error, "danger")
+            return redirect(url_for("main.movie_poster", movie_id=movie.id))
+        flash(f"Uploaded a custom poster for '{title}'", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    if (
+        poster_select_form.poster_select_submit.data
+        and poster_select_form.validate_on_submit()
+    ):
+        uploaded_data, error = _fetch_tmdb_poster(poster_select_form.poster_path.data)
+        if not error:
+            error = _assign_movie_poster(movie, uploaded_data)
+        if error:
+            flash(error, "danger")
+            return redirect(url_for("main.movie_poster", movie_id=movie.id))
+        flash(f"Set the poster for '{title}' from TMDb", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    posters, languages, active_language = _poster_gallery_context(
+        _tmdb_poster_gallery(movie.tmdb_id)
+    )
+
+    return render_template(
+        "poster_picker.html",
+        title=f'Poster for "{title}"',
+        movie=movie,
+        back_url=url_for("main.movie", movie_id=movie.id),
+        back_label=title,
+        posters=posters,
+        languages=languages,
+        active_language=active_language,
+        language_url=lambda language: url_for(
+            "main.movie_poster", movie_id=movie.id, language=language
+        ),
+        custom_poster_form=custom_poster_form,
+        poster_select_form=poster_select_form,
+        poster_remove_form=poster_remove_form,
+        has_custom_poster=bool(movie.custom_poster),
+        default_poster_path=movie.tmdb_poster_path,
+        upload_enabled=True,
     )
 
 
@@ -1917,54 +2212,6 @@ def file(file_id):
         else:
             return redirect(url_for("main.index"))
 
-    custom_poster_form = CustomPosterUploadForm()
-    if custom_poster_form.validate_on_submit():
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        uploaded_data = custom_poster_form.custom_poster.data
-        file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
-        poster_filename = f"poster{file_ext}"
-
-        library_directory = os.path.join(
-            current_app.config["LIBRARY_DIR"], file.dirname
-        )
-
-        if file_ext not in [".jpg", ".jpeg", ".png", ".tbn"]:
-            flash(
-                f"'{poster_filename}' is an invalid movie poster file type!", "danger"
-            )
-            return redirect(url_for("main.file", file_id=file.id))
-
-        try:
-            try:
-                original_file = save_custom_poster(
-                    uploaded_data,
-                    poster_filename,
-                    os.path.join("app", "static", "custom", "file", str(file.id)),
-                )
-            except ValueError as error:
-                flash(str(error), "danger")
-                return redirect(url_for("main.file", file_id=file.id))
-
-            if file.feature_type_id == None:
-                replace_library_poster(
-                    library_directory, original_file, poster_filename
-                )
-
-            file.custom_poster = poster_filename
-            db.session.commit()
-
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
-            flash(f"Unable to assign a custom poster to '{file.basename}'!", "danger")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        flash(f"Uploaded a custom poster for '{file.basename}'", "success")
-        return redirect(url_for("main.file", file_id=file.id))
-
     return render_template(
         "file.html",
         file=file,
@@ -1981,9 +2228,101 @@ def file(file_id):
         download_form=download_form,
         file_restore_estimate=file_restore_estimate,
         delete_form=delete_form,
-        custom_poster_form=custom_poster_form,
         best_file=best_file,
         file_exists_locally=file_exists_locally,
+    )
+
+
+@bp.route("/file/<int:file_id>/poster", methods=["GET", "POST"])
+@login_required
+def file_poster(file_id):
+    """The poster picker's file-scoped twin: one file's custom poster.
+
+    The TMDb gallery appears for movie files; TV files get the upload form
+    only, since TMDb season/episode artwork isn't wired up.
+    """
+
+    file = File.query.filter_by(id=file_id).first_or_404()
+    movie = file.movie
+
+    # A custom poster is written next to the library file, so there must
+    # be a library file to write next to
+
+    file_exists_locally = os.path.isfile(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
+
+    custom_poster_form = CustomPosterUploadForm()
+    poster_select_form = TMDBPosterSelectForm()
+    poster_remove_form = CustomPosterRemoveForm()
+
+    if (
+        poster_remove_form.poster_remove_submit.data
+        and poster_remove_form.validate_on_submit()
+    ):
+        if not file.custom_poster:
+            flash(f"'{file.basename}' has no custom poster to remove.", "warning")
+            return redirect(url_for("main.file_poster", file_id=file.id))
+        error = _remove_file_poster(file)
+        if error:
+            flash(error, "danger")
+        else:
+            flash(f"Removed the custom poster for '{file.basename}'", "success")
+        return redirect(url_for("main.file_poster", file_id=file.id))
+
+    if (
+        custom_poster_form.poster_submit.data
+        and custom_poster_form.validate_on_submit()
+    ):
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file_poster", file_id=file.id))
+        error = _assign_file_poster(file, custom_poster_form.custom_poster.data)
+        if error:
+            flash(error, "danger")
+            return redirect(url_for("main.file_poster", file_id=file.id))
+        flash(f"Uploaded a custom poster for '{file.basename}'", "success")
+        return redirect(url_for("main.file", file_id=file.id))
+
+    if (
+        poster_select_form.poster_select_submit.data
+        and poster_select_form.validate_on_submit()
+    ):
+        if not file_exists_locally:
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.file_poster", file_id=file.id))
+        uploaded_data, error = _fetch_tmdb_poster(poster_select_form.poster_path.data)
+        if not error:
+            error = _assign_file_poster(file, uploaded_data)
+        if error:
+            flash(error, "danger")
+            return redirect(url_for("main.file_poster", file_id=file.id))
+        flash(f"Set the poster for '{file.basename}' from TMDb", "success")
+        return redirect(url_for("main.file", file_id=file.id))
+
+    posters, languages, active_language = _poster_gallery_context(
+        _tmdb_poster_gallery(movie.tmdb_id if movie else None)
+    )
+
+    return render_template(
+        "poster_picker.html",
+        title=f'Poster for "{file.basename}"',
+        movie=movie,
+        file=file,
+        back_url=url_for("main.file", file_id=file.id),
+        back_label=file.basename,
+        posters=posters,
+        languages=languages,
+        active_language=active_language,
+        language_url=lambda language: url_for(
+            "main.file_poster", file_id=file.id, language=language
+        ),
+        custom_poster_form=custom_poster_form,
+        poster_select_form=poster_select_form,
+        poster_remove_form=poster_remove_form,
+        has_custom_poster=bool(file.custom_poster),
+        default_poster_path=movie.tmdb_poster_path if movie else None,
+        upload_enabled=file_exists_locally,
     )
 
 

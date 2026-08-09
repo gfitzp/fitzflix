@@ -240,6 +240,17 @@ class CustomPosterUploadForm(FlaskForm):
     poster_submit = SubmitField("Upload")
 
 
+class TMDBPosterSelectForm(FlaskForm):
+    """One "use this poster" button per image on the poster picker page."""
+
+    poster_path = HiddenField(validators=[DataRequired()])
+    poster_select_submit = SubmitField("Use this poster")
+
+
+class CustomPosterRemoveForm(FlaskForm):
+    poster_remove_submit = SubmitField("Remove custom poster")
+
+
 class FailedJobForm(FlaskForm):
     failed_job_id = HiddenField(validators=[DataRequired()])
     failed_queue = HiddenField(validators=[DataRequired()])

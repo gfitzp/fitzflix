@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ back_url }}">{{ back_label }}</a></li>
+		<li class="breadcrumb-item active" aria-current="page">Poster</li>
+	</ol>
+</nav>
+<div class="row mb-n2">
+	<div class="col-md-auto">
+		{% if movie or (file is defined and file and file.custom_poster) %}
+			{% include "_movie_poster_large.html" %}
+		{% else %}
+			<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
+				<svg width="3em" height="3em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+					<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
+				</svg>
+			</div>
+		{% endif %}
+		<p class="small text-muted text-center mt-1 mb-0">Current poster</p>
+		{% if has_custom_poster %}
+		<form method="post" class="text-center mt-2">
+			{{ poster_remove_form.hidden_tag() }}
+			{{ poster_remove_form.poster_remove_submit(class_="btn btn-sm btn-outline-danger") }}
+		</form>
+		<p class="small text-muted text-center mt-1 mb-0" style="max-width: 250px;">Deletes the custom artwork and reverts to the TMDb poster.</p>
+		{% endif %}
+	</div>
+	<div class="col-md">
+		<h3>{{ title }}</h3>
+		<p class="text-muted">Pick a poster from the TMDb gallery below, or upload your own image to be this {{ "file's" if file is defined and file else "movie's" }} definitive poster.</p>
+		<div class="col-md-6 px-0">
+			<form method="post" enctype="multipart/form-data">
+				<fieldset {% if not upload_enabled %}disabled{% endif %}>
+				{{ custom_poster_form.hidden_tag() }}
+				<div class="form-group">
+					{{ custom_poster_form.custom_poster.label }}
+					<div class="custom-file">
+						{{ custom_poster_form.custom_poster(type="file", class_="form-control-sm custom-file-input", id="custom-poster", accept="image/*") }}
+						<label class="form-control-sm custom-file-label" for="custom-poster">Choose poster image</label>
+					</div>
+				</div>
+				{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}
+				</fieldset>
+			</form>
+			<script>
+				document.querySelector('.custom-file-input').addEventListener('change',function(e){
+					var fileName = document.getElementById("custom-poster").files[0].name;
+					var nextSibling = e.target.nextElementSibling;
+					nextSibling.innerText = fileName;
+				})
+			</script>
+		</div>
+	</div>
+</div>
+<hr>
+<h3>Posters from TMDb</h3>
+{% if posters is none %}
+	<p class="small text-muted">No TMDb gallery is available{% if movie and not movie.tmdb_id %} — this movie has no TMDb id{% endif %}.</p>
+{% else %}
+	<ul class="nav nav-pills mb-3">
+		<li class="nav-item">
+			<a class="nav-link py-1 {{ 'active' if active_language == 'all' }}" href="{{ language_url('all') }}">All</a>
+		</li>
+		{% for language in languages %}
+		<li class="nav-item">
+			<a class="nav-link py-1 {{ 'active' if active_language == language }}" href="{{ language_url(language) }}">{{ "No text" if language == "none" else language }}</a>
+		</li>
+		{% endfor %}
+	</ul>
+	{% if posters %}
+	<div class="d-flex flex-wrap">
+		{% for poster in posters %}
+		{% set is_default = default_poster_path and poster.file_path == default_poster_path %}
+		<div class="mr-3 mb-4 text-center" style="width: 154px;">
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ poster.file_path }}" loading="lazy" class="border mb-1{% if is_default %} border-primary{% endif %}" alt="Poster option {{ loop.index }}" style="width: 154px;{% if is_default %} border-width: 3px !important;{% endif %}">
+			<div class="small text-muted">{{ poster.width }}&times;{{ poster.height }}{% if poster.iso_639_1 %} &middot; {{ poster.iso_639_1 }}{% endif %}</div>
+			<form method="post">
+				{{ poster_select_form.csrf_token }}
+				{{ poster_select_form.poster_path(value=poster.file_path) }}
+				{{ poster_select_form.poster_select_submit(class_="btn btn-sm btn-outline-primary mt-1", disabled=not upload_enabled) }}
+			</form>
+			{% if is_default %}<div><span class="badge badge-primary">TMDb default</span></div>{% endif %}
+		</div>
+		{% endfor %}
+	</div>
+	{% else %}
+	<p class="small text-muted">No posters in this language.</p>
+	{% endif %}
+{% endif %}
+{% endblock %}
