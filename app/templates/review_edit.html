@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.history') }}">My History</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ movie.tmdb_title if movie.tmdb_title else movie.title }}</li>
+	</ol>
+</nav>
+<div class="row mb-n2">
+	<div class="col-md-auto">
+		{% include "_movie_poster_large.html" %}
+	</div>
+	<div class="col-md-8">
+		<h3><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})</a></h3>
+		<p class="text-muted">
+			{% if user_review.date_watched %}Viewing on {{ user_review.date_watched.strftime("%B %-d, %Y") }}{% else %}Undated viewing{% endif %}{% if user_review.rewatch %} &middot; rewatch{% endif %}
+		</p>
+		<form action="" method="post">
+			{{ movie_review_form.hidden_tag() }}
+			<div class="row">
+				<div class="form-group col-sm-5">
+					{{ movie_review_form.rating.label }}
+					{{ movie_review_form.rating(size=10, class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.rating.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+				<div class="form-group col-sm-5">
+					{{ movie_review_form.date_watched.label }}
+					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+					{% for error in movie_review_form.date_watched.errors %}
+					<div class="text-danger small">{{ error }}</div>
+					{% endfor %}
+				</div>
+				<div class="form-group col-sm-2">
+					<div class="form-check mt-4 pt-2">
+						{{ movie_review_form.liked(class_="form-check-input") }}
+						{{ movie_review_form.liked.label(class_="form-check-label") }}
+					</div>
+				</div>
+			</div>
+			<div class="form-group">
+				{{ movie_review_form.review.label }}
+				{{ movie_review_form.review(class_="form-control form-control-sm", rows=6) }}
+				{% for error in movie_review_form.review.errors %}
+				<div class="text-danger small">{{ error }}</div>
+				{% endfor %}
+			</div>
+			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success", value="Save Review") }}
+			<a class="btn btn-sm btn-outline-secondary ml-2" href="{{ url_for('main.history') }}" role="button">Cancel</a>
+		</form>
+	</div>
+</div>
+{% endblock %}

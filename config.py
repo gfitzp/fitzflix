@@ -133,6 +133,12 @@ class Config(object):
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None
     SONARR_URL                          = os.environ.get("SONARR_URL") or None
 
+    # Plex configuration: URL + token enable the watch-history poller, the
+    # webhook token gates the /api/plex/webhook endpoint
+    PLEX_URL                            = os.environ.get("PLEX_URL") or None
+    PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
+    PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
+
     # Radarr configuration
     RADARR_API_KEY                      = os.environ.get("RADARR_API_KEY") or None
     RADARR_URL                          = os.environ.get("RADARR_URL") or None

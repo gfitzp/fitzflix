@@ -108,6 +108,9 @@ class TestConfig(Config):
 
     TMDB_API_KEY = None
     TMDB_API_URL = "http://127.0.0.1:1"
+    PLEX_URL = None
+    PLEX_TOKEN = None
+    PLEX_WEBHOOK_TOKEN = "plex-test-webhook-token"
     SONARR_URL = "http://127.0.0.1:1"
     SONARR_API_KEY = "sonarr-test-key"
     RADARR_URL = "http://127.0.0.1:1"

@@ -1,3 +1,7 @@
+import json
+import re
+import secrets
+
 from datetime import datetime, timezone
 
 from flask import current_app, jsonify, request
@@ -26,6 +30,67 @@ def queue_details():
     # The user could not be authenticated, return a 401 http error code
 
     return jsonify({}), 401
+
+
+@bp.route("/plex/webhook/<token>", methods=["POST"])
+def plex_webhook(token):
+    """Plex webhook receiver: record movie scrobbles as watches.
+
+    Plex webhooks can't carry auth headers, so a secret path segment gates
+    the endpoint (404 when unset or wrong, indistinguishable from a missing
+    route). Scrobbles enqueue the same apply task the history poller uses;
+    the shared dedup marker keeps the two sources from double-counting.
+    """
+
+    expected = current_app.config["PLEX_WEBHOOK_TOKEN"]
+    if not expected or not secrets.compare_digest(token, expected):
+        return jsonify({}), 404
+
+    # Plex posts multipart form data with the JSON in a "payload" field
+    # (plus an optional thumbnail file); accept a raw JSON body too
+
+    try:
+        if "payload" in request.form:
+            payload = json.loads(request.form["payload"])
+        else:
+            payload = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        payload = {}
+
+    metadata = payload.get("Metadata") or {}
+    if payload.get("event") != "media.scrobble" or metadata.get("type") != "movie":
+        return "", 204
+
+    tmdb_id = None
+    for guid in metadata.get("Guid") or []:
+        match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
+        if match:
+            tmdb_id = int(match.group(1))
+            break
+    if tmdb_id is None:
+        # Legacy metadata agent: the guid is a single string
+        match = re.search(r"themoviedb://(\d+)", metadata.get("guid") or "")
+        if match:
+            tmdb_id = int(match.group(1))
+    if tmdb_id is None:
+        current_app.logger.info(
+            f"Plex scrobble of '{metadata.get('title')}' has no TMDb guid; ignoring"
+        )
+        return "", 204
+
+    username = (payload.get("Account") or {}).get("title") or ""
+    current_app.sql_queue.enqueue(
+        "app.videos.apply_plex_watch",
+        args=(
+            tmdb_id,
+            username,
+            datetime.now(timezone.utc).isoformat(),
+            "webhook",
+        ),
+        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+        description=f"Recording Plex watch of tmdb:{tmdb_id} by {username}",
+    )
+    return "", 204
 
 
 @bp.route("/add-to-cart", methods=["POST"])

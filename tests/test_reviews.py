@@ -76,24 +76,30 @@ def test_parse_letterboxd_export_merges_per_film(app):
     assert jaws["entries"][1]["rating"] == 5
     assert jaws["entries"][0]["review"] is None
 
+    # Rewatch is stored as stated: a blank diary cell is a first watch
+    assert jaws["entries"][0]["rewatch"] is False
+    assert jaws["entries"][1]["rewatch"] is True
+
     # A review with no rating anywhere stays unrated
     tall_t = films[("The Tall T", 1957)]
     assert tall_t["rating"] is None
     assert tall_t["entries"][0]["review"] == "A nice day."
     assert tall_t["entries"][0]["rating"] is None
 
-    # Rated-only and liked-only films get a single dateless entry
+    # Rated-only and liked-only films get a single dateless entry, with an
+    # unknown rewatch state
     assert films[("Sharknado", 2013)]["entries"][0]["watched"] is None
+    assert films[("Sharknado", 2013)]["entries"][0]["rewatch"] is None
     london = films[("The London Story", 1986)]
     assert london["liked"] is True
     assert london["entries"][0]["watched"] is None
 
 
 def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
-    page = admin_client.get("/reviews").get_data(as_text=True)
+    page = admin_client.get("/history").get_data(as_text=True)
 
     response = admin_client.post(
-        "/reviews",
+        "/history",
         data={
             "csrf_token": csrf_token_from(page),
             "upload_submit": "Import Reviews",
@@ -182,12 +188,14 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
         assert first.rating == 4
         assert first.whole_stars == 4 and first.half_stars == 0
         assert first.liked is True
+        assert first.rewatch is False
 
         assert second.date_watched == datetime(2024, 6, 1)
         assert second.rating == 5
         assert second.review == "Still holds up."
         assert second.date_reviewed == datetime(2024, 6, 2)
         assert second.liked is True
+        assert second.rewatch is True
 
         # Re-importing the same export updates rather than duplicates
         assert apply_letterboxd_import(user_id, films) is True
@@ -197,7 +205,7 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
         )
 
         # The reviews page renders unrated and liked entries
-        page = admin_client.get("/reviews").get_data(as_text=True)
+        page = admin_client.get("/history").get_data(as_text=True)
         assert page and "bi-heart-fill" in page
 
 
@@ -257,6 +265,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
                 date_watched=datetime(2024, 6, 1, 20, 30),
                 date_reviewed=datetime(2024, 6, 2),
                 liked=True,
+                rewatch=True,
                 **star_rating_fields(4.0),
             )
         )
@@ -281,9 +290,9 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
     monkeypatch.setattr(main_routes, "send_email", fake_send_email)
 
-    page = admin_client.get("/reviews").get_data(as_text=True)
+    page = admin_client.get("/history").get_data(as_text=True)
     response = admin_client.post(
-        "/reviews",
+        "/history",
         data={
             "csrf_token": csrf_token_from(page),
             "export_submit": "Export Reviews",
@@ -301,6 +310,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
         "Year",
         "Rating",
         "WatchedDate",
+        "Rewatch",
         "Review",
     ]
 
@@ -311,19 +321,23 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     # truncate to the calendar date Letterboxd requires
     assert jaws[4] == "4"
     assert jaws[5] == "2024-06-01"
-    assert 'He said "we need a bigger boat", or similar.' in jaws[6]
+    # Rewatch was recorded on this row, so it exports per the spec
+    assert jaws[6] == "Yes"
+    assert 'He said "we need a bigger boat", or similar.' in jaws[7]
 
     tall_t = by_title["The Tall T"]
     assert tall_t[4] == "" and tall_t[5] == ""
-    assert tall_t[6] == "A nice day."
+    # A legacy row with no rewatch information exports a blank cell
+    assert tall_t[6] == ""
+    assert tall_t[7] == "A nice day."
 
 
 def test_legacy_json_lines_upload_still_works(app, admin_client):
-    page = admin_client.get("/reviews").get_data(as_text=True)
+    page = admin_client.get("/history").get_data(as_text=True)
 
     legacy = b'{"name": "Old Import Film", "rating": 3.5}\n'
     response = admin_client.post(
-        "/reviews",
+        "/history",
         data={
             "csrf_token": csrf_token_from(page),
             "upload_submit": "Import Reviews",
@@ -604,7 +618,7 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
             )
         db.session.commit()
 
-    page = admin_client.get("/reviews").get_data(as_text=True)
+    page = admin_client.get("/history").get_data(as_text=True)
     assert "charts/loader.js" not in page
     assert 'id="rating-distribution"' in page
     # Five whole-star bins, each absorbing the half-step below it: the
@@ -618,3 +632,266 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
     assert "3 ratings" in page
     # Review titles are no longer inlined into the page's JavaScript
     assert "arrayToDataTable" not in page
+
+
+def test_history_page_offers_per_viewing_edit_links(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("History Film", 1990)
+        reviewed = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="Thoughts were had.",
+            date_watched=datetime(2024, 3, 1),
+            **star_rating_fields(3.5),
+        )
+        bare = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2024, 4, 1),
+            **star_rating_fields(None),
+        )
+        db.session.add_all([reviewed, bare])
+        db.session.commit()
+        reviewed_id, bare_id = reviewed.id, bare.id
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert "My History" in page
+    assert f"/review/{reviewed_id}/edit" in page
+    assert f"/review/{bare_id}/edit" in page
+    assert "Edit review" in page
+    assert "Add review" in page
+
+
+def test_review_edit_updates_the_viewing_in_place(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Editable Film", 1995)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="First impressions.",
+            date_watched=datetime(2024, 1, 5),
+            **star_rating_fields(3.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id, movie_id = row.id, movie.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    assert "First impressions." in page
+    assert 'value="2024-01-05"' in page
+
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "rating": "4.5",
+            "liked": "y",
+            "date_watched": "2024-01-05",
+            "review": "On reflection, better than I thought.",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/history")
+
+    with app.app_context():
+        db.session.expire_all()
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.rating == 4.5
+        assert row.whole_stars == 4 and row.half_stars == 1
+        assert row.liked is True
+        assert row.review == "On reflection, better than I thought."
+        # The row had no review date, so the text change set one (a first
+        # review, not an update)
+        assert row.date_reviewed is not None
+        assert row.date_updated is None
+        # Still one row: edited in place, not logged as a new viewing
+        assert (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
+            == 1
+        )
+
+
+def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Plex Watched Film", 2001)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2026, 8, 1),
+            rewatch=False,
+            **star_rating_fields(None),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "rating": "",
+            "date_watched": "2026-08-01",
+            "review": "Watched on Plex, loved it.",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        db.session.expire_all()
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.review == "Watched on Plex, loved it."
+        assert row.rating is None
+        assert row.rewatch is False  # untouched by the edit
+
+
+def test_review_edit_rejects_empty_submission(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Guarded Film", 2002)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2026, 8, 2),
+            **star_rating_fields(None),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "rating": "",
+            "date_watched": "2026-08-02",
+            "review": "",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.status_code == 200
+    assert "Add a rating, mark it liked, or write a review." in response.get_data(
+        as_text=True
+    )
+
+
+def test_review_edit_is_owner_only(app, admin_client, user_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        admin_id = User.query.filter_by(admin=True).first().id
+        movie = make_movie("Private Film", 2003)
+        row = UserMovieReview(
+            user_id=admin_id,
+            movie_id=movie.id,
+            review="Mine.",
+            date_watched=datetime(2026, 8, 3),
+            **star_rating_fields(4.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    assert user_client.get(f"/review/{row_id}/edit").status_code == 404
+    assert admin_client.get(f"/review/{row_id}/edit").status_code == 200
+
+
+def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Revised Film", 2004)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="Original thoughts.",
+            date_watched=datetime(2024, 5, 1),
+            date_reviewed=datetime(2024, 5, 2),
+            **star_rating_fields(3.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "rating": "3",
+            "date_watched": "2024-05-01",
+            "review": "Revised thoughts.",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        db.session.expire_all()
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.review == "Revised thoughts."
+        # The original review date survives; the edit lands in date_updated
+        assert row.date_reviewed == datetime(2024, 5, 2)
+        assert row.date_updated is not None
+
+    # The edit happened years after the review date, so the history page
+    # shows both dates
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert "; updated" in page
+
+
+def test_history_hides_update_date_from_the_same_day(app, admin_client):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Same Day Film", 2005)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=movie.id,
+                review="Reviewed and touched up within the day.",
+                date_watched=datetime(2024, 7, 1),
+                date_reviewed=datetime(2024, 7, 2, 9, 0),
+                date_updated=datetime(2024, 7, 2, 22, 30),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert "Reviewed and touched up within the day." in page
+    assert "; updated" not in page

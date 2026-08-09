@@ -68,6 +68,7 @@ from app.main.forms import (
     TrackMetadataScanForm,
     TranscodeForm,
     TVShoppingFilterForm,
+    PlexUsernameForm,
     UpdateAPIKeyForm,
 )
 from app.models import (
@@ -80,6 +81,7 @@ from app.models import (
     RefQuality,
     TMDBCredit,
     TVSeries,
+    User,
     UserMovieReview,
     movie_file_rank,
     tmdb_get,
@@ -2326,10 +2328,73 @@ def file_poster(file_id):
     )
 
 
-@bp.route("/reviews", methods=["GET", "POST"])
+@bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])
 @login_required
-def reviews():
-    """Display all of a user's movie reviews."""
+def review_edit(review_id):
+    """Add or edit the review on one logged viewing.
+
+    Each viewing — a Letterboxd import row, a Plex watch, or a manual log
+    from the movie page — is its own row; this edits that row in place,
+    unlike the movie page's form, which always logs a new viewing.
+    """
+
+    user_review = UserMovieReview.query.filter_by(
+        id=review_id, user_id=current_user.id
+    ).first_or_404()
+    movie = user_review.movie
+    title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
+
+    movie_review_form = MovieReviewForm()
+    if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
+        rating = (
+            float(movie_review_form.rating.data)
+            if movie_review_form.rating.data is not None
+            else None
+        )
+        for field, value in star_rating_fields(rating).items():
+            setattr(user_review, field, value)
+        user_review.liked = movie_review_form.liked.data
+        user_review.date_watched = movie_review_form.date_watched.data
+
+        # Text changes on a row that was already reviewed keep the original
+        # review date and stamp date_updated instead; a first review (no
+        # date_reviewed yet) sets the review date
+
+        new_text = movie_review_form.review.data or ""
+        if new_text != (user_review.review or ""):
+            user_review.review = new_text
+            if user_review.date_reviewed:
+                user_review.date_updated = datetime.now(timezone.utc)
+            else:
+                user_review.date_reviewed = datetime.now(timezone.utc)
+
+        db.session.commit()
+        flash(f"Updated your review of '{title}'", "success")
+        return redirect(url_for("main.history"))
+
+    if request.method == "GET":
+        movie_review_form = MovieReviewForm(
+            rating=user_review.rating,
+            liked=user_review.liked,
+            review=user_review.review,
+            date_watched=(
+                user_review.date_watched.date() if user_review.date_watched else None
+            ),
+        )
+
+    return render_template(
+        "review_edit.html",
+        title=f'Edit review for "{title}"',
+        movie=movie,
+        user_review=user_review,
+        movie_review_form=movie_review_form,
+    )
+
+
+@bp.route("/history", methods=["GET", "POST"])
+@login_required
+def history():
+    """Display all of a user's viewings and reviews."""
 
     # Paginate a user's movie reviews, show 50 reviews per page
 
@@ -2345,10 +2410,10 @@ def reviews():
         .paginate(page=page, per_page=50, error_out=False)
     )
     next_url = (
-        url_for("main.reviews", page=reviews.next_num) if reviews.has_next else None
+        url_for("main.history", page=reviews.next_num) if reviews.has_next else None
     )
     prev_url = (
-        url_for("main.reviews", page=reviews.prev_num) if reviews.has_prev else None
+        url_for("main.history", page=reviews.prev_num) if reviews.has_prev else None
     )
 
     # The ratings distribution: five whole-star bins, each absorbing the
@@ -2402,7 +2467,16 @@ def reviews():
         # format (https://letterboxd.com/about/importing-data/)
 
         csv_export = [
-            ["tmdbID", "imdbID", "Title", "Year", "Rating", "WatchedDate", "Review"]
+            [
+                "tmdbID",
+                "imdbID",
+                "Title",
+                "Year",
+                "Rating",
+                "WatchedDate",
+                "Rewatch",
+                "Review",
+            ]
         ]
 
         # Compile the list of this user's reviews for export
@@ -2429,6 +2503,10 @@ def reviews():
                     if r.modified_rating == int(r.modified_rating)
                     else r.modified_rating
                 )
+            # Rewatch per the Letterboxd spec: Yes/No, blank when unknown
+            # (rows that predate the flag)
+
+            rewatch = "" if r.rewatch is None else ("Yes" if r.rewatch else "No")
             csv_export.append(
                 [
                     r.movie.tmdb_id,
@@ -2437,6 +2515,7 @@ def reviews():
                     r.movie.year,
                     rating,
                     r.date_watched.strftime("%Y-%m-%d") if r.date_watched else "",
+                    rewatch,
                     r.review or "",
                 ]
             )
@@ -2466,7 +2545,7 @@ def reviews():
 
         f.close()
 
-        return redirect(url_for("main.reviews"))
+        return redirect(url_for("main.history"))
 
     review_upload_form = ReviewUploadForm()
     if (
@@ -2513,11 +2592,11 @@ def reviews():
                         job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                         description=f"Reviewing {movie_rating['name']}",
                     )
-        return redirect(url_for("main.reviews"))
+        return redirect(url_for("main.history"))
 
     return render_template(
-        "reviews.html",
-        title="My Movie Reviews",
+        "history.html",
+        title="My History",
         review_export_form=review_export_form,
         review_upload_form=review_upload_form,
         reviews=reviews.items,
@@ -2557,11 +2636,38 @@ def profile():
         flash("Regenerated the API key.", "success")
         return redirect(url_for("main.profile"))
 
+    # Form to map this account to a Plex username, so Plex watches land in
+    # this user's diary
+
+    plex_form = PlexUsernameForm()
+    if plex_form.plex_submit.data and plex_form.validate_on_submit():
+        plex_username = (plex_form.plex_username.data or "").strip() or None
+        taken = (
+            User.query.filter(User.plex_username == plex_username)
+            .filter(User.id != current_user.id)
+            .first()
+            if plex_username
+            else None
+        )
+        if taken:
+            flash(f"'{plex_username}' is already mapped to another user.", "danger")
+        else:
+            current_user.plex_username = plex_username
+            db.session.commit()
+            if plex_username:
+                flash(
+                    f"Plex watches by '{plex_username}' now count as yours.", "success"
+                )
+            else:
+                flash("Removed your Plex username mapping.", "success")
+        return redirect(url_for("main.profile"))
+
     return render_template(
         "profile.html",
         title="Profile",
         email_form=email_form,
         api_refresh_form=api_refresh_form,
+        plex_form=plex_form,
     )
 
 
@@ -2655,6 +2761,7 @@ def _scheduled_tasks():
         "0 * * * *": "Hourly",
         "30 * * * *": "Hourly at :30",
         "*/10 * * * *": "Every 10 minutes",
+        "*/15 * * * *": "Every 15 minutes",
         "* * * * *": "Every minute",
     }
     scheduled_tasks = []
@@ -3362,7 +3469,7 @@ def review_tmdb(tmdb_id):
 
     if not current_app.config["TMDB_API_KEY"]:
         flash("TMDB_API_KEY is not configured, so TMDb can't be queried.", "warning")
-        return redirect(url_for("main.reviews"))
+        return redirect(url_for("main.history"))
 
     try:
         r = tmdb_get(
@@ -3377,7 +3484,7 @@ def review_tmdb(tmdb_id):
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         flash("TMDb could not be reached; try again in a moment.", "warning")
-        return redirect(url_for("main.reviews"))
+        return redirect(url_for("main.history"))
 
     details = r.json()
 
@@ -3426,7 +3533,7 @@ def review_tmdb(tmdb_id):
             "can't be reviewed.",
             "warning",
         )
-        return redirect(url_for("main.reviews"))
+        return redirect(url_for("main.history"))
     year = int(release_year)
 
     movie_review_form = MovieReviewForm(date_watched=datetime.now())

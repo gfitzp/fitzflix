@@ -26,5 +26,17 @@
     		{{ api_refresh_form.regenerate_key_submit(class_="btn btn-sm btn-warning") }}
     	</form>
     </div>
+    <div class="col-md-4">
+    	<p>Plex username:{% if current_user.plex_username %} {{ current_user.plex_username }}{% else %} <span class="text-muted">not mapped</span>{% endif %}</p>
+    	<form action="" method="post">
+    		{{ plex_form.hidden_tag() }}
+    		<div class="form-group">
+    			{{ plex_form.plex_username.label }}
+    			{{ plex_form.plex_username(size=32, class_="form-control", value=current_user.plex_username or "") }}
+    		</div>
+    		{{ plex_form.plex_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">Plex watches by this account are recorded in your diary. Leave blank to unmap.</p>
+    </div>
 </div>
 {% endblock %}

@@ -399,6 +399,22 @@ def create_app(config_class=Config, watch_import_dir=False):
 
         app.maintenance_scheduler.cancel("sqs-retrieve")
 
+    # Poll Plex watch history every 15 minutes as the self-healing backstop
+    # to the real-time webhook: watches scrobbled while the app was down
+    # are picked up from the stored cursor on the next poll
+
+    if app.config["PLEX_URL"] and app.config["PLEX_TOKEN"]:
+        register_cron(
+            app.maintenance_scheduler,
+            "*/15 * * * *",
+            func="app.videos.plex_history_poll",
+            job_id="plex-history-poll",
+            timeout="15m",
+            description="Polling Plex for watch history",
+        )
+    elif "plex-history-poll" in app.maintenance_scheduler:
+        app.maintenance_scheduler.cancel("plex-history-poll")
+
     # Configure the Redis redlock manager
 
     app.lock_manager = Redlock([app.redis])

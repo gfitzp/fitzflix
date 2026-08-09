@@ -768,6 +768,12 @@ class User(UserMixin, db.Model):
     admin = db.Column(db.Boolean, default=False)
     api_key = db.Column(db.String(32))
 
+    # This user's Plex account name, so Plex watches can be attributed to
+    # them personally (unmapped watchers still count toward household
+    # shopping-cart priority)
+
+    plex_username = db.Column(db.String(64), unique=True)
+
     def __repr__(self):
         return f"<User '{self.email}'>"
 
@@ -1003,6 +1009,16 @@ class UserMovieReview(db.Model):
     liked = db.Column(db.Boolean, nullable=False, default=False, server_default="0")
     date_watched = db.Column(db.DateTime)
     date_reviewed = db.Column(db.DateTime)
+
+    # When the review text was last edited; date_reviewed keeps the
+    # original review date
+
+    date_updated = db.Column(db.DateTime)
+
+    # True for a repeat viewing, False for a first watch, NULL for legacy
+    # rows where nobody knows
+
+    rewatch = db.Column(db.Boolean)
 
     def __repr__(self):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"

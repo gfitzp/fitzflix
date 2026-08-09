@@ -50,6 +50,13 @@ class UpdateAPIKeyForm(FlaskForm):
     regenerate_key_submit = SubmitField("Regenerate API Key")
 
 
+class PlexUsernameForm(FlaskForm):
+    """Map this Fitzflix account to a Plex account for watch attribution."""
+
+    plex_username = StringField("Plex Username", validators=[Optional()])
+    plex_submit = SubmitField("Update Plex Mapping")
+
+
 class ImportForm(FlaskForm):
     submit = SubmitField("Scan Import Directory")
 

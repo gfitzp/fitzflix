@@ -3234,6 +3234,7 @@ def parse_letterboxd_export(zip_bytes):
                         "logged": None,
                         "rating": None,
                         "review": None,
+                        "rewatch": None,
                     },
                 )
                 if row.get("Date"):
@@ -3243,6 +3244,13 @@ def parse_letterboxd_export(zip_bytes):
                 if row.get("Review"):
                     entry["review"] = row["Review"]
 
+                # Stored as stated: Letterboxd knows about viewings that
+                # predate this app, so a blank cell is a first watch, not
+                # an unknown — only rows without the column stay None
+
+                if "Rewatch" in row:
+                    entry["rewatch"] = (row.get("Rewatch") or "").strip() == "Yes"
+
     results = []
     for f in films.values():
         f["entries"] = sorted(
@@ -3250,7 +3258,13 @@ def parse_letterboxd_export(zip_bytes):
         )
         if not f["entries"] and (f["rating"] is not None or f["liked"]):
             f["entries"] = [
-                {"watched": None, "logged": None, "rating": None, "review": None}
+                {
+                    "watched": None,
+                    "logged": None,
+                    "rating": None,
+                    "review": None,
+                    "rewatch": None,
+                }
             ]
         if f["entries"]:
             results.append(f)
@@ -3432,6 +3446,7 @@ def apply_letterboxd_import(user_id, films):
                             review=entry["review"] or "",
                             date_watched=date_watched,
                             date_reviewed=date_reviewed,
+                            rewatch=entry.get("rewatch"),
                             **star_rating_fields(rating),
                         )
                         db.session.add(review)
@@ -3443,6 +3458,8 @@ def apply_letterboxd_import(user_id, films):
                             review.review = entry["review"]
                         if date_reviewed and not review.date_reviewed:
                             review.date_reviewed = date_reviewed
+                        if entry.get("rewatch") is not None:
+                            review.rewatch = entry["rewatch"]
                     review.liked = review.liked or film["liked"]
                     imported += 1
 
@@ -3475,6 +3492,220 @@ def apply_letterboxd_import(user_id, films):
 
         else:
             return True
+
+
+def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
+    """Record one Plex movie watch, from either the webhook or the poller.
+
+    Every watch bumps the movie's household shopping-cart priority (the
+    same effect as the Tautulli add-to-cart call). When the Plex account
+    maps to a Fitzflix user via User.plex_username, the watch also lands
+    in their diary as an unrated review row keyed on user/movie/date —
+    with rewatch computed from whether any earlier row exists.
+
+    A Redis marker keyed on account/movie/date makes the two sources
+    idempotent: whichever records the watch first wins, and repeats of the
+    same film on the same day don't double-count.
+    """
+
+    with app.app_context():
+        try:
+            watched_at = datetime.fromisoformat(viewed_at)
+            date_watched = datetime(watched_at.year, watched_at.month, watched_at.day)
+            marker = (
+                f"fitzflix:plex:watch:{plex_username}:{tmdb_id}:"
+                f"{date_watched.strftime('%Y-%m-%d')}"
+            )
+            if not current_app.redis.set(marker, source, nx=True, ex=172800):
+                current_app.logger.debug(
+                    f"Plex watch already recorded ({marker}); skipping"
+                )
+                return True
+
+            movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
+            if movie is None:
+                current_app.logger.info(
+                    f"Plex watch of tmdb:{tmdb_id} by '{plex_username}' matches "
+                    f"no movie in the library; ignoring"
+                )
+                return True
+
+            movie.shopping_cart_add_date = datetime.now(timezone.utc)
+            movie.shopping_cart_priority = (movie.shopping_cart_priority or 0) + 1
+
+            user = None
+            if plex_username:
+                user = User.query.filter_by(plex_username=plex_username).first()
+
+            if user is not None:
+                existing = UserMovieReview.query.filter_by(
+                    user_id=user.id, movie_id=movie.id, date_watched=date_watched
+                ).first()
+                if existing is None:
+                    rewatch = (
+                        db.session.query(UserMovieReview.id)
+                        .filter_by(user_id=user.id, movie_id=movie.id)
+                        .first()
+                        is not None
+                    )
+                    db.session.add(
+                        UserMovieReview(
+                            user_id=user.id,
+                            movie_id=movie.id,
+                            review="",
+                            date_watched=date_watched,
+                            rewatch=rewatch,
+                            **star_rating_fields(None),
+                        )
+                    )
+
+            db.session.commit()
+            current_app.logger.info(
+                f"Plex watch ({source}): '{movie.title} ({movie.year})' by "
+                f"'{plex_username}'"
+                + ("" if user is None else f" — recorded in {user.email}'s diary")
+            )
+
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            db.session.rollback()
+            return False
+
+        else:
+            return True
+
+
+def _plex_tmdb_id(entry, headers):
+    """Resolve a Plex history entry to a TMDb id via its metadata Guid
+    list, cached in Redis since rating keys are stable."""
+
+    rating_key = entry.get("ratingKey")
+    if not rating_key:
+        return None
+    cache_key = f"fitzflix:plex:tmdb:{rating_key}"
+    cached = current_app.redis.get(cache_key)
+    if cached is not None:
+        # An empty value means known-unresolvable (no TMDb guid)
+        return int(cached) if cached else None
+
+    tmdb_id = None
+    try:
+        r = requests.get(
+            f"{current_app.config['PLEX_URL']}/library/metadata/{rating_key}",
+            headers=headers,
+            timeout=30,
+        )
+        r.raise_for_status()
+        items = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+        guids = (items[0].get("Guid") or []) if items else []
+        for guid in guids:
+            match = re.match(r"tmdb://(\d+)", guid.get("id") or "")
+            if match:
+                tmdb_id = int(match.group(1))
+                break
+        if tmdb_id is None and items:
+            # Legacy metadata agent: the guid is a single string
+            match = re.search(r"themoviedb://(\d+)", items[0].get("guid") or "")
+            if match:
+                tmdb_id = int(match.group(1))
+    except Exception:
+        # Don't cache transient failures
+        current_app.logger.warning(traceback.format_exc())
+        return None
+
+    current_app.redis.setex(cache_key, 604800, str(tmdb_id) if tmdb_id else "")
+    return tmdb_id
+
+
+def plex_history_poll():
+    """Poll Plex's watch history for movie scrobbles past the stored cursor.
+
+    The self-healing backstop to the real-time webhook: anything Plex
+    scrobbled while Fitzflix was down is picked up here, and the shared
+    dedup marker in apply_plex_watch keeps the two sources from
+    double-counting. The first run only plants the cursor, so history
+    predating the feature isn't ingested.
+    """
+
+    with app.app_context():
+        config = current_app.config
+        if not (config["PLEX_URL"] and config["PLEX_TOKEN"]):
+            return True
+
+        redis_conn = current_app.redis
+        headers = {"X-Plex-Token": config["PLEX_TOKEN"], "Accept": "application/json"}
+        cursor_key = "fitzflix:plex:history-cursor"
+
+        cursor = redis_conn.get(cursor_key)
+        if cursor is None:
+            redis_conn.set(cursor_key, int(time.time()))
+            current_app.logger.info(
+                "Plex history poll: cursor initialized; watches from now on "
+                "will be recorded"
+            )
+            return True
+        cursor = int(cursor)
+
+        try:
+            r = requests.get(
+                f"{config['PLEX_URL']}/status/sessions/history/all",
+                headers={**headers, "X-Plex-Container-Size": "500"},
+                params={"viewedAt>": cursor, "sort": "viewedAt:asc"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            entries = (r.json().get("MediaContainer") or {}).get("Metadata") or []
+        except Exception:
+            current_app.logger.error(traceback.format_exc())
+            return False
+
+        # Server-account id -> Plex username, for watcher attribution; a
+        # failure here still counts watches toward household priority
+
+        accounts = {}
+        try:
+            r = requests.get(
+                f"{config['PLEX_URL']}/accounts", headers=headers, timeout=30
+            )
+            r.raise_for_status()
+            for account in (r.json().get("MediaContainer") or {}).get("Account") or []:
+                accounts[account.get("id")] = account.get("name")
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+
+        newest = cursor
+        queued = 0
+        for entry in entries:
+            viewed_at = int(entry.get("viewedAt") or 0)
+            newest = max(newest, viewed_at)
+            if entry.get("type") != "movie" or viewed_at <= cursor:
+                continue
+            tmdb_id = _plex_tmdb_id(entry, headers)
+            if tmdb_id is None:
+                current_app.logger.info(
+                    f"Plex history entry '{entry.get('title')}' has no TMDb "
+                    f"guid; ignoring"
+                )
+                continue
+            account_id = entry.get("accountID")
+            username = accounts.get(account_id) or f"account-{account_id}"
+            current_app.sql_queue.enqueue(
+                "app.videos.apply_plex_watch",
+                args=(
+                    tmdb_id,
+                    username,
+                    datetime.fromtimestamp(viewed_at, tz=timezone.utc).isoformat(),
+                    "history",
+                ),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Recording Plex watch of tmdb:{tmdb_id} by {username}",
+            )
+            queued += 1
+
+        redis_conn.set(cursor_key, newest)
+        if queued:
+            current_app.logger.info(f"Plex history poll: {queued} new watch(es)")
+        return True
 
 
 def review_task(user_id, title, rating):

@@ -114,6 +114,29 @@ When a download completes, Fitzflix renames the file with a *downgraded* quality
 
 Downloads with a custom format score below 1600 are labeled `WEBRip` instead of `WEBDL`. The file is imported in place from the download client's folder (not copied to the import directory), TV episodes that aired within the last 14 days jump to the front of the import queue, and Sonarr is asked to rescan the series after the rename so its records stay accurate.
 
+## Tracking Plex watches
+
+Fitzflix can record movie watches straight from Plex. Every watch bumps the movie's shopping-list priority for the whole household, and a watcher mapped to a Fitzflix account also gets the watch recorded in their diary as an unrated entry — flagged as a rewatch when they've logged the film before. Two sources feed the same recording logic and de-duplicate against each other, so they can (and ideally should) run together: the webhook reports watches in real time, and the poller catches anything the webhook missed while Fitzflix was down.
+
+### Webhook (real time; requires Plex Pass)
+
+1. Set `PLEX_WEBHOOK_TOKEN` in `.env` to a long random string (e.g. `python3 -c "import secrets; print(secrets.token_hex(24))"`) and restart Fitzflix.
+2. In Plex Web, open **Settings → Account → Webhooks** and add:
+
+   `https://<fitzflix host>/api/plex/webhook/<PLEX_WEBHOOK_TOKEN>`
+
+Plex can't send credentials with webhooks, so the secret in the URL is the authentication — the endpoint answers 404 to anything else. Only movie `media.scrobble` events are recorded (a scrobble fires when Plex considers the item watched, at about 90% played); play/pause/rating events and TV episodes are ignored. Movies are matched to the library by their TMDb guid, covering both the current Plex Movie agent and the legacy TMDb agent.
+
+### History poller (self-healing backstop; no Plex Pass needed)
+
+Set `PLEX_URL` (e.g. `http://<plex host>:32400`) and `PLEX_TOKEN` ([finding your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) in `.env` and restart. A scheduled task then polls Plex's watch history every 15 minutes from a stored cursor, so watches scrobbled while Fitzflix was down are picked up on the next poll. The first poll only plants the cursor — history from before the feature was enabled is not imported.
+
+### Mapping watchers to users
+
+Each Fitzflix user can enter their **Plex username** on their Profile page. Watches by that Plex account then land in their diary; watches by unmapped accounts (house guests, unlinked managed users) still count toward the household shopping-list priority, just without a diary entry.
+
+If Tautulli has been calling `/api/add-to-cart`, disable that notifier once direct tracking is confirmed working — the endpoint still works, but Tautulli and the direct sources would each count the same watch.
+
 ## System requirements
 
 Fitzflix is developed and run on macOS with [Homebrew](https://brew.sh), and the default binary paths point at `/opt/homebrew/bin`; every path below can be overridden in the `.env` file, so any platform that provides these tools should work.
@@ -173,6 +196,7 @@ TMDB_API_KEY=<your TMDb API key>
 | `ARCHIVE_ORIGINAL_MEDIA` | Upload each imported original to AWS S3 for archival |
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | Credentials for the archival bucket; all three are required for uploads |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | SMTP server for error notifications and password-reset emails, sent from `SERVER_EMAIL` to `ADMIN_EMAIL` (both default to `MAIL_USERNAME`) |
+| `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking: URL and token enable the 15-minute history poller, and the webhook token gates the `/api/plex/webhook/<token>` endpoint (see [Tracking Plex watches](#tracking-plex-watches)) |
 | `HANDBRAKE_PRESET`, `HANDBRAKE_PRESET_FILE`, `HANDBRAKE_EXTENSION` | Transcoding preset name, an optional exported preset file it lives in, and the output container |
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | Application log location (default `logs/fitzflix.log`) and how many days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | Per-queue job timeouts in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |
