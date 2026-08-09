@@ -131,7 +131,8 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
             user_id=mapped_admin, movie_id=movie_id
         ).all()
         assert len(diary) == 1
-        assert diary[0].date_watched == datetime(2026, 8, 1)
+        # The full watch timestamp is stored, not a midnight-truncated date
+        assert diary[0].date_watched == datetime(2026, 8, 1, 21, 15)
         assert diary[0].rating is None
         assert diary[0].liked is False
         assert diary[0].rewatch is False
@@ -158,7 +159,9 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
         db.session.expire_all()
         assert db.session.get(Movie, movie_id).shopping_cart_priority == 2
         rewatch_row = UserMovieReview.query.filter_by(
-            user_id=mapped_admin, movie_id=movie_id, date_watched=datetime(2026, 8, 5)
+            user_id=mapped_admin,
+            movie_id=movie_id,
+            date_watched=datetime(2026, 8, 5, 20, 0),
         ).one()
         assert rewatch_row.rewatch is True
 
@@ -379,3 +382,121 @@ def test_reviews_page_badges_rewatches(app, admin_client):
 
     page = admin_client.get("/history").get_data(as_text=True)
     assert "Rewatch" in page
+
+
+def test_letterboxd_import_merges_with_plex_timed_row(app):
+    """A Letterboxd entry for a date where a Plex watch (with a clock
+    time) already exists updates that row instead of sitting beside it."""
+
+    from app.videos import apply_letterboxd_import, apply_plex_watch
+
+    with app.app_context():
+        user = User.query.first()
+        user_plex = user.plex_username
+        user.plex_username = "merge-drill"
+        db.session.commit()
+        try:
+            movie = make_movie("Cross Source Film", 1969, tmdb_id=77321)
+            db.session.commit()
+            movie_id = movie.id
+
+            assert (
+                apply_plex_watch(
+                    77321, "merge-drill", "2026-08-05T20:30:00+00:00", "webhook"
+                )
+                is True
+            )
+            films = [
+                {
+                    "title": "Cross Source Film",
+                    "year": 1969,
+                    "movie_id": movie_id,
+                    "rating": 4.0,
+                    "liked": True,
+                    "entries": [
+                        {
+                            "watched": "2026-08-05",
+                            "logged": "2026-08-06",
+                            "rating": 4.0,
+                            "review": "Merged in from Letterboxd.",
+                            "rewatch": False,
+                        }
+                    ],
+                }
+            ]
+            assert apply_letterboxd_import(user.id, films) is True
+
+            db.session.expire_all()
+            rows = UserMovieReview.query.filter_by(
+                user_id=user.id, movie_id=movie_id
+            ).all()
+            assert len(rows) == 1
+            # The Plex clock time survives; the Letterboxd data merges in
+            assert rows[0].date_watched == datetime(2026, 8, 5, 20, 30)
+            assert rows[0].rating == 4.0
+            assert rows[0].review == "Merged in from Letterboxd."
+        finally:
+            db.session.rollback()
+            User.query.first().plex_username = user_plex
+            db.session.commit()
+
+
+def test_review_edit_preserves_plex_timestamp(app, admin_client):
+    """Editing a viewing without changing its date keeps the stored clock
+    time; changing the date stores a fresh timestamp."""
+
+    import re
+
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Timestamped Film", 1988)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            review="",
+            date_watched=datetime(2026, 8, 9, 17, 49, 14),
+            rewatch=False,
+            **star_rating_fields(None),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": token,
+            "rating": "4",
+            "date_watched": "2026-08-09",
+            "review": "Same date, time kept.",
+            "review_submit": "Save Review",
+        },
+    )
+    with app.app_context():
+        db.session.expire_all()
+        assert db.session.get(UserMovieReview, row_id).date_watched == datetime(
+            2026, 8, 9, 17, 49, 14
+        )
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": token,
+            "rating": "4",
+            "date_watched": "2026-08-07",
+            "review": "Same date, time kept.",
+            "review_submit": "Save Review",
+        },
+    )
+    with app.app_context():
+        db.session.expire_all()
+        assert db.session.get(UserMovieReview, row_id).date_watched == datetime(
+            2026, 8, 7
+        )

@@ -103,6 +103,22 @@ from rq.registry import FailedJobRegistry, StartedJobRegistry
 from functools import wraps
 
 
+def _watched_timestamp(watched_date):
+    """A full DateTime for a date-only form value.
+
+    Logging today's watch keeps the clock time so same-day viewings order
+    correctly on the history page; past dates carry no time information
+    and store midnight.
+    """
+
+    if watched_date is None:
+        return None
+    now = datetime.now()
+    if watched_date == now.date():
+        return now
+    return datetime.combine(watched_date, datetime.min.time())
+
+
 def admin_required(view):
     """Allow only admin users through; everyone else bounces to the home
     page. Stack under @login_required so anonymous visitors still get the
@@ -813,7 +829,7 @@ def movie(movie_id):
             movie_id=movie.id,
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
-            date_watched=movie_review_form.date_watched.data,
+            date_watched=_watched_timestamp(movie_review_form.date_watched.data),
             date_reviewed=datetime.now(timezone.utc),
             **star_rating_fields(rating),
         )
@@ -2324,7 +2340,19 @@ def review_edit(review_id):
         for field, value in star_rating_fields(rating).items():
             setattr(user_review, field, value)
         user_review.liked = movie_review_form.liked.data
-        user_review.date_watched = movie_review_form.date_watched.data
+
+        # The date-only form field can't improve on a stored timestamp
+        # (e.g. a Plex watch's actual clock time), so only replace the
+        # value when the calendar date itself changed
+
+        new_date = movie_review_form.date_watched.data
+        if new_date is None:
+            user_review.date_watched = None
+        elif (
+            user_review.date_watched is None
+            or user_review.date_watched.date() != new_date
+        ):
+            user_review.date_watched = _watched_timestamp(new_date)
 
         # Text changes on a row that was already reviewed keep the original
         # review date and stamp date_updated instead; a first review (no
@@ -2369,12 +2397,18 @@ def history():
     # Paginate a user's movie reviews, show 50 reviews per page
 
     page = request.args.get("page", 1, type=int)
+
+    # Chronological by watch date, newest first — unreviewed viewings (Plex
+    # watches) sort by recency like everything else. DESC puts NULL watch
+    # dates last in both MySQL and SQLite, so dateless rating-only entries
+    # trail the dated history rather than burying it.
+
     reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .filter(UserMovieReview.user_id == int(current_user.id))
         .order_by(
+            UserMovieReview.date_watched.desc(),
             UserMovieReview.date_reviewed.desc(),
-            UserMovieReview.rating.desc(),
             Movie.title.asc(),
         )
         .paginate(page=page, per_page=50, error_out=False)
@@ -3534,7 +3568,7 @@ def review_tmdb(tmdb_id):
             movie_id=movie.id,
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
-            date_watched=movie_review_form.date_watched.data,
+            date_watched=_watched_timestamp(movie_review_form.date_watched.data),
             date_reviewed=datetime.now(timezone.utc),
             **star_rating_fields(rating),
         )

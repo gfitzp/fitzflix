@@ -3395,9 +3395,22 @@ def apply_letterboxd_import(user_id, films):
                         else film["rating"]
                     )
 
-                    review = UserMovieReview.query.filter_by(
-                        user_id=user_id, movie_id=movie.id, date_watched=date_watched
-                    ).first()
+                    # Match per calendar day: a Plex-recorded watch carries a
+                    # time of day, and re-importing the same Letterboxd date
+                    # must update that row, not sit beside it
+
+                    if date_watched is not None:
+                        review = UserMovieReview.query.filter(
+                            UserMovieReview.user_id == user_id,
+                            UserMovieReview.movie_id == movie.id,
+                            UserMovieReview.date_watched >= date_watched,
+                            UserMovieReview.date_watched
+                            < date_watched + timedelta(days=1),
+                        ).first()
+                    else:
+                        review = UserMovieReview.query.filter_by(
+                            user_id=user_id, movie_id=movie.id, date_watched=None
+                        ).first()
                     if review is None:
                         review = UserMovieReview(
                             user_id=user_id,
@@ -3469,11 +3482,18 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
     with app.app_context():
         try:
-            watched_at = datetime.fromisoformat(viewed_at)
-            date_watched = datetime(watched_at.year, watched_at.month, watched_at.day)
+            # Full timestamp, naive UTC (matching the column's other
+            # writers); dedup still works per calendar day
+
+            watched_at = (
+                datetime.fromisoformat(viewed_at)
+                .astimezone(timezone.utc)
+                .replace(tzinfo=None)
+            )
+            day_start = datetime(watched_at.year, watched_at.month, watched_at.day)
             marker = (
                 f"fitzflix:plex:watch:{plex_username}:{tmdb_id}:"
-                f"{date_watched.strftime('%Y-%m-%d')}"
+                f"{day_start.strftime('%Y-%m-%d')}"
             )
             if not current_app.redis.set(marker, source, nx=True, ex=172800):
                 current_app.logger.debug(
@@ -3497,8 +3517,13 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 user = User.query.filter_by(plex_username=plex_username).first()
 
             if user is not None:
-                existing = UserMovieReview.query.filter_by(
-                    user_id=user.id, movie_id=movie.id, date_watched=date_watched
+                # One diary row per calendar day, whatever the exact times
+
+                existing = UserMovieReview.query.filter(
+                    UserMovieReview.user_id == user.id,
+                    UserMovieReview.movie_id == movie.id,
+                    UserMovieReview.date_watched >= day_start,
+                    UserMovieReview.date_watched < day_start + timedelta(days=1),
                 ).first()
                 if existing is None:
                     rewatch = (
@@ -3512,7 +3537,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                             user_id=user.id,
                             movie_id=movie.id,
                             review="",
-                            date_watched=date_watched,
+                            date_watched=watched_at,
                             rewatch=rewatch,
                             **star_rating_fields(None),
                         )

@@ -895,3 +895,53 @@ def test_history_hides_update_date_from_the_same_day(app, admin_client):
     page = admin_client.get("/history").get_data(as_text=True)
     assert "Reviewed and touched up within the day." in page
     assert "; updated" not in page
+
+
+def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
+    """The history page is chronological by watch date: a fresh unreviewed
+    Plex watch outranks older reviewed entries, and dateless rating-only
+    rows trail the dated history."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        old_reviewed = make_movie("Old Reviewed Film", 1970)
+        fresh_watch = make_movie("Fresh Plex Watch Film", 1971)
+        dateless = make_movie("Dateless Rating Film", 1972)
+        db.session.add_all(
+            [
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=old_reviewed.id,
+                    review="Reviewed long ago.",
+                    date_watched=datetime(2020, 1, 1),
+                    date_reviewed=datetime(2026, 8, 1),
+                    **star_rating_fields(4.0),
+                ),
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=fresh_watch.id,
+                    review="",
+                    date_watched=datetime(2026, 8, 9),
+                    rewatch=False,
+                    **star_rating_fields(None),
+                ),
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=dateless.id,
+                    review="",
+                    date_watched=None,
+                    **star_rating_fields(3.0),
+                ),
+            ]
+        )
+        db.session.commit()
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    fresh = page.index("Fresh Plex Watch Film")
+    old = page.index("Old Reviewed Film")
+    dateless_pos = page.index("Dateless Rating Film")
+    assert fresh < old < dateless_pos
