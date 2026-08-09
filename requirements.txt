@@ -39,6 +39,6 @@ six==1.17.0
 SQLAlchemy==2.0.51
 Unidecode==1.4.0
 urllib3==2.7.0
-watchdog==2.1.2
+watchdog==6.0.0
 Werkzeug==3.1.8
 WTForms==3.2.2
