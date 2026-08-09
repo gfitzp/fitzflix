@@ -2310,6 +2310,7 @@ def _scheduled_tasks():
     cron_descriptions = {
         "0 0 * * *": "Daily at midnight",
         "30 0 * * *": "Daily at 12:30 AM",
+        "0 1 * * 0": "Weekly on Sunday at 1:00 AM",
         "0 3 18 * *": "Monthly on the 18th at 3:00 AM",
         "0 4 1 * *": "Monthly on the 1st at 4:00 AM",
         "0 * * * *": "Hourly",

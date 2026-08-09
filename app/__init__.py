@@ -355,6 +355,19 @@ def create_app(config_class=Config, watch_import_dir=False):
         description="Refreshing Criterion Collection information",
     )
 
+    # Weekly sweep for the hidden partial files failed tasks strand — and a
+    # failed restore drill's leftover scratch database — early Sunday,
+    # after the nightly backup window
+
+    register_cron(
+        app.maintenance_scheduler,
+        "0 1 * * 0",
+        func="app.maintenance.cleanup_orphaned_files",
+        job_id="orphan-cleanup",
+        timeout="1h",
+        description="Cleaning up orphaned partial files",
+    )
+
     # Probe external services and system health every ten minutes; results
     # feed the admin page's health card, and new problems are emailed
 

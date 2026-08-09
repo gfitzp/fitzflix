@@ -940,6 +940,149 @@ def restore_drill():
         return True
 
 
+ORPHAN_MAX_AGE_DAYS = 7
+
+# macOS scatters its own dot-prefixed metadata (Finder, AppleDouble) through
+# these directories; none of it is a pipeline strand, so it stays untouched
+
+ORPHAN_IGNORED_NAMES = {".DS_Store", ".localized"}
+ORPHAN_IGNORED_PREFIXES = ("._",)
+
+
+def cleanup_orphaned_files():
+    """Delete the hidden partial files that failed tasks strand, plus a
+    failed restore drill's leftover scratch database.
+
+    Every pipeline stage that moves media writes it under a dot-prefixed
+    name first — localization staging (and its .convert.mkv scratch),
+    cross-volume library copies, AWS downloads into the import directory,
+    reject moves (.partial), and transcode outputs — promoting to the
+    visible name only on success. A hidden file a week old can therefore
+    only be the residue of a failed task. Deletions are age-gated,
+    confined to those directories, and summarized by email.
+    """
+
+    with app.app_context():
+        config = current_app.config
+        cutoff = time.time() - ORPHAN_MAX_AGE_DAYS * 86400
+        removed = []
+
+        roots = (
+            config["STAGING_DIR"],
+            config["MOVIE_LIBRARY"],
+            config["TV_LIBRARY"],
+            config["IMPORT_DIR"],
+            config["REJECTS_DIR"],
+            config["TRANSCODES_DIR"],
+        )
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                # Never descend into hidden directories (Spotlight, trashes)
+
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                for name in filenames:
+                    if not name.startswith("."):
+                        continue
+                    if name in ORPHAN_IGNORED_NAMES or name.startswith(
+                        ORPHAN_IGNORED_PREFIXES
+                    ):
+                        continue
+                    path = os.path.join(dirpath, name)
+                    try:
+                        stats = os.stat(path)
+                    except OSError:
+                        continue
+                    if stats.st_mtime > cutoff:
+                        continue
+                    try:
+                        os.remove(path)
+                    except OSError as e:
+                        current_app.logger.warning(
+                            f"'{path}' Couldn't delete orphaned file: {e}"
+                        )
+                        continue
+                    current_app.logger.info(f"'{path}' Deleted orphaned partial file")
+                    removed.append(f"{path} ({_human_size(stats.st_size)})")
+
+        dropped_scratch_db = _drop_leftover_restore_database()
+
+        if not removed and not dropped_scratch_db:
+            current_app.logger.info("Orphan cleanup found nothing to delete")
+            return
+
+        lines = []
+        if removed:
+            lines.append(
+                f"Deleted {len(removed)} orphaned partial file(s) older than "
+                f"{ORPHAN_MAX_AGE_DAYS} days:"
+            )
+            lines.extend(f"  {entry}" for entry in removed)
+        if dropped_scratch_db:
+            lines.append(
+                f"Dropped the leftover {RESTORE_CHECK_DATABASE} scratch database "
+                f"from a failed restore drill."
+            )
+        task_send_email(
+            "Fitzflix orphaned-file cleanup",
+            sender=config["SERVER_EMAIL"],
+            recipients=[config["ADMIN_EMAIL"]],
+            text_body="\n".join(lines),
+            html_body=None,
+        )
+
+
+def _drop_leftover_restore_database():
+    """Drop the restore drill's scratch database if a failed drill left it.
+
+    Runs on the same single-worker maintenance queue as restore_drill, so
+    it can never fire while a drill is mid-restore.
+    """
+
+    url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
+    if not url.drivername.startswith("mysql"):
+        return False
+
+    mysql_env = dict(os.environ)
+    if url.password:
+        mysql_env["MYSQL_PWD"] = url.password
+    mysql_command = [
+        current_app.config["MYSQL_BIN"],
+        f"--user={url.username}",
+    ]
+    if url.host:
+        mysql_command.append(f"--host={url.host}")
+    if url.port:
+        mysql_command.append(f"--port={url.port}")
+
+    try:
+        leftover = subprocess.run(
+            mysql_command
+            + ["-N", "-e", f"SHOW DATABASES LIKE '{RESTORE_CHECK_DATABASE}'"],
+            env=mysql_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if not leftover:
+            return False
+        subprocess.run(
+            mysql_command + ["-e", f"DROP DATABASE {RESTORE_CHECK_DATABASE}"],
+            env=mysql_env,
+            check=True,
+            capture_output=True,
+        )
+    except Exception as e:
+        current_app.logger.error(f"Couldn't drop {RESTORE_CHECK_DATABASE}: {e}")
+        return False
+
+    current_app.logger.info(
+        f"Dropped the leftover {RESTORE_CHECK_DATABASE} scratch database"
+    )
+    return True
+
+
 def _probe_http(url, **kwargs):
     """Probe an HTTP endpoint, raising on any failure or error status."""
 
