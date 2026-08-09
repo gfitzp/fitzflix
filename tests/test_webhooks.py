@@ -9,6 +9,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from app import safe_job_id
 from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL
 
 
@@ -82,7 +83,7 @@ def test_sonarr_download_renames_and_enqueues(app, client, tmp_path):
     assert (series_dir / renamed).exists()
     assert not (series_dir / original).exists()
 
-    job = app.import_queue.fetch_job(renamed)
+    job = app.import_queue.fetch_job(safe_job_id(renamed))
     assert job is not None
     assert job.args == (str(series_dir / renamed),)
 
@@ -112,7 +113,7 @@ def test_radarr_download_low_score_becomes_webrip(app, client, tmp_path):
     assert (movie_dir / renamed).exists()
     assert not (movie_dir / original).exists()
 
-    job = app.import_queue.fetch_job(renamed)
+    job = app.import_queue.fetch_job(safe_job_id(renamed))
     assert job is not None
     assert job.args == (str(movie_dir / renamed),)
 
@@ -138,4 +139,4 @@ def test_download_with_already_web_quality_skips_rename(app, client, tmp_path):
     )
     assert response.status_code == 200
     assert (movie_dir / original).exists()
-    assert app.import_queue.fetch_job(original) is not None
+    assert app.import_queue.fetch_job(safe_job_id(original)) is not None

@@ -33,7 +33,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app
+from app import db, get_app, safe_job_id
 from app.email import send_email as send_email_async
 from app.email import task_send_email as send_email
 from app.maintenance import volume_alive
@@ -296,7 +296,7 @@ def acquire_lock_or_defer(
         *args,
         **(kwargs or {}),
         timeout=timeout,
-        job_id=f"retry:{func.rsplit('.', 1)[-1]}:{description}",
+        job_id=safe_job_id(f"retry:{func.rsplit('.', 1)[-1]}:{description}"),
         job_result_ttl=86400,
         job_description=description,
     )
@@ -451,7 +451,7 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=f"retry:localization_task:'{basename}'",
+                    job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -485,7 +485,7 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=f"retry:localization_task:'{basename}'",
+                    job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -531,7 +531,7 @@ def localization_task(
                         transient_retries=transient_retries,
                         completeness_retries=completeness_retries + 1,
                         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=f"retry:localization_task:'{basename}'",
+                        job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
                         job_result_ttl=86400,
                         job_description=f"'{basename}'",
                     )
@@ -681,7 +681,7 @@ def localization_task(
                         transient_retries=transient_retries + 1,
                         completeness_retries=completeness_retries,
                         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=f"retry:localization_task:'{basename}'",
+                        job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
                         job_result_ttl=86400,
                         job_description=f"'{basename}'",
                     )
@@ -1360,7 +1360,7 @@ def move_localized_file(
                 hidden_output_file,
                 transient_retries=transient_retries,
                 timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                job_id=f"retry:move_localized_file:'{basename}'",
+                job_id=safe_job_id(f"retry:move_localized_file:'{basename}'"),
                 job_result_ttl=86400,
                 job_description=f"'{basename}'",
             )
@@ -1429,7 +1429,7 @@ def move_localized_file(
                     hidden_output_file,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                    job_id=f"retry:move_localized_file:'{basename}'",
+                    job_id=safe_job_id(f"retry:move_localized_file:'{basename}'"),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -1509,7 +1509,9 @@ def finalize_localization(
                 lock,
                 hidden_output_file,
                 timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                job_id=f"retry:finalize_localization:'{file_details.get('basename')}'",
+                job_id=safe_job_id(
+                    f"retry:finalize_localization:'{file_details.get('basename')}'"
+                ),
                 job_result_ttl=86400,
                 job_description=f"'{file_details.get('basename')}'",
             )
@@ -1969,7 +1971,7 @@ def finalize_transcoding(file_id, lock, transient_retries=0):
                     lock,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    job_id=f"retry:finalize_transcoding:{file_id}",
+                    job_id=safe_job_id(f"retry:finalize_transcoding:{file_id}"),
                     job_result_ttl=86400,
                     job_description=f"'{file.plex_title}'",
                 )
@@ -2029,7 +2031,7 @@ def manual_import_task():
                             )
                             job_queue.extend(localization_tasks_running.get_job_ids())
                             job_queue.extend(current_app.import_queue.job_ids)
-                            if os.path.basename(file) not in job_queue:
+                            if safe_job_id(os.path.basename(file)) not in job_queue:
                                 current_app.logger.info(
                                     f"'{os.path.basename(file)}' Found in import directory"
                                 )
@@ -2044,7 +2046,7 @@ def manual_import_task():
                                         "LOCALIZATION_TASK_TIMEOUT"
                                     ],
                                     description=f"'{os.path.basename(file)}'",
-                                    job_id=os.path.basename(file),
+                                    job_id=safe_job_id(os.path.basename(file)),
                                 )
 
                             current_app.lock_manager.unlock(lock)
@@ -2112,7 +2114,7 @@ def track_metadata_scan_task(file_id):
                     "app.videos.track_metadata_scan_task",
                     file_id=file_id,
                     timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                    job_id=f"retry:track_metadata_scan_task:{file_id}",
+                    job_id=safe_job_id(f"retry:track_metadata_scan_task:{file_id}"),
                     job_result_ttl=86400,
                     job_description=f"'{file.basename}'",
                 )
@@ -2304,7 +2306,7 @@ def mkvpropedit_task(
                     forced_subtitle_tracks,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                    job_id=f"retry:mkvpropedit_task:{file_id}",
+                    job_id=safe_job_id(f"retry:mkvpropedit_task:{file_id}"),
                     job_result_ttl=86400,
                     job_description=f"'{file.basename}'",
                 )
@@ -2828,7 +2830,7 @@ def sync_aws_s3_storage_task():
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
                 timeout="24h",
-                job_id="retry:sync_aws_s3_storage_task",
+                job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
                 job_result_ttl=86400,
                 job_description="Syncing files with AWS S3 storage",
                 at_front=True,
@@ -3097,7 +3099,7 @@ def sync_aws_s3_storage_task():
                         args=(library_file,),
                         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{os.path.basename(library_file)}'",
-                        job_id=os.path.basename(library_file),
+                        job_id=safe_job_id(os.path.basename(library_file)),
                     )
                     current_app.logger.info(
                         f"'{library_file}' isn't in library; added to import queue"
@@ -3597,7 +3599,7 @@ def _plex_tmdb_id(entry, headers):
         current_app.logger.warning(traceback.format_exc())
         return None
 
-    current_app.redis.setex(cache_key, 604800, str(tmdb_id) if tmdb_id else "")
+    current_app.redis.set(cache_key, str(tmdb_id) if tmdb_id else "", ex=604800)
     return tmdb_id
 
 
@@ -4001,7 +4003,7 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     sqs_receipt_handle,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    job_id=f"retry:download_task:'{basename}'",
+                    job_id=safe_job_id(f"retry:download_task:'{basename}'"),
                     job_result_ttl=86400,
                     job_description=f"'{basename}' — Downloading from AWS",
                 )
@@ -5139,10 +5141,10 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
             ).strip() or None
             criterion_collection.append(release)
 
-    current_app.redis.setex(
+    current_app.redis.set(
         CRITERION_CACHE_KEY,
-        CRITERION_CACHE_SECONDS,
         json.dumps(criterion_collection),
+        ex=CRITERION_CACHE_SECONDS,
     )
     current_app.logger.info(
         f"Fetched {len(criterion_collection)} Criterion Collection releases "
@@ -5753,7 +5755,9 @@ def apply_tmdb_refresh(
                             tmdb_payload=tmdb_payload,
                             notify_if_missing=notify_if_missing,
                             timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                            job_id=f"retry:apply_tmdb_refresh:{library}:{id}",
+                            job_id=safe_job_id(
+                                f"retry:apply_tmdb_refresh:{library}:{id}"
+                            ),
                             job_result_ttl=86400,
                             job_description=(
                                 f"Updating '{movie.title} ({movie.year})' "

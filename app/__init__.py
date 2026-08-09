@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 import traceback
@@ -36,6 +37,17 @@ mail = Mail()
 moment = Moment()
 
 _app = None
+
+
+def safe_job_id(value):
+    """Flatten a string into rq 2's allowed job-id charset.
+
+    Job ids carry the dedup and retry-replacement semantics (file basenames,
+    deterministic retry:task:target ids), so disallowed characters are
+    mapped to underscores rather than the ids being abandoned.
+    """
+
+    return re.sub(r"[^A-Za-z0-9_-]", "_", value)
 
 
 def enqueue_import_scan(
@@ -216,7 +228,7 @@ def create_app(config_class=Config, watch_import_dir=False):
                 # Use the file basename as the job id, so we can see if this file is
                 # already in the job_queue, and only add it if it doesn't already exist
 
-                if os.path.basename(path) not in job_queue:
+                if safe_job_id(os.path.basename(path)) not in job_queue:
                     app.logger.info(
                         f"'{os.path.basename(path)}' Found in import directory"
                     )
@@ -225,7 +237,7 @@ def create_app(config_class=Config, watch_import_dir=False):
                         args=(path,),
                         job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
                         description=f"'{os.path.basename(path)}'",
-                        job_id=os.path.basename(path),
+                        job_id=safe_job_id(os.path.basename(path)),
                     )
 
                 app.lock_manager.unlock(lock)

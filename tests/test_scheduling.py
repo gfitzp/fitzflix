@@ -10,14 +10,14 @@ import os
 import threading
 import time
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from app import register_cron
+from app import register_cron, safe_job_id
 from app.videos import (
     acquire_lock_or_defer,
     localization_task,
@@ -72,9 +72,11 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
         retries = [
             job_id
             for job_id in scheduled_ids(app.import_scheduler)
-            if job_id.startswith("retry:")
+            if job_id.startswith("retry_")
         ]
-        assert retries == ["retry:localization_task:'Jaws (1975) - [DVD].mkv'"]
+        assert retries == [
+            safe_job_id("retry:localization_task:'Jaws (1975) - [DVD].mkv'")
+        ]
 
         job = Job.fetch(retries[0], connection=app.redis)
         assert_binds(job)
@@ -102,7 +104,9 @@ def test_defer_with_positional_args_binds(app, held_lock):
             args=("/incoming/args-form.mkv",),
         )
 
-        job = Job.fetch("retry:localization_task:'args-form.mkv'", connection=app.redis)
+        job = Job.fetch(
+            safe_job_id("retry:localization_task:'args-form.mkv'"), connection=app.redis
+        )
         assert_binds(job)
         assert job.args == ("/incoming/args-form.mkv",)
 
@@ -121,7 +125,7 @@ def test_acquire_returns_lock_when_free(app):
         )
         assert lock
         app.lock_manager.unlock(lock)
-        assert "retry:localization_task:'free.mkv'" not in scheduled_ids(
+        assert safe_job_id("retry:localization_task:'free.mkv'") not in scheduled_ids(
             app.import_scheduler
         )
 
@@ -157,9 +161,9 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
             retries = [
                 job_id
                 for job_id in scheduled_ids(app.import_scheduler)
-                if job_id.startswith("retry:")
+                if job_id.startswith("retry_")
             ]
-            assert retries == [f"retry:localization_task:'{basename}'"]
+            assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
     finally:
         os.remove(file_path)
@@ -189,9 +193,9 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
             retries = [
                 job_id
                 for job_id in scheduled_ids(app.import_scheduler)
-                if job_id.startswith("retry:")
+                if job_id.startswith("retry_")
             ]
-            assert retries == [f"retry:localization_task:'{basename}'"]
+            assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
     finally:
         stop.set()
@@ -216,7 +220,9 @@ def test_sync_defers_while_queues_are_busy(app):
         try:
             sync_aws_s3_storage_task()
 
-            job = Job.fetch("retry:sync_aws_s3_storage_task", connection=app.redis)
+            job = Job.fetch(
+                safe_job_id("retry:sync_aws_s3_storage_task"), connection=app.redis
+            )
             assert_binds(job)
             assert not job.args and not job.kwargs
         finally:
@@ -238,7 +244,8 @@ def test_register_cron_preserves_run_history(app):
 
         register("0 0 * * *")
         job = Job.fetch("test-cron", connection=app.redis)
-        last_run = datetime(2026, 1, 1, 0, 0, 0)
+        # rq 2 round-trips job timestamps as aware UTC
+        last_run = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         job.ended_at = last_run
         job.save()
 
@@ -264,13 +271,13 @@ def test_watchdog_enqueues_new_import_files(app):
     try:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if basename in app.import_queue.job_ids:
+            if safe_job_id(basename) in app.import_queue.job_ids:
                 break
             time.sleep(0.5)
         else:
             pytest.fail("watchdog never enqueued the new file")
 
-        job = app.import_queue.fetch_job(basename)
+        job = app.import_queue.fetch_job(safe_job_id(basename))
         assert job.args == (file_path,)
         assert_binds(job)
     finally:
@@ -336,9 +343,11 @@ def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkey
         retries = [
             job
             for job, _ in app.sql_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:finalize_transcoding")
+            if job.id.startswith("retry_finalize_transcoding")
         ]
-        assert [job.id for job in retries] == [f"retry:finalize_transcoding:{file_id}"]
+        assert [job.id for job in retries] == [
+            safe_job_id(f"retry:finalize_transcoding:{file_id}")
+        ]
         job = retries[0]
         assert list(job.args) == [file_id, lock]
         assert job.kwargs == {"transient_retries": 1}
@@ -385,7 +394,7 @@ def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
         )
 
         assert not any(
-            job.id.startswith("retry:finalize_transcoding")
+            job.id.startswith("retry_finalize_transcoding")
             for job, _ in app.sql_scheduler.get_jobs(with_times=True)
         )
 
@@ -424,9 +433,11 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
         retries = [
             job
             for job, _ in app.file_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:mkvpropedit_task")
+            if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
-        assert [job.id for job in retries] == [f"retry:mkvpropedit_task:{file_id}"]
+        assert [job.id for job in retries] == [
+            safe_job_id(f"retry:mkvpropedit_task:{file_id}")
+        ]
         job = retries[0]
         assert list(job.args) == [file_id, "2", None, []]
         assert job.kwargs == {"transient_retries": 1}
@@ -467,7 +478,7 @@ def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch)
             videos.mkvpropedit_task(file_id, "2", None, [])
 
         assert not any(
-            job.id.startswith("retry:mkvpropedit_task")
+            job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
             for job, _ in app.file_scheduler.get_jobs(with_times=True)
         )
 
@@ -496,10 +507,10 @@ def test_download_transient_error_defers(app, monkeypatch):
     retries = [
         job
         for job, _ in app.file_scheduler.get_jobs(with_times=True)
-        if job.id.startswith("retry:download_task")
+        if job.id.startswith(safe_job_id("retry:download_task"))
     ]
     assert [job.id for job in retries] == [
-        "retry:download_task:'Thing (2021) - [DVD].mkv'"
+        safe_job_id("retry:download_task:'Thing (2021) - [DVD].mkv'")
     ]
     job = retries[0]
     assert list(job.args) == [
@@ -534,7 +545,7 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
     assert result is not True
 
     assert not any(
-        job.id.startswith("retry:download_task")
+        job.id.startswith(safe_job_id("retry:download_task"))
         for job, _ in app.file_scheduler.get_jobs(with_times=True)
     )
 
@@ -646,10 +657,10 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
         retries = [
             job
             for job, _ in app.sql_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:apply_tmdb_refresh")
+            if job.id.startswith("retry_apply_tmdb_refresh")
         ]
         assert [job.id for job in retries] == [
-            f"retry:apply_tmdb_refresh:Movies:{movie_id}"
+            safe_job_id(f"retry:apply_tmdb_refresh:Movies:{movie_id}")
         ]
         job = retries[0]
         assert job.kwargs["library"] == "Movies"
@@ -677,7 +688,7 @@ def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
 
         assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is False
         assert any(
-            job.id == f"retry:apply_tmdb_refresh:Movies:{source_id}"
+            job.id == safe_job_id(f"retry:apply_tmdb_refresh:Movies:{source_id}")
             for job, _ in app.sql_scheduler.get_jobs(with_times=True)
         )
 

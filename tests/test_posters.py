@@ -88,8 +88,8 @@ def tmdb_image_cdn(monkeypatch):
 def make_galleried_movie(app):
     movie = make_movie("Poster Film", 1972, tmdb_id=578)
     db.session.commit()
-    app.redis.setex(
-        f"fitzflix:tmdb:movie:{movie.tmdb_id}:posters", 600, json.dumps(GALLERY)
+    app.redis.set(
+        f"fitzflix:tmdb:movie:{movie.tmdb_id}:posters", json.dumps(GALLERY), ex=600
     )
     return movie
 
@@ -124,8 +124,8 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
             "Default Poster Film", 1968, tmdb_id=579, tmdb_poster_path="/english.jpg"
         )
         db.session.commit()
-        app.redis.setex(
-            f"fitzflix:tmdb:movie:{movie.tmdb_id}:posters", 600, json.dumps(GALLERY)
+        app.redis.set(
+            f"fitzflix:tmdb:movie:{movie.tmdb_id}:posters", json.dumps(GALLERY), ex=600
         )
         movie_id = movie.id
 

@@ -118,17 +118,20 @@ def _live_workers(connection):
 def worker_health(connection):
     """Summarize rq worker liveness per queue against the expected roster."""
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     queues = {name: {"queue": name, "live": 0, "busy": []} for name in EXPECTED_WORKERS}
     for worker in _live_workers(connection):
         # A busy worker stops refreshing its heartbeat for the duration of
-        # the job, so only idle workers can be considered stale
+        # the job, so only idle workers can be considered stale. rq 2
+        # returns aware datetimes; normalize in case of older stored values
 
+        heartbeat = worker.last_heartbeat
+        if heartbeat is not None and heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
         if (
             worker.get_state() != "busy"
-            and worker.last_heartbeat
-            and (now - worker.last_heartbeat).total_seconds()
-            > WORKER_HEARTBEAT_STALE_SECONDS
+            and heartbeat
+            and (now - heartbeat).total_seconds() > WORKER_HEARTBEAT_STALE_SECONDS
         ):
             continue
 

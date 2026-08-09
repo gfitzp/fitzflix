@@ -33,7 +33,7 @@ from flask_login import current_user, login_required
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
-from app import db, enqueue_import_scan
+from app import db, enqueue_import_scan, safe_job_id
 from app.main.forms import (
     CriterionFilterForm,
     CriterionForm,
@@ -461,7 +461,7 @@ def movie_library():
                     )
                     r.raise_for_status()
                     tmdb_credits = r.json().get("cast") or []
-                    current_app.redis.setex(cache_key, 86400, json.dumps(tmdb_credits))
+                    current_app.redis.set(cache_key, json.dumps(tmdb_credits), ex=86400)
                 except Exception:
                     current_app.logger.warning(traceback.format_exc())
 
@@ -1170,7 +1170,7 @@ def _tmdb_poster_gallery(tmdb_id):
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return None
-    current_app.redis.setex(cache_key, 86400, json.dumps(posters))
+    current_app.redis.set(cache_key, json.dumps(posters), ex=86400)
     return posters
 
 
@@ -1509,7 +1509,7 @@ def tv(series_id):
                 args=(file.id,),
                 job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                 description=f"'{file.plex_title}'",
-                job_id=file.plex_title,
+                job_id=safe_job_id(file.plex_title),
             )
 
         flash(f"Added all files for '{title}' to transcoding queue", "success")
@@ -2105,7 +2105,7 @@ def file(file_id):
             args=(file.id,),
             job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
             description=f"'{file.plex_title}'",
-            job_id=file.plex_title,
+            job_id=safe_job_id(file.plex_title),
         )
         flash(f"Added '{file.plex_title}' to transcoding queue", "success")
         return redirect(url_for("main.file", file_id=file.id))
@@ -2736,7 +2736,13 @@ def system():
                     "error": exc_lines[-1][:200] if exc_lines else "",
                 }
             )
-    failed_jobs.sort(key=lambda job: job["failed_at"] or datetime.min, reverse=True)
+    # rq 2 job timestamps are timezone-aware, so the missing-date fallback
+    # must be aware too or the sort can't compare them
+
+    failed_jobs.sort(
+        key=lambda job: job["failed_at"] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
 
     return render_template(
         "system.html",

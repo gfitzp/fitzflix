@@ -16,6 +16,8 @@ import time
 
 import pytest
 
+from app import safe_job_id
+
 import app.videos as videos
 import app.maintenance as maintenance
 
@@ -258,9 +260,9 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
         retries = [
             job.id
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:")
+            if job.id.startswith("retry_")
         ]
-        assert retries == [f"retry:localization_task:'{basename}'"]
+        assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
 
         # The file was left untouched — not rejected, not staged
         assert os.path.exists(source)
@@ -295,9 +297,11 @@ def test_staging_copy_transient_error_defers_and_retries(
         retries = [
             job
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:")
+            if job.id.startswith("retry_")
         ]
-        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+        assert [job.id for job in retries] == [
+            safe_job_id(f"retry:localization_task:'{basename}'")
+        ]
 
         # The retry carries the incremented attempt count and the original
         # flags, and binds to the task's signature
@@ -355,7 +359,7 @@ def test_staging_copy_transient_error_rejects_after_max_retries(
         localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
 
     assert not any(
-        job.id.startswith("retry:")
+        job.id.startswith("retry_")
         for job, _ in app.import_scheduler.get_jobs(with_times=True)
     )
     assert basename in rejected_files(app)
@@ -382,7 +386,7 @@ def test_staging_copy_permanent_error_rejects_immediately(
         localization_task(source)
 
     assert not any(
-        job.id.startswith("retry:")
+        job.id.startswith("retry_")
         for job, _ in app.import_scheduler.get_jobs(with_times=True)
     )
     assert basename in rejected_files(app)
@@ -428,10 +432,10 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
         retries = [
             job
             for job, _ in app.file_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:")
+            if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            f"retry:move_localized_file:'{basename}'"
+            safe_job_id(f"retry:move_localized_file:'{basename}'")
         ]
 
         # The retry carries the original chain — including the lock — plus
@@ -492,7 +496,7 @@ def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
         )
 
     assert not any(
-        job.id.startswith("retry:")
+        job.id.startswith("retry_")
         for job, _ in app.file_scheduler.get_jobs(with_times=True)
     )
     assert basename in rejected_files(app)
@@ -517,9 +521,11 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
     retries = [
         job.id
         for job, _ in app.sql_scheduler.get_jobs(with_times=True)
-        if job.id.startswith("retry:finalize")
+        if job.id.startswith("retry_finalize")
     ]
-    assert retries == ["retry:finalize_localization:'Deferred (2021) - [DVD].mkv'"]
+    assert retries == [
+        safe_job_id("retry:finalize_localization:'Deferred (2021) - [DVD].mkv'")
+    ]
 
 
 def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
@@ -818,9 +824,11 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
     retries = [
         job.id
         for job, _ in app.file_scheduler.get_jobs(with_times=True)
-        if job.id.startswith("retry:move_localized_file")
+        if job.id.startswith("retry_move_localized_file")
     ]
-    assert retries == ["retry:move_localized_file:'Move Defer (2021) - [DVD].mkv'"]
+    assert retries == [
+        safe_job_id("retry:move_localized_file:'Move Defer (2021) - [DVD].mkv'")
+    ]
 
 
 def test_rename_with_retries_rides_out_transient_errors(app, tmp_path, monkeypatch):
@@ -877,9 +885,11 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
         retries = [
             job
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:")
+            if job.id.startswith("retry_")
         ]
-        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+        assert [job.id for job in retries] == [
+            safe_job_id(f"retry:localization_task:'{basename}'")
+        ]
         job = retries[0]
         assert job.kwargs["completeness_retries"] == 1
         inspect.signature(localization_task).bind(
@@ -911,9 +921,11 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
         retries = [
             job
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry:")
+            if job.id.startswith("retry_")
         ]
-        assert [job.id for job in retries] == [f"retry:localization_task:'{basename}'"]
+        assert [job.id for job in retries] == [
+            safe_job_id(f"retry:localization_task:'{basename}'")
+        ]
         assert retries[0].kwargs["completeness_retries"] == 1
         assert os.path.exists(source)
     finally:
@@ -940,7 +952,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         # It proceeded into the pipeline instead of deferring again
 
         assert not any(
-            job.id.startswith("retry:")
+            job.id.startswith("retry_")
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
         )
         move_jobs = [

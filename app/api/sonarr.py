@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from flask import current_app, jsonify, request
 
+from app import safe_job_id
 from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
@@ -84,7 +85,7 @@ def sonarr_add(payload):
         args=(sonarr_file_path,),
         job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
         description=f"'{os.path.basename(sonarr_file_path)}'",
-        job_id=os.path.basename(sonarr_file_path),
+        job_id=safe_job_id(os.path.basename(sonarr_file_path)),
         at_front=at_front,
     )
     if job:
