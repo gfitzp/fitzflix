@@ -131,8 +131,10 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
             user_id=mapped_admin, movie_id=movie_id
         ).all()
         assert len(diary) == 1
-        # The full watch timestamp is stored, not a midnight-truncated date
-        assert diary[0].date_watched == datetime(2026, 8, 1, 21, 15)
+        # The full watch timestamp is stored — in local wall-clock time,
+        # not UTC and not a midnight-truncated date
+        expected = datetime.fromisoformat(first_watch).astimezone().replace(tzinfo=None)
+        assert diary[0].date_watched == expected
         assert diary[0].rating is None
         assert diary[0].liked is False
         assert diary[0].rewatch is False
@@ -158,10 +160,13 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
         )
         db.session.expire_all()
         assert db.session.get(Movie, movie_id).shopping_cart_priority == 2
+        expected = (
+            datetime.fromisoformat("2026-08-05T20:00:00+00:00")
+            .astimezone()
+            .replace(tzinfo=None)
+        )
         rewatch_row = UserMovieReview.query.filter_by(
-            user_id=mapped_admin,
-            movie_id=movie_id,
-            date_watched=datetime(2026, 8, 5, 20, 0),
+            user_id=mapped_admin, movie_id=movie_id, date_watched=expected
         ).one()
         assert rewatch_row.rewatch is True
 
@@ -432,7 +437,12 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
             ).all()
             assert len(rows) == 1
             # The Plex clock time survives; the Letterboxd data merges in
-            assert rows[0].date_watched == datetime(2026, 8, 5, 20, 30)
+            expected = (
+                datetime.fromisoformat("2026-08-05T20:30:00+00:00")
+                .astimezone()
+                .replace(tzinfo=None)
+            )
+            assert rows[0].date_watched == expected
             assert rows[0].rating == 4.0
             assert rows[0].review == "Merged in from Letterboxd."
         finally:

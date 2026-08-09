@@ -830,7 +830,7 @@ def movie(movie_id):
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now(timezone.utc),
+            date_reviewed=datetime.now(),
             **star_rating_fields(rating),
         )
         db.session.add(review)
@@ -2362,9 +2362,9 @@ def review_edit(review_id):
         if new_text != (user_review.review or ""):
             user_review.review = new_text
             if user_review.date_reviewed:
-                user_review.date_updated = datetime.now(timezone.utc)
+                user_review.date_updated = datetime.now()
             else:
-                user_review.date_reviewed = datetime.now(timezone.utc)
+                user_review.date_reviewed = datetime.now()
 
         db.session.commit()
         flash(f"Updated your review of '{title}'", "success")
@@ -3569,7 +3569,7 @@ def review_tmdb(tmdb_id):
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now(timezone.utc),
+            date_reviewed=datetime.now(),
             **star_rating_fields(rating),
         )
         db.session.add(review)

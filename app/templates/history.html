@@ -108,7 +108,11 @@
 				Rewatch
 			</span>
 		{% endif %}<br/>
-		{% if review.date_reviewed %}Reviewed {{ moment(review.date_reviewed).format("ll") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ moment(review.date_updated).format("ll") }}{% endif %}<br/>{% endif %}
+		{# Server-side dates, deliberately not flask-moment: these columns
+		   hold local wall-clock values (and imported rows hold bare
+		   calendar dates), so moment's naive-means-UTC conversion would
+		   shift them a day early for viewers west of UTC #}
+		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
 		{{ review.review }}
 		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id) }}">{{ "Edit review" if (review.review or review.rating is not none) else "Add review" }}</a></div>
 	</div>

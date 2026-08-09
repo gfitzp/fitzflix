@@ -3482,13 +3482,13 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
     with app.app_context():
         try:
-            # Full timestamp, naive UTC (matching the column's other
-            # writers); dedup still works per calendar day
+            # Full timestamp in local wall-clock time, like every other
+            # diary writer: the calendar day used for dedup and display
+            # must be the household's day, not UTC's (a 9 PM watch is not
+            # tomorrow's viewing)
 
             watched_at = (
-                datetime.fromisoformat(viewed_at)
-                .astimezone(timezone.utc)
-                .replace(tzinfo=None)
+                datetime.fromisoformat(viewed_at).astimezone().replace(tzinfo=None)
             )
             day_start = datetime(watched_at.year, watched_at.month, watched_at.day)
             marker = (
