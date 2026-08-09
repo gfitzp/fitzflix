@@ -2238,20 +2238,6 @@ def track_metadata_scan(file_id):
     return save_track_metadata(file_id, details, lock=lock)
 
 
-def track_metadata_scan_unlocked(file_id):
-    """Rescan a file's metadata; the caller must hold the title's lock."""
-
-    file = File.query.filter_by(id=file_id).first()
-    file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
-    if not os.path.isfile(file_path):
-        raise FileNotFoundError(
-            f"'{file_path}' does not exist, cannot scan track metadata"
-        )
-
-    details = extract_track_metadata(file_path)
-    return save_track_metadata(file_id, details)
-
-
 def mkvpropedit_task(
     file_id,
     default_audio_track,
@@ -3119,33 +3105,6 @@ def sync_aws_s3_storage_task():
 
         except Exception:
             app.logger.error(traceback.format_exc())
-
-        else:
-            return True
-
-
-def rename_task(file_id, new_key):
-    """Rename an object already uploaded to AWS S3 storage."""
-
-    with app.app_context():
-        try:
-            job = get_current_job()
-
-            file = File.query.filter_by(id=file_id).first()
-            old_key = file.aws_untouched_key
-            if job:
-                job.meta["description"] = f"Renaming AWS key '{old_key}' to '{new_key}'"
-                job.meta["progress"] = -1
-                job.save_meta()
-
-            file.aws_untouched_key, file.aws_untouched_date_uploaded = aws_rename(
-                old_key, new_key
-            )
-            db.session.commit()
-
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
 
         else:
             return True
@@ -4301,44 +4260,6 @@ def aws_download(key, basename, sqs_receipt_handle=None):
     return False
 
 
-def aws_rename(old_key, new_key):
-    """Rename an object in AWS S3 storage."""
-
-    job = get_current_job()
-
-    new_key = sanitize_s3_key(new_key)
-    current_app.logger.info(f"Renaming AWS key '{old_key}' to '{new_key}'")
-
-    # If the keys are the same after sanitizing, just pretend we renamed one to the other
-    if old_key == new_key:
-        return new_key, datetime.now(timezone.utc)
-
-    session = boto3.Session(
-        aws_access_key_id=current_app.config["AWS_ACCESS_KEY"],
-        aws_secret_access_key=current_app.config["AWS_SECRET_KEY"],
-    )
-    s3 = session.resource("s3")
-
-    if job:
-        job.meta["description"] = f"Renaming '{old_key}' at AWS to '{new_key}'"
-        job.meta["progress"] = -1
-        job.save_meta()
-
-    # There's no function to rename a file, so we have to make a copy of the object
-    # with the new name and then delete the old object
-
-    s3.meta.client.copy(
-        {
-            "Bucket": current_app.config["AWS_BUCKET"],
-            "Key": old_key,
-        },
-        current_app.config["AWS_BUCKET"],
-        new_key,
-    )
-    s3.meta.client.delete_object(Bucket=current_app.config["AWS_BUCKET"], Key=old_key)
-    return new_key, datetime.now(timezone.utc)
-
-
 def aws_restore(key, days=2, tier="Standard"):
     """Request a file at AWS to be restored from Glacier status for download."""
 
@@ -5296,36 +5217,6 @@ def get_matching_s3_objects(bucket, prefix="", suffix=""):
                 key = obj["Key"]
                 if key.endswith(suffix):
                     yield obj
-
-
-def get_matching_s3_keys(bucket, prefix="", suffix=""):
-    """Return objects in S3 storage.
-
-    https://alexwlchan.net/2019/07/listing-s3-keys/
-
-    Copyright (c) 2012-2019 Alex Chan
-
-    Permission is hereby granted, free of charge, to any person obtaining a
-    copy of this software and associated documentation files (the "Software"),
-    to deal in the Software without restriction, including without limitation
-    the rights to use, copy, modify, merge, publish, distribute, sublicense,
-    and/or sell copies of the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
-    OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
-    ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-    OTHER DEALINGS IN THE SOFTWARE.
-    """
-
-    for obj in get_matching_s3_objects(bucket, prefix, suffix):
-        yield obj["Key"]
 
 
 def get_subtitle_tracks_from_file(file_path):

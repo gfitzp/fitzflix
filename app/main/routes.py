@@ -178,24 +178,6 @@ def replace_library_poster(library_directory, original_file, poster_filename):
     current_app.logger.info(f"'{original_file}' Copied to '{destination_file}'")
 
 
-@bp.route("/browserconfig.xml")
-def browserconfigXml():
-    return send_from_directory(
-        os.path.join(current_app.root_path, "static"),
-        "browserconfig.xml",
-        mimetype="image/png",
-    )
-
-
-@bp.route("/mstile-150x150.png")
-def mstilePng():
-    return send_from_directory(
-        os.path.join(current_app.root_path, "static"),
-        "mstile-150x150.png",
-        mimetype="image/png",
-    )
-
-
 @bp.route("/apple-touch-icon-precomposed.png")
 @bp.route("/apple-touch-icon.png")
 def androidPng():
@@ -843,19 +825,7 @@ def movie(movie_id):
             flash(f"Logged review for '{title}'", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # Form to request all the files for this movie to be transcoded
-
     transcode_form = TranscodeForm()
-    # TODO: Get the best files for this movie and pass them to the transcoding task
-    # if transcode_form.validate_on_submit():
-    #         current_app.transcode_queue.enqueue(
-    #             "app.videos.transcode_task",
-    #             args=(file.id,),
-    #             job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-    #             description=f"'{file.plex_title}'",
-    #         )
-    #         flash(f"Added '{file.plex_title}' to transcoding queue", "success")
-    #         return redirect(url_for("main.file", file_id=file.id))
 
     # Form to update a movie's information with the latest TMDb data
 

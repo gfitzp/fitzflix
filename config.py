@@ -17,7 +17,6 @@ class Config(object):
     # Time constants
     ONE_SECOND      = 1
     ONE_MINUTE      = ONE_SECOND * 60
-    FIVE_MINUTES    = ONE_MINUTE * 5
     TEN_MINUTES     = ONE_MINUTE * 10
     ONE_HOUR        = ONE_MINUTE * 60
     TWO_HOURS       = ONE_HOUR * 2

@@ -754,12 +754,6 @@ class TMDBMixin(object):
 
         return self
 
-    def tmdb_tv_query(self, tmdb_id=None):
-        """Fetch from TMDb and apply to the database in one step; see
-        tmdb_movie_query."""
-
-        return self.tmdb_tv_apply(self.tmdb_tv_fetch(tmdb_id))
-
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
