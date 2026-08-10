@@ -206,6 +206,12 @@ def check_config(app):
 
 
 def create_app(config_class=Config, watch_import_dir=False):
+    """Application factory: build and fully wire an app instance.
+
+    watch_import_dir starts the import-directory filesystem observer;
+    supervisor.py enables it for the import-program workers alone.
+    """
+
     class MyHandler(FileSystemEventHandler):
         """Handlers for watchdog to fire when filesystem events occur."""
 

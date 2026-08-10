@@ -53,10 +53,16 @@ class StaleReadSuspected(Exception):
 
 
 def _snapshot_dir(config):
+    """Where provision snapshots live, beside the application log."""
+
     return os.path.join(os.path.dirname(config["LOG_FILE"]), "aws-snapshots")
 
 
 def _save_snapshot(config, payload):
+    """Write the as-found AWS configuration to a timestamped snapshot
+    file; returns its path.
+    """
+
     directory = _snapshot_dir(config)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f"lifecycle-{time.strftime('%Y%m%d-%H%M%S')}.json")
@@ -66,6 +72,10 @@ def _save_snapshot(config, payload):
 
 
 def _newest_snapshot_rule_count(config):
+    """The lifecycle-rule count the newest snapshot recorded, or None
+    when no snapshots exist yet.
+    """
+
     snapshots = sorted(glob.glob(os.path.join(_snapshot_dir(config), "*.json")))
     if not snapshots:
         return None

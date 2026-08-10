@@ -198,6 +198,8 @@ def replace_library_poster(library_directory, original_file, poster_filename):
 @bp.route("/apple-touch-icon-precomposed.png")
 @bp.route("/apple-touch-icon.png")
 def androidPng():
+    """Serve the touch icon at the fixed paths Apple devices request."""
+
     return send_from_directory(
         os.path.join(current_app.root_path, "static"),
         "apple-touch-icon.png",
@@ -207,6 +209,8 @@ def androidPng():
 
 @bp.route("/favicon.ico")
 def favicon():
+    """Serve the classic favicon at its fixed root path."""
+
     return send_from_directory(
         os.path.join(current_app.root_path, "static"),
         "favicon.ico",
@@ -218,6 +222,10 @@ def favicon():
 def service_worker():
     # Served from the root (rather than /static/) so the service worker's
     # scope covers the whole application
+
+    """Serve the PWA service worker from the site root, so its scope
+    covers the whole application.
+    """
 
     return send_from_directory(
         os.path.join(current_app.root_path, "static"),

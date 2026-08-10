@@ -29,6 +29,8 @@ from app.models import User
 
 
 class EditProfileForm(FlaskForm):
+    """Change the account email, on the Profile page."""
+
     email = StringField("New Email Address", validators=[DataRequired(), Email()])
     email2 = StringField(
         "Confirm Email Address", validators=[DataRequired(), Email(), EqualTo("email")]
@@ -40,6 +42,8 @@ class EditProfileForm(FlaskForm):
         self.original_email = original_email
 
     def validate_email(self, email):
+        """Reject an address another account already uses."""
+
         if email.data != self.original_email:
             user = User.query.filter_by(email=self.email.data).first()
             if user is not None:
@@ -47,6 +51,8 @@ class EditProfileForm(FlaskForm):
 
 
 class UpdateAPIKeyForm(FlaskForm):
+    """Regenerate the API key, on the Profile page."""
+
     regenerate_key_submit = SubmitField("Regenerate API Key")
 
 
@@ -58,10 +64,14 @@ class PlexUsernameForm(FlaskForm):
 
 
 class ImportForm(FlaskForm):
+    """Manually trigger an import-directory scan."""
+
     submit = SubmitField("Scan Import Directory")
 
 
 class MovieReviewForm(FlaskForm):
+    """Log or edit a viewing: rating, liked, review text, watch date."""
+
     rating = DecimalField("Rating (out of 5)", places=1, validators=[Optional()])
     liked = BooleanField("Liked")
     review = TextAreaField("Review")
@@ -69,6 +79,8 @@ class MovieReviewForm(FlaskForm):
     review_submit = SubmitField("Rate Movie")
 
     def validate_rating(self, rating):
+        """Keep ratings between 0 and 5 stars."""
+
         if rating.data is not None and (rating.data < 0 or rating.data > 5):
             raise ValidationError("Please enter a rating between 0 and 5 stars.")
 
@@ -77,6 +89,8 @@ class MovieReviewForm(FlaskForm):
         # text — but an empty submission is probably a misclick. This can't
         # live in validate_rating: Optional() stops that field's validator
         # chain before it runs on empty input.
+
+        """Require at least one of rating, liked, or review text."""
 
         if not super().validate(extra_validators):
             return False
@@ -90,20 +104,28 @@ class MovieReviewForm(FlaskForm):
         return True
 
     def validate_date_watched(self, date_watched):
+        """Reject watch dates in the future."""
+
         if datetime.strptime(str(date_watched.data), "%Y-%m-%d") > datetime.now():
             raise ValidationError("Enter a date in the past.")
 
 
 class TMDBLookupForm(FlaskForm):
+    """Movie page: refresh or re-point a title's TMDb data."""
+
     tmdb_id = IntegerField("TMDB ID", validators=[Optional()])
     lookup_submit = SubmitField("Refresh TMDB Data")
 
 
 class TMDBRefreshForm(FlaskForm):
+    """Maintenance page: refresh TMDb data for the whole library."""
+
     tmdb_refresh = SubmitField("Refresh TMDb Info")
 
 
 class CriterionForm(FlaskForm):
+    """Movie page: edit a film's Criterion Collection details."""
+
     spine_number = IntegerField("Spine #", validators=[Optional()])
     set_title = StringField("Collector's Set Title", validators=[Optional()])
     in_print = BooleanField("In Print", validators=[Optional()])
@@ -112,25 +134,35 @@ class CriterionForm(FlaskForm):
     criterion_submit = SubmitField("Update Criterion Info")
 
     def validate_spine_number(self, spine_number):
+        """Spine numbers are positive."""
+
         if spine_number.data < 1:
             raise ValidationError("Enter a positive spine number.")
 
 
 class TranscodeForm(FlaskForm):
+    """Queue transcodes, from the movie and file pages."""
+
     transcode_submit = SubmitField("Create Transcoded File")
     transcode_all = SubmitField("Transcode All")
 
 
 class LibrarySearchForm(FlaskForm):
+    """The library listings' search box."""
+
     search_query = StringField("Search...", validators=[Optional()])
     search_submit = SubmitField("Search")
 
 
 class CriterionRefreshForm(FlaskForm):
+    """Maintenance page: refresh Criterion data from Wikidata."""
+
     criterion_refresh = SubmitField("Refresh Criterion Collection Info")
 
 
 class CriterionFilterForm(FlaskForm):
+    """Criterion page: all releases versus owned discs."""
+
     filter_status = RadioField(
         "Library",
         choices=[
@@ -142,6 +174,8 @@ class CriterionFilterForm(FlaskForm):
 
 
 class MovieShoppingFilterForm(FlaskForm):
+    """Movie shopping list: library, media, and quality-range filters."""
+
     filter_status = RadioField(
         "Library",
         choices=[
@@ -162,49 +196,69 @@ class MovieShoppingFilterForm(FlaskForm):
 
 
 class QualityFilterForm(FlaskForm):
+    """Filter a listing to one quality tier."""
+
     quality = SelectField("Quality")
     filter_submit = SubmitField("Filter")
 
 
 class TVShoppingFilterForm(FlaskForm):
+    """TV shopping list: maximum-quality filter."""
+
     quality = SelectField("Maximum quality")
     filter_submit = SubmitField("Filter")
 
 
 class ReviewExportForm(FlaskForm):
+    """History page: email the Letterboxd-format review export."""
+
     export_submit = SubmitField("Export Reviews")
 
 
 class ReviewUploadForm(FlaskForm):
+    """History page: import a Letterboxd zip or legacy ratings file."""
+
     file = FileField("Reviews File")
     upload_submit = SubmitField("Import Reviews")
 
 
 class S3DownloadForm(FlaskForm):
+    """File page: password-confirmed restore from AWS."""
+
     password = PasswordField("Password:", validators=[DataRequired()])
     s3_download_submit = SubmitField("Restore from AWS")
 
 
 class SeasonRestoreForm(FlaskForm):
+    """Season page: password-confirmed bulk restore from AWS."""
+
     password = PasswordField("Password:", validators=[DataRequired()])
     season_restore_submit = SubmitField("Bulk restore season from AWS")
 
 
 class SeriesRestoreForm(FlaskForm):
+    """Series page: password-confirmed bulk restore from AWS."""
+
     password = PasswordField("Password:", validators=[DataRequired()])
     series_restore_submit = SubmitField("Bulk restore series from AWS")
 
 
 class S3UploadForm(FlaskForm):
+    """File page: upload the original to AWS."""
+
     s3_upload_submit = SubmitField("Upload to AWS")
 
 
 class MultiCheckboxField(SelectMultipleField):
+    """A SelectMultipleField rendered as a list of checkboxes."""
+
     widget = widgets.ListWidget(prefix_label=False)
     option_widget = widgets.CheckboxInput()
 
 
 class MKVPropEditForm(FlaskForm):
+    """File page: set default audio/subtitle tracks and forced flags."""
+
     default_audio = RadioField("Default audio track", validators=[Optional()])
     default_subtitle = RadioField("Default subtitle track", validators=[Optional()])
     forced_subtitles = MultiCheckboxField(
@@ -214,35 +268,49 @@ class MKVPropEditForm(FlaskForm):
 
 
 class MKVMergeForm(FlaskForm):
+    """File page: strip unwanted tracks via a remux."""
+
     audio_tracks = MultiCheckboxField("Audio tracks", validators=[Optional()])
     subtitle_tracks = MultiCheckboxField("Subtitle tracks", validators=[Optional()])
     mkvmerge_submit = SubmitField("Remux MKV File")
 
 
 class SyncAWSStorageForm(FlaskForm):
+    """Maintenance page: password-confirmed S3 sync and prune."""
+
     password = PasswordField("Password:", validators=[DataRequired()])
     sync_submit = SubmitField("Sync AWS S3 Storage")
 
 
 class FileDeleteForm(FlaskForm):
+    """File page: delete a file and purge its records."""
+
     delete_submit = SubmitField("Delete and Purge File")
 
 
 class SeriesDeleteForm(FlaskForm):
+    """Series page: delete the series."""
+
     delete_submit = SubmitField("Delete Series")
 
 
 class TrackMetadataScanForm(FlaskForm):
+    """Rescan track metadata, per file or library-wide."""
+
     scan_submit = SubmitField("Rescan Track Metadata")
 
 
 class MovieShoppingExcludeForm(FlaskForm):
+    """Add a title to the shopping list or remove it."""
+
     movie_id = IntegerField("Movie ID", validators=[Optional()], widget=HiddenInput())
     add_submit = SubmitField("Add to List")
     exclude_submit = SubmitField("Remove from List")
 
 
 class CustomPosterUploadForm(FlaskForm):
+    """Poster picker: upload a custom poster image."""
+
     custom_poster = FileField("Poster Image File", validators=[FileRequired()])
     poster_submit = SubmitField("Upload")
 
@@ -255,10 +323,14 @@ class TMDBPosterSelectForm(FlaskForm):
 
 
 class CustomPosterRemoveForm(FlaskForm):
+    """Poster picker: delete the custom poster."""
+
     poster_remove_submit = SubmitField("Remove custom poster")
 
 
 class FailedJobForm(FlaskForm):
+    """System page: requeue or forget a failed background job."""
+
     failed_job_id = HiddenField(validators=[DataRequired()])
     failed_queue = HiddenField(validators=[DataRequired()])
     requeue_submit = SubmitField("Requeue")
@@ -266,12 +338,16 @@ class FailedJobForm(FlaskForm):
 
 
 class RejectActionForm(FlaskForm):
+    """Rejects page: send a file back for import, or delete it."""
+
     file_path = HiddenField(validators=[DataRequired()])
     reimport_submit = SubmitField("Re-import")
     delete_submit = SubmitField("Delete")
 
 
 class MovieMergeForm(FlaskForm):
+    """Maintenance page: merge duplicate movies sharing a TMDb id."""
+
     merge_tmdb_id = HiddenField(validators=[DataRequired()])
     merge_submit = SubmitField("Merge")
 
@@ -286,5 +362,7 @@ class SubtitleTriageForm(FlaskForm):
 
 
 class FilenameTestForm(FlaskForm):
+    """Maintenance page: preview how a filename would import."""
+
     test_filename = StringField("Filename", validators=[DataRequired()])
     filename_test_submit = SubmitField("Preview import")

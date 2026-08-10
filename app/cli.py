@@ -5,6 +5,8 @@ from app.models import Movie, TVSeries
 
 
 def register(app):
+    """Attach the application's CLI commands to the Flask app."""
+
     @app.cli.group()
     def refresh():
         """Refresh data from various services."""

@@ -183,6 +183,10 @@ def volume_alive(path, timeout=10):
 
 
 def _monitored_paths(config):
+    """The configured directories whose backing volumes health checks
+    watch.
+    """
+
     return (
         config["MEDIA_LOCATION"],
         config["IMPORT_DIR"],

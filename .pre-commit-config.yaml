@@ -15,3 +15,10 @@ repos:
         language: script
         types: [python]
         exclude: ^migrations/
+      - id: docstrings
+        name: docstrings
+        entry: venv/bin/python tests/test_docstrings.py
+        language: system
+        types: [python]
+        exclude: ^migrations/
+        pass_filenames: false

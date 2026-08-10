@@ -105,6 +105,8 @@ tv_seasons = db.Table(
 
 
 class Utilities(object):
+    """Static string helpers shared by the import pipeline."""
+
     @staticmethod
     def sanitize_string(string):
         """Given an arbitrary string, clean it of troublesome characters."""
@@ -150,6 +152,13 @@ def tmdb_get(url, **kwargs):
 
 
 class TMDBMixin(object):
+    """TMDb fetch/apply methods shared by the Movie and TVSeries models.
+
+    Each refresh is split in half: *_fetch does the network work and
+    returns a payload, *_apply writes it to the database — so the
+    two-phase refresh tasks can run the halves on different queues.
+    """
+
     def tmdb_movie_fetch(self, tmdb_id=None):
         """Network half of a TMDb movie refresh: search (when no id is
         given) and pull the movie details. Writes nothing to the database,
@@ -756,6 +765,8 @@ class TMDBMixin(object):
 
 
 class User(UserMixin, db.Model):
+    """An account: credentials, admin flag, API key, and Plex mapping."""
+
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), index=True, unique=True)
     password_hash = db.Column(db.String(256))
@@ -772,12 +783,18 @@ class User(UserMixin, db.Model):
         return f"<User '{self.email}'>"
 
     def set_password(self, password):
+        """Store a salted hash of the password."""
+
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
+        """True when the password matches the stored hash."""
+
         return check_password_hash(self.password_hash, password)
 
     def get_reset_password_token(self, expires_in=600):
+        """A signed, short-lived JWT for the password-reset email link."""
+
         return jwt.encode(
             {"reset_password": self.id, "exp": time() + expires_in},
             current_app.config["SECRET_KEY"],
@@ -786,6 +803,8 @@ class User(UserMixin, db.Model):
 
     @staticmethod
     def verify_reset_password_token(token):
+        """The User a reset token identifies, or None if invalid or expired."""
+
         try:
             id = jwt.decode(
                 token, current_app.config["SECRET_KEY"], algorithms=["HS256"]
@@ -795,6 +814,12 @@ class User(UserMixin, db.Model):
         return db.session.get(User, id)
 
     def get_queue_details(self):
+        """Running and queued background jobs for the queue page.
+
+        Merges the import, transcode, and file-operation queues into one
+        ordered list with queue positions attached.
+        """
+
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
         imports_running = imports.get_job_ids()
         transcodes = StartedJobRegistry(
@@ -966,6 +991,8 @@ class User(UserMixin, db.Model):
         return details
 
     def get_queue_count(self):
+        """Total queued plus running jobs, for the navbar badge."""
+
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
         imports_running = imports.get_job_ids()
         transcodes = StartedJobRegistry(
@@ -988,6 +1015,10 @@ class User(UserMixin, db.Model):
 
 
 class UserMovieReview(db.Model):
+    """One viewing: a diary/review row from the movie page, a Letterboxd
+    import, or a Plex watch.
+    """
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
@@ -1019,6 +1050,10 @@ class UserMovieReview(db.Model):
 
 
 class Movie(db.Model, TMDBMixin, Utilities):
+    """A film: local identity, TMDb enrichment, Criterion details, and
+    shopping-cart state.
+    """
+
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, index=True)
     year = db.Column(db.Integer, nullable=False, index=True)
@@ -1136,6 +1171,8 @@ class Movie(db.Model, TMDBMixin, Utilities):
 
 
 class TVSeries(db.Model, TMDBMixin):
+    """A TV series and its TMDb enrichment."""
+
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, unique=True, index=True)
     date_created = db.Column(
@@ -1212,6 +1249,10 @@ class TVSeries(db.Model, TMDBMixin):
 
 
 class File(db.Model):
+    """A library media file: location, quality and ranking fields, track
+    metadata relations, and AWS archive state.
+    """
+
     id = db.Column(db.Integer, primary_key=True)
     untouched_basename = db.Column(db.String(255))
     media_library = db.Column(db.String(16), nullable=False, index=True)
@@ -1296,6 +1337,12 @@ class File(db.Model):
             setattr(self, key, kwargs[key])
 
     def delete_local_file(self, delete_directory_tree=False):
+        """Delete the library copy and any transcoded sibling.
+
+        Missing files aren't an error, and with delete_directory_tree the
+        emptied folders are purged too.
+        """
+
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
         transcoded_file = os.path.join(
             current_app.config["TRANSCODES_DIR"],
@@ -1341,6 +1388,10 @@ class File(db.Model):
         return self
 
     def file_identifier(self):
+        """The JSON identity used as this file's cross-task lock key:
+        title/year/feature for movies, series/season/episode for TV.
+        """
+
         if self.media_library == "Movies":
             file = (
                 File.query.join(Movie, (Movie.id == File.movie_id))
@@ -1422,6 +1473,8 @@ class File(db.Model):
         # xoxo,
         # Past Glenn
         # 2020-08-02
+
+        """Same-title files that outrank this one."""
 
         better_files = []
 
@@ -1580,6 +1633,10 @@ class File(db.Model):
         return better_files
 
     def find_worse_files(self):
+        """Same-title files this one outranks — the pruning candidates after
+        an upgrade.
+        """
+
         worse_files = []
 
         if self.media_library == "Movies":
@@ -1624,6 +1681,8 @@ class File(db.Model):
 
 
 class FileAudioTrack(db.Model):
+    """One audio track from a file's MediaInfo scan."""
+
     id = db.Column(db.Integer, primary_key=True)
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"))
     track = db.Column(db.Integer, nullable=False)
@@ -1648,6 +1707,8 @@ class FileAudioTrack(db.Model):
 
 
 class FileSubtitleTrack(db.Model):
+    """One subtitle track from a file's MediaInfo scan."""
+
     id = db.Column(db.Integer, primary_key=True)
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"))
     track = db.Column(db.Integer, nullable=False)
@@ -1666,6 +1727,8 @@ class FileSubtitleTrack(db.Model):
 
 
 class RefFeatureType(db.Model):
+    """Lookup table of special-feature types (Trailers, Featurettes, ...)."""
+
     id = db.Column(db.Integer, primary_key=True)
     feature_type = db.Column(db.String(32), nullable=False, unique=True)
     files = db.relationship(
@@ -1677,6 +1740,10 @@ class RefFeatureType(db.Model):
 
 
 class RefQuality(db.Model):
+    """Lookup table of quality tiers ordered by preference, including the
+    virtual bottom tier 'Not in library'.
+    """
+
     id = db.Column(db.Integer, primary_key=True)
     quality_title = db.Column(db.String(32), nullable=False, unique=True)
     preference = db.Column(db.Integer, nullable=False)
@@ -1694,6 +1761,8 @@ class RefQuality(db.Model):
 
 
 class RefTMDBCertification(db.Model, TMDBMixin):
+    """Lookup table of per-country TMDb certifications (G, PG-13, ...)."""
+
     id = db.Column(db.Integer, primary_key=True)
     country = db.Column(db.String(8))
     certification = db.Column(db.String(32))
@@ -1707,6 +1776,8 @@ class RefTMDBCertification(db.Model, TMDBMixin):
 
 
 class TMDBMovieCollection(db.Model, TMDBMixin):
+    """A TMDb collection a movie belongs to."""
+
     id = db.Column(db.Integer, primary_key=True)
     tmdb_backdrop_path = db.Column(db.String(64))
     name = db.Column(db.String(128))
@@ -1717,6 +1788,8 @@ class TMDBMovieCollection(db.Model, TMDBMixin):
 
 
 class TMDBCredit(db.Model, TMDBMixin):
+    """A person from TMDb credits, shared by the cast and crew join rows."""
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
     gender = db.Column(db.Integer)
@@ -1733,6 +1806,8 @@ class TMDBCredit(db.Model, TMDBMixin):
 
 
 class MovieCast(db.Model):
+    """Join row: a credit's acting role on a movie."""
+
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
@@ -1746,6 +1821,8 @@ class MovieCast(db.Model):
 
 
 class MovieCrew(db.Model):
+    """Join row: a credit's crew role on a movie."""
+
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
@@ -1761,6 +1838,8 @@ class MovieCrew(db.Model):
 
 
 class TVCast(db.Model):
+    """Join row: a credit's acting role on a TV series."""
+
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
@@ -1773,6 +1852,8 @@ class TVCast(db.Model):
 
 
 class TVCrew(db.Model):
+    """Join row: a credit's crew role on a TV series."""
+
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
@@ -1786,6 +1867,8 @@ class TVCrew(db.Model):
 
 
 class TMDBGenre(db.Model, TMDBMixin):
+    """A TMDb genre associated with a library title."""
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(32))
 
@@ -1794,6 +1877,8 @@ class TMDBGenre(db.Model, TMDBMixin):
 
 
 class TMDBKeyword(db.Model, TMDBMixin):
+    """A TMDb keyword associated with a library title."""
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
 
@@ -1802,6 +1887,8 @@ class TMDBKeyword(db.Model, TMDBMixin):
 
 
 class TMDBNetwork(db.Model, TMDBMixin):
+    """A TMDb network associated with a series."""
+
     id = db.Column(db.Integer, primary_key=True)
     tmdb_logo_path = db.Column(db.String(64))
     name = db.Column(db.String(128))
@@ -1812,6 +1899,8 @@ class TMDBNetwork(db.Model, TMDBMixin):
 
 
 class TMDBProductionCompany(db.Model, TMDBMixin):
+    """A TMDb production company associated with a library title."""
+
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
     country = db.Column(db.String(16))
@@ -1822,6 +1911,8 @@ class TMDBProductionCompany(db.Model, TMDBMixin):
 
 
 class TMDBProductionCountry(db.Model, TMDBMixin):
+    """A TMDb production country associated with a library title."""
+
     id = db.Column(db.String(2), primary_key=True)
     name = db.Column(db.String(128))
 
@@ -1830,6 +1921,8 @@ class TMDBProductionCountry(db.Model, TMDBMixin):
 
 
 class TMDBSpokenLanguage(db.Model, TMDBMixin):
+    """A TMDb spoken language associated with a library title."""
+
     id = db.Column(db.String(2), primary_key=True)
     name = db.Column(db.String(128))
 
@@ -1838,6 +1931,8 @@ class TMDBSpokenLanguage(db.Model, TMDBMixin):
 
 
 class TMDBSeason(db.Model, TMDBMixin):
+    """A TMDb season summary associated with a series."""
+
     id = db.Column(db.Integer, primary_key=True)
     air_date = db.Column(db.DateTime)
     episode_count = db.Column(db.Integer)
@@ -1852,6 +1947,8 @@ class TMDBSeason(db.Model, TMDBMixin):
 
 @login.user_loader
 def load_user(id):
+    """flask-login's user loader."""
+
     return db.session.get(User, int(id))
 
 
