@@ -76,7 +76,7 @@ class MovieReviewForm(FlaskForm):
     liked = BooleanField("Liked")
     review = TextAreaField("Review")
     date_watched = DateField("Date Watched", format="%Y-%m-%d", validators=[Optional()])
-    review_submit = SubmitField("Rate Movie")
+    review_submit = SubmitField("Log Movie")
 
     def validate_rating(self, rating):
         """Keep ratings between 0 and 5 stars."""

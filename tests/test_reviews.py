@@ -452,7 +452,7 @@ def test_movie_page_review_accepts_like_without_rating(app, admin_client):
         f"/movie/{movie_id}",
         data={
             "csrf_token": csrf_token_from(page),
-            "review_submit": "Rate Movie",
+            "review_submit": "Log Movie",
             "rating": "",
             "liked": "y",
             "review": "",
@@ -488,7 +488,7 @@ def test_movie_page_logs_bare_watches(app, admin_client):
         f"/movie/{movie_id}",
         data={
             "csrf_token": csrf_token_from(page),
-            "review_submit": "Rate Movie",
+            "review_submit": "Log Movie",
             "rating": "",
             "review": "",
             "date_watched": "2026-08-01",
@@ -512,7 +512,7 @@ def test_movie_page_logs_bare_watches(app, admin_client):
         f"/movie/{movie_id}",
         data={
             "csrf_token": csrf_token_from(page),
-            "review_submit": "Rate Movie",
+            "review_submit": "Log Movie",
             "rating": "",
             "review": "",
             "date_watched": "2026-08-09",
@@ -586,7 +586,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         "/review/tmdb/579",
         data={
             "csrf_token": csrf_token_from(page),
-            "review_submit": "Rate Movie",
+            "review_submit": "Log Movie",
             "rating": "3.5",
             "liked": "y",
             "review": "Still a decent shark.",
