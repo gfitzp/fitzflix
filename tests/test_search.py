@@ -53,15 +53,17 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     with app.app_context():
         build_library(app)
 
+    # Upgradability is conveyed by badge color alone: amber for an
+    # upgrade candidate, green for a topped-out copy
+
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
-    assert "DVD" in page
-    assert "upgrade candidate" in page
+    assert 'badge-warning">DVD' in page
 
     page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
     assert "Jurassic Park (1993)" in page
-    assert "Bluray-2160p Remux" in page
-    assert "upgrade candidate" not in page
+    assert 'badge-success">Bluray-2160p Remux' in page
+    assert "badge-warning" not in page
 
 
 def test_search_shows_reviewed_movie_without_files(app, admin_client):
@@ -245,7 +247,7 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
 
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
     assert 'badge-success">DVD &mdash; excluded' in page
-    assert "upgrade candidate" not in page
+    assert "badge-warning" not in page
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
