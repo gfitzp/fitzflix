@@ -424,6 +424,14 @@ JAWS_2_DETAILS = {
                 "profile_path": "/scheider.jpg",
             },
             {"id": 999888777, "name": "Unknown Costar", "order": 1},
+            # Deep in the billing: the cast scroller shows everyone, not
+            # just the top-billed three
+            {
+                "id": 555444333,
+                "name": "Deep Billed Player",
+                "order": 9,
+                "character": "Beach Extra",
+            },
         ]
     },
 }
@@ -513,12 +521,16 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "116&nbsp;minutes" in page
     assert "Horror" in page and "Thriller" in page
     assert ">PG</span>" in page
-    # Top billing: locally known people link to their filmography, others
-    # render unlinked
+    # The cast scroller shows every credited actor: locally known people
+    # link to their filmography, others render unlinked, and deep-billed
+    # names (order > 2) appear too
     assert "Roy Scheider" in page
     assert "credit=4430" in page
     assert "Unknown Costar" in page
     assert "credit=999888777" not in page
+    assert "Deep Billed Player" in page
+    assert "Beach Extra" in page
+    assert "cast-scroller" in page
     # The store-search dropdown and external links render for the film,
     # but there's no Files button or shopping-list toggle
     assert "blu-ray.com/movies/search.php" in page

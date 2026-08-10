@@ -152,6 +152,18 @@ def _register_mysql_compat_functions(engine):
         # ratings are nullable
         return _math.floor(value) if value is not None else None
 
+    def _substring_index(value, delimiter, count):
+        # Only the count=-1 form (text after the last delimiter) is used,
+        # but mirror MySQL's general semantics anyway
+        if value is None or delimiter is None:
+            return None
+        parts = str(value).split(delimiter)
+        if count > 0:
+            return delimiter.join(parts[:count])
+        if count < 0:
+            return delimiter.join(parts[count:])
+        return ""
+
     def _utc_timestamp():
         return _datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -160,6 +172,7 @@ def _register_mysql_compat_functions(engine):
         dbapi_connection.create_function("adddate", 2, _adddate)
         dbapi_connection.create_function("floor", 1, _floor)
         dbapi_connection.create_function("regexp_replace", 3, _regexp_replace)
+        dbapi_connection.create_function("substring_index", 3, _substring_index)
         dbapi_connection.create_function("utc_timestamp", 0, _utc_timestamp)
 
 

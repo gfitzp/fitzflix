@@ -19,29 +19,17 @@
 			</div>
 		{% endif %}
 	</div>
-	<div class="col-md">
+	{# min-width: 0 lets this column shrink below the cast strip's
+	   intrinsic width, so the wide scroller can't push the whole
+	   column down beneath the poster #}
+	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ film_title }} ({{ year }})</h3>
 			<p>
 				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(", ") }}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
 			</p>
 			<p class="small text-muted">This film isn't in the library; logging a review adds it as a seen-but-unowned title.</p>
-			{% if starring %}
-				<div class="row ml-1">
-					{% for person in starring %}
-						<figure class="figure text-center">
-							{% if person.known %}<a href="{{ url_for('main.movie_library', credit=person.id) }}">{% endif %}
-								{% if person.profile_path %}
-									<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" alt="{{ person.name }}" class="rounded mx-3" style="width: 92px;">
-								{% else %}
-									<div class="border rounded d-flex justify-content-center align-items-center text-secondary mx-3" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
-								{% endif %}
-							{% if person.known %}</a>{% endif %}
-							<figcaption class="figure-caption mx-1">{% if person.known %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="text-muted text-nowrap">{{ person.name }}</a>{% else %}<span class="text-muted text-nowrap">{{ person.name }}</span>{% endif %}</figcaption>
-						</figure>
-					{% endfor %}
-				</div>
-			{% endif %}
+			{% include "_cast_scroller.html" %}
 		</div>
 	</div>
 </div>

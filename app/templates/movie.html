@@ -11,7 +11,10 @@
 	<div class="col-md-auto">
 		{% include "_movie_poster_large.html" %}
 	</div>
-	<div class="col-md">
+	{# min-width: 0 lets this column shrink below the cast strip's
+	   intrinsic width, so the wide scroller can't push the whole
+	   column down beneath the poster #}
+	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ title }}</h3>
 			{% if movie.tmdb_data_as_of %}
@@ -43,22 +46,7 @@
 			{% elif movie.criterion_set_title %}
 				<p>Part of the Criterion Collection's {{ movie.criterion_set_title }} collector's set.</p>
 			{% endif %}
-			{% if starring_roles %}
-				<div class="row ml-1">
-					{% for role in starring_roles %}
-						<figure class="figure text-center">
-							<a href="{{ url_for('main.movie_library', credit=role.starring.id) }}">
-								{% if role.starring.tmdb_profile_path %}
-									<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ role.starring.tmdb_profile_path }}" alt="{{ role.starring.name }}" class="rounded mx-3" style="width: 92px;">
-								{% else %}
-									<div class="border rounded d-flex justify-content-center align-items-center text-secondary mx-3" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
-								{% endif %}
-							</a>
-							<figcaption class="figure-caption mx-1"><a href="{{ url_for('main.movie_library', credit=role.starring.id) }}" class="text-muted text-nowrap">{{ role.starring.name }}</a></figcaption>
-						</figure>
-					{% endfor %}
-				</div>
-			{% endif %}
+			{% include "_cast_scroller.html" %}
 		</div>
 	</div>
 </div>

@@ -136,3 +136,31 @@ def test_library_page_badges_quality_by_upgradability(app, admin_client):
     assert 'badge-success">Bluray-1080p' in page
     # An excluded movie's copy counts as final even below the threshold
     assert 'badge-success">DVD' in page
+
+
+def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):
+    """The movie page's cast pane holds every credited actor in billing
+    order — the old page stopped at the top-billed three."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        movie = make_movie("Ensemble Film", 1974)
+        for order in range(8):
+            person = TMDBCredit(id=700000 + order, name=f"Ensemble Actor {order}")
+            db.session.add(person)
+            db.session.flush()
+            make_cast(person, movie, character=f"Passenger {order}", order=order)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "cast-scroller" in page
+    for order in range(8):
+        assert f"Ensemble Actor {order}" in page
+        assert f"credit=70000{order}" in page
+    assert "Passenger 7" in page  # characters render beneath the names
+
+    # Billing order is preserved left to right
+    positions = [page.index(f"Ensemble Actor {order}") for order in range(8)]
+    assert positions == sorted(positions)

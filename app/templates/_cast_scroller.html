@@ -1,0 +1,63 @@
+{# The billed-cast pane: a horizontally scrolling strip of every credited
+   actor, in credit order. Plain CSS overflow scrolling with snap points
+   (momentum-swipes on phones); the chevrons page it for pointer users and
+   the right-edge fade hints that more cast is off-screen. Expects `cast`:
+   a list of {id, name, profile_path, character, known} dicts — known
+   people link to their filmography pages. #}
+{% if cast %}
+<div class="mt-2">
+	<div class="d-flex align-items-center mb-1">
+		<span class="small text-muted mr-auto">Starring</span>
+		<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 mr-1 cast-scroll-prev" aria-label="Scroll cast left">&lsaquo;</button>
+		<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 cast-scroll-next" aria-label="Scroll cast right">&rsaquo;</button>
+	</div>
+	<div class="position-relative">
+		<div class="d-flex cast-scroller" style="overflow-x: auto; scroll-snap-type: x proximity; gap: 12px; padding-bottom: 4px; -webkit-overflow-scrolling: touch;">
+			{% for person in cast %}
+			<figure class="figure text-center mb-0" style="flex: 0 0 92px; scroll-snap-align: start;">
+				{% if person.known %}<a href="{{ url_for('main.movie_library', credit=person.id) }}">{% endif %}
+				{% if person.profile_path %}
+					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">
+				{% else %}
+					<div class="border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
+				{% endif %}
+				{% if person.known %}</a>{% endif %}
+				<figcaption class="figure-caption" style="width: 92px;">
+					{% if person.known %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="text-muted d-block text-truncate" title="{{ person.name }}">{{ person.name }}</a>{% else %}<span class="text-muted d-block text-truncate" title="{{ person.name }}">{{ person.name }}</span>{% endif %}
+					{% if person.character %}<span class="d-block text-truncate" style="opacity: 0.7;" title="{{ person.character }}">{{ person.character }}</span>{% endif %}
+				</figcaption>
+			</figure>
+			{% endfor %}
+		</div>
+		<div class="position-absolute cast-scroll-fade-left" style="top: 0; left: 0; bottom: 4px; width: 36px; background: linear-gradient(to left, rgba(255,255,255,0), #fff); pointer-events: none; transition: opacity 0.15s; opacity: 0;"></div>
+		<div class="position-absolute cast-scroll-fade-right" style="top: 0; right: 0; bottom: 4px; width: 36px; background: linear-gradient(to right, rgba(255,255,255,0), #fff); pointer-events: none; transition: opacity 0.15s;"></div>
+	</div>
+</div>
+<script>
+	(function() {
+		var scroller = document.querySelector(".cast-scroller");
+		var fadeLeft = document.querySelector(".cast-scroll-fade-left");
+		var fadeRight = document.querySelector(".cast-scroll-fade-right");
+
+		// Each fade only means "more cast this way": the left one appears
+		// once the strip has scrolled, the right one hides when the last
+		// card is fully in view (or the cast fits without scrolling)
+
+		function updateFade() {
+			fadeLeft.style.opacity = scroller.scrollLeft > 1 ? "1" : "0";
+			var atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1;
+			fadeRight.style.opacity = atEnd ? "0" : "1";
+		}
+		scroller.addEventListener("scroll", updateFade, {passive: true});
+		window.addEventListener("resize", updateFade);
+		updateFade();
+
+		document.querySelector(".cast-scroll-prev").addEventListener("click", function() {
+			scroller.scrollBy({left: -320, behavior: "smooth"});
+		});
+		document.querySelector(".cast-scroll-next").addEventListener("click", function() {
+			scroller.scrollBy({left: 320, behavior: "smooth"});
+		});
+	})();
+</script>
+{% endif %}

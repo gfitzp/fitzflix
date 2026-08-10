@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% macro pagination_nav() %}
+<nav aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages() %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{% endmacro %}
+
+{% block app_content %}
+<div class="row mt-n2 mb-2 d-flex">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">People</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		<form class="form-inline float-sm-right mb-2" action="{{ url_for('main.people') }}" method="get">
+			<input type="search" name="q" value="{{ query_text }}" class="form-control form-control-sm mr-2" placeholder="Search people&hellip;" aria-label="Search people by name">
+			<button type="submit" class="btn btn-sm btn-primary">Search</button>
+		</form>
+	</div>
+</div>
+{% if query_text %}
+<p class="small text-muted">People matching &ldquo;{{ query_text }}&rdquo;{% if pages %} ({{ pages.total }}){% endif %} &mdash; <a href="{{ url_for('main.people') }}">clear search</a></p>
+{% else %}
+<p class="small text-muted">Everyone credited in more than one of the library's films{% if pages %} ({{ pages.total }} people){% endif %}, most films first. Search to find anyone, including single-film appearances.</p>
+{% endif %}
+{% if people %}
+{{ pagination_nav() }}
+<div class="d-flex flex-wrap" style="gap: 16px;">
+	{% for person in people %}
+	<figure class="figure text-center mb-2" style="flex: 0 0 92px;">
+		<a href="{{ url_for('main.movie_library', credit=person.id) }}">
+			{% if person.tmdb_profile_path %}
+				<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">
+			{% else %}
+				<div class="border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 138px; width: 92px;"><svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg></div>
+			{% endif %}
+		</a>
+		<figcaption class="figure-caption" style="width: 92px;">
+			<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="text-muted d-block text-truncate" title="{{ person.name }}">{{ person.name }}</a>
+			<span class="d-block" style="opacity: 0.7;">{{ person.film_count }} film{{ "s" if person.film_count != 1 }}</span>
+		</figcaption>
+	</figure>
+	{% endfor %}
+</div>
+{{ pagination_nav() }}
+{% else %}
+<p class="text-muted">No people found{% if query_text %} for &ldquo;{{ query_text }}&rdquo;{% endif %}.</p>
+{% endif %}
+{% endblock %}

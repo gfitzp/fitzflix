@@ -762,12 +762,21 @@ def movie(movie_id):
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
-    starring_roles = (
-        MovieCast.query.filter(MovieCast.movie_id == movie_id)
-        .filter(MovieCast.billing_order <= 2)
+    # Every credited actor in billing order for the cast scroller; local
+    # credit rows always have filmography pages, so all of them link
+
+    cast = [
+        {
+            "id": role.starring.id,
+            "name": role.starring.name,
+            "profile_path": role.starring.tmdb_profile_path,
+            "character": role.character,
+            "known": True,
+        }
+        for role in MovieCast.query.filter(MovieCast.movie_id == movie_id)
         .order_by(MovieCast.billing_order.asc())
         .all()
-    )
+    ]
     genres = [genre.name for genre in movie.genres]
     review = (
         UserMovieReview.query.filter_by(user_id=int(current_user.id), movie_id=movie.id)
@@ -938,7 +947,7 @@ def movie(movie_id):
         "movie.html",
         title=title,
         movie=movie,
-        starring_roles=starring_roles,
+        cast=cast,
         genres=genres,
         review=review,
         films=films,
@@ -1288,6 +1297,73 @@ def movie_poster(movie_id):
         has_custom_poster=bool(movie.custom_poster),
         default_poster_path=movie.tmdb_poster_path,
         upload_enabled=True,
+    )
+
+
+@bp.route("/people")
+@login_required
+def people():
+    """Browse every credited person across the library's films.
+
+    Defaults to people appearing in multiple films, since the long tail is
+    one-appearance day players; searching by name widens to everyone, and
+    uncredited-only roles never count toward the filter (Glenn's spec from
+    GitHub #13). Each person links to their filmography page.
+    """
+
+    page = request.args.get("page", 1, type=int)
+    query_text = (request.args.get("q") or "").strip()
+    minimum_films = 1 if query_text else 2
+
+    film_count = db.func.count(db.distinct(MovieCast.movie_id)).label("film_count")
+    people_query = (
+        db.session.query(
+            TMDBCredit.id,
+            TMDBCredit.name,
+            TMDBCredit.tmdb_profile_path,
+            film_count,
+        )
+        .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
+        .filter(
+            db.or_(
+                MovieCast.character == None,
+                db.not_(MovieCast.character.like("%(uncredited)%")),
+            )
+        )
+        .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
+    )
+    if query_text:
+        people_query = people_query.filter(TMDBCredit.name.ilike(f"%{query_text}%"))
+    # Ties break on surname: TMDb has no structured sort name, so the last
+    # whitespace-separated token stands in for it (wrong for "Jr." suffixes
+    # and multi-word surnames, fine as a tie-break)
+
+    people_page = (
+        people_query.having(film_count >= minimum_films)
+        .order_by(
+            film_count.desc(),
+            db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
+            TMDBCredit.name.asc(),
+        )
+        .paginate(page=page, per_page=120, error_out=False)
+    )
+
+    return render_template(
+        "people.html",
+        title="People",
+        people=people_page.items,
+        pages=people_page,
+        query_text=query_text,
+        next_url=(
+            url_for("main.people", page=people_page.next_num, q=query_text or None)
+            if people_page.has_next
+            else None
+        ),
+        prev_url=(
+            url_for("main.people", page=people_page.prev_num, q=query_text or None)
+            if people_page.has_prev
+            else None
+        ),
     )
 
 
@@ -3511,11 +3587,10 @@ def review_tmdb(tmdb_id):
                     break
             break
 
-    top_billed = [
-        person
-        for person in (details.get("credits") or {}).get("cast") or []
-        if person.get("order", 99) <= 2
-    ][:3]
+    billed_cast = sorted(
+        (details.get("credits") or {}).get("cast") or [],
+        key=lambda person: person.get("order", 99),
+    )
 
     # Only people with local credit records get filmography links; the
     # filmography page 404s on ids it has never seen
@@ -3523,17 +3598,18 @@ def review_tmdb(tmdb_id):
     known_people = {
         credit.id
         for credit in TMDBCredit.query.filter(
-            TMDBCredit.id.in_([p.get("id") for p in top_billed] or [0])
+            TMDBCredit.id.in_([p.get("id") for p in billed_cast] or [0])
         ).all()
     }
-    starring = [
+    cast = [
         {
             "id": person.get("id"),
             "name": person.get("name"),
             "profile_path": person.get("profile_path"),
+            "character": person.get("character"),
             "known": person.get("id") in known_people,
         }
-        for person in top_billed
+        for person in billed_cast
     ]
     film_title = details.get("title")
     release_year = (details.get("release_date") or "")[:4]
@@ -3620,7 +3696,7 @@ def review_tmdb(tmdb_id):
         runtime=details.get("runtime"),
         genres=genres,
         certification=certification,
-        starring=starring,
+        cast=cast,
         movie_review_form=movie_review_form,
         movie=store_lookup,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
