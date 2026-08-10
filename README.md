@@ -321,9 +321,9 @@ Everything Fitzflix keeps at AWS lives in one S3 bucket (`AWS_BUCKET`), laid out
 | --- | --- | --- |
 | `untouched/` (`AWS_UNTOUCHED_PREFIX`) | Archived original media, uploaded on import when `ARCHIVE_ORIGINAL_MEDIA` is set | Uploaded as `STANDARD`, transitioned to **Glacier Deep Archive** by a day-0 lifecycle rule |
 | `backup/` (`AWS_BACKUP_PREFIX`) | Nightly database dumps and the encrypted `.env` copy | Pruned by the backup task's own retention window |
-| `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | Mirror of the custom artwork tree, synced by the nightly backup (deletions propagate) | — |
+| `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | Mirror of the custom artwork tree, synced by the nightly backup (deletions propagate) | Noncurrent versions expire after 30 days |
 
-**Bucket versioning** stays enabled — it is the recovery layer for deleted or overwritten objects, and the [disaster recovery](#disaster-recovery) procedure depends on it. A bucket-wide lifecycle rule aborts **incomplete multipart uploads** after one day, so an interrupted archive or backup upload can't silently accumulate billable, invisible parts.
+**Bucket versioning** stays enabled — it is the recovery layer for deleted or overwritten objects, and the [disaster recovery](#disaster-recovery) procedure depends on it. Versioning is bucket-wide (S3 has no per-prefix versioning); what varies per prefix is how long noncurrent versions are kept. For `untouched/`, a deleted or replaced original's previous version stays recoverable for **180 days** — chosen to match Deep Archive's 180-day minimum storage duration, so the window is free: expiring noncurrent versions any sooner would cost the same in early-deletion fees. A bucket-wide lifecycle rule also aborts **incomplete multipart uploads** after one day, so an interrupted archive or backup upload can't silently accumulate billable, invisible parts.
 
 **Restore notifications**: the bucket sends `s3:ObjectRestore:Completed` events for `untouched/` to an SQS queue (`AWS_SQS_URL`); the hourly poll drains it and downloads each completed restore. See [Restoring files from AWS](#restoring-files-from-aws).
 
@@ -333,7 +333,7 @@ Everything Fitzflix keeps at AWS lives in one S3 bucket (`AWS_BUCKET`), laid out
 flask aws provision
 ```
 
-idempotently creates whatever is missing and reports each component — the bucket, versioning, both lifecycle rules, the SQS queue (printing the `AWS_SQS_URL` line to add to `.env` if it created one), the queue policy that lets S3 deliver to it, and the restore-event notification. Existing configuration is always preserved: lifecycle rules and notifications are appended to, never replaced, so hand-made rules survive. Re-running against a fully configured account changes nothing and says so.
+idempotently creates whatever is missing and reports each component — the bucket, versioning, the lifecycle rules, the SQS queue (printing the `AWS_SQS_URL` line to add to `.env` if it created one), the queue policy that lets S3 deliver to it, and the restore-event notification. Existing configuration is always preserved: lifecycle rules and notifications are appended to, never replaced, so hand-made rules survive. Re-running against a fully configured account changes nothing and says so. Every run saves the as-found lifecycle and notification configuration to `logs/aws-snapshots/` before writing, and refuses to proceed if the bucket reports fewer lifecycle rules than the newest snapshot — pass `--force` when the reduction is intentional (for example, wiping the rules to rebuild the provision-managed set from a clean slate).
 
 ### IAM
 

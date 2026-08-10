@@ -142,11 +142,19 @@ def register(app):
         pass
 
     @aws.command()
-    def provision():
+    @click.option(
+        "--force",
+        is_flag=True,
+        help="Proceed even if the bucket reports fewer lifecycle rules "
+        "than the newest local snapshot (i.e. the reduction is intended).",
+    )
+    def provision(force):
         """Idempotently create the S3 bucket, lifecycle rules, SQS queue,
         and restore-notification wiring described in the README. Safe to
-        re-run: existing configuration is preserved and reported."""
+        re-run: existing configuration is preserved and reported, and the
+        as-found configuration is snapshotted before any change."""
 
+        from app.aws_setup import StaleReadSuspected
         from app.aws_setup import provision as provision_aws
         from app.videos import aws_s3_client, aws_sqs_client
 
@@ -156,9 +164,16 @@ def register(app):
                 "set in .env before provisioning"
             )
 
-        results = provision_aws(
-            app.config, aws_s3_client(), aws_sqs_client(), echo=click.echo
-        )
+        try:
+            results = provision_aws(
+                app.config,
+                aws_s3_client(),
+                aws_sqs_client(),
+                echo=click.echo,
+                force=force,
+            )
+        except StaleReadSuspected as e:
+            raise click.ClickException(str(e))
         created = sum(1 for _, status in results if status != "present")
         click.echo(
             f"\n{len(results)} components checked, "

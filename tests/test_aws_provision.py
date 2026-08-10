@@ -84,6 +84,7 @@ class FakeSQS:
 CONFIG = {
     "AWS_BUCKET": "test-bucket",
     "AWS_UNTOUCHED_PREFIX": "untouched",
+    "AWS_CUSTOM_POSTERS_PREFIX": "custom-posters",
     "AWS_SQS_URL": "https://sqs.test/existing",
 }
 
@@ -98,10 +99,10 @@ def s3_policy_statement(bucket="test-bucket"):
     }
 
 
-def test_provision_creates_everything_from_nothing():
+def test_provision_creates_everything_from_nothing(tmp_path):
     s3 = FakeS3(exists=False)
     sqs = FakeSQS()
-    config = dict(CONFIG, AWS_SQS_URL=None)
+    config = dict(CONFIG, AWS_SQS_URL=None, LOG_FILE=str(tmp_path / "app.log"))
 
     results = dict(provision(config, s3, sqs, echo=lambda *_: None))
 
@@ -109,11 +110,20 @@ def test_provision_creates_everything_from_nothing():
     assert s3.versioning == "Enabled"
     rule_ids = [rule["ID"] for rule in s3.rules]
     assert ABORT_RULE_ID in rule_ids
-    assert any(
-        rule.get("Filter", {}).get("Prefix") == "untouched/"
-        and rule["Transitions"][0]["StorageClass"] == "DEEP_ARCHIVE"
+    untouched_rule = next(
+        rule
         for rule in s3.rules
+        if rule.get("Filter", {}).get("Prefix") == "untouched/"
     )
+    assert untouched_rule["Transitions"][0]["StorageClass"] == "DEEP_ARCHIVE"
+    assert untouched_rule["NoncurrentVersionExpiration"]["NoncurrentDays"] == 180
+    assert untouched_rule["Expiration"] == {"ExpiredObjectDeleteMarker": True}
+    posters_rule = next(
+        rule
+        for rule in s3.rules
+        if rule.get("Filter", {}).get("Prefix") == "custom-posters/"
+    )
+    assert posters_rule["NoncurrentVersionExpiration"]["NoncurrentDays"] == 30
     assert "create_queue" in sqs.writes
     assert any(
         statement.get("Principal", {}).get("Service") == "s3.amazonaws.com"
@@ -122,10 +132,16 @@ def test_provision_creates_everything_from_nothing():
     assert s3.notification["QueueConfigurations"][0]["Events"] == [
         "s3:ObjectRestore:Completed"
     ]
-    assert all(status in ("created", "updated") for status in results.values())
+    # The delete-marker cleanup is created as part of the untouched/ rule
+    # itself, so its own step finds it already present
+    statuses = dict(results)
+    assert (
+        statuses.pop("lifecycle: untouched/ expired delete-marker cleanup") == "present"
+    )
+    assert all(status in ("created", "updated") for status in statuses.values())
 
 
-def test_provision_preserves_existing_hand_made_configuration():
+def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     """Against a bucket shaped like the real one — versioning on, per-prefix
     rules with their own names, notification wired — only the bucket-wide
     abort rule is added, and nothing existing is touched."""
@@ -137,6 +153,8 @@ def test_provision_preserves_existing_hand_made_configuration():
             "Filter": {"Prefix": "untouched/"},
             "Transitions": [{"Days": 0, "StorageClass": "DEEP_ARCHIVE"}],
             "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1},
+            "Expiration": {"ExpiredObjectDeleteMarker": True},
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 1},
         },
         {
             "ID": "custom-posters/ lifecycle",
@@ -166,15 +184,27 @@ def test_provision_preserves_existing_hand_made_configuration():
         policy={"Version": "2012-10-17", "Statement": [s3_policy_statement()]}
     )
 
-    results = dict(provision(CONFIG, s3, sqs, echo=lambda *_: None))
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    results = dict(provision(config, s3, sqs, echo=lambda *_: None))
 
-    created = [
-        component for component, status in results.items() if status != "present"
-    ]
-    assert created == ["lifecycle: bucket-wide incomplete-multipart abort"]
+    changed = {
+        component: status
+        for component, status in results.items()
+        if status != "present"
+    }
+    assert changed == {
+        "lifecycle: bucket-wide incomplete-multipart abort": "created",
+        "lifecycle: untouched/ noncurrent-version retention (180 days)": "updated",
+    }
 
-    # The two hand-made rules survive verbatim, with ours appended
-    assert s3.rules[:2] == hand_made_rules
+    # The hand-made untouched/ rule keeps every field except the raised
+    # retention; the other rule survives verbatim; ours is appended
+    untouched = s3.rules[0]
+    assert untouched["NoncurrentVersionExpiration"] == {"NoncurrentDays": 180}
+    assert untouched["Expiration"] == {"ExpiredObjectDeleteMarker": True}
+    assert untouched["AbortIncompleteMultipartUpload"] == {"DaysAfterInitiation": 1}
+    assert untouched["Transitions"] == hand_made_rules[0]["Transitions"]
+    assert s3.rules[1] == hand_made_rules[1]
     assert s3.rules[2]["ID"] == ABORT_RULE_ID
     assert s3.rules[2]["Filter"] == {}
 
@@ -183,10 +213,10 @@ def test_provision_preserves_existing_hand_made_configuration():
     assert sqs.writes == []
 
 
-def test_provision_is_idempotent():
+def test_provision_is_idempotent(tmp_path):
     s3 = FakeS3(exists=False)
     sqs = FakeSQS()
-    config = dict(CONFIG)
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
 
     provision(config, s3, sqs, echo=lambda *_: None)
     first_writes = list(s3.writes) + list(sqs.writes)
@@ -195,3 +225,58 @@ def test_provision_is_idempotent():
 
     assert all(status == "present" for status in results.values())
     assert list(s3.writes) + list(sqs.writes) == first_writes
+
+
+def test_provision_snapshots_the_as_found_configuration(tmp_path):
+    s3 = FakeS3(
+        versioning="Enabled", rules=[{"ID": "keep", "Status": "Enabled", "Filter": {}}]
+    )
+    sqs = FakeSQS(
+        policy={"Version": "2012-10-17", "Statement": [s3_policy_statement()]}
+    )
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+
+    provision(config, s3, sqs, echo=lambda *_: None)
+
+    snapshots = list((tmp_path / "aws-snapshots").glob("lifecycle-*.json"))
+    assert len(snapshots) == 1
+    saved = json.loads(snapshots[0].read_text())
+    assert saved["lifecycle_rules"][0]["ID"] == "keep"
+    assert "notification" in saved
+
+
+def test_provision_refuses_a_suspected_stale_read(tmp_path):
+    """A run that sees fewer rules than the newest snapshot recorded must
+    not write — an eventually-consistent partial read written back is how
+    hand-made rules get silently destroyed."""
+
+    import pytest
+
+    from app.aws_setup import StaleReadSuspected
+
+    config = dict(CONFIG, LOG_FILE=str(tmp_path / "app.log"))
+    sqs = FakeSQS(
+        policy={"Version": "2012-10-17", "Statement": [s3_policy_statement()]}
+    )
+
+    full = FakeS3(
+        versioning="Enabled",
+        rules=[
+            {"ID": f"rule-{n}", "Status": "Enabled", "Filter": {"Prefix": f"p{n}/"}}
+            for n in range(3)
+        ],
+    )
+    provision(config, full, sqs, echo=lambda *_: None)
+
+    stale = FakeS3(
+        versioning="Enabled",
+        rules=[{"ID": "rule-0", "Status": "Enabled", "Filter": {"Prefix": "p0/"}}],
+    )
+    with pytest.raises(StaleReadSuspected):
+        provision(config, stale, sqs, echo=lambda *_: None)
+    assert "put_lifecycle" not in stale.writes
+
+    # --force acknowledges an intentional reduction and proceeds
+    results = dict(provision(config, stale, sqs, echo=lambda *_: None, force=True))
+    assert "put_lifecycle" in stale.writes
+    assert any(status != "present" for status in results.values())
