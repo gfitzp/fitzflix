@@ -20,7 +20,7 @@
 			<span class="text-nowrap">
 				{# Films without a release year can't be reviewed yet #}
 				{% if match.year %}
-				<a class="btn btn-outline-primary btn-sm py-0" href="{{ url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}">Review</a>
+				<a class="btn btn-outline-primary btn-sm py-0" href="{{ url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}">Log</a>
 				{% endif %}
 				<span class="badge badge-secondary">Not in library</span>
 			</span>

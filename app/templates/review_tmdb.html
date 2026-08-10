@@ -28,7 +28,7 @@
 			<p>
 				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(", ") }}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
 			</p>
-			<p class="small text-muted">This film isn't in the library; logging a review adds it as a seen-but-unowned title.</p>
+			<p class="small text-muted">This film isn't in the library; logging it adds a seen-but-unowned title to your history.</p>
 			{% include "_cast_scroller.html" %}
 		</div>
 	</div>
