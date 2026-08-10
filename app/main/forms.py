@@ -84,25 +84,6 @@ class MovieReviewForm(FlaskForm):
         if rating.data is not None and (rating.data < 0 or rating.data > 5):
             raise ValidationError("Please enter a rating between 0 and 5 stars.")
 
-    def validate(self, extra_validators=None):
-        # A star rating is optional — a review can be just a like and/or
-        # text — but an empty submission is probably a misclick. This can't
-        # live in validate_rating: Optional() stops that field's validator
-        # chain before it runs on empty input.
-
-        """Require at least one of rating, liked, or review text."""
-
-        if not super().validate(extra_validators):
-            return False
-        if (
-            self.rating.data is None
-            and not self.liked.data
-            and not (self.review.data or "").strip()
-        ):
-            self.rating.errors.append("Add a rating, mark it liked, or write a review.")
-            return False
-        return True
-
     def validate_date_watched(self, date_watched):
         """Reject watch dates in the future."""
 

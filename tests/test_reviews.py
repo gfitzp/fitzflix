@@ -470,12 +470,16 @@ def test_movie_page_review_accepts_like_without_rating(app, admin_client):
         assert review.whole_stars is None
 
 
-def test_movie_page_review_rejects_empty_submission(app, admin_client):
+def test_movie_page_logs_bare_watches(app, admin_client):
+    """A submission with no rating, like, or text is a plain diary entry:
+    a watch, not a review — no review date, rewatch computed like a Plex
+    watch would."""
+
     from app import db
     from app.models import UserMovieReview
 
     with app.app_context():
-        movie = make_movie("Empty Review Film", 1995)
+        movie = make_movie("Bare Watch Film", 1995)
         db.session.commit()
         movie_id = movie.id
 
@@ -487,15 +491,40 @@ def test_movie_page_review_rejects_empty_submission(app, admin_client):
             "review_submit": "Rate Movie",
             "rating": "",
             "review": "",
-            "date_watched": "",
+            "date_watched": "2026-08-01",
+        },
+        follow_redirects=True,
+    )
+    assert "in your history" in response.get_data(as_text=True)
+
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(movie_id=movie_id).one()
+        assert row.rating is None
+        assert row.liked is False
+        assert row.review == ""
+        assert row.date_reviewed is None
+        assert row.rewatch is False
+
+    # Logging the film again is a rewatch
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review_submit": "Rate Movie",
+            "rating": "",
+            "review": "",
+            "date_watched": "2026-08-09",
         },
     )
-    assert response.status_code == 200
-    assert "Add a rating, mark it liked, or write a review." in response.get_data(
-        as_text=True
-    )
     with app.app_context():
-        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 0
+        rows = (
+            UserMovieReview.query.filter_by(movie_id=movie_id)
+            .order_by(UserMovieReview.date_watched.asc())
+            .all()
+        )
+        assert [row.rewatch for row in rows] == [False, True]
 
 
 def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatch):
@@ -776,14 +805,14 @@ def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
         assert row.rewatch is False  # untouched by the edit
 
 
-def test_review_edit_rejects_empty_submission(app, admin_client):
+def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
     from app import db
     from app.models import User, UserMovieReview
     from app.videos import star_rating_fields
 
     with app.app_context():
         user_id = User.query.first().id
-        movie = make_movie("Guarded Film", 2002)
+        movie = make_movie("Cleared Film", 2002)
         row = UserMovieReview(
             user_id=user_id,
             movie_id=movie.id,
@@ -806,10 +835,13 @@ def test_review_edit_rejects_empty_submission(app, admin_client):
             "review_submit": "Save Review",
         },
     )
-    assert response.status_code == 200
-    assert "Add a rating, mark it liked, or write a review." in response.get_data(
-        as_text=True
-    )
+    # An empty edit is legal now: a bare watch is a valid diary entry
+    assert response.status_code == 302
+    with app.app_context():
+        row = db.session.get(UserMovieReview, row_id)
+        assert row.rating is None
+        assert row.liked is False
+        assert row.review == ""
 
 
 def test_review_edit_is_owner_only(app, admin_client, user_client):

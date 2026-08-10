@@ -842,21 +842,40 @@ def movie(movie_id):
             if movie_review_form.rating.data is not None
             else None
         )
+        # A bare submission (no rating, like, or text) is a plain diary
+        # entry — a watch, not a review — so it carries no review date.
+        # Rewatch is computed the way Plex watches compute it: any earlier
+        # row for this user and film makes this a repeat viewing.
+
+        is_review = bool(
+            rating is not None
+            or movie_review_form.liked.data
+            or (movie_review_form.review.data or "").strip()
+        )
+        rewatch = (
+            db.session.query(UserMovieReview.id)
+            .filter_by(user_id=current_user.id, movie_id=movie.id)
+            .first()
+            is not None
+        )
         review = UserMovieReview(
             user_id=current_user.id,
             movie_id=movie.id,
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now(),
+            date_reviewed=datetime.now() if is_review else None,
+            rewatch=rewatch,
             **star_rating_fields(rating),
         )
         db.session.add(review)
         db.session.commit()
         if rating is not None:
             flash(f"Rated '{title}' {rating:g} out of 5 stars", "success")
-        else:
+        elif is_review:
             flash(f"Logged review for '{title}'", "success")
+        else:
+            flash(f"Logged '{title}' in your history", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     transcode_form = TranscodeForm()
@@ -3803,13 +3822,30 @@ def review_tmdb(tmdb_id):
             if movie_review_form.rating.data is not None
             else None
         )
+        # A bare submission (no rating, like, or text) is a plain diary
+        # entry — a watch, not a review — so it carries no review date.
+        # Rewatch is computed the way Plex watches compute it: any earlier
+        # row for this user and film makes this a repeat viewing.
+
+        is_review = bool(
+            rating is not None
+            or movie_review_form.liked.data
+            or (movie_review_form.review.data or "").strip()
+        )
+        rewatch = (
+            db.session.query(UserMovieReview.id)
+            .filter_by(user_id=current_user.id, movie_id=movie.id)
+            .first()
+            is not None
+        )
         review = UserMovieReview(
             user_id=current_user.id,
             movie_id=movie.id,
             review=movie_review_form.review.data,
             liked=movie_review_form.liked.data,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now(),
+            date_reviewed=datetime.now() if is_review else None,
+            rewatch=rewatch,
             **star_rating_fields(rating),
         )
         db.session.add(review)
@@ -3825,7 +3861,10 @@ def review_tmdb(tmdb_id):
                 ),
             )
 
-        flash(f"Logged review for '{film_title} ({year})'", "success")
+        if is_review:
+            flash(f"Logged review for '{film_title} ({year})'", "success")
+        else:
+            flash(f"Logged '{film_title} ({year})' in your history", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     # A movie-shaped stand-in so the shared store-search dropdown and the
