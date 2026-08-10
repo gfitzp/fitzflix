@@ -313,6 +313,52 @@ Run from the project root with the venv activated. Each command queues a backgro
 
 Criterion data comes from [Wikidata](https://www.wikidata.org): each movie is matched by TMDb id (falling back to title and year) to pick up its spine number and a direct link to its film page at criterion.com. Box sets are supported too — a film released only inside a set (say, a Godzilla Showa-era or Olympic-films collection) takes its set's spine number, and the set title is filled in automatically when one hasn't been entered by hand. The refresh is additive: it never clears spine numbers or overwrites hand-curated set titles, and in-print/disc-owned flags stay whatever they've been set to.
 
+## AWS infrastructure
+
+Everything Fitzflix keeps at AWS lives in one S3 bucket (`AWS_BUCKET`), laid out by prefix:
+
+| Prefix | Contents | Lifecycle |
+| --- | --- | --- |
+| `untouched/` (`AWS_UNTOUCHED_PREFIX`) | Archived original media, uploaded on import when `ARCHIVE_ORIGINAL_MEDIA` is set | Uploaded as `STANDARD`, transitioned to **Glacier Deep Archive** by a day-0 lifecycle rule |
+| `backup/` (`AWS_BACKUP_PREFIX`) | Nightly database dumps and the encrypted `.env` copy | Pruned by the backup task's own retention window |
+| `custom-posters/` (`AWS_CUSTOM_POSTERS_PREFIX`) | Mirror of the custom artwork tree, synced by the nightly backup (deletions propagate) | — |
+
+**Bucket versioning** stays enabled — it is the recovery layer for deleted or overwritten objects, and the [disaster recovery](#disaster-recovery) procedure depends on it. A bucket-wide lifecycle rule aborts **incomplete multipart uploads** after one day, so an interrupted archive or backup upload can't silently accumulate billable, invisible parts.
+
+**Restore notifications**: the bucket sends `s3:ObjectRestore:Completed` events for `untouched/` to an SQS queue (`AWS_SQS_URL`); the hourly poll drains it and downloads each completed restore. See [Restoring files from AWS](#restoring-files-from-aws).
+
+### Provisioning
+
+```bash
+flask aws provision
+```
+
+idempotently creates whatever is missing and reports each component — the bucket, versioning, both lifecycle rules, the SQS queue (printing the `AWS_SQS_URL` line to add to `.env` if it created one), the queue policy that lets S3 deliver to it, and the restore-event notification. Existing configuration is always preserved: lifecycle rules and notifications are appended to, never replaced, so hand-made rules survive. Re-running against a fully configured account changes nothing and says so.
+
+### IAM
+
+The app runs fine with a policy scoped to its bucket and queue. Day-to-day operation needs:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:RestoreObject", "s3:ListBucket"],
+            "Resource": ["arn:aws:s3:::<bucket>", "arn:aws:s3:::<bucket>/*"]
+        },
+        {
+            "Effect": "Allow",
+            "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+            "Resource": "arn:aws:sqs:<region>:<account>:<queue>"
+        }
+    ]
+}
+```
+
+`flask aws provision` additionally needs `s3:CreateBucket`, `s3:PutBucketVersioning`, `s3:GetBucketVersioning`, `s3:PutLifecycleConfiguration`, `s3:GetLifecycleConfiguration`, `s3:PutBucketNotification`, `s3:GetBucketNotification`, `sqs:CreateQueue`, and `sqs:SetQueueAttributes` — grant those temporarily, or run provisioning with an admin credential once and drop back to the runtime policy.
+
 ## Restoring files from AWS
 
 Archived originals live in S3 Glacier Deep Archive, so getting one back is a two-step process:

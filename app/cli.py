@@ -135,3 +135,33 @@ def register(app):
             description="Polling AWS SQS for files to download",
         )
         app.logger.info("Polling AWS SQS for files to download")
+
+    @app.cli.group()
+    def aws():
+        """Manage the AWS infrastructure Fitzflix depends on."""
+        pass
+
+    @aws.command()
+    def provision():
+        """Idempotently create the S3 bucket, lifecycle rules, SQS queue,
+        and restore-notification wiring described in the README. Safe to
+        re-run: existing configuration is preserved and reported."""
+
+        from app.aws_setup import provision as provision_aws
+        from app.videos import aws_s3_client, aws_sqs_client
+
+        if not app.config["AWS_BUCKET"]:
+            raise click.ClickException(
+                "AWS_BUCKET (plus AWS_ACCESS_KEY / AWS_SECRET_KEY) must be "
+                "set in .env before provisioning"
+            )
+
+        results = provision_aws(
+            app.config, aws_s3_client(), aws_sqs_client(), echo=click.echo
+        )
+        created = sum(1 for _, status in results if status != "present")
+        click.echo(
+            f"\n{len(results)} components checked, "
+            f"{created} created or updated"
+            + ("" if created else " — everything was already in place")
+        )
