@@ -779,6 +779,14 @@ class User(UserMixin, db.Model):
 
     plex_username = db.Column(db.String(64), unique=True)
 
+    # Review-export bookkeeping: when the last Letterboxd CSV export ran
+    # and the highest review id it covered, so the default export can emit
+    # only entries added or edited since. New rows are detected by id
+    # because date_watched can be backdated past the last export
+
+    date_reviews_exported = db.Column(db.DateTime)
+    last_export_review_id = db.Column(db.Integer)
+
     def __repr__(self):
         return f"<User '{self.email}'>"
 

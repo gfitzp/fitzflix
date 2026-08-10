@@ -332,6 +332,205 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     assert tall_t[7] == "A nice day."
 
 
+def capture_sent_attachments(monkeypatch):
+    """Stub the History page's send_email; returns the list that collects
+    each call's attachments."""
+
+    import app.main.routes as main_routes
+
+    sent = []
+
+    def fake_send_email(subject, sender, recipients, **kwargs):
+        sent.append(kwargs.get("attachments"))
+
+    monkeypatch.setattr(main_routes, "send_email", fake_send_email)
+    return sent
+
+
+def export_reviews(client, token, full=False):
+    """POST the History page's export form."""
+
+    data = {"csrf_token": token, "export_submit": "Export Reviews"}
+    if full:
+        data["full_export"] = "y"
+    return client.post("/history", data=data)
+
+
+def exported_titles(attachments):
+    """The set of film titles in an export call's CSV attachment."""
+
+    import csv as csv_module
+
+    filename, mimetype, contents = attachments[0]
+    return {row[2] for row in list(csv_module.reader(io.StringIO(contents)))[1:]}
+
+
+def test_incremental_export_covers_only_entries_since_last_export(
+    app, admin_client, monkeypatch
+):
+    from datetime import timedelta
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.first()
+        # The app fixture is session-scoped, so wipe any baseline stamped
+        # by an earlier test's export
+        user.date_reviews_exported = None
+        user.last_export_review_id = None
+        user_id = user.id
+        first = make_movie("The First Watch", 2001)
+        edited = make_movie("The Edited Review", 2002)
+        edited_movie_id = edited.id
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=first.id,
+                date_watched=datetime(2024, 1, 1),
+                **star_rating_fields(3.0),
+            )
+        )
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=edited.id,
+                review="First impressions.",
+                date_watched=datetime(2024, 2, 1),
+                date_reviewed=datetime(2024, 2, 1),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+
+    sent = capture_sent_attachments(monkeypatch)
+    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+
+    # The first-ever export has no baseline, so the default covers everything
+
+    assert export_reviews(admin_client, token).status_code == 302
+    assert sent[-1][0][0] == "reviews.csv"
+    assert {"The First Watch", "The Edited Review"} <= exported_titles(sent[-1])
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user.date_reviews_exported is not None
+        assert user.last_export_review_id == (
+            db.session.query(db.func.max(UserMovieReview.id))
+            .filter(UserMovieReview.user_id == user_id)
+            .scalar()
+        )
+
+        # A watch logged after the export but backdated to before it: only
+        # the row id reveals it's new
+
+        backdated = make_movie("The Backdated Watch", 2003)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=backdated.id,
+                date_watched=datetime(2020, 6, 1),
+                **star_rating_fields(None),
+            )
+        )
+
+        # An edit to an already-exported row, stamped the way review_edit does
+
+        row = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=edited_movie_id
+        ).one()
+        row.review = "On reflection, better."
+        row.date_updated = datetime.now() + timedelta(minutes=1)
+        db.session.commit()
+
+    assert export_reviews(admin_client, token).status_code == 302
+    filename = sent[-1][0][0]
+    assert filename.startswith("reviews-since-")
+    titles = exported_titles(sent[-1])
+    assert "The Backdated Watch" in titles
+    assert "The Edited Review" in titles
+    assert "The First Watch" not in titles
+
+
+def test_full_export_checkbox_exports_everything(app, admin_client, monkeypatch):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.first()
+        user.date_reviews_exported = None
+        user.last_export_review_id = None
+        user_id = user.id
+        for title, year in (("Old Faithful", 1990), ("Older Faithful", 1980)):
+            db.session.add(
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=make_movie(title, year).id,
+                    date_watched=datetime(2024, 3, 1),
+                    **star_rating_fields(3.5),
+                )
+            )
+        db.session.commit()
+
+    sent = capture_sent_attachments(monkeypatch)
+    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+    export_reviews(admin_client, token)
+
+    # Nothing new since, but the checkbox re-exports the lot
+
+    assert export_reviews(admin_client, token, full=True).status_code == 302
+    assert sent[-1][0][0] == "reviews.csv"
+    assert {"Old Faithful", "Older Faithful"} <= exported_titles(sent[-1])
+
+
+def test_incremental_export_with_nothing_new_sends_no_email(
+    app, admin_client, monkeypatch
+):
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.first()
+        user.date_reviews_exported = None
+        user.last_export_review_id = None
+        user_id = user.id
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=make_movie("A Single Watch", 2010).id,
+                date_watched=datetime(2024, 4, 1),
+                **star_rating_fields(2.5),
+            )
+        )
+        db.session.commit()
+
+    sent = capture_sent_attachments(monkeypatch)
+    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+    export_reviews(admin_client, token)
+    assert len(sent) == 1
+
+    with app.app_context():
+        baseline = db.session.get(User, user_id).date_reviews_exported
+
+    response = admin_client.post(
+        "/history",
+        data={"csrf_token": token, "export_submit": "Export Reviews"},
+        follow_redirects=True,
+    )
+    assert "Nothing logged or updated since your last export" in response.get_data(
+        as_text=True
+    )
+    assert len(sent) == 1
+
+    # The empty export produced no file, so the baseline must not advance
+
+    with app.app_context():
+        assert db.session.get(User, user_id).date_reviews_exported == baseline
+
+
 def test_legacy_json_lines_upload_still_works(app, admin_client):
     page = admin_client.get("/history").get_data(as_text=True)
 

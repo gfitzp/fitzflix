@@ -191,8 +191,12 @@ class TVShoppingFilterForm(FlaskForm):
 
 
 class ReviewExportForm(FlaskForm):
-    """History page: email the Letterboxd-format review export."""
+    """History page: email the Letterboxd-format review export. The default
+    export covers only entries added or edited since the last export; the
+    checkbox requests everything.
+    """
 
+    full_export = BooleanField("Full export")
     export_submit = SubmitField("Export Reviews")
 
 

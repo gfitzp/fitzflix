@@ -19,6 +19,12 @@
 	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="" method="post">
 			{{ review_export_form.hidden_tag() }}
+			{# Unchecked, the export covers only entries logged or updated
+			   since the last export #}
+			<div class="form-check mr-2 small">
+				{{ review_export_form.full_export(class_="form-check-input") }}
+				{{ review_export_form.full_export.label(class_="form-check-label") }}
+			</div>
 			{{ review_export_form.export_submit(class_="btn btn-sm btn-primary col") }}
 		</form>
 	</div>

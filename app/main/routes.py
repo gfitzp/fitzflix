@@ -2587,18 +2587,41 @@ def history():
             ]
         ]
 
-        # Compile the list of this user's reviews for export
+        # Compile the list of this user's reviews for export. By default
+        # only entries added or edited since the last export are included,
+        # so each Letterboxd upload contains exactly the new rows; the
+        # "Full export" checkbox exports everything. New rows are detected
+        # by id rather than date_watched, which can be backdated past the
+        # last export
 
-        review_export = (
-            UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
-            .filter(UserMovieReview.user_id == int(current_user.id))
-            .order_by(
-                UserMovieReview.date_watched.desc(),
-                UserMovieReview.date_reviewed.desc(),
-                UserMovieReview.rating.desc(),
-            )
-            .all()
+        export_query = UserMovieReview.query.join(
+            Movie, (Movie.id == UserMovieReview.movie_id)
+        ).filter(UserMovieReview.user_id == int(current_user.id))
+
+        last_exported_at = current_user.date_reviews_exported
+        incremental = (
+            not review_export_form.full_export.data and last_exported_at is not None
         )
+        if incremental:
+            export_query = export_query.filter(
+                db.or_(
+                    UserMovieReview.id > (current_user.last_export_review_id or 0),
+                    UserMovieReview.date_updated > last_exported_at,
+                )
+            )
+
+        review_export = export_query.order_by(
+            UserMovieReview.date_watched.desc(),
+            UserMovieReview.date_reviewed.desc(),
+            UserMovieReview.rating.desc(),
+        ).all()
+
+        if not review_export:
+            if incremental:
+                flash("Nothing logged or updated since your last export", "info")
+            else:
+                flash("No entries to export", "info")
+            return redirect(url_for("main.history"))
         for r in review_export:
             # Letterboxd accepts ratings of 0.5-5 and calendar dates only,
             # so unrated reviews export a blank rating and watched
@@ -2637,7 +2660,14 @@ def history():
         for review in csv_export:
             review_writer.writerow(review)
 
-        # Send an email to the user with the CSV file as an attachment
+        # Send an email to the user with the CSV file as an attachment;
+        # incremental files are named for their cutoff so exports since
+        # different dates are distinguishable in the inbox
+
+        if incremental:
+            filename = f"reviews-since-{last_exported_at.strftime('%Y-%m-%d')}.csv"
+        else:
+            filename = "reviews.csv"
 
         send_email(
             "Fitzflix - Your movie reviews",
@@ -2645,9 +2675,29 @@ def history():
             recipients=[current_user.email],
             text_body=render_template("email/reviews.txt", user=current_user),
             html_body=render_template("email/reviews.html", user=current_user),
-            attachments=[("reviews.csv", "text/csv", f.getvalue())],
+            attachments=[(filename, "text/csv", f.getvalue())],
         )
-        flash(f"Emailed your reviews to {current_user.email}", "success")
+
+        # Advance the export bookkeeping: either mode leaves Letterboxd
+        # current through this moment
+
+        current_user.date_reviews_exported = datetime.now()
+        current_user.last_export_review_id = (
+            db.session.query(db.func.max(UserMovieReview.id))
+            .filter(UserMovieReview.user_id == int(current_user.id))
+            .scalar()
+        )
+        db.session.commit()
+
+        if incremental:
+            count = len(review_export)
+            flash(
+                f"Emailed {count} new or updated entr{'y' if count == 1 else 'ies'}"
+                f" to {current_user.email}",
+                "success",
+            )
+        else:
+            flash(f"Emailed your reviews to {current_user.email}", "success")
 
         # Discard the in-memory CSV file
 
