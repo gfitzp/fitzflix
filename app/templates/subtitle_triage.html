@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.maintenance') }}">Library Maintenance</a></li>
+		<li class="breadcrumb-item active" aria-current="page">Possibly-forced subtitles</li>
+	</ol>
+</nav>
+<h2 class="mt-2 mb-n2">Possibly-forced subtitles</h2>
+<hr>
+<p class="small text-muted">Each of these unforced tracks holds a quarter or less of the elements of the largest same-language track in its file &mdash; the shape of a foreign-parts-only track. Marking a track forced rewrites the flag in place with mkvpropedit, keeping the file's current default tracks; "Nothing forced here" stops the file from being flagged again.</p>
+{% if candidates %}
+{% for entry in candidates %}
+{% set file = entry.file %}
+<div class="card mb-3">
+	<div class="card-header py-2">
+		<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
+		{% if file.container != "Matroska" %}<span class="badge badge-secondary ml-2" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
+		<form action="" method="post" class="float-right">
+			{{ triage_form.csrf_token }}
+			{{ triage_form.file_id(value=file.id) }}
+			{{ triage_form.dismiss_submit(class_="btn btn-sm btn-outline-secondary") }}
+		</form>
+	</div>
+	<div class="card-body py-2">
+		<table class="table table-sm mb-0">
+			<thead class="thead-light">
+				<tr>
+					<th scope="col">Track</th>
+					<th scope="col">Language</th>
+					<th scope="col">Format</th>
+					<th scope="col">Elements</th>
+					<th scope="col"></th>
+				</tr>
+			</thead>
+			<tbody>
+				{% for item in entry.tracks %}
+				<tr>
+					<td>{{ item.track.track }}</td>
+					<td>{{ item.track.language_name }}</td>
+					<td>{{ item.track.format }}</td>
+					<td>{{ item.track.elements }} of {{ item.max_elements }} in the fullest {{ item.track.language_name }} track</td>
+					<td>
+						{% if file.container == "Matroska" %}
+						<form action="" method="post">
+							{{ triage_form.csrf_token }}
+							{{ triage_form.track_id(value=item.track.id) }}
+							{{ triage_form.mark_forced_submit(class_="btn btn-sm btn-warning") }}
+						</form>
+						{% endif %}
+					</td>
+				</tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</div>
+</div>
+{% endfor %}
+{% else %}
+<p class="small text-muted">Nothing looks forced right now.</p>
+{% endif %}
+{% endblock %}

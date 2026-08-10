@@ -1243,6 +1243,12 @@ class File(db.Model):
     date_updated = db.Column(db.DateTime, index=True)
     date_localized = db.Column(db.DateTime, index=True)
     date_transcoded = db.Column(db.DateTime, index=True)
+
+    # When the subtitle triage marked this file's tracks as reviewed
+    # ("nothing forced here"). Lives on the file rather than the track
+    # rows because rescans delete and rebuild those.
+
+    subtitle_triage_reviewed = db.Column(db.DateTime)
     aws_untouched_key = db.Column(db.String(255), index=True)
     aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)

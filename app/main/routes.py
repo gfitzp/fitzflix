@@ -44,6 +44,7 @@ from app.main.forms import (
     FileDeleteForm,
     FailedJobForm,
     FilenameTestForm,
+    SubtitleTriageForm,
     ImportForm,
     LibrarySearchForm,
     MKVMergeForm,
@@ -3098,6 +3099,7 @@ def maintenance():
         "maintenance.html",
         title="Library Maintenance",
         rejected_count=len(_rejected_files()),
+        subtitle_triage_count=len(_forced_subtitle_candidates()),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -3107,6 +3109,145 @@ def maintenance():
         sync_form=sync_form,
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
+    )
+
+
+def _forced_subtitle_candidates():
+    """Subtitle tracks that look forced but aren't flagged, grouped by file.
+
+    A track is suspicious when it's unforced and holds a quarter or less
+    of the elements of the largest same-language track in the same file —
+    the shape of a foreign-parts-only track sitting beside the full
+    subtitles. Only meaningful comparisons count (the full track needs at
+    least 100 elements, the candidate can't be empty), and files marked
+    reviewed are excluded.
+    """
+
+    sibling_max = (
+        db.session.query(
+            FileSubtitleTrack.file_id.label("sibling_file_id"),
+            FileSubtitleTrack.language.label("sibling_language"),
+            db.func.max(FileSubtitleTrack.elements).label("max_elements"),
+        )
+        .group_by(FileSubtitleTrack.file_id, FileSubtitleTrack.language)
+        .subquery()
+    )
+    rows = (
+        db.session.query(FileSubtitleTrack, File, sibling_max.c.max_elements)
+        .join(
+            sibling_max,
+            db.and_(
+                FileSubtitleTrack.file_id == sibling_max.c.sibling_file_id,
+                FileSubtitleTrack.language == sibling_max.c.sibling_language,
+            ),
+        )
+        .join(File, File.id == FileSubtitleTrack.file_id)
+        .filter(
+            db.or_(
+                FileSubtitleTrack.forced == False,
+                FileSubtitleTrack.forced.is_(None),
+            ),
+            File.subtitle_triage_reviewed.is_(None),
+            sibling_max.c.max_elements >= 100,
+            FileSubtitleTrack.elements > 0,
+            FileSubtitleTrack.elements * 4 <= sibling_max.c.max_elements,
+        )
+        .order_by(File.plex_title.asc(), FileSubtitleTrack.track.asc())
+        .all()
+    )
+
+    grouped = {}
+    for track, file, max_elements in rows:
+        entry = grouped.setdefault(file.id, {"file": file, "tracks": []})
+        entry["tracks"].append({"track": track, "max_elements": max_elements})
+    return list(grouped.values())
+
+
+@bp.route("/maintenance/subtitles", methods=["GET", "POST"])
+@login_required
+@admin_required
+def subtitle_triage():
+    """Triage subtitle tracks that look forced but aren't flagged.
+
+    Marking a track forced reuses the file page's mkvpropedit pipeline
+    with the file's current defaults preserved; dismissing marks the whole
+    file's subtitles as reviewed so it stops being flagged.
+    """
+
+    triage_form = SubtitleTriageForm()
+
+    if triage_form.mark_forced_submit.data and triage_form.validate_on_submit():
+        track = FileSubtitleTrack.query.filter_by(
+            id=triage_form.track_id.data
+        ).first_or_404()
+        file = db.session.get(File, track.file_id)
+
+        if file.container != "Matroska":
+            flash(
+                f"'{file.basename}' isn't an MKV file, so its subtitle flags "
+                f"can't be edited in place.",
+                "danger",
+            )
+            return redirect(url_for("main.subtitle_triage"))
+        if not os.path.isfile(
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        ):
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return redirect(url_for("main.subtitle_triage"))
+
+        # Preserve the file's current selections, adding this track to
+        # the forced set — the same arguments the file page's form sends
+
+        audio_default = FileAudioTrack.query.filter_by(
+            file_id=file.id, default=True
+        ).first()
+        default_audio_track = str(audio_default.track) if audio_default else None
+        subtitle_default = FileSubtitleTrack.query.filter_by(
+            file_id=file.id, default=True
+        ).first()
+        default_subtitle_track = (
+            str(subtitle_default.track) if subtitle_default else None
+        )
+        forced_tracks = sorted(
+            {
+                str(existing.track)
+                for existing in FileSubtitleTrack.query.filter_by(
+                    file_id=file.id, forced=True
+                )
+            }
+            | {str(track.track)},
+            key=int,
+        )
+
+        current_app.file_queue.enqueue(
+            "app.videos.mkvpropedit_task",
+            args=(
+                file.id,
+                default_audio_track,
+                default_subtitle_track,
+                forced_tracks,
+            ),
+            job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+        )
+        flash(
+            f"Marking track {track.track} of '{file.basename}' as forced",
+            "info",
+        )
+        return redirect(url_for("main.subtitle_triage"))
+
+    if triage_form.dismiss_submit.data and triage_form.validate_on_submit():
+        file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        file.subtitle_triage_reviewed = datetime.now()
+        db.session.commit()
+        flash(f"Marked '{file.basename}' subtitles as reviewed", "success")
+        return redirect(url_for("main.subtitle_triage"))
+
+    return render_template(
+        "subtitle_triage.html",
+        title="Possibly-forced subtitles",
+        candidates=_forced_subtitle_candidates(),
+        triage_form=triage_form,
     )
 
 

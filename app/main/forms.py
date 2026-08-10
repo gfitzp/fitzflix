@@ -276,6 +276,15 @@ class MovieMergeForm(FlaskForm):
     merge_submit = SubmitField("Merge")
 
 
+class SubtitleTriageForm(FlaskForm):
+    """Per-row actions on the possibly-forced subtitles triage page."""
+
+    track_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    file_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    mark_forced_submit = SubmitField("Mark forced")
+    dismiss_submit = SubmitField("Nothing forced here")
+
+
 class FilenameTestForm(FlaskForm):
     test_filename = StringField("Filename", validators=[DataRequired()])
     filename_test_submit = SubmitField("Preview import")

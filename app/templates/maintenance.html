@@ -44,6 +44,10 @@
 <p class="small text-muted">No two movies share a TMDb id.</p>
 {% endif %}
 <hr>
+<h3>Possibly-forced subtitles</h3>
+<p class="small text-muted">Unforced subtitle tracks that are far smaller than a same-language sibling in the same file &mdash; the shape of a foreign-parts-only track that should carry the forced flag.</p>
+<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge badge-light">{{ subtitle_triage_count }}</span></a>
+<hr>
 <h3>Filename tester</h3>
 <p class="small text-muted">Preview how a filename would be parsed and filed on import, without importing anything.</p>
 <form action="" method="post" class="form-inline">
