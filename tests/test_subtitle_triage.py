@@ -57,10 +57,15 @@ def test_heuristic_flags_small_unforced_same_language_tracks(app, admin_client):
     with app.app_context():
         file, small = build_candidate()
 
-        # None of these should be flagged:
+        # None of these should be flagged. "Already Forced" also carries a
+        # third small unforced track that would match on ratio alone — a
+        # file with a forced track has its forced needs met, so nothing
+        # in it is suggested
+
         already_forced = make_movie_file(make_movie("Already Forced", 2001), "DVD")
         add_subtitle(already_forced, 1, 1500)
         add_subtitle(already_forced, 2, 60, forced=True)
+        add_subtitle(already_forced, 3, 45)
 
         healthy_ratio = make_movie_file(make_movie("Healthy Ratio", 2002), "DVD")
         add_subtitle(healthy_ratio, 1, 1500)

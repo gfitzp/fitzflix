@@ -3119,10 +3119,13 @@ def _forced_subtitle_candidates():
     of the elements of the largest same-language track in the same file —
     the shape of a foreign-parts-only track sitting beside the full
     subtitles. Only meaningful comparisons count (the full track needs at
-    least 100 elements, the candidate can't be empty), and files marked
-    reviewed are excluded.
+    least 100 elements, the candidate can't be empty). Files marked
+    reviewed are excluded, as are files that already carry a forced track
+    — their forced needs are met, so a small unforced sibling is probably
+    a commentary or variant.
     """
 
+    ForcedSibling = db.aliased(FileSubtitleTrack)
     sibling_max = (
         db.session.query(
             FileSubtitleTrack.file_id.label("sibling_file_id"),
@@ -3147,6 +3150,12 @@ def _forced_subtitle_candidates():
                 FileSubtitleTrack.forced == False,
                 FileSubtitleTrack.forced.is_(None),
             ),
+            ~db.session.query(ForcedSibling.id)
+            .filter(
+                ForcedSibling.file_id == FileSubtitleTrack.file_id,
+                ForcedSibling.forced == True,
+            )
+            .exists(),
             File.subtitle_triage_reviewed.is_(None),
             sibling_max.c.max_elements >= 100,
             FileSubtitleTrack.elements > 0,
