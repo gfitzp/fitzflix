@@ -4,7 +4,7 @@
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if not q %}
-<p class="text-muted">Type a movie or TV series title into the search box to see whether it's in the library.</p>
+<p class="text-muted">Type a movie or TV series title, or a person's name, into the search box to see whether it's in the library.</p>
 {% else %}
 
 {% if movie_results %}
@@ -60,7 +60,33 @@
 </div>
 {% endif %}
 
-{% if not movie_results and not tv_results %}
+{% if people_results %}
+<h4>People</h4>
+<div class="list-group mb-2">
+	{% for person in people_results %}
+	<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="list-group-item list-group-item-action">
+		<div class="media">
+			{% if person.tmdb_profile_path %}
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded mr-3" style="width: 46px;">
+			{% else %}
+			<div class="rounded mr-3 border d-flex justify-content-center align-items-center text-secondary" style="width: 46px; height: 69px;">
+				<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+					<path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
+				</svg>
+			</div>
+			{% endif %}
+			<div class="media-body">
+				<h5 class="mb-1">{{ person.name }}</h5>
+				<span class="badge badge-light">{{ person.film_count }} film{{ "s" if person.film_count != 1 }}</span>
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
+<p class="mb-4"><a class="small" href="{{ url_for('main.people', q=q) }}">All people matching &ldquo;{{ q }}&rdquo;</a></p>
+{% endif %}
+
+{% if not movie_results and not tv_results and not people_results %}
 <p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 {% endif %}
 

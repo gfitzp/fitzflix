@@ -3617,6 +3617,40 @@ def _tv_search_results(wildcard, limit=50):
     ]
 
 
+def _people_search_results(wildcard, limit=12):
+    """Credited people whose names match, with their library film counts.
+
+    Mirrors the People page's rules: uncredited-only roles never count,
+    and matches order by film count with the surname tie-break.
+    """
+
+    film_count = db.func.count(db.distinct(MovieCast.movie_id)).label("film_count")
+    return (
+        db.session.query(
+            TMDBCredit.id,
+            TMDBCredit.name,
+            TMDBCredit.tmdb_profile_path,
+            film_count,
+        )
+        .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
+        .filter(
+            db.or_(
+                MovieCast.character == None,
+                db.not_(MovieCast.character.like("%(uncredited)%")),
+            )
+        )
+        .filter(TMDBCredit.name.ilike(f"%{wildcard}%"))
+        .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
+        .order_by(
+            film_count.desc(),
+            db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
+            TMDBCredit.name.asc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+
 @bp.route("/search")
 @login_required
 def search():
@@ -3625,6 +3659,7 @@ def search():
     q = (request.args.get("q") or "").strip()
     movie_results = []
     tv_results = []
+    people_results = []
 
     if q:
         # Spaces become wildcards so word order and punctuation don't matter
@@ -3632,6 +3667,7 @@ def search():
         wildcard = q.replace(" ", "%")
         movie_results = _movie_search_results(wildcard)
         tv_results = _tv_search_results(wildcard)
+        people_results = _people_search_results(wildcard)
 
     return render_template(
         "search.html",
@@ -3639,6 +3675,7 @@ def search():
         q=q,
         movie_results=movie_results,
         tv_results=tv_results,
+        people_results=people_results,
     )
 
 
@@ -3687,6 +3724,19 @@ def search_json():
                     "title": (series.tmdb_name if series.tmdb_name else series.title),
                     "detail": detail,
                     "url": url_for("main.tv", series_id=series.id),
+                }
+            )
+
+        for person in _people_search_results(wildcard, limit=5):
+            results.append(
+                {
+                    "type": "Person",
+                    "title": person.name,
+                    "detail": (
+                        f"{person.film_count} film"
+                        f"{'s' if person.film_count != 1 else ''}"
+                    ),
+                    "url": url_for("main.movie_library", credit=person.id),
                 }
             )
 

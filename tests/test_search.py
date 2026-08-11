@@ -4,7 +4,7 @@ with in-library annotations.
 """
 
 from app import db
-from app.models import User, UserMovieReview
+from app.models import MovieCast, TMDBCredit, User, UserMovieReview
 
 from tests.factories import (
     make_movie,
@@ -12,6 +12,24 @@ from tests.factories import (
     make_tv_file,
     make_tv_series,
 )
+
+
+def make_person(person_id, name, movies, character="Self"):
+    """A TMDBCredit with a cast row in each of the given movies."""
+
+    person = TMDBCredit(id=person_id, name=name)
+    db.session.add(person)
+    db.session.flush()
+    for order, movie in enumerate(movies):
+        db.session.add(
+            MovieCast(
+                movie_id=movie.id,
+                credit_id=person.id,
+                character=character,
+                billing_order=order,
+            )
+        )
+    return person
 
 
 def build_library(app):
@@ -263,3 +281,36 @@ def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
 
     page = admin_client.get("/search?q=titled+episodes").get_data(as_text=True)
     assert 'badge-success" title="1 episode">Season 1: Bluray-1080p' in page
+
+
+def test_search_finds_people(app, admin_client):
+    with app.app_context():
+        first = make_movie("Ensemble Piece", 1970)
+        second = make_movie("Ensemble Piece II", 1972)
+        make_person(901, "Prolific Player", [first, second])
+        make_person(902, "Prolific Extra", [first], character="Extra (uncredited)")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=prolific").get_data(as_text=True)
+    assert "People" in page
+    assert "Prolific Player" in page
+    assert "2 films" in page
+    assert "credit=901" in page
+    # Uncredited-only people never surface, matching the People page
+    assert "Prolific Extra" not in page
+    # The widening link to the People page carries the query
+    assert "/people?q=prolific" in page
+
+
+def test_search_json_includes_people(app, admin_client):
+    with app.app_context():
+        movie = make_movie("Solo Show", 1980)
+        make_person(903, "Typeahead Thespian", [movie])
+        db.session.commit()
+
+    data = admin_client.get("/search.json?q=typeahead").get_json()
+    people = [r for r in data["results"] if r["type"] == "Person"]
+    assert len(people) == 1
+    assert people[0]["title"] == "Typeahead Thespian"
+    assert people[0]["detail"] == "1 film"
+    assert "credit=903" in people[0]["url"]
