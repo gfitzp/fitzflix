@@ -1,40 +1,45 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-{# Portrait, name, lifespan, and biography stack flush to the same left
-   edge #}
-<div class="mt-n2">
+{# Portrait on the left, lifespan and biography in a column to its
+   right. The title renders in that right-hand column on wider screens
+   but moves above the portrait on phones — two copies, exactly one
+   displayed per breakpoint #}
+<h2 class="d-sm-none mt-n2">{{ title }}</h2>
+<div class="d-flex mt-0 mt-sm-n2">
 	{% if profile_path %}
-		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border" style="width: 92px;">
+		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border mr-3 align-self-start" style="width: 92px; flex-shrink: 0;">
 	{% else %}
-		<div class="border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 138px; width: 92px;">
+		<div class="border rounded d-flex justify-content-center align-items-center text-secondary mr-3 align-self-start" style="height: 138px; width: 92px; flex-shrink: 0;">
 			<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
 		</div>
 	{% endif %}
-	<h2 class="mt-2 mb-0">{{ title }}</h2>
-	{% if bio and bio.born_line %}<div class="small text-muted">{{ bio.born_line }}</div>{% endif %}
-	{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
+	<div style="min-width: 0;">
+		<h2 class="d-none d-sm-block mb-0">{{ title }}</h2>
+		{% if bio and bio.born_line %}<div class="small text-muted">{{ bio.born_line }}</div>{% endif %}
+		{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
+		{% if bio and bio.biography %}
+		{# Clamped to a few lines; the toggle only appears when there's
+		   more. pre-line keeps TMDb's paragraph breaks #}
+		<p class="small text-muted mt-2 mb-0" id="person-biography" style="white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ bio.biography }}</p>
+		<button type="button" class="btn btn-link btn-sm p-0" id="person-biography-toggle" style="display: none;">Show more</button>
+		<script>
+			(function() {
+				var bio = document.getElementById("person-biography");
+				var toggle = document.getElementById("person-biography-toggle");
+				if (bio.scrollHeight > bio.clientHeight + 1) {
+					toggle.style.display = "inline";
+				}
+				toggle.addEventListener("click", function() {
+					var clamped = bio.style.webkitLineClamp !== "unset";
+					bio.style.webkitLineClamp = clamped ? "unset" : "4";
+					toggle.textContent = clamped ? "Show less" : "Show more";
+				});
+			})();
+		</script>
+		{% endif %}
+	</div>
 </div>
-{% if bio and bio.biography %}
-{# Clamped to a few lines; the toggle only appears when there's more.
-   pre-line keeps TMDb's paragraph breaks #}
-<p class="small text-muted mt-2 mb-0" id="person-biography" style="white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ bio.biography }}</p>
-<button type="button" class="btn btn-link btn-sm p-0" id="person-biography-toggle" style="display: none;">Show more</button>
-<script>
-	(function() {
-		var bio = document.getElementById("person-biography");
-		var toggle = document.getElementById("person-biography-toggle");
-		if (bio.scrollHeight > bio.clientHeight + 1) {
-			toggle.style.display = "inline";
-		}
-		toggle.addEventListener("click", function() {
-			var clamped = bio.style.webkitLineClamp !== "unset";
-			bio.style.webkitLineClamp = clamped ? "unset" : "4";
-			toggle.textContent = clamped ? "Show less" : "Show more";
-		});
-	})();
-</script>
-{% endif %}
 <hr>
 {% if tmdb_unavailable %}
 <div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
