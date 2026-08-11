@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from PIL import Image
 
 from flask import (
+    abort,
     current_app,
     jsonify,
     make_response,
@@ -365,6 +366,34 @@ def index():
     )
 
 
+def _tmdb_person_name(person_id):
+    """The person's name from TMDb, cached for a day; None when there's no
+    API key or TMDb doesn't answer with one, which the filmography treats
+    as an unknown person.
+    """
+
+    if not current_app.config["TMDB_API_KEY"]:
+        return None
+    cache_key = f"fitzflix:tmdb:person:{person_id}:name"
+    cached = current_app.redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + f"/person/{person_id}",
+            params={"api_key": current_app.config["TMDB_API_KEY"]},
+            timeout=10,
+        )
+        r.raise_for_status()
+        name = (r.json() or {}).get("name")
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None
+    if name:
+        current_app.redis.set(cache_key, json.dumps(name), ex=86400)
+    return name
+
+
 @bp.route("/library/movie", methods=["GET", "POST"])
 @login_required
 def movie_library():
@@ -394,7 +423,14 @@ def movie_library():
     )
 
     if credit:
-        person = TMDBCredit.query.filter_by(id=int(credit)).first_or_404()
+        # Credit ids are TMDb person ids, so the filmography isn't limited
+        # to people with local credit rows: anyone TMDb knows can be
+        # browsed from any cast list. A local row saves the name lookup
+
+        person = TMDBCredit.query.filter_by(id=int(credit)).first()
+        person_name = person.name if person else _tmdb_person_name(int(credit))
+        if person_name is None:
+            abort(404)
 
         # The filmography shows the person's entire TMDb career, whether
         # or not a film has any local record. Local rows attach the best
@@ -456,7 +492,7 @@ def movie_library():
 
         tmdb_credits = None
         if current_app.config["TMDB_API_KEY"]:
-            cache_key = f"fitzflix:tmdb:person:{person.id}:credits"
+            cache_key = f"fitzflix:tmdb:person:{int(credit)}:credits"
             cached = current_app.redis.get(cache_key)
             if cached:
                 tmdb_credits = json.loads(cached)
@@ -464,7 +500,7 @@ def movie_library():
                 try:
                     r = tmdb_get(
                         current_app.config["TMDB_API_URL"]
-                        + f"/person/{person.id}/movie_credits",
+                        + f"/person/{int(credit)}/movie_credits",
                         params={"api_key": current_app.config["TMDB_API_KEY"]},
                         timeout=10,
                     )
@@ -528,8 +564,7 @@ def movie_library():
 
         return render_template(
             "filmography.html",
-            title=f"Movies starring {person.name}",
-            person=person,
+            title=f"Movies starring {person_name}",
             filmography=filmography,
             tmdb_unavailable=tmdb_credits is None,
             upgrade_threshold=_upgrade_threshold(),
@@ -771,8 +806,7 @@ def movie(movie_id):
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
-    # Every credited actor in billing order for the cast scroller; local
-    # credit rows always have filmography pages, so all of them link
+    # Every credited actor in billing order for the cast scroller
 
     cast = [
         {
@@ -780,7 +814,6 @@ def movie(movie_id):
             "name": role.starring.name,
             "profile_path": role.starring.tmdb_profile_path,
             "character": role.character,
-            "known": True,
         }
         for role in MovieCast.query.filter(MovieCast.movie_id == movie_id)
         .order_by(MovieCast.billing_order.asc())
@@ -3869,24 +3902,18 @@ def review_tmdb(tmdb_id):
         key=lambda person: person.get("order", 99),
     )
 
-    # Only people with local credit records get filmography links; the
-    # filmography page 404s on ids it has never seen
+    # The filmography page serves any TMDb person id, so every cast member
+    # links whether or not they have local credit rows
 
-    known_people = {
-        credit.id
-        for credit in TMDBCredit.query.filter(
-            TMDBCredit.id.in_([p.get("id") for p in billed_cast] or [0])
-        ).all()
-    }
     cast = [
         {
             "id": person.get("id"),
             "name": person.get("name"),
             "profile_path": person.get("profile_path"),
             "character": person.get("character"),
-            "known": person.get("id") in known_people,
         }
         for person in billed_cast
+        if person.get("id") is not None
     ]
     film_title = details.get("title")
     release_year = (details.get("release_date") or "")[:4]

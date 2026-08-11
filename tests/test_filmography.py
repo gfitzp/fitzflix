@@ -117,8 +117,70 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "The Cameo" in page
 
 
+def test_filmography_serves_people_without_local_credit_rows(
+    app, admin_client, monkeypatch
+):
+    """A person from a not-in-library film's cast has no TMDBCredit row;
+    their filmography still renders, with the name and career from TMDb."""
+
+    import app.main.routes as main_routes
+
+    class FakeTMDb:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def fake_tmdb_get(url, **kwargs):
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 300,
+                            "title": "Wanderer Unknown Film",
+                            "release_date": "2005-03-03",
+                            "character": "The Stranger",
+                        }
+                    ]
+                }
+            )
+        return FakeTMDb({"name": "Uncredited Wanderer"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
+    assert "Uncredited Wanderer" in page
+    assert "Wanderer Unknown Film" in page
+    assert "/review/tmdb/300" in page
+    assert "Not in library" in page
+
+
 def test_filmography_unknown_person_is_404(app, admin_client):
+    """No local row and no TMDb key to ask: the id can't be resolved."""
+
     assert admin_client.get("/library/movie?credit=999999999").status_code == 404
+
+
+def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatch):
+    """TMDb errors on the person lookup (no such id), so the page 404s."""
+
+    import requests
+
+    import app.main.routes as main_routes
+
+    def raising_tmdb_get(url, **kwargs):
+        raise requests.HTTPError("404 Client Error")
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", raising_tmdb_get)
+
+    assert admin_client.get("/library/movie?credit=888888888").status_code == 404
 
 
 def test_library_page_badges_quality_by_upgradability(app, admin_client):
