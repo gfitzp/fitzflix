@@ -10,7 +10,7 @@ import traceback
 
 from types import SimpleNamespace
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from PIL import Image
 
 from flask import (
@@ -367,9 +367,9 @@ def index():
 
 
 def _tmdb_person_details(person_id):
-    """The person's {name, profile_path} from TMDb, cached for a day; None
-    when there's no API key or TMDb doesn't answer with a name, which the
-    filmography treats as an unknown person.
+    """The person's name, photo, and biographical fields from TMDb, cached
+    for a day; None when there's no API key or TMDb doesn't answer with a
+    name, which the filmography treats as an unknown person.
     """
 
     if not current_app.config["TMDB_API_KEY"]:
@@ -394,9 +394,57 @@ def _tmdb_person_details(person_id):
     details = {
         "name": payload["name"],
         "profile_path": payload.get("profile_path"),
+        "biography": payload.get("biography"),
+        "birthday": payload.get("birthday"),
+        "deathday": payload.get("deathday"),
+        "place_of_birth": payload.get("place_of_birth"),
     }
     current_app.redis.set(cache_key, json.dumps(details), ex=86400)
     return details
+
+
+def _tmdb_date(value):
+    """A date from TMDb's YYYY-MM-DD strings; None when absent or odd."""
+
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _person_bio(details):
+    """Preformatted born/died lines and biography text for the filmography
+    header, from a TMDb person-details dict. Ages compute against the
+    death date when there is one.
+    """
+
+    birthday = _tmdb_date(details.get("birthday"))
+    deathday = _tmdb_date(details.get("deathday"))
+    age = None
+    if birthday:
+        end = deathday or date.today()
+        age = (
+            end.year
+            - birthday.year
+            - ((end.month, end.day) < (birthday.month, birthday.day))
+        )
+    born_line = None
+    if birthday:
+        born_line = f"Born {birthday.strftime('%B %-d, %Y')}"
+        if details.get("place_of_birth"):
+            born_line += f" in {details['place_of_birth']}"
+        if not deathday and age is not None:
+            born_line += f" (age {age})"
+    died_line = None
+    if deathday:
+        died_line = f"Died {deathday.strftime('%B %-d, %Y')}"
+        if age is not None:
+            died_line += f" (aged {age})"
+    return {
+        "born_line": born_line,
+        "died_line": died_line,
+        "biography": (details.get("biography") or "").strip(),
+    }
 
 
 @bp.route("/library/movie", methods=["GET", "POST"])
@@ -430,18 +478,19 @@ def movie_library():
     if credit:
         # Credit ids are TMDb person ids, so the filmography isn't limited
         # to people with local credit rows: anyone TMDb knows can be
-        # browsed from any cast list. A local row saves the TMDb lookup
+        # browsed from any cast list. The day-cached TMDb person lookup
+        # supplies the biography for everyone; a local credit row backstops
+        # the name and photo when TMDb can't be reached
 
         person = TMDBCredit.query.filter_by(id=int(credit)).first()
-        if person:
-            person_name = person.name
-            person_profile_path = person.tmdb_profile_path
-        else:
-            details = _tmdb_person_details(int(credit)) or {}
-            person_name = details.get("name")
-            person_profile_path = details.get("profile_path")
+        details = _tmdb_person_details(int(credit)) or {}
+        person_name = details.get("name") or (person.name if person else None)
+        person_profile_path = details.get("profile_path") or (
+            person.tmdb_profile_path if person else None
+        )
         if person_name is None:
             abort(404)
+        bio = _person_bio(details) if details else None
 
         # The filmography shows the person's entire TMDb career, whether
         # or not a film has any local record. Local rows attach the best
@@ -578,6 +627,7 @@ def movie_library():
             title=f"Movies starring {person_name}",
             person_name=person_name,
             profile_path=person_profile_path,
+            bio=bio,
             filmography=filmography,
             tmdb_unavailable=tmdb_credits is None,
             upgrade_threshold=_upgrade_threshold(),

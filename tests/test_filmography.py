@@ -77,41 +77,62 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         make_cast(person, seen)
         db.session.commit()
 
-    class FakeCredits:
+    class FakeTMDb:
+        def __init__(self, payload):
+            self.payload = payload
+
         def raise_for_status(self):
             pass
 
         def json(self):
-            return {
-                "cast": [
-                    {
-                        "id": 100,
-                        "title": "Career Owned Film",
-                        "release_date": "1980-05-01",
-                        "character": "The Lead",
-                    },
-                    {
-                        "id": 150,
-                        "title": "Career Seen Film",
-                        "release_date": "1985-02-01",
-                        "character": "The Friend",
-                    },
-                    {
-                        "id": 200,
-                        "title": "Career Unknown Film",
-                        "release_date": "1999-09-09",
-                        "character": "The Cameo",
-                        "poster_path": "/unknown.jpg",
-                    },
-                ]
+            return self.payload
+
+    def fake_tmdb_get(url, **kwargs):
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 100,
+                            "title": "Career Owned Film",
+                            "release_date": "1980-05-01",
+                            "character": "The Lead",
+                        },
+                        {
+                            "id": 150,
+                            "title": "Career Seen Film",
+                            "release_date": "1985-02-01",
+                            "character": "The Friend",
+                        },
+                        {
+                            "id": 200,
+                            "title": "Career Unknown Film",
+                            "release_date": "1999-09-09",
+                            "character": "The Cameo",
+                            "poster_path": "/unknown.jpg",
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb(
+            {
+                "name": "Career Actor",
+                "profile_path": "/career.jpg",
+                "biography": "Worked steadily for decades.",
+                "birthday": "1920-01-10",
+                "deathday": "1999-05-02",
             }
+        )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", lambda *a, **k: FakeCredits())
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=535353").get_data(as_text=True)
-    # The header portrait comes straight from the local credit row
     assert "/w185/career.jpg" in page
+    # A dead person's age is figured against the death date
+    assert "Born January 10, 1920" in page
+    assert "Died May 2, 1999 (aged 79)" in page
+    assert "Worked steadily for decades." in page
     # Owned: Blu-ray is at the threshold, so it badges as final
     assert 'badge-success">Bluray-1080p' in page
     # Seen but unowned: info badge plus the liked heart
@@ -156,7 +177,13 @@ def test_filmography_serves_people_without_local_credit_rows(
                 }
             )
         return FakeTMDb(
-            {"name": "Uncredited Wanderer", "profile_path": "/wanderer.jpg"}
+            {
+                "name": "Uncredited Wanderer",
+                "profile_path": "/wanderer.jpg",
+                "biography": "Wandered into pictures by accident.",
+                "birthday": "1970-03-03",
+                "place_of_birth": "Butte, Montana, USA",
+            }
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
@@ -164,8 +191,11 @@ def test_filmography_serves_people_without_local_credit_rows(
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
-    # The header portrait comes from the same TMDb person lookup
+    # The header portrait and biography come from the same TMDb person
+    # lookup; a living person's born line carries their current age
     assert "/w185/wanderer.jpg" in page
+    assert "Born March 3, 1970 in Butte, Montana, USA (age" in page
+    assert "Wandered into pictures by accident." in page
     assert "Wanderer Unknown Film" in page
     assert "/review/tmdb/300" in page
     assert "Not in library" in page
