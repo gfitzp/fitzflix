@@ -38,6 +38,8 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
 
     page = admin_client.get("/library/movie?credit=424242").get_data(as_text=True)
     assert "Filmography Actor" in page
+    # No stored profile path, so the header shows the silhouette placeholder
+    assert "bi-person-fill" in page
     assert "Owned Credit Film" in page
     # DVD is below the Blu-ray threshold, so it badges as an upgrade candidate
     assert 'badge-warning">DVD' in page
@@ -54,7 +56,9 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
 
     with app.app_context():
         user_id = User.query.first().id
-        person = TMDBCredit(id=535353, name="Career Actor")
+        person = TMDBCredit(
+            id=535353, name="Career Actor", tmdb_profile_path="/career.jpg"
+        )
         db.session.add(person)
         owned = make_movie("Career Owned Film", 1980, tmdb_id=100)
         make_movie_file(owned, "Bluray-1080p")
@@ -106,6 +110,8 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     monkeypatch.setattr(main_routes, "tmdb_get", lambda *a, **k: FakeCredits())
 
     page = admin_client.get("/library/movie?credit=535353").get_data(as_text=True)
+    # The header portrait comes straight from the local credit row
+    assert "/w185/career.jpg" in page
     # Owned: Blu-ray is at the threshold, so it badges as final
     assert 'badge-success">Bluray-1080p' in page
     # Seen but unowned: info badge plus the liked heart
@@ -149,13 +155,17 @@ def test_filmography_serves_people_without_local_credit_rows(
                     ]
                 }
             )
-        return FakeTMDb({"name": "Uncredited Wanderer"})
+        return FakeTMDb(
+            {"name": "Uncredited Wanderer", "profile_path": "/wanderer.jpg"}
+        )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
+    # The header portrait comes from the same TMDb person lookup
+    assert "/w185/wanderer.jpg" in page
     assert "Wanderer Unknown Film" in page
     assert "/review/tmdb/300" in page
     assert "Not in library" in page

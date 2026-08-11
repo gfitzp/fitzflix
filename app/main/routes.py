@@ -366,15 +366,15 @@ def index():
     )
 
 
-def _tmdb_person_name(person_id):
-    """The person's name from TMDb, cached for a day; None when there's no
-    API key or TMDb doesn't answer with one, which the filmography treats
-    as an unknown person.
+def _tmdb_person_details(person_id):
+    """The person's {name, profile_path} from TMDb, cached for a day; None
+    when there's no API key or TMDb doesn't answer with a name, which the
+    filmography treats as an unknown person.
     """
 
     if not current_app.config["TMDB_API_KEY"]:
         return None
-    cache_key = f"fitzflix:tmdb:person:{person_id}:name"
+    cache_key = f"fitzflix:tmdb:person:{person_id}:details"
     cached = current_app.redis.get(cache_key)
     if cached:
         return json.loads(cached)
@@ -385,13 +385,18 @@ def _tmdb_person_name(person_id):
             timeout=10,
         )
         r.raise_for_status()
-        name = (r.json() or {}).get("name")
+        payload = r.json() or {}
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return None
-    if name:
-        current_app.redis.set(cache_key, json.dumps(name), ex=86400)
-    return name
+    if not payload.get("name"):
+        return None
+    details = {
+        "name": payload["name"],
+        "profile_path": payload.get("profile_path"),
+    }
+    current_app.redis.set(cache_key, json.dumps(details), ex=86400)
+    return details
 
 
 @bp.route("/library/movie", methods=["GET", "POST"])
@@ -425,10 +430,16 @@ def movie_library():
     if credit:
         # Credit ids are TMDb person ids, so the filmography isn't limited
         # to people with local credit rows: anyone TMDb knows can be
-        # browsed from any cast list. A local row saves the name lookup
+        # browsed from any cast list. A local row saves the TMDb lookup
 
         person = TMDBCredit.query.filter_by(id=int(credit)).first()
-        person_name = person.name if person else _tmdb_person_name(int(credit))
+        if person:
+            person_name = person.name
+            person_profile_path = person.tmdb_profile_path
+        else:
+            details = _tmdb_person_details(int(credit)) or {}
+            person_name = details.get("name")
+            person_profile_path = details.get("profile_path")
         if person_name is None:
             abort(404)
 
@@ -565,6 +576,8 @@ def movie_library():
         return render_template(
             "filmography.html",
             title=f"Movies starring {person_name}",
+            person_name=person_name,
+            profile_path=person_profile_path,
             filmography=filmography,
             tmdb_unavailable=tmdb_credits is None,
             upgrade_threshold=_upgrade_threshold(),

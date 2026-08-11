@@ -1,7 +1,16 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
+<div class="d-flex align-items-center mt-n2">
+	{% if profile_path %}
+		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border mr-3" style="width: 92px;">
+	{% else %}
+		<div class="border rounded d-flex justify-content-center align-items-center text-secondary mr-3" style="height: 138px; width: 92px; flex-shrink: 0;">
+			<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
+		</div>
+	{% endif %}
+	<h2 class="mb-0">{{ title }}</h2>
+</div>
 <hr>
 {% if tmdb_unavailable %}
 <div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
