@@ -1,19 +1,19 @@
 {% extends "base.html" %}
 
 {% block app_content %}
-<div class="d-flex align-items-center mt-n2">
+{# Portrait, name, lifespan, and biography stack flush to the same left
+   edge #}
+<div class="mt-n2">
 	{% if profile_path %}
-		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border mr-3" style="width: 92px;">
+		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border" style="width: 92px;">
 	{% else %}
-		<div class="border rounded d-flex justify-content-center align-items-center text-secondary mr-3" style="height: 138px; width: 92px; flex-shrink: 0;">
+		<div class="border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 138px; width: 92px;">
 			<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
 		</div>
 	{% endif %}
-	<div>
-		<h2 class="mb-0">{{ title }}</h2>
-		{% if bio and bio.born_line %}<div class="small text-muted">{{ bio.born_line }}</div>{% endif %}
-		{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
-	</div>
+	<h2 class="mt-2 mb-0">{{ title }}</h2>
+	{% if bio and bio.born_line %}<div class="small text-muted">{{ bio.born_line }}</div>{% endif %}
+	{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
 </div>
 {% if bio and bio.biography %}
 {# Clamped to a few lines; the toggle only appears when there's more.
