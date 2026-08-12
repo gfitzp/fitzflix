@@ -502,3 +502,50 @@ def test_evaluate_applies_trial_class_weights(app):
         )
 
     assert genre_led["mean_percentile"] != decade_led["mean_percentile"]
+
+
+def test_runtime_filter_trims_the_library_rail(app, admin_client):
+    """?minutes=N is a view filter: long films and unknown runtimes drop
+    out while it's set, and the default view ignores length entirely."""
+
+    from app import db
+    from app.recommendations import RECS_KEY
+    from app.models import User
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        short = make_movie("Filter Short", 1990, tmdb_runtime=95)
+        make_movie_file(short, "Bluray-1080p")
+        long = make_movie("Filter Long", 1991, tmdb_runtime=200)
+        make_movie_file(long, "Bluray-1080p")
+        unknown = make_movie("Filter Unknown", 1992)
+        make_movie_file(unknown, "Bluray-1080p")
+        ids = [short.id, long.id, unknown.id]
+        db.session.commit()
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [
+                    {"movie_id": movie_id, "score": 1.0, "because": ["Comedy"]}
+                    for movie_id in ids
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?minutes=100").get_data(as_text=True)
+    assert "Filter Short (1990)" in body
+    assert "95 min" in body
+    assert "Filter Long" not in body
+    assert "Filter Unknown" not in body
+    assert "films with unknown runtimes are hidden" in body
+    assert ">Clear</a>" in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Filter Short (1990)" in body
+    assert "Filter Long (1991)" in body
+    assert "Filter Unknown (1992)" in body
+    assert "95 min" not in body

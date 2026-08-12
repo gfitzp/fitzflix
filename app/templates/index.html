@@ -12,6 +12,20 @@
 	</div>
 </div>
 <hr>
+{% if recs or rail or minutes %}
+{# The runtime filter is a view on the already-computed rails: the
+   recommendations never consider length, and films with unknown
+   runtimes hide only while a limit is set #}
+<form class="form-inline mb-3" action="{{ url_for('main.index') }}" method="get">
+	<label class="small text-muted mr-2" for="minutes">Only films that fit your evening:</label>
+	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm mr-2" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
+	<button type="submit" class="btn btn-sm btn-outline-primary mr-2">Filter</button>
+	{% if minutes %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
+</form>
+{% if minutes %}
+<p class="small text-muted">Showing films of {{ minutes }} minutes or less; films with unknown runtimes are hidden.</p>
+{% endif %}
+{% endif %}
 {% if recs %}
 <div class="row">
 	{% for rec in recs %}
@@ -28,7 +42,7 @@
 					</svg>
 				</div>
 			{% endif %}
-			<h6 class="mb-1">{{ rec.movie.title }} ({{ rec.movie.year }})</h6>
+			<h6 class="mb-1">{{ rec.movie.title }} ({{ rec.movie.year }}){% if minutes %} <span class="small text-muted font-weight-normal">&middot; {{ rec.movie.tmdb_runtime }} min</span>{% endif %}</h6>
 		</a>
 		{% if rec.because %}
 		<p class="mb-0">
@@ -69,7 +83,7 @@
 					</svg>
 				</div>
 			{% endif %}
-			<h6 class="mb-1">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</h6>
+			<h6 class="mb-1">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}{% if minutes %} <span class="small text-muted font-weight-normal">&middot; {{ item.runtime }} min</span>{% endif %}</h6>
 		</a>
 		<p class="mb-0">
 			{% for provider in item.providers %}

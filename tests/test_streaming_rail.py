@@ -344,3 +344,52 @@ def test_no_rail_section_without_provider_picks(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "Streaming on your services" not in body
     assert app.maintenance_queue.jobs == []
+
+
+def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
+    """The minute limit filters stored rail items by their enriched
+    runtime; zero means unknown and hides only from filtered views."""
+
+    from app.models import User
+    from app.streaming_rail import RAIL_KEY
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+
+    def rail_item(tmdb_id, title, runtime):
+        """A minimal stored rail entry."""
+
+        return {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "year": "1994",
+            "poster_path": None,
+            "runtime": runtime,
+            "providers": ["Netflix"],
+            "because": ["popular on Netflix"],
+            "score": 1.0,
+        }
+
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 02:15",
+                "items": [
+                    rail_item(7001, "Rail Filter Short", 95),
+                    rail_item(7002, "Rail Filter Long", 200),
+                    rail_item(7003, "Rail Filter Unknown", 0),
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?minutes=100").get_data(as_text=True)
+    assert "Rail Filter Short (1994)" in body
+    assert "Rail Filter Long" not in body
+    assert "Rail Filter Unknown" not in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Rail Filter Short (1994)" in body
+    assert "Rail Filter Long (1994)" in body
+    assert "Rail Filter Unknown (1994)" in body

@@ -257,7 +257,16 @@ def service_worker():
 @login_required
 def index():
     """The landing page: what to watch tonight, recommended from the
-    library by the user's own diary (GitHub #46/#61)."""
+    library by the user's own diary (GitHub #46/#61).
+
+    ?minutes=N filters both rails at view time to films that fit the
+    evening — the computed recommendations themselves never consider
+    length, and films with unknown runtimes hide only from filtered
+    views."""
+
+    minutes = request.args.get("minutes", type=int)
+    if minutes is not None and minutes < 1:
+        minutes = None
 
     stored = stored_recommendations(current_app.redis, current_user.id)
 
@@ -290,6 +299,8 @@ def index():
         for item in stored.get("items", []):
             movie = movies.get(item["movie_id"])
             if movie is None or item["movie_id"] in seen:
+                continue
+            if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
                 continue
             recs.append({"movie": movie, "because": item.get("because", [])[:3]})
             if len(recs) == 18:
@@ -335,6 +346,8 @@ def index():
         for item in rail_payload.get("items", []):
             if item["tmdb_id"] in dropped:
                 continue
+            if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
+                continue
             rail.append(item)
             if len(rail) == 12:
                 break
@@ -358,6 +371,7 @@ def index():
         has_history=has_history,
         rail=rail,
         rail_computed_at=rail_computed_at,
+        minutes=minutes,
     )
 
 

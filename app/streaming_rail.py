@@ -71,11 +71,14 @@ TASTE_PEOPLE_LIMIT = 3
 NEGATIVE_GENRE_THRESHOLD = -0.08
 
 # How deep the rail digs: coarse-ranked candidates verified against the
-# per-title availability cache, then enriched with credits
+# per-title availability cache, then enriched with credits. The depth
+# feeds the landing page's runtime filter — a tight minute limit thins
+# the rail, so it stores well past the dozen displayed (enrichment is
+# week-cached, so the extra depth costs one first-night burst)
 
-VERIFY_DEPTH = 75
-ENRICH_DEPTH = 25
-STORED_RAIL_ITEMS = 25
+VERIFY_DEPTH = 100
+ENRICH_DEPTH = 50
+STORED_RAIL_ITEMS = 50
 
 
 def _discover(params):
