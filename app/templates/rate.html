@@ -53,14 +53,16 @@
 		</form>
 	</div>
 </div>
-{% if up_next %}
+{% if suggestions and anchor %}
 <hr>
-{# The films the last answer queued up — rating the card above
-   reshuffles these toward (or away from) its neighborhood #}
-<h5>Up next</h5>
+{# Enjoyment picks earned by the last positive rating — each can be
+   banked to the watchlist without moving the session along; the
+   next card to RATE stays a surprise #}
+<h5>Since you liked {{ anchor.tmdb_title if anchor.tmdb_title else anchor.title }}&hellip;</h5>
+<p class="small text-muted">These unseen films from your library share its DNA and fit your taste profile.</p>
 <div class="row">
-	{% for movie in up_next %}
-	<div class="col-4 col-sm-3 col-md-2 mb-3">
+	{% for movie in suggestions %}
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body">
 			{% if movie.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w185/' + movie.custom_poster) }}" loading="lazy" class="img-fluid border rounded mb-1 w-100" alt="{{ movie.title }} ({{ movie.year }})">
@@ -73,8 +75,13 @@
 					</svg>
 				</div>
 			{% endif %}
-			<p class="small mb-0">{{ movie.title }} ({{ movie.year }})</p>
+			<p class="small mb-1">{{ movie.title }} ({{ movie.year }})</p>
 		</a>
+		<form action="" method="post">
+			{{ form.csrf_token }}
+			{{ form.movie_id(value=movie.id) }}
+			{{ form.want_suggestion_submit(class_="btn btn-sm btn-outline-primary py-0") }}
+		</form>
 	</div>
 	{% endfor %}
 </div>

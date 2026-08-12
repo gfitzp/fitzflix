@@ -226,6 +226,9 @@ class RateFilmForm(FlaskForm):
     watchlist_submit = SubmitField("Add to Watchlist")
     unseen_submit = SubmitField("Haven't Seen It")
     skip_submit = SubmitField("Skip")
+    # Adds a SUGGESTED film to the watchlist without touching the
+    # drive's steering, unlike watchlist_submit on the featured card
+    want_suggestion_submit = SubmitField("Add to Watchlist")
 
     def validate_rating(self, rating):
         """Keep ratings between 0 and 5 stars."""

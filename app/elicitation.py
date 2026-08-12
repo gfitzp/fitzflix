@@ -25,6 +25,7 @@ from app.recommendations import (
     FEATURE_CLASS_WEIGHTS,
     collect_features,
     local_candidates,
+    score_movie,
     stored_profile,
 )
 
@@ -49,6 +50,12 @@ UNSEEN_STEER_WEIGHT = -0.5
 
 UP_NEXT_COUNT = 3
 
+# After a positive rating, up to this many taste-scored suggestions
+# appear ("since you liked X…") — enjoyment picks, unlike the drive's
+# own information-value ranking
+
+SUGGESTION_COUNT = 3
+
 
 def _int_set(redis, key):
     """A Redis set's members as ints."""
@@ -71,13 +78,16 @@ def mark_skipped(redis, user_id, movie_id):
     redis.expire(key, SKIP_TTL_SECONDS)
 
 
-def set_last_response(redis, user_id, movie_id, action):
+def set_last_response(redis, user_id, movie_id, action, positive=False):
     """Remember the session's last response, which steers the next
-    picks: action is one of rated / watchlist / unseen / skip."""
+    picks: action is one of rated / watchlist / unseen / skip, and a
+    positive rating (or like) also unlocks the suggestion strip."""
 
     redis.set(
         LAST_KEY.format(user_id=int(user_id)),
-        json.dumps({"movie_id": int(movie_id), "action": action}),
+        json.dumps(
+            {"movie_id": int(movie_id), "action": action, "positive": bool(positive)}
+        ),
         ex=LAST_TTL_SECONDS,
     )
 
@@ -152,12 +162,18 @@ def adjacency_scores(candidates, features, anchor_features):
     return scores
 
 
-def next_films(user_id, count=1 + UP_NEXT_COUNT):
+def next_films(user_id, count=1 + UP_NEXT_COUNT, exclude=()):
     """The next films to offer, most informative first, steered by the
     last response. Deterministic for a given state, so a reload shows
-    the same card — every answer changes the state and the picks."""
+    the same card — every answer changes the state and the picks.
+    `exclude` keeps the card from doubling as one of the suggestion
+    strip's enjoyment picks."""
 
-    candidates = elicitation_candidates(user_id)
+    candidates = [
+        movie_id
+        for movie_id in elicitation_candidates(user_id)
+        if movie_id not in set(exclude)
+    ]
     if not candidates:
         return []
     redis = current_app.redis
@@ -187,3 +203,43 @@ def next_films(user_id, count=1 + UP_NEXT_COUNT):
         candidates, key=lambda movie_id: scores.get(movie_id, 0.0), reverse=True
     )
     return ranked[:count]
+
+
+def suggestions_after_rating(user_id, exclude=(), count=SUGGESTION_COUNT):
+    """(anchor movie id, suggested movie ids) after a positive rating,
+    or (None, []).
+
+    Enjoyment picks, not elicitation picks: unseen candidates that
+    actually share features with the just-rated film, ranked by the
+    taste profile's own score plus the adjacency bonus — the fresh
+    rating's signal rides in through the adjacency term while the
+    stored profile catches up in the background.
+    """
+
+    redis = current_app.redis
+    last = last_response(redis, user_id)
+    if not last or last.get("action") != "rated" or not last.get("positive"):
+        return None, []
+    profile = stored_profile(redis, user_id)
+    if not profile:
+        return None, []
+
+    anchor_id = last["movie_id"]
+    candidates = [
+        movie_id
+        for movie_id in elicitation_candidates(user_id)
+        if movie_id not in set(exclude)
+    ]
+    if not candidates:
+        return anchor_id, []
+
+    features = collect_features(candidates + [anchor_id])
+    adjacency = adjacency_scores(candidates, features, features.get(anchor_id, []))
+    scored = []
+    for movie_id in candidates:
+        if adjacency.get(movie_id, 0.0) <= 0:
+            continue
+        taste, _ = score_movie(features.get(movie_id, []), profile)
+        scored.append((taste + ADJACENCY_WEIGHT * adjacency[movie_id], movie_id))
+    scored.sort(reverse=True)
+    return anchor_id, [movie_id for _, movie_id in scored[:count]]

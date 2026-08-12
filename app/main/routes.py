@@ -120,11 +120,11 @@ from app.streaming import (
     user_streaming,
 )
 from app.elicitation import (
-    UP_NEXT_COUNT,
     mark_skipped,
     mark_unseen,
     next_films,
     set_last_response,
+    suggestions_after_rating,
 )
 from app.leaving_criterion import leaving_inventory, leaving_shelf
 from app.streaming_rail import stored_rail
@@ -4777,7 +4777,15 @@ def rate():
             db.session.add(review)
             clear_watchlist(current_user.id, movie.id)
             db.session.commit()
-            set_last_response(current_app.redis, current_user.id, movie.id, "rated")
+            # A positive answer unlocks the "since you liked…" strip
+            positive = bool(form.liked.data) or (rating is not None and rating >= 3.5)
+            set_last_response(
+                current_app.redis,
+                current_user.id,
+                movie.id,
+                "rated",
+                positive=positive,
+            )
             # Fold fresh ratings into the stored profile every few
             # minutes during a session, instead of waiting for 1:45 AM
             if current_app.redis.set(
@@ -4795,7 +4803,7 @@ def rate():
                 flash(f"Rated '{title}' {rating:g} out of 5", "success")
             else:
                 flash(f"Marked '{title}' as liked", "success")
-        elif form.watchlist_submit.data:
+        elif form.watchlist_submit.data or form.want_suggestion_submit.data:
             if not UserWatchlist.query.filter_by(
                 user_id=int(current_user.id), movie_id=movie.id
             ).first():
@@ -4803,7 +4811,13 @@ def rate():
                     UserWatchlist(user_id=current_user.id, movie_id=movie.id)
                 )
                 db.session.commit()
-            set_last_response(current_app.redis, current_user.id, movie.id, "watchlist")
+            # Banking a SUGGESTED film keeps the steering (and the
+            # strip) anchored on the rated film; answering the featured
+            # card's own watchlist button moves the session along
+            if form.watchlist_submit.data:
+                set_last_response(
+                    current_app.redis, current_user.id, movie.id, "watchlist"
+                )
             flash(f"Added '{title}' to your watchlist", "success")
         elif form.unseen_submit.data:
             mark_unseen(current_app.redis, current_user.id, movie.id)
@@ -4814,10 +4828,24 @@ def rate():
             set_last_response(current_app.redis, current_user.id, movie.id, "skip")
         return redirect(url_for("main.rate"))
 
-    queue = next_films(current_user.id, count=1 + UP_NEXT_COUNT)
-    movies = {m.id: m for m in Movie.query.filter(Movie.id.in_(queue or [0]))}
-    featured = movies.get(queue[0]) if queue else None
-    up_next = [movies[movie_id] for movie_id in queue[1:] if movie_id in movies]
+    # Only the featured card shows — what comes next stays a mystery,
+    # the carrot for answering. A positive rating earns the "since you
+    # liked…" strip first (the reward keeps its best picks), and the
+    # card then takes the most informative film left over
+
+    anchor_id, suggested_ids = suggestions_after_rating(current_user.id)
+    queue = next_films(current_user.id, count=1, exclude=suggested_ids)
+    featured_id = queue[0] if queue else None
+    wanted_ids = [featured_id] + suggested_ids + [anchor_id]
+    movies = {
+        m.id: m
+        for m in Movie.query.filter(
+            Movie.id.in_([movie_id for movie_id in wanted_ids if movie_id] or [0])
+        )
+    }
+    featured = movies.get(featured_id)
+    suggestions = [movies[movie_id] for movie_id in suggested_ids if movie_id in movies]
+    anchor = movies.get(anchor_id)
     directors = []
     if featured:
         directors = [
@@ -4834,7 +4862,8 @@ def rate():
         title="Rate Films",
         form=form,
         featured=featured,
-        up_next=up_next,
+        suggestions=suggestions,
+        anchor=anchor,
         directors=directors,
     )
 

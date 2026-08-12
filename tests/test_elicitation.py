@@ -196,7 +196,10 @@ def test_rate_page_actions_flow(app, admin_client):
     assert "Nothing left to offer right now." in page
 
 
-def test_rate_page_shows_featured_details_and_up_next(app, admin_client):
+def test_rate_page_shows_featured_details_only(app, admin_client):
+    """One card at a time — what's next stays a mystery, the carrot
+    for answering."""
+
     with app.app_context():
         western = genre(37, "Western")
         director = make_person(777004, "Featured Director")
@@ -216,7 +219,7 @@ def test_rate_page_shows_featured_details_and_up_next(app, admin_client):
                 job="Director",
             )
         )
-        # Lower-information companions fill the up-next strip
+        # Lower-information companions must stay hidden
         for n in range(3):
             make_candidate(f"Drive Filler {n}", 1990)
         db.session.commit()
@@ -227,5 +230,115 @@ def test_rate_page_shows_featured_details_and_up_next(app, admin_client):
     assert "119 min" in page
     assert "Western" in page
     assert "A searcher searches." in page
-    assert "Up next" in page
-    assert "Drive Filler" in page
+    assert "Up next" not in page
+    assert "Drive Filler" not in page
+
+
+def test_positive_rating_earns_suggestions(app, admin_client):
+    """A ≥3.5 rating surfaces up to three taste-adjacent unseen films —
+    bankable to the watchlist without moving the drive along — while a
+    sour rating earns nothing."""
+
+    import json
+
+    from app.elicitation import last_response
+
+    with app.app_context():
+        user_id = admin_id()
+        western = genre(37, "Western")
+        auteur = make_person(777005, "Suggestion Director")
+        anchor = make_candidate(
+            "Suggest Anchor", 1960, genre_row=western, director=auteur
+        )
+        similar = make_candidate(
+            "Suggest Similar", 1961, genre_row=western, director=auteur
+        )
+        # An unrelated candidate that shares nothing with the anchor
+        # (different genre AND decade) can never join the strip
+        drama = genre(18, "Drama")
+        make_candidate("Suggest Unrelated", 1999, genre_row=drama)
+        db.session.commit()
+        anchor_id, similar_id = anchor.id, similar.id
+
+    # A taste profile so score_movie has something to work with
+
+    app.redis.set(
+        f"fitzflix:recs:profile:{user_id}",
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:37": {
+                        "class": "genre",
+                        "label": "Western",
+                        "count": 3,
+                        "score": 0.5,
+                    }
+                },
+                "movies": 3,
+            }
+        ),
+    )
+
+    page = admin_client.get("/rate").get_data(as_text=True)
+    token = csrf_token_from(page)
+
+    response = admin_client.post(
+        "/rate",
+        data={
+            "csrf_token": token,
+            "movie_id": str(anchor_id),
+            "rating": "4.5",
+            "rate_submit": "Rate It",
+        },
+    )
+    assert response.status_code == 302
+
+    page = admin_client.get("/rate").get_data(as_text=True)
+    assert "Since you liked Suggest Anchor" in page
+    assert "Suggest Similar (1961)" in page
+    strip = page[page.index("Since you liked") :]
+    assert "Suggest Unrelated" not in strip
+
+    # Banking the suggestion adds it to the watchlist WITHOUT moving
+    # the steering — the strip stays anchored, minus the banked film
+
+    response = admin_client.post(
+        "/rate",
+        data={
+            "csrf_token": token,
+            "movie_id": str(similar_id),
+            "want_suggestion_submit": "Add to Watchlist",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=similar_id).first()
+            is not None
+        )
+        assert last_response(app.redis, user_id)["movie_id"] == anchor_id
+
+    # The first GET renders the one-shot flash (which names the film);
+    # the second shows the page's own steady state
+
+    admin_client.get("/rate")
+    page = admin_client.get("/rate").get_data(as_text=True)
+    assert "Suggest Similar (1961)" not in page
+
+    # A sour rating earns no strip
+
+    with app.app_context():
+        sour = make_candidate("Suggest Sour", 1962, genre_row=genre(37, "Western"))
+        db.session.commit()
+        sour_id = sour.id
+    admin_client.post(
+        "/rate",
+        data={
+            "csrf_token": token,
+            "movie_id": str(sour_id),
+            "rating": "2.0",
+            "rate_submit": "Rate It",
+        },
+    )
+    page = admin_client.get("/rate").get_data(as_text=True)
+    assert "Since you liked" not in page
