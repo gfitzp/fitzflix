@@ -134,6 +134,12 @@ from rq.registry import FailedJobRegistry, StartedJobRegistry
 
 from functools import wraps
 
+# At most this many of a rail's 12 daily slots go to watchlist pins;
+# bigger watchlists rotate through the pinned slots day by day, so the
+# list always surfaces without ever crowding out discovery
+
+WATCHLIST_PIN_LIMIT = 4
+
 
 def _watched_timestamp(watched_date):
     """A full DateTime for a date-only form value.
@@ -311,10 +317,11 @@ def index():
         }
         # Watchlisted owned films pin ahead of the rotation regardless
         # of where (or whether) they sit in the stored ranking — the
-        # library is big, but these are the ones specifically wanted
+        # library is big, but these are the ones specifically wanted.
+        # Pins are capped so a long watchlist rotates through its slots
+        # instead of freezing the rail — the discovery slots always
+        # keep the majority
 
-        pinned = []
-        pinned_ids = set()
         because_by_id = {
             item["movie_id"]: item.get("because", [])[:3]
             for item in stored.get("items", [])
@@ -327,25 +334,25 @@ def index():
             .order_by(UserWatchlist.date_added.desc())
             .all()
         )
-        for movie in wanted_owned:
-            if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
-                continue
-            if len(pinned) == 12:
-                break
-            pinned_ids.add(movie.id)
-            pinned.append(
-                {
-                    "movie": movie,
-                    "because": because_by_id.get(movie.id, []),
-                    "watchlisted": True,
-                }
-            )
+        watchlist_ids = {movie.id for movie in wanted_owned}
+        pin_candidates = [
+            {
+                "movie": movie,
+                "because": because_by_id.get(movie.id, []),
+                "watchlisted": True,
+            }
+            for movie in wanted_owned
+            if not minutes or (movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
+        ]
+        pinned = rotate_partition(
+            pin_candidates, WATCHLIST_PIN_LIMIT, date.today().toordinal()
+        )
 
         for item in stored.get("items", []):
             movie = movies.get(item["movie_id"])
             if movie is None or item["movie_id"] in seen:
                 continue
-            if item["movie_id"] in pinned_ids:
+            if item["movie_id"] in watchlist_ids:
                 continue
             if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
                 continue
@@ -405,7 +412,8 @@ def index():
             dropped = {t for (t,) in owned_now} | {t for (t,) in logged_now}
         # A watchlisted film on the rail is the best kind of match —
         # wanted, and streaming on a service already paid for — so it
-        # pins ahead of the daily rotation
+        # pins ahead of the daily rotation, capped like the library
+        # rail so discovery keeps most of the slots
 
         watchlisted_now = set()
         if rail_ids:
@@ -423,7 +431,11 @@ def index():
                 continue
             item["watchlisted"] = item["tmdb_id"] in watchlisted_now
             rail.append(item)
-        pinned = [item for item in rail if item["watchlisted"]][:12]
+        pinned = rotate_partition(
+            [item for item in rail if item["watchlisted"]],
+            WATCHLIST_PIN_LIMIT,
+            date.today().toordinal(),
+        )
         rest = [item for item in rail if not item["watchlisted"]]
         rail = pinned + rotate_daily(
             rest,

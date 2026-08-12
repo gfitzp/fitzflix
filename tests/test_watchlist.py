@@ -371,6 +371,91 @@ def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
     assert body.index("Rail Wanted (1994)") < body.index("Rail Unwanted High (1994)")
 
 
+def test_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
+    """A big watchlist cycles through a few pinned slots instead of
+    freezing the streaming rail — discovery keeps most of the cards."""
+
+    from app import db
+    from app.main.routes import WATCHLIST_PIN_LIMIT
+    from app.models import UserWatchlist
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = admin_id(app)
+    with app.app_context():
+        wanted_tmdb_ids = []
+        for n in range(12):
+            movie = make_movie(f"Rail Wanted {n}", 1990, tmdb_id=9400 + n)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+            wanted_tmdb_ids.append(9400 + n)
+        db.session.commit()
+
+    def rail_item(tmdb_id, title, score):
+        """A minimal stored rail entry."""
+
+        return {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "year": "1990",
+            "poster_path": None,
+            "runtime": 95,
+            "providers": [{**NETFLIX, "kind": "flatrate"}],
+            "because": ["popular on Netflix"],
+            "score": 2.0,
+        }
+
+    items = [
+        rail_item(tmdb_id, f"Rail Wanted {n}", 2.0)
+        for n, tmdb_id in enumerate(wanted_tmdb_ids)
+    ]
+    items += [rail_item(9500 + n, f"Rail Discovery {n}", 1.0) for n in range(12)]
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps({"computed_at": "2026-08-12 02:15", "items": items}),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    shown_wanted = sum(f"Rail Wanted {n} (1990)" in body for n in range(12))
+    shown_discovery = sum(f"Rail Discovery {n} (1990)" in body for n in range(12))
+    assert shown_wanted == WATCHLIST_PIN_LIMIT
+    assert shown_discovery == 12 - WATCHLIST_PIN_LIMIT
+
+
+def test_library_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
+    """Twelve watchlisted owned films must not freeze the library rail:
+    the cap keeps the daily discovery slots in the majority."""
+
+    from app import db
+    from app.main.routes import WATCHLIST_PIN_LIMIT
+    from app.models import UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    user_id = admin_id(app)
+    rec_items = []
+    with app.app_context():
+        for n in range(12):
+            movie = make_movie(f"Library Wanted {n}", 1990)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        for n in range(12):
+            movie = make_movie(f"Library Discovery {n}", 1991)
+            make_movie_file(movie, "Bluray-1080p")
+            rec_items.append(
+                {"movie_id": movie.id, "score": 1.0, "because": ["Comedy"]}
+            )
+        db.session.commit()
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps({"computed_at": "2026-08-12 01:45", "items": rec_items}),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    shown_wanted = sum(f"Library Wanted {n} (1990)" in body for n in range(12))
+    shown_discovery = sum(f"Library Discovery {n} (1991)" in body for n in range(12))
+    assert shown_wanted == WATCHLIST_PIN_LIMIT
+    assert shown_discovery == 12 - WATCHLIST_PIN_LIMIT
+
+
 def test_watchlist_feeds_the_taste_profile(app):
     from app import db
     from app.models import UserWatchlist

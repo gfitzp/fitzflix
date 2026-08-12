@@ -405,12 +405,13 @@ def rotate_partition(items, count, day_index):
 
     if len(items) <= count:
         return list(items)
-    tier_size = -(-len(items) // count)
     picks = []
     for tier in range(count):
-        tier_items = items[tier * tier_size : (tier + 1) * tier_size]
-        if not tier_items:
-            break
+        # Balanced boundaries: tier sizes differ by at most one and no
+        # tier is ever empty, so short lists still fill every slot
+        tier_items = items[
+            tier * len(items) // count : (tier + 1) * len(items) // count
+        ]
         picks.append(tier_items[day_index % len(tier_items)])
     return picks
 

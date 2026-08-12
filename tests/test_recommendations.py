@@ -708,6 +708,12 @@ def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
     ragged = list(range(100))
     assert all(len(rotate_partition(ragged, 12, day)) == 12 for day in range(20))
 
+    # Even barely-bigger-than-count pools fill every slot (a ceil-based
+    # tier size used to leave trailing tiers empty: 12 items in 8 slots
+    # returned only 6)
+
+    assert all(len(rotate_partition(list(range(12)), 8, day)) == 8 for day in range(6))
+
 
 def test_marker_bar_rides_with_the_profile(app):
     """The nightly recompute stores the baseline-percentile marker bar
