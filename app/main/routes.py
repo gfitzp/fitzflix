@@ -67,6 +67,7 @@ from app.main.forms import (
     TMDBLookupForm,
     TMDBPosterSelectForm,
     TMDBRefreshForm,
+    RateFilmForm,
     TrackMetadataScanForm,
     TranscodeForm,
     WatchlistForm,
@@ -117,6 +118,13 @@ from app.streaming import (
     title_availability,
     user_provider_ids,
     user_streaming,
+)
+from app.elicitation import (
+    UP_NEXT_COUNT,
+    mark_skipped,
+    mark_unseen,
+    next_films,
+    set_last_response,
 )
 from app.leaving_criterion import leaving_inventory, leaving_shelf
 from app.streaming_rail import stored_rail
@@ -4733,6 +4741,101 @@ def watchlist():
         rows=rows,
         watchlist_form=watchlist_form,
         streaming_attribution=streaming_attribution,
+    )
+
+
+@bp.route("/rate", methods=["GET", "POST"])
+@login_required
+def rate():
+    """The rating drive: library films offered one at a time to deepen
+    the taste profile — rate it, want it, haven't seen it, or skip it,
+    and every answer steers what's offered next."""
+
+    form = RateFilmForm()
+    if form.validate_on_submit() and form.movie_id.data:
+        movie = Movie.query.filter_by(id=form.movie_id.data).first_or_404()
+        title = (
+            f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
+            f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+        )
+        if form.rate_submit.data:
+            rating = float(form.rating.data) if form.rating.data is not None else None
+            if rating is None and not form.liked.data:
+                flash("Pick a rating (or at least a like) first", "warning")
+                return redirect(url_for("main.rate"))
+            # An elicited rating is an ordinary diary row with no watch
+            # date — the film was seen sometime before Fitzflix
+            review = UserMovieReview(
+                user_id=current_user.id,
+                movie_id=movie.id,
+                liked=form.liked.data,
+                date_watched=None,
+                date_reviewed=datetime.now(),
+                rewatch=False,
+                **star_rating_fields(rating),
+            )
+            db.session.add(review)
+            clear_watchlist(current_user.id, movie.id)
+            db.session.commit()
+            set_last_response(current_app.redis, current_user.id, movie.id, "rated")
+            # Fold fresh ratings into the stored profile every few
+            # minutes during a session, instead of waiting for 1:45 AM
+            if current_app.redis.set(
+                f"fitzflix:elicit:recompute:{int(current_user.id)}",
+                "1",
+                nx=True,
+                ex=300,
+            ):
+                current_app.maintenance_queue.enqueue(
+                    "app.recommendations.recompute_recommendations",
+                    job_timeout="1h",
+                    description="Recomputing film recommendations",
+                )
+            if rating is not None:
+                flash(f"Rated '{title}' {rating:g} out of 5", "success")
+            else:
+                flash(f"Marked '{title}' as liked", "success")
+        elif form.watchlist_submit.data:
+            if not UserWatchlist.query.filter_by(
+                user_id=int(current_user.id), movie_id=movie.id
+            ).first():
+                db.session.add(
+                    UserWatchlist(user_id=current_user.id, movie_id=movie.id)
+                )
+                db.session.commit()
+            set_last_response(current_app.redis, current_user.id, movie.id, "watchlist")
+            flash(f"Added '{title}' to your watchlist", "success")
+        elif form.unseen_submit.data:
+            mark_unseen(current_app.redis, current_user.id, movie.id)
+            set_last_response(current_app.redis, current_user.id, movie.id, "unseen")
+            flash(f"Got it — you haven't seen '{title}'", "info")
+        elif form.skip_submit.data:
+            mark_skipped(current_app.redis, current_user.id, movie.id)
+            set_last_response(current_app.redis, current_user.id, movie.id, "skip")
+        return redirect(url_for("main.rate"))
+
+    queue = next_films(current_user.id, count=1 + UP_NEXT_COUNT)
+    movies = {m.id: m for m in Movie.query.filter(Movie.id.in_(queue or [0]))}
+    featured = movies.get(queue[0]) if queue else None
+    up_next = [movies[movie_id] for movie_id in queue[1:] if movie_id in movies]
+    directors = []
+    if featured:
+        directors = [
+            name
+            for (name,) in db.session.query(TMDBCredit.name)
+            .join(MovieCrew, MovieCrew.credit_id == TMDBCredit.id)
+            .filter(MovieCrew.movie_id == featured.id)
+            .filter(MovieCrew.job == "Director")
+            .distinct()
+        ]
+
+    return render_template(
+        "rate.html",
+        title="Rate Films",
+        form=form,
+        featured=featured,
+        up_next=up_next,
+        directors=directors,
     )
 
 

@@ -215,6 +215,25 @@ class WatchlistForm(FlaskForm):
     remove_watchlist_submit = SubmitField("Remove from Watchlist")
 
 
+class RateFilmForm(FlaskForm):
+    """The rating drive's response card: rate the film, want it,
+    haven't seen it, or skip it for now."""
+
+    movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
+    rating = DecimalField("Your rating (out of 5)", places=1, validators=[Optional()])
+    liked = BooleanField("Liked")
+    rate_submit = SubmitField("Rate It")
+    watchlist_submit = SubmitField("Add to Watchlist")
+    unseen_submit = SubmitField("Haven't Seen It")
+    skip_submit = SubmitField("Skip")
+
+    def validate_rating(self, rating):
+        """Keep ratings between 0 and 5 stars."""
+
+        if rating.data is not None and not 0 <= rating.data <= 5:
+            raise ValidationError("Ratings run from 0 to 5 stars.")
+
+
 class ReviewExportForm(FlaskForm):
     """History page: email the Letterboxd-format review export. The default
     export covers only entries added or edited since the last export; the
