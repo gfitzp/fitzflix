@@ -21,6 +21,9 @@
 				{% if result.rating is not none %}
 				<span class="badge badge-info">Seen &mdash; rated {{ result.rating }}</span>
 				{% endif %}
+				{% if movie.tmdb_overview %}
+				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
+				{% endif %}
 			</div>
 		</div>
 	</a>
@@ -48,6 +51,9 @@
 				<span class="badge badge-light">{{ result.file_count }} file{{ "s" if result.file_count != 1 }}</span>
 				{% else %}
 				<span class="badge badge-secondary">No episodes in library</span>
+				{% endif %}
+				{% if tv.tmdb_overview %}
+				<p class="mb-1 mt-1 small text-muted">{{ tv.tmdb_overview|truncate(240) }}</p>
 				{% endif %}
 			</div>
 		</div>

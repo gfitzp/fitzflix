@@ -37,7 +37,9 @@ def build_library(app):
     movie with no files (which the library search must omit), and a TV
     series with one episode."""
 
-    dvd_movie = make_movie("Jaws", 1975)
+    dvd_movie = make_movie(
+        "Jaws", 1975, tmdb_overview="A giant shark terrorizes a beach town."
+    )
     make_movie_file(dvd_movie, "DVD")
 
     remux_movie = make_movie("Jurassic Park", 1993)
@@ -78,6 +80,10 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
     assert 'badge-warning">DVD' in page
+
+    # The overview excerpt reads under the badges, like the TMDb page
+
+    assert "A giant shark terrorizes a beach town." in page
 
     page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
     assert "Jurassic Park (1993)" in page
