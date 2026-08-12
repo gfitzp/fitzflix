@@ -326,6 +326,13 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
         assert "5 cues from 0:00:10 to 1:38:20" in page
         assert f"triage/{file_id}/2/snap-1.jpg" in page
         assert 'name="track_ids"' in page
+
+        # Snapshots enlarge in place through the shared modal instead
+        # of opening as a new-tab link
+
+        assert "triage-snapshot" in page
+        assert "triageSnapshotModal" in page
+        assert f'<a href="/static/triage/{file_id}' not in page
     finally:
         os.remove(local_path)
         with app.app_context():

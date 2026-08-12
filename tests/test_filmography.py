@@ -423,12 +423,15 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
                             "department": "Directing",
                             "job": "Director",
                         },
+                        # Deliberately out of closing-credit order: the
+                        # credit line must sort to Director · Writer ·
+                        # Composer regardless of payload order
                         {
                             "id": 501,
                             "title": "Directed Unknown Film",
                             "release_date": "1975-01-01",
-                            "department": "Directing",
-                            "job": "Director",
+                            "department": "Sound",
+                            "job": "Original Music Composer",
                         },
                         {
                             "id": 501,
@@ -436,6 +439,13 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
                             "release_date": "1975-01-01",
                             "department": "Writing",
                             "job": "Screenplay",
+                        },
+                        {
+                            "id": 501,
+                            "title": "Directed Unknown Film",
+                            "release_date": "1975-01-01",
+                            "department": "Directing",
+                            "job": "Director",
                         },
                         {
                             "id": 502,
@@ -461,10 +471,12 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     assert "Director &middot; as The Cameo" in page
     assert page.count('title="In your Fitzflix library"') == 1
 
-    # A crew-only film rows up with its role labels; non-key jobs don't
+    # A crew-only film rows up with its role labels in closing-credit
+    # order (the payload listed Composer, Writer, Director); non-key
+    # jobs don't appear at all
 
     assert "Directed Unknown Film (1975)" in page
-    assert "Director &middot; Writer" in page
+    assert "Director &middot; Writer &middot; Composer" in page
     assert "Thanked Film" not in page
 
 

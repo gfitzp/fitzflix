@@ -60,8 +60,11 @@
 							</div>
 							<p class="small text-muted mb-1">{{ item.aids.cues }} cues from {{ item.aids.first }} to {{ item.aids.last }}</p>
 							<div>
+								{# Clicking a snapshot enlarges it in place via
+								   the shared modal below, instead of leaving
+								   the page #}
 								{% for snap in item.aids.snapshots %}
-								<a href="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" target="_blank"><img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px;" class="border rounded mr-1 mb-1" alt="Track {{ item.track.track }} burned onto the film"></a>
+								<img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded mr-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
 								{% endfor %}
 							</div>
 						</td>
@@ -80,4 +83,36 @@
 {% else %}
 <p class="small text-muted">Nothing looks forced right now.</p>
 {% endif %}
+{# One shared modal enlarges whichever snapshot was clicked; the image
+   shows at its natural render size (the frames are burned at 480px),
+   and clicking anywhere dismisses it #}
+<div class="modal fade" id="triageSnapshotModal" tabindex="-1" role="dialog" aria-label="Enlarged snapshot" aria-hidden="true">
+	<div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+		<div class="modal-content bg-transparent border-0 shadow-none">
+			<img id="triageSnapshotModalImage" src="" class="mw-100 d-block mx-auto border rounded" style="cursor: zoom-out;" alt="Enlarged subtitle snapshot" data-dismiss="modal">
+		</div>
+	</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+	// Enlarge-in-place for the burned-in snapshots: clicking (or
+	// pressing Enter on) a thumbnail loads it into the shared modal
+
+	document.addEventListener("click", function (event) {
+		var snapshot = event.target.closest(".triage-snapshot");
+		if (!snapshot) return;
+		document.getElementById("triageSnapshotModalImage").src = snapshot.src;
+		$("#triageSnapshotModal").modal("show");
+	});
+	document.addEventListener("keydown", function (event) {
+		if (event.key !== "Enter") return;
+		var snapshot = event.target.closest(".triage-snapshot");
+		if (!snapshot) return;
+		event.preventDefault();
+		snapshot.click();
+	});
+</script>
 {% endblock %}

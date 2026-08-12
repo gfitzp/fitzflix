@@ -2,9 +2,9 @@
 {# The global search box. The navbar renders it twice — outside the
    collapse for phones, inside the right-side menu for desktop — so the
    class-based type-ahead script binds to both. The results pages render
-   it again at the top, pre-filled, so a fruitless search can be retried
-   in place: the local page keeps the type-ahead, the TMDb page submits
-   plainly to /search/tmdb (the type-ahead only knows the library). #}
+   it again on the heading row, pre-filled and without the type-ahead
+   (Glenn's consistency pass), so a fruitless search can be retried in
+   place; the TMDb page's copy submits back to /search/tmdb. #}
 <form class="form-inline flex-nowrap {{ extra_classes }}" action="{{ action or url_for('main.search') }}" method="get" autocomplete="off" role="search">
 	<div class="position-relative" style="width: {{ width }};">
 		<input class="form-control form-control-sm w-100{% if typeahead %} global-search-input{% endif %}" type="search" name="q" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}"{% if value %} value="{{ value }}"{% endif %}>

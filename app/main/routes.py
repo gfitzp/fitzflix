@@ -152,6 +152,11 @@ CREW_ROLE_LABELS = {
     job: role.capitalize() for role, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
 }
 
+# A multi-role credit line reads in conventional closing-credit order —
+# directed, written, shot, edited, scored — not TMDb payload order
+
+CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
+
 
 def _watched_timestamp(watched_date):
     """A full DateTime for a date-only form value.
@@ -911,6 +916,8 @@ def movie_library():
             label = CREW_ROLE_LABELS.get(crew_credit.get("job"))
             if label and label not in row["jobs"]:
                 row["jobs"].append(label)
+        for row in rows.values():
+            row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
 
         matched_tmdb_ids = set(rows.keys())
         for entry in local.values():
