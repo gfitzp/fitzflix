@@ -34,21 +34,19 @@
 			</div>
 			{% endif %}
 			<div class="media-body">
-				<div class="d-flex w-100 justify-content-between">
-					<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
-					<span class="text-nowrap ml-2">
-						{% for provider in (match.streaming or []) + (match.rentals or []) %}
-						{{ availability_badge(provider) }}
-						{% endfor %}
-						{% if match.library_id %}
-						<span class="badge badge-success">In library</span>
-						{% else %}
-						<span class="badge badge-secondary">Not in library</span>
-						{% endif %}
-					</span>
-				</div>
+				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
+				{# Badges sit left-aligned under the title, like the local
+				   search rows: library status first, then availability #}
+				{% if match.library_id %}
+				<span class="badge badge-success mr-1">In library</span>
+				{% else %}
+				<span class="badge badge-secondary mr-1">Not in library</span>
+				{% endif %}
+				{% for provider in (match.streaming or []) + (match.rentals or []) %}
+				{{ availability_badge(provider) }}
+				{% endfor %}
 				{% if match.overview %}
-				<p class="mb-1 small text-muted">{{ match.overview|truncate(240) }}</p>
+				<p class="mb-1 mt-1 small text-muted">{{ match.overview|truncate(240) }}</p>
 				{% endif %}
 			</div>
 		</div>
@@ -79,18 +77,14 @@
 			</div>
 			{% endif %}
 			<div class="media-body">
-				<div class="d-flex w-100 justify-content-between">
-					<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
-					<span class="text-nowrap ml-2">
-						{% if match.library_id %}
-						<span class="badge badge-success">In library</span>
-						{% else %}
-						<span class="badge badge-secondary">Not in library</span>
-						{% endif %}
-					</span>
-				</div>
+				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
+				{% if match.library_id %}
+				<span class="badge badge-success mr-1">In library</span>
+				{% else %}
+				<span class="badge badge-secondary mr-1">Not in library</span>
+				{% endif %}
 				{% if match.overview %}
-				<p class="mb-1 small text-muted">{{ match.overview|truncate(240) }}</p>
+				<p class="mb-1 mt-1 small text-muted">{{ match.overview|truncate(240) }}</p>
 				{% endif %}
 			</div>
 		</div>
