@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
 <h2 class="mt-n2">Rate Films</h2>
@@ -37,16 +38,7 @@
 		<form action="" method="post">
 			{{ form.csrf_token }}
 			{{ form.movie_id(value=featured.id) }}
-			{# One tap per answer, 0–5 stars left to right; the star
-			   input below keeps half-step precision and the like #}
-			<div class="mb-2">
-				<button type="submit" name="quick_rating" value="0" class="btn btn-sm btn-outline-secondary mr-1 mb-1">Not interested</button>
-				<button type="submit" name="quick_rating" value="1" class="btn btn-sm btn-outline-secondary mr-1 mb-1">Hated it</button>
-				<button type="submit" name="quick_rating" value="2" class="btn btn-sm btn-outline-secondary mr-1 mb-1">Didn't like it</button>
-				<button type="submit" name="quick_rating" value="3" class="btn btn-sm btn-outline-primary mr-1 mb-1">Liked it</button>
-				<button type="submit" name="quick_rating" value="4" class="btn btn-sm btn-outline-primary mr-1 mb-1">Really liked it</button>
-				<button type="submit" name="quick_rating" value="5" class="btn btn-sm btn-outline-primary mb-1">Loved it</button>
-			</div>
+			{{ rating_ladder() }}
 			<div class="form-row align-items-center mb-2">
 				<div class="col-auto">
 					{{ form.rating.label(class_="small mb-0") }}

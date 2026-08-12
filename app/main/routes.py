@@ -168,6 +168,23 @@ CREW_ROLE_LABELS = {
 CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
 
 
+def _quick_rating():
+    """(present, rating) from the quick-answer ladder's submission.
+
+    (False, None) when no ladder button was pressed, (True, None) when
+    the value is nonsense, (True, 0.0–5.0) otherwise. The ladder rides
+    inside every rating form; a valid value overrides the form's own
+    rating field while everything else the form carries is honored.
+    """
+
+    value = (request.form.get("quick_rating") or "").strip()
+    if not value:
+        return False, None
+    if value not in {"0", "1", "2", "3", "4", "5"}:
+        return True, None
+    return True, float(value)
+
+
 def _watched_timestamp(watched_date):
     """A full DateTime for a date-only form value.
 
@@ -1392,16 +1409,26 @@ def movie(movie_id):
     # table for this film.
 
     movie_review_form = MovieReviewForm(date_watched=datetime.now())
-    if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
+    quick_present, quick_rating = _quick_rating()
+    if (
+        movie_review_form.review_submit.data or quick_present
+    ) and movie_review_form.validate_on_submit():
+        if quick_present and quick_rating is None:
+            flash("That rating didn't make sense", "warning")
+            return redirect(url_for("main.movie", movie_id=movie.id))
         # The rating is optional — a review can be just a like and/or text.
-        # star_rating_fields rounds a given rating to the nearest half star
-        # for display.
+        # A ladder tap overrides the rating field; the date, like, and
+        # review text submit as they stand. star_rating_fields rounds a
+        # given rating to the nearest half star for display.
 
-        rating = (
-            float(movie_review_form.rating.data)
-            if movie_review_form.rating.data is not None
-            else None
-        )
+        if quick_rating is not None:
+            rating = quick_rating
+        else:
+            rating = (
+                float(movie_review_form.rating.data)
+                if movie_review_form.rating.data is not None
+                else None
+            )
         # A bare submission (no rating, like, or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier
@@ -3080,12 +3107,21 @@ def review_edit(review_id):
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
 
     movie_review_form = MovieReviewForm()
-    if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
-        rating = (
-            float(movie_review_form.rating.data)
-            if movie_review_form.rating.data is not None
-            else None
-        )
+    quick_present, quick_rating = _quick_rating()
+    if (
+        movie_review_form.review_submit.data or quick_present
+    ) and movie_review_form.validate_on_submit():
+        if quick_present and quick_rating is None:
+            flash("That rating didn't make sense", "warning")
+            return redirect(url_for("main.review_edit", review_id=review_id))
+        if quick_rating is not None:
+            rating = quick_rating
+        else:
+            rating = (
+                float(movie_review_form.rating.data)
+                if movie_review_form.rating.data is not None
+                else None
+            )
         for field, value in star_rating_fields(rating).items():
             setattr(user_review, field, value)
         user_review.liked = movie_review_form.liked.data
@@ -4764,13 +4800,13 @@ def rate():
         # the film from the drive and every recommendation surface and
         # weighs hard against its features in the profile
 
-        quick_value = (request.form.get("quick_rating") or "").strip()
-        if quick_value and quick_value not in {"0", "1", "2", "3", "4", "5"}:
+        quick_present, quick_rating = _quick_rating()
+        if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.rate"))
-        if form.rate_submit.data or quick_value:
-            if quick_value:
-                rating = float(quick_value)
+        if form.rate_submit.data or quick_present:
+            if quick_rating is not None:
+                rating = quick_rating
             else:
                 rating = (
                     float(form.rating.data) if form.rating.data is not None else None
@@ -5018,14 +5054,23 @@ def review_tmdb(tmdb_id):
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     movie_review_form = MovieReviewForm(date_watched=datetime.now())
-    if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
+    quick_present, quick_rating = _quick_rating()
+    if (
+        movie_review_form.review_submit.data or quick_present
+    ) and movie_review_form.validate_on_submit():
+        if quick_present and quick_rating is None:
+            flash("That rating didn't make sense", "warning")
+            return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
         movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
 
-        rating = (
-            float(movie_review_form.rating.data)
-            if movie_review_form.rating.data is not None
-            else None
-        )
+        if quick_rating is not None:
+            rating = quick_rating
+        else:
+            rating = (
+                float(movie_review_form.rating.data)
+                if movie_review_form.rating.data is not None
+                else None
+            )
         # A bare submission (no rating, like, or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier

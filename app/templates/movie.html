@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
 <nav aria-label="breadcrumb">
@@ -69,6 +70,7 @@
 	<div class="col-md-8">
 		<form action="" method="post">
 			{{ movie_review_form.hidden_tag() }}
+			{{ rating_ladder() }}
 			<div class="row">
 				<div class="form-group col-sm-5">
 					{{ movie_review_form.rating.label }}

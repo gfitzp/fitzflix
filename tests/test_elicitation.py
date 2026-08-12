@@ -232,6 +232,10 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     ):
         assert label in page
 
+    # The 1–5 buttons are star glyphs (1+2+3+4+5 stars), labels in titles
+
+    assert page.count("&#9733;") == 15
+
     response = admin_client.post(
         "/rate",
         data={"csrf_token": token, "movie_id": str(loved_id), "quick_rating": "5"},
@@ -280,6 +284,33 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
             ).first()
             is None
         )
+
+
+def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
+    """The ladder rides the movie page's log form too: one tap logs a
+    rating through the standard review path, honoring the form's other
+    fields as submitted."""
+
+    with app.app_context():
+        user_id = admin_id()
+        movie = make_candidate("Ladder Movie Page", 1970)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert page.count("&#9733;") == 15
+    token = csrf_token_from(page)
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "quick_rating": "4"},
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=movie_id
+        ).one()
+        assert float(review.rating) == 4.0
 
 
 def test_rate_page_shows_featured_details_only(app, admin_client):
