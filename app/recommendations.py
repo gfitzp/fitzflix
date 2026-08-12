@@ -48,9 +48,28 @@ FEATURE_CLASS_WEIGHTS = {
     "genre": 1.0,
     "director": 1.5,
     "actor": 1.0,
+    "cinematographer": 1.0,
+    "composer": 0.8,
+    "writer": 1.0,
+    "editor": 0.6,
     "keyword": 0.8,
     "decade": 0.6,
     "language": 0.4,
+}
+
+# Crew roles are separate feature classes — a lumped "crew" class would
+# let role signals dilute each other. Labels double as the explanation
+# text ("shot by Roger Deakins")
+
+CREW_ROLE_JOBS = {
+    "director": (("Director",), "directed by {name}"),
+    "cinematographer": (
+        ("Director of Photography", "Cinematography"),
+        "shot by {name}",
+    ),
+    "composer": (("Original Music Composer", "Music"), "scored by {name}"),
+    "writer": (("Screenplay", "Writer"), "written by {name}"),
+    "editor": (("Editor",), "edited by {name}"),
 }
 
 # Bayesian shrinkage per class: affinity = sum(weights) / (count + k),
@@ -61,6 +80,10 @@ FEATURE_CLASS_SHRINKAGE = {
     "genre": 5.0,
     "director": 2.0,
     "actor": 2.0,
+    "cinematographer": 3.0,
+    "composer": 3.0,
+    "writer": 3.0,
+    "editor": 3.0,
     "keyword": 3.0,
     "decade": 5.0,
     "language": 5.0,
@@ -132,12 +155,21 @@ def collect_features(movie_ids):
     ):
         features[movie_id].append(("keyword", f"keyword:{keyword_id}", name))
 
-    for movie_id, credit_id, name in (
-        db.session.query(MovieCrew.movie_id, MovieCrew.credit_id, TMDBCredit.name)
+    job_to_class = {
+        job: cls for cls, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
+    }
+    for movie_id, credit_id, name, job in (
+        db.session.query(
+            MovieCrew.movie_id, MovieCrew.credit_id, TMDBCredit.name, MovieCrew.job
+        )
         .join(TMDBCredit, TMDBCredit.id == MovieCrew.credit_id)
-        .filter(MovieCrew.movie_id.in_(movie_ids), MovieCrew.job == "Director")
+        .filter(
+            MovieCrew.movie_id.in_(movie_ids), MovieCrew.job.in_(list(job_to_class))
+        )
     ):
-        features[movie_id].append(("director", f"director:{credit_id}", name))
+        cls = job_to_class[job]
+        label = CREW_ROLE_JOBS[cls][1].format(name=name)
+        features[movie_id].append((cls, f"{cls}:{credit_id}", label))
 
     for movie_id, credit_id, name in (
         db.session.query(MovieCast.movie_id, MovieCast.credit_id, TMDBCredit.name)
@@ -340,7 +372,7 @@ def credit_interest_markers(profile, credit_id, filmography_rows):
         return entry["score"] if entry else 0.0
 
     person = max(
-        affinity(f"actor:{int(credit_id)}"), affinity(f"director:{int(credit_id)}")
+        affinity(f"{cls}:{int(credit_id)}") for cls in ("actor", *CREW_ROLE_JOBS)
     )
 
     scored = []

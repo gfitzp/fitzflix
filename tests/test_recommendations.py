@@ -132,6 +132,40 @@ def test_recommendations_prefer_matching_features_and_say_why(app):
     assert ranked[0]["because"][0] == "Comedy"
 
 
+def test_crew_roles_are_separate_feature_classes(app):
+    """A shared cinematographer builds a cinematographer affinity, scores
+    the candidate, and explains itself in role terms."""
+
+    from app import db
+    from app.models import MovieCrew
+    from app.recommendations import compute_user_recommendations
+
+    with app.app_context():
+        user_id = admin_id()
+        dp = make_person(888001, "Famous DP")
+        liked = make_movie("Crew Liked", 1990)
+        log_watch(user_id, liked, liked=True)
+        candidate = make_movie("Crew Candidate", 1991)
+        make_movie_file(candidate, "Bluray-1080p")
+        candidate_id = candidate.id
+        for movie in (liked, candidate):
+            db.session.add(
+                MovieCrew(
+                    movie_id=movie.id,
+                    credit_id=dp.id,
+                    department="Camera",
+                    job="Director of Photography",
+                )
+            )
+        db.session.flush()
+
+        profile, ranked = compute_user_recommendations(user_id)
+
+    assert profile["affinities"]["cinematographer:888001"]["score"] > 0
+    assert ranked[0]["movie_id"] == candidate_id
+    assert "shot by Famous DP" in ranked[0]["because"]
+
+
 def test_seen_and_extras_only_films_are_not_candidates(app):
     from app.recommendations import local_candidates
 
