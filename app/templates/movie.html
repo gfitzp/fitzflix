@@ -143,9 +143,9 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
-{# Watchlist: adding is for films without a local copy (the funnel
-   stage before the shopping list); removal shows whenever listed #}
-{% if on_watchlist or not films %}
+{# Watchlist: any film can be wanted — unowned ones as the funnel stage
+   before the shopping list, owned ones to track which of the library's
+   many films this user specifically means to watch #}
 <div class="mt-2">
 	<form action="" method="post" class="d-inline">
 		{{ watchlist_form.hidden_tag() }}
@@ -156,7 +156,6 @@
 		{% endif %}
 	</form>
 </div>
-{% endif %}
 <hr>
 <h5>Movie Data</h5>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>

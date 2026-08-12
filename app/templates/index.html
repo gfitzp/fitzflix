@@ -45,8 +45,11 @@
 			{% endif %}
 			<h6 class="mb-1">{{ rec.movie.title }} ({{ rec.movie.year }}){% if minutes %} <span class="small text-muted font-weight-normal">&middot; {{ rec.movie.tmdb_runtime }} min</span>{% endif %}</h6>
 		</a>
-		{% if rec.because %}
+		{% if rec.watchlisted or rec.because %}
 		<p class="mb-0">
+			{% if rec.watchlisted %}
+			<span class="badge badge-warning font-weight-normal" title="On your watchlist">On your watchlist</span>
+			{% endif %}
 			{% for label in rec.because %}
 			<span class="badge badge-light border font-weight-normal">{{ label }}</span>
 			{% endfor %}

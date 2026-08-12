@@ -309,19 +309,62 @@ def index():
             movie.id: movie
             for movie in Movie.query.filter(Movie.id.in_(movie_ids or [0]))
         }
+        # Watchlisted owned films pin ahead of the rotation regardless
+        # of where (or whether) they sit in the stored ranking — the
+        # library is big, but these are the ones specifically wanted
+
+        pinned = []
+        pinned_ids = set()
+        because_by_id = {
+            item["movie_id"]: item.get("because", [])[:3]
+            for item in stored.get("items", [])
+        }
+        wanted_owned = (
+            db.session.query(Movie)
+            .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
+            .filter(UserWatchlist.user_id == int(current_user.id))
+            .filter(Movie.files.any(File.feature_type_id.is_(None)))
+            .order_by(UserWatchlist.date_added.desc())
+            .all()
+        )
+        for movie in wanted_owned:
+            if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
+                continue
+            if len(pinned) == 12:
+                break
+            pinned_ids.add(movie.id)
+            pinned.append(
+                {
+                    "movie": movie,
+                    "because": because_by_id.get(movie.id, []),
+                    "watchlisted": True,
+                }
+            )
+
         for item in stored.get("items", []):
             movie = movies.get(item["movie_id"])
             if movie is None or item["movie_id"] in seen:
                 continue
+            if item["movie_id"] in pinned_ids:
+                continue
             if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
                 continue
-            recs.append({"movie": movie, "because": item.get("because", [])[:3]})
+            recs.append(
+                {
+                    "movie": movie,
+                    "because": item.get("because", [])[:3],
+                    "watchlisted": False,
+                }
+            )
 
         # A no-repeat daily partition through the deep stored ranking:
         # twelve films a day, one per quality tier, cycling the whole
-        # set (~400 films, roughly monthly) before anything repeats
+        # set (~400 films, roughly monthly) before anything repeats —
+        # with the watchlisted films pinned ahead of it
 
-        recs = rotate_partition(recs, 12, date.today().toordinal())
+        recs = pinned + rotate_partition(
+            recs, 12 - len(pinned), date.today().toordinal()
+        )
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
         # reviewer): compute once now instead of waiting for tonight; the
@@ -4299,6 +4342,16 @@ def watchlist():
                 ),
             )
 
+    # Owned films badge with the library mark, so owned-wanted and
+    # unowned-wanted read at a glance
+
+    owned_ids = {
+        movie_id
+        for (movie_id,) in db.session.query(Movie.id)
+        .filter(Movie.id.in_([entry.movie_id for entry in entries] or [0]))
+        .filter(Movie.files.any(File.feature_type_id.is_(None)))
+    }
+
     rows = []
     streaming_attribution = False
     for entry in entries:
@@ -4315,6 +4368,7 @@ def watchlist():
             {
                 "movie": movie,
                 "date_added": entry.date_added,
+                "owned": movie.id in owned_ids,
                 "streaming": streaming,
                 "rentals": rentals,
             }

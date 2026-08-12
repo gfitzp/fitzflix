@@ -58,13 +58,13 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
         db.session.commit()
         unowned_id, owned_id = unowned.id, owned.id
 
-    # An unowned film offers the add; an owned film offers neither
-    # until it's somehow on the list
+    # Every film offers the add — unowned ones as the pre-shopping
+    # stage, owned ones to track specific interest within the library
 
     page = admin_client.get(f"/movie/{unowned_id}").get_data(as_text=True)
     assert 'name="add_watchlist_submit"' in page
     owned_page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
-    assert 'name="add_watchlist_submit"' not in owned_page
+    assert 'name="add_watchlist_submit"' in owned_page
 
     token = csrf_token_from(page)
     response = admin_client.post(
@@ -216,17 +216,39 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
         ),
     )
 
+    # An owned watchlisted film sits alongside, wearing the library badge
+
+    with app.app_context():
+        owned = make_movie("Watchlist Owned Tracker", 1995)
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=owned.id))
+        db.session.commit()
+        owned_id = owned.id
+
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Watchlist Page Film (1994)" in page
     assert 'title="Streaming on Netflix"' in page
     assert "A film worth waiting for." in page
     assert "Streaming data by JustWatch" in page
+    assert "Watchlist Owned Tracker (1995)" in page
+    assert page.count('title="In your Fitzflix library"') == 1
 
     response = admin_client.post(
         "/watchlist",
         data={
             "csrf_token": csrf_token_from(page),
             "movie_id": str(movie_id),
+            "remove_watchlist_submit": "Remove from Watchlist",
+        },
+    )
+    assert response.status_code == 302
+    assert entries_for(app, user_id) == [owned_id]
+
+    response = admin_client.post(
+        "/watchlist",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "movie_id": str(owned_id),
             "remove_watchlist_submit": "Remove from Watchlist",
         },
     )
@@ -364,3 +386,41 @@ def test_watchlist_feeds_the_taste_profile(app):
         weights = user_movie_weights(user_id)
 
     assert weights[wanted_id] == WATCHLIST_WEIGHT
+
+
+def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
+    """A watchlisted owned film pins ahead of the library rail's daily
+    rotation, badged — the library is big, these are the wanted ones."""
+
+    from app import db
+    from app.models import UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    user_id = admin_id(app)
+    with app.app_context():
+        strong = make_movie("Library Unwanted High", 1994)
+        make_movie_file(strong, "Bluray-1080p")
+        wanted = make_movie("Library Wanted", 1995)
+        make_movie_file(wanted, "Bluray-1080p")
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
+        db.session.commit()
+        strong_id, wanted_id = strong.id, wanted.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [
+                    {"movie_id": strong_id, "score": 2.0, "because": ["Comedy"]},
+                    {"movie_id": wanted_id, "score": 1.0, "because": ["Comedy"]},
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "On your watchlist" in body
+    assert body.index("Library Wanted (1995)") < body.index(
+        "Library Unwanted High (1994)"
+    )

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge %}
+{% from "_availability_badges.html" import availability_badge, library_badge %}
 
 {% block app_content %}
 <h2 class="mt-n2">My Watchlist</h2>
@@ -30,6 +30,9 @@
 						<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
 					</form>
 				</div>
+				{% if row.owned %}
+				{{ library_badge() }}
+				{% endif %}
 				{% for provider in row.streaming + row.rentals %}
 				{{ availability_badge(provider) }}
 				{% endfor %}
