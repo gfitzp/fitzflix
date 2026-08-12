@@ -290,6 +290,12 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
     assert "Watchlist Owned Tracker (1995)" in page
     assert page.count('title="In your Fitzflix library"') == 1
 
+    # Whole rows open the movie page (the title's stretched-link covers
+    # the row) while each Remove form stays clickable above the overlay
+
+    assert page.count("stretched-link") == 2
+    assert f'href="/movie/{owned_id}"' in page
+
     response = admin_client.post(
         "/watchlist",
         data={

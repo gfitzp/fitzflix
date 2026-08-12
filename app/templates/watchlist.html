@@ -8,7 +8,11 @@
 <div class="list-group mb-3">
 	{% for row in rows %}
 	{% set movie = row.movie %}
-	<div class="list-group-item">
+	{# The whole row opens the movie page (the title's stretched-link
+	   overlay covers the list-group-item, which BS4 positions), while
+	   the Remove form sits above the overlay so it still gets the
+	   click #}
+	<div class="list-group-item list-group-item-action">
 		<div class="media">
 			{% if movie.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w185/' + movie.custom_poster) }}" loading="lazy" class="mr-3 border" alt="{{ movie.title }} ({{ movie.year }})" style="width: 92px;">
@@ -23,8 +27,8 @@
 			{% endif %}
 			<div class="media-body">
 				<div class="d-flex w-100 justify-content-between">
-					<h5 class="mb-1"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-body">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</a></h5>
-					<form action="" method="post" class="ml-2">
+					<h5 class="mb-1"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="stretched-link text-body text-decoration-none">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</a></h5>
+					<form action="" method="post" class="ml-2 position-relative" style="z-index: 2;">
 						{{ watchlist_form.hidden_tag() }}
 						<input type="hidden" name="movie_id" value="{{ movie.id }}">
 						<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
