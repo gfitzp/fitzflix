@@ -108,6 +108,7 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
+from app.streaming_rail import stored_rail
 from app.videos import (
     evaluate_filename,
     parse_letterboxd_export,
@@ -307,12 +308,56 @@ def index():
                 description="Computing film recommendations",
             )
 
+    # The second rail: films streaming on this user's services, from the
+    # nightly discover-pool recompute. Films logged or acquired since
+    # the run drop out immediately; a user with a profile and provider
+    # picks but no stored rail gets a one-off compute enqueued
+
+    rail = []
+    rail_computed_at = None
+    rail_payload = stored_rail(current_app.redis, current_user.id)
+    if rail_payload:
+        rail_computed_at = rail_payload.get("computed_at")
+        rail_ids = [item["tmdb_id"] for item in rail_payload.get("items", [])]
+        dropped = set()
+        if rail_ids:
+            owned_now = db.session.query(Movie.tmdb_id).filter(
+                Movie.tmdb_id.in_(rail_ids),
+                Movie.files.any(File.feature_type_id.is_(None)),
+            )
+            logged_now = (
+                db.session.query(Movie.tmdb_id)
+                .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
+                .filter(Movie.tmdb_id.in_(rail_ids))
+                .filter(UserMovieReview.user_id == int(current_user.id))
+            )
+            dropped = {t for (t,) in owned_now} | {t for (t,) in logged_now}
+        for item in rail_payload.get("items", []):
+            if item["tmdb_id"] in dropped:
+                continue
+            rail.append(item)
+            if len(rail) == 12:
+                break
+    elif user_provider_ids(current_user) and stored_profile(
+        current_app.redis, current_user.id
+    ):
+        if current_app.redis.set(
+            f"fitzflix:rail:requested:{int(current_user.id)}", "1", nx=True, ex=3600
+        ):
+            current_app.maintenance_queue.enqueue(
+                "app.streaming_rail.recompute_streaming_rail",
+                job_timeout="1h",
+                description="Computing the streaming rail",
+            )
+
     return render_template(
         "index.html",
         title="Home",
         recs=recs,
         computed_at=computed_at,
         has_history=has_history,
+        rail=rail,
+        rail_computed_at=rail_computed_at,
     )
 
 

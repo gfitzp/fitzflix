@@ -199,6 +199,16 @@ def register(app):
         click.echo("Recommendations recomputed")
 
     @recs.command()
+    def streaming():
+        """Recompute and store every eligible user's streaming rail now,
+        instead of waiting for the nightly run."""
+
+        from app.streaming_rail import recompute_streaming_rail
+
+        recompute_streaming_rail()
+        click.echo("Streaming rail recomputed")
+
+    @recs.command()
     @click.option(
         "--weights",
         default=None,
