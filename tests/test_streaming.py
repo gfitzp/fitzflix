@@ -440,9 +440,10 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
     assert "Apple TV (rent)" in page
-    # A purchase-only provider labels honestly
-    assert "Max (buy)" in page
-    assert 'title="Buy from Max"' in page
+    # Digital purchase is ignored — buying happens on physical media —
+    # so buy-only Max shows nothing even though it's a picked service
+    assert "(buy)" not in page
+    assert "Max (buy)" not in page and 'title="Buy from' not in page
     assert "Amazon Video" not in page
     assert "Not on your services" not in page
     assert "Streaming data by JustWatch" in page

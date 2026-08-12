@@ -201,20 +201,22 @@ def streaming_matches(availability, provider_ids):
 
 
 def rental_matches(availability, provider_ids):
-    """Rent/buy providers carrying the film that the user subscribes to,
-    rent preferred when a provider offers both. Never part of the
-    streaming match set — a purchase isn't a subscription."""
+    """Rent providers carrying the film that the user subscribes to.
+
+    Digital purchase is deliberately ignored — buying happens on
+    physical media in this house — and rentals never join the
+    streaming match set. The cached payload still carries the buy
+    list, should that preference ever change."""
 
     if not availability or not provider_ids:
         return []
     matches = []
     seen = set()
-    for kind in ("rent", "buy"):
-        for provider in availability.get(kind) or []:
-            if provider["provider_id"] in provider_ids:
-                if provider["provider_id"] not in seen:
-                    seen.add(provider["provider_id"])
-                    matches.append({**provider, "kind": kind})
+    for provider in availability.get("rent") or []:
+        if provider["provider_id"] in provider_ids:
+            if provider["provider_id"] not in seen:
+                seen.add(provider["provider_id"])
+                matches.append({**provider, "kind": "rent"})
     return matches
 
 
@@ -224,10 +226,10 @@ def user_streaming(tmdb_id, user, negative=False, local=False):
     surfaces stay quiet for them). negative=True keeps the payload when
     nothing matched, so unowned-film pages can say "not on your
     services" instead of nothing — and only those pages also list where
-    the film can be rented or bought, since that's where the purchase
-    decision is live. Rentals are filtered to the user's chosen services
-    too (renting elsewhere is a click away via the watch-page link), and
-    rent/buy never counts as a subscription match. local=True marks an
+    the film can be rented, since that's where the watch decision is
+    live. Rentals are filtered to the user's chosen services too
+    (renting elsewhere is a click away via the watch-page link), and a
+    rental never counts as a subscription match. local=True marks an
     owned film: the strip leads with "In your library" so a streaming
     badge never upstages the copy on the shelf, and the payload survives
     an empty match list to say so."""
