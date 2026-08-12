@@ -34,7 +34,8 @@ def make_person(person_id, name, movies, character="Self"):
 
 def build_library(app):
     """A small library: an upgradable movie, a topped-out movie, a reviewed
-    movie with no files, and a TV series with one episode."""
+    movie with no files (which the library search must omit), and a TV
+    series with one episode."""
 
     dvd_movie = make_movie("Jaws", 1975)
     make_movie_file(dvd_movie, "DVD")
@@ -84,14 +85,16 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     assert "badge-warning" not in page
 
 
-def test_search_shows_reviewed_movie_without_files(app, admin_client):
+def test_search_omits_reviewed_movies_without_files(app, admin_client):
+    """A review-only record (a logged unowned film) stays out of the
+    library search — it belongs to the TMDb search instead."""
+
     with app.app_context():
         build_library(app)
 
     page = admin_client.get("/search?q=jacob").get_data(as_text=True)
-    assert "Jacob" in page
-    assert "No copy in library" in page
-    assert "Seen" in page
+    assert "Jacob" not in page
+    assert "No copy in library" not in page
 
 
 def test_search_finds_tv_series(app, admin_client):
@@ -203,6 +206,11 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     with app.app_context():
         owned = make_movie("Jaws", 1975, tmdb_id=578)
         make_movie_file(owned, "DVD")
+
+        # A review-only record: the film was logged but no file exists,
+        # so it must not badge as in-library
+
+        make_movie("Jaws 2", 1978, tmdb_id=579)
         db.session.commit()
         owned_id = owned.id
 
@@ -247,11 +255,13 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     assert f"/movie/{owned_id}" in page
     assert "Jaws 2 (1978)" in page
 
-    # The owned match carries the movie-page strip's Fitzflix badge; an
-    # unowned row simply has no library badge
+    # Only the match with a local file carries the Fitzflix badge — the
+    # review-only Jaws 2 record doesn't count as in-library, and its row
+    # still leads to the log page (which redirects to its movie page)
 
     assert page.count('title="In your Fitzflix library"') == 1
     assert "Not in library" not in page
+    assert "/review/tmdb/579" in page
 
     # Rows render like the local search: a poster thumbnail, and the
     # whole unowned row links to the log page

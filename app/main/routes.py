@@ -3756,7 +3756,11 @@ def _upgrade_threshold():
 
 
 def _movie_search_results(wildcard, limit=50):
-    """Movies whose titles match, each with its best owned copy (if any)."""
+    """Movies whose titles match, each with its best owned copy.
+
+    Only films with a local main-feature file appear: review-only
+    records (a diary entry for an unowned film) belong to the TMDb
+    search, not the library search."""
 
     upgrade_threshold = _upgrade_threshold()
 
@@ -3768,6 +3772,7 @@ def _movie_search_results(wildcard, limit=50):
                 Movie.tmdb_title.ilike(f"%{wildcard}%"),
             )
         )
+        .filter(Movie.files.any(File.feature_type_id.is_(None)))
         .order_by(Movie.title.asc(), Movie.year.asc())
         .limit(limit)
         .all()
@@ -3979,7 +3984,7 @@ def search_json():
                 {
                     "type": "Movie",
                     "title": f"{display_title} ({display_year})",
-                    "detail": result["quality"] or "No copy in library",
+                    "detail": result["quality"],
                     "url": url_for("main.movie", movie_id=movie.id),
                 }
             )
@@ -4063,12 +4068,15 @@ def search_tmdb():
             current_app.logger.warning(traceback.format_exc())
             error = "TMDb could not be reached; try again in a moment."
 
-        # Annotate which results are already in the library, by TMDb id
+        # Annotate which results are already in the library, by TMDb id.
+        # "In library" means a local main-feature file exists — a
+        # review-only record (a logged unowned film) doesn't count
 
         if movie_matches:
             owned = dict(
                 db.session.query(Movie.tmdb_id, Movie.id)
                 .filter(Movie.tmdb_id.in_([m["tmdb_id"] for m in movie_matches]))
+                .filter(Movie.files.any(File.feature_type_id.is_(None)))
                 .all()
             )
             for match in movie_matches:
