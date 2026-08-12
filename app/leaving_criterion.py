@@ -293,4 +293,13 @@ def leaving_shelf(user):
         )
 
     items.sort(key=lambda item: (item["watchlisted"], item["score"]), reverse=True)
-    return {"departs": departs, "items": items}
+
+    # The scraped page's own URL, so the shelf heading can link to it;
+    # payloads stored before the key existed reconstruct it from the
+    # departure date (the same shape the candidate list builds)
+
+    url = stored.get("source") or (
+        "https://www.criterionchannel.com/leaving-"
+        f"{calendar.month_name[departs.month].lower()}-{departs.day}"
+    )
+    return {"departs": departs, "url": url, "items": items}

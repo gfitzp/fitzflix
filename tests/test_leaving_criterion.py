@@ -266,6 +266,14 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Western" in body
     assert "criterionchannel.com" in body
 
+    # The heading links to the month's own leaving page
+
+    assert (
+        '<a href="https://www.criterionchannel.com/leaving-august-31"'
+        ' target="_blank" rel="noreferrer" class="text-body text-decoration-none">'
+        "Leaving the Criterion Channel" in body
+    )
+
     # The watchlisted film sorts first — it's the urgency case — and
     # the runtime filter applies like everywhere else
 
@@ -273,6 +281,35 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)
     assert "Shelf Fresh (1956)" in filtered
     assert "Shelf Wanted" not in filtered
+
+
+def test_shelf_heading_link_survives_pre_url_payloads(app, admin_client):
+    """A stored set from before the source key existed still gets a
+    heading link, reconstructed from the departure date."""
+
+    import calendar
+
+    from app.leaving_criterion import LEAVING_KEY
+
+    subscribe_criterion(app)
+    departs = date.today() + timedelta(days=10)
+    app.redis.set(
+        LEAVING_KEY,
+        json.dumps(
+            {
+                "fetched_at": "2026-08-01 03:30",
+                "departs": departs.isoformat(),
+                "items": [shelf_item(8301, "Shelf Linkless")],
+            }
+        ),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    expected = (
+        "https://www.criterionchannel.com/leaving-"
+        f"{calendar.month_name[departs.month].lower()}-{departs.day}"
+    )
+    assert f'<a href="{expected}"' in body
 
 
 def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):

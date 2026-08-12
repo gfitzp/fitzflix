@@ -479,8 +479,10 @@ def index():
     shelf = leaving_shelf(current_user)
     shelf_items = []
     shelf_departs = None
+    shelf_url = None
     if shelf:
         shelf_departs = shelf["departs"].strftime("%B %-d")
+        shelf_url = shelf["url"]
         fitting = [
             item
             for item in shelf["items"]
@@ -508,6 +510,7 @@ def index():
         rail_computed_at=rail_computed_at,
         shelf=shelf_items,
         shelf_departs=shelf_departs,
+        shelf_url=shelf_url,
         minutes=minutes,
     )
 
