@@ -345,18 +345,22 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
     monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
+    subscribe(app, 2, "Apple TV")
     plant_availability(
         app,
         700,
-        {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []},
+        {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [APPLE], "buy": []},
     )
 
     page = admin_client.get("/search/tmdb?q=streamable").get_data(as_text=True)
 
-    # The same logo badge as the movie-page strip, tooltip and all
+    # The same logo badges as the movie-page strip, tooltips and all —
+    # streaming and rental side by side
 
     assert 'title="Streaming on Netflix"' in page
     assert "/w45/netflix.jpg" in page
+    assert 'title="Rent from Apple TV"' in page
+    assert "Apple TV (rent)" in page
     assert "Streaming data by JustWatch" in page
 
 
@@ -417,6 +421,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
+    subscribe(app, 1899, "Max")
     plant_availability(
         app,
         800,
@@ -425,7 +430,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
             "flatrate": [],
             "ads": [],
             "rent": [AMAZON, APPLE],
-            "buy": [AMAZON],
+            "buy": [AMAZON, MAX],
         },
     )
 
@@ -435,6 +440,9 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
     assert "Apple TV (rent)" in page
+    # A purchase-only provider labels honestly
+    assert "Max (buy)" in page
+    assert 'title="Buy from Max"' in page
     assert "Amazon Video" not in page
     assert "Not on your services" not in page
     assert "Streaming data by JustWatch" in page
@@ -636,18 +644,27 @@ def test_filmography_badges_unowned_films_on_your_services(
     monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
+    subscribe(app, 2, "Apple TV")
 
-    # Both films stream on Netflix, but only the unowned row may badge
+    # Both films stream on Netflix and rent on Apple TV, but only the
+    # unowned row may badge
 
     for tmdb_id in (910, 911):
         plant_availability(
             app,
             tmdb_id,
-            {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []},
+            {
+                "link": None,
+                "flatrate": [NETFLIX],
+                "ads": [],
+                "rent": [APPLE],
+                "buy": [],
+            },
         )
 
     page = admin_client.get("/library/movie?credit=777003").get_data(as_text=True)
     assert page.count('title="Streaming on Netflix"') == 1
+    assert page.count("Apple TV (rent)") == 1
     assert page.index("Filmography Unowned") < page.index(
         'title="Streaming on Netflix"'
     )

@@ -200,6 +200,24 @@ def streaming_matches(availability, provider_ids):
     return matches
 
 
+def rental_matches(availability, provider_ids):
+    """Rent/buy providers carrying the film that the user subscribes to,
+    rent preferred when a provider offers both. Never part of the
+    streaming match set — a purchase isn't a subscription."""
+
+    if not availability or not provider_ids:
+        return []
+    matches = []
+    seen = set()
+    for kind in ("rent", "buy"):
+        for provider in availability.get(kind) or []:
+            if provider["provider_id"] in provider_ids:
+                if provider["provider_id"] not in seen:
+                    seen.add(provider["provider_id"])
+                    matches.append({**provider, "kind": kind})
+    return matches
+
+
 def user_streaming(tmdb_id, user, negative=False, local=False):
     """The template payload for one film: the user's matches and the
     TMDb watch-page link, or None when the user picked no services (the
@@ -222,15 +240,7 @@ def user_streaming(tmdb_id, user, negative=False, local=False):
     if not matches and not negative and not local:
         return None
 
-    rentals = []
-    if negative:
-        seen = set()
-        for kind in ("rent", "buy"):
-            for provider in (availability or {}).get(kind) or []:
-                if provider["provider_id"] in provider_ids:
-                    if provider["provider_id"] not in seen:
-                        seen.add(provider["provider_id"])
-                        rentals.append(dict(provider))
+    rentals = rental_matches(availability, provider_ids) if negative else []
 
     return {
         "matches": matches,

@@ -102,6 +102,7 @@ from app.recommendations import (
 from app.streaming import (
     batch_title_availability,
     provider_registry,
+    rental_matches,
     streaming_matches,
     title_availability,
     user_provider_ids,
@@ -741,11 +742,14 @@ def movie_library():
             for row in filmography:
                 if row["quality"] or not row["tmdb_id"]:
                     continue
-                matches = streaming_matches(
-                    availability_by_id.get(row["tmdb_id"]), provider_ids
-                )
+                availability = availability_by_id.get(row["tmdb_id"])
+                matches = streaming_matches(availability, provider_ids)
+                rentals = rental_matches(availability, provider_ids)
                 if matches:
                     row["streaming"] = matches
+                if rentals:
+                    row["rentals"] = rentals
+                if matches or rentals:
                     streaming_attribution = True
 
         return render_template(
@@ -4078,9 +4082,9 @@ def search_tmdb():
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
 
-        # Streaming badges on unowned movie matches, filtered to this
-        # user's services (lookups are day-cached per title); the flag
-        # turns on the mandatory JustWatch credit
+        # Streaming and rent/buy badges on unowned movie matches, both
+        # filtered to this user's services (lookups are day-cached per
+        # title); the flag turns on the mandatory JustWatch credit
 
         provider_ids = user_provider_ids(current_user)
         if provider_ids:
@@ -4089,8 +4093,12 @@ def search_tmdb():
                     continue
                 availability = title_availability(match["tmdb_id"])
                 matches = streaming_matches(availability, provider_ids)
+                rentals = rental_matches(availability, provider_ids)
                 if matches:
                     match["streaming"] = matches
+                if rentals:
+                    match["rentals"] = rentals
+                if matches or rentals:
                     streaming_attribution = True
 
     return render_template(

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import provider_badge %}
+{% from "_availability_badges.html" import availability_badge %}
 
 {% block app_content %}
 <h2 class="mt-n2">{{ title }}</h2>
@@ -23,8 +23,8 @@
 				{% if match.year %}
 				<a class="btn btn-outline-primary btn-sm py-0" href="{{ url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}">Log</a>
 				{% endif %}
-				{% for provider in match.streaming or [] %}
-				{{ provider_badge(provider, suffix=" (with ads)" if provider.kind == "ads" else "") }}
+				{% for provider in (match.streaming or []) + (match.rentals or []) %}
+				{{ availability_badge(provider) }}
 				{% endfor %}
 				<span class="badge badge-secondary">Not in library</span>
 			</span>

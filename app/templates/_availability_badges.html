@@ -1,6 +1,10 @@
-{# The shared availability badge: [provider logo] Name, with the full
-   phrasing in the tooltip. Used by the movie-page strip and the TMDb
-   search results so every surface renders providers identically. #}
-{% macro provider_badge(provider, action="Streaming on", suffix="") -%}
+{# The shared availability badge: [provider logo] Name, with wording
+   derived from the match kind (flatrate/ads/rent/buy) and the full
+   phrasing in the tooltip. Used by the movie-page strip, TMDb search
+   results, and filmography rows so every surface renders providers
+   identically. #}
+{% macro availability_badge(provider) -%}
+{%- set action = {"rent": "Rent from", "buy": "Buy from"}.get(provider.kind, "Streaming on") -%}
+{%- set suffix = {"ads": " (with ads)", "rent": " (rent)", "buy": " (buy)"}.get(provider.kind, "") -%}
 <span class="badge badge-light border align-middle mr-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
 {%- endmacro %}
