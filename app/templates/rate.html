@@ -29,6 +29,9 @@
 		{% if featured.tmdb_overview %}
 		<p>{{ featured.tmdb_overview }}</p>
 		{% endif %}
+		{% if top_cast %}
+		<p class="small text-muted">Starring {{ top_cast|join(", ") }}</p>
+		{% endif %}
 		{# One form, four answers — the movie_id rides in the form's own
 		   hidden field (never a duplicate via hidden_tag) #}
 		<form action="" method="post">

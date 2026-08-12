@@ -7,7 +7,13 @@ import re
 from app import db
 from app.models import MovieCrew, UserMovieReview, UserWatchlist
 from tests.factories import make_movie, make_movie_file
-from tests.test_recommendations import admin_id, genre, log_watch, make_person
+from tests.test_recommendations import (
+    admin_id,
+    genre,
+    log_watch,
+    make_cast,
+    make_person,
+)
 
 
 def csrf_token_from(page_html):
@@ -219,6 +225,10 @@ def test_rate_page_shows_featured_details_only(app, admin_client):
                 job="Director",
             )
         )
+        lead = make_person(777104, "Leading Lady")
+        second = make_person(777105, "Second Banana")
+        make_cast(second, featured, character="The Pal", order=1)
+        make_cast(lead, featured, character="The Lead", order=0)
         # Lower-information companions must stay hidden
         for n in range(3):
             make_candidate(f"Drive Filler {n}", 1990)
@@ -230,6 +240,10 @@ def test_rate_page_shows_featured_details_only(app, admin_client):
     assert "119 min" in page
     assert "Western" in page
     assert "A searcher searches." in page
+
+    # Top-billed cast reads under the synopsis, in billing order
+
+    assert "Starring Leading Lady, Second Banana" in page
     assert "Up next" not in page
     assert "Drive Filler" not in page
 

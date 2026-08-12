@@ -101,6 +101,7 @@ from app.email import send_email
 from app.maintenance import system_health
 from app.recommendations import (
     CREW_ROLE_JOBS,
+    TOP_BILLING_CUTOFF,
     coarse_interest_score,
     credit_interest_markers,
     marker_bar,
@@ -4847,6 +4848,7 @@ def rate():
     suggestions = [movies[movie_id] for movie_id in suggested_ids if movie_id in movies]
     anchor = movies.get(anchor_id)
     directors = []
+    top_cast = []
     if featured:
         directors = [
             name
@@ -4855,6 +4857,15 @@ def rate():
             .filter(MovieCrew.movie_id == featured.id)
             .filter(MovieCrew.job == "Director")
             .distinct()
+        ]
+        # The same billing cutoff the taste engine counts as "starring"
+        top_cast = [
+            name
+            for (name,) in db.session.query(TMDBCredit.name)
+            .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
+            .filter(MovieCast.movie_id == featured.id)
+            .order_by(MovieCast.billing_order.asc())
+            .limit(TOP_BILLING_CUTOFF)
         ]
 
     return render_template(
@@ -4865,6 +4876,7 @@ def rate():
         suggestions=suggestions,
         anchor=anchor,
         directors=directors,
+        top_cast=top_cast,
     )
 
 
