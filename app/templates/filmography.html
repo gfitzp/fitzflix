@@ -73,6 +73,9 @@
 						{% elif row.seen %}
 							<span class="badge badge-info">Seen</span>
 						{% else %}
+							{% if row.might_interest %}
+								<span class="badge badge-light border">Might interest you</span>
+							{% endif %}
 							<span class="badge badge-secondary">Not in library</span>
 						{% endif %}
 					</span>

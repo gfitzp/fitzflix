@@ -182,3 +182,63 @@ def register(app):
             f"{created} created or updated"
             + ("" if created else " — everything was already in place")
         )
+
+    @app.cli.group()
+    def recs():
+        """Manage the film recommendation engine."""
+        pass
+
+    @recs.command()
+    def recompute():
+        """Recompute and store every reviewer's recommendations now,
+        instead of waiting for the nightly run."""
+
+        from app.recommendations import recompute_recommendations
+
+        recompute_recommendations()
+        click.echo("Recommendations recomputed")
+
+    @recs.command()
+    @click.option(
+        "--weights",
+        default=None,
+        help="Trial class weights as a comma list, e.g. "
+        "'genre=1.2,director=2.0'; unlisted classes keep their "
+        "current weight.",
+    )
+    def evaluate(weights):
+        """Leave-one-out ranking metrics per user: how highly the films
+        each user demonstrably liked would have been recommended. Use to
+        compare trial feature-class weights against the current ones."""
+
+        from app import db
+        from app.models import UserMovieReview
+        from app.recommendations import FEATURE_CLASS_WEIGHTS, evaluate_user
+
+        class_weights = dict(FEATURE_CLASS_WEIGHTS)
+        if weights:
+            for pair in weights.split(","):
+                cls, _, value = pair.partition("=")
+                if cls.strip() not in class_weights:
+                    raise click.ClickException(f"Unknown feature class '{cls}'")
+                class_weights[cls.strip()] = float(value)
+        click.echo(f"Class weights: {class_weights}")
+
+        user_ids = [
+            user_id
+            for (user_id,) in db.session.query(UserMovieReview.user_id)
+            .filter(UserMovieReview.user_id.isnot(None))
+            .distinct()
+        ]
+        for user_id in user_ids:
+            metrics = evaluate_user(user_id, class_weights=class_weights)
+            if metrics is None:
+                click.echo(f"user {user_id}: not enough positive films to measure")
+                continue
+            click.echo(
+                f"user {user_id}: {metrics['positives']} positives, "
+                f"mean percentile {metrics['mean_percentile']:.3f} "
+                f"(0 = always ranked first), "
+                f"hit@10 {metrics['hit_at_10']:.1%}, "
+                f"hit@25 {metrics['hit_at_25']:.1%}"
+            )

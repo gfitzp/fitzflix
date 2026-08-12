@@ -415,6 +415,19 @@ def create_app(config_class=Config, watch_import_dir=False):
 
         app.maintenance_scheduler.cancel("sqs-retrieve")
 
+    # Recompute per-user film recommendations nightly, after the log
+    # rotation and backup windows: taste profiles and ranked lists land in
+    # Redis for the landing page and the filmography interest markers
+
+    register_cron(
+        app.maintenance_scheduler,
+        "45 1 * * *",
+        func="app.recommendations.recompute_recommendations",
+        job_id="recompute-recommendations",
+        timeout="1h",
+        description="Recomputing film recommendations",
+    )
+
     # Poll Plex watch history every 15 minutes as the self-healing backstop
     # to the real-time webhook: watches scrobbled while the app was down
     # are picked up from the stored cursor on the next poll

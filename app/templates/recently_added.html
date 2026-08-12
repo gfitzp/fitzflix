@@ -38,9 +38,9 @@
 		{% for page in pages.iter_pages() %}
 			{% if page %}
 				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% endif %}
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -61,9 +61,9 @@
 		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 			{% if page %}
 				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% endif %}
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -149,9 +149,9 @@
 		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
 			{% if page %}
 				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% endif %}
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -172,9 +172,9 @@
 		{% for page in pages.iter_pages() %}
 			{% if page %}
 				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.index', page=page) }}">{{ page }}</a></li>
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.recently_added', page=page) }}">{{ page }}</a></li>
 				{% endif %}
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>

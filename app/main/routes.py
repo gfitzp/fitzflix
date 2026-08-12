@@ -92,6 +92,11 @@ from app.models import (
 from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
+from app.recommendations import (
+    credit_interest_markers,
+    stored_profile,
+    stored_recommendations,
+)
 from app.videos import (
     evaluate_filename,
     parse_letterboxd_export,
@@ -237,9 +242,72 @@ def service_worker():
 
 @bp.route("/")
 @bp.route("/index")
-@bp.route("/recently-added")
 @login_required
 def index():
+    """The landing page: what to watch tonight, recommended from the
+    library by the user's own diary (GitHub #46/#61)."""
+
+    stored = stored_recommendations(current_app.redis, current_user.id)
+
+    has_history = (
+        db.session.query(UserMovieReview.id)
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .first()
+        is not None
+    )
+
+    recs = []
+    computed_at = None
+    if stored:
+        computed_at = stored.get("computed_at")
+
+        # Films logged since the nightly recompute drop out immediately
+        # rather than lingering as recommendations until tonight
+
+        seen = {
+            movie_id
+            for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+            .filter(UserMovieReview.user_id == int(current_user.id))
+            .filter(UserMovieReview.movie_id.isnot(None))
+        }
+        movie_ids = [item["movie_id"] for item in stored.get("items", [])]
+        movies = {
+            movie.id: movie
+            for movie in Movie.query.filter(Movie.id.in_(movie_ids or [0]))
+        }
+        for item in stored.get("items", []):
+            movie = movies.get(item["movie_id"])
+            if movie is None or item["movie_id"] in seen:
+                continue
+            recs.append({"movie": movie, "because": item.get("because", [])[:3]})
+            if len(recs) == 18:
+                break
+    elif has_history:
+        # Diary rows but nothing stored yet (first deploy, or a brand-new
+        # reviewer): compute once now instead of waiting for tonight; the
+        # marker keeps repeat page loads from re-enqueueing
+
+        if current_app.redis.set(
+            f"fitzflix:recs:requested:{int(current_user.id)}", "1", nx=True, ex=3600
+        ):
+            current_app.maintenance_queue.enqueue(
+                "app.recommendations.recompute_recommendations",
+                job_timeout="1h",
+                description="Computing film recommendations",
+            )
+
+    return render_template(
+        "index.html",
+        title="Home",
+        recs=recs,
+        computed_at=computed_at,
+        has_history=has_history,
+    )
+
+
+@bp.route("/recently-added")
+@login_required
+def recently_added():
     """Show the ten most recently added files."""
 
     page = request.args.get("page", 1, type=int)
@@ -263,12 +331,12 @@ def index():
     )
 
     next_url = (
-        url_for("main.index", page=recently_added.next_num)
+        url_for("main.recently_added", page=recently_added.next_num)
         if recently_added.has_next
         else None
     )
     prev_url = (
-        url_for("main.index", page=recently_added.prev_num)
+        url_for("main.recently_added", page=recently_added.prev_num)
         if recently_added.has_prev
         else None
     )
@@ -592,6 +660,7 @@ def movie_library():
                     "title": cast_credit.get("title"),
                     "year": int(release_year) if release_year.isdigit() else None,
                     "poster_path": cast_credit.get("poster_path"),
+                    "genre_ids": cast_credit.get("genre_ids") or [],
                     "characters": [],
                     "movie": entry["movie"] if entry else None,
                     "file": entry["file"] if entry else None,
@@ -621,6 +690,15 @@ def movie_library():
         for row in filmography:
             row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
             row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
+
+        # Modest "might interest you" markers on unowned films, scored at
+        # render time from the already-cached credits payload against the
+        # user's stored taste profile — no TMDb calls, nothing persisted
+
+        profile = stored_profile(current_app.redis, current_user.id)
+        interesting = credit_interest_markers(profile, int(credit), filmography)
+        for row in filmography:
+            row["might_interest"] = row["tmdb_id"] in interesting
 
         return render_template(
             "filmography.html",
