@@ -18,8 +18,16 @@
 			<div class="media-body">
 				<h5 class="mb-1">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</h5>
 				<span class="badge badge-{{ "warning" if result.upgradable else "success" }}">{{ result.quality }}{% if result.excluded %} &mdash; excluded{% endif %}</span>
+				{# The personal funnel: Seen (their diary), On your
+				   watchlist, Might interest you — seen and might-interest
+				   never show together #}
 				{% if result.rating is not none %}
 				<span class="badge badge-info">Seen &mdash; rated {{ result.rating }}</span>
+				{% elif result.seen %}
+				<span class="badge badge-info">Seen</span>
+				{% endif %}
+				{% if result.watchlisted %}
+				<span class="badge badge-warning">On your watchlist</span>
 				{% endif %}
 				{% if result.might_interest %}
 				<span class="badge badge-info">Might interest you</span>

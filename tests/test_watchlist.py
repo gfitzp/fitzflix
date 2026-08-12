@@ -92,6 +92,63 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     assert entries_for(app, user_id) == []
 
 
+def test_movie_page_funnel_badges(app, admin_client):
+    """The movie page carries the personal funnel badges: watchlist
+    coexists with might-interest while unseen; logging flips the row to
+    Seen and retires might-interest."""
+
+    from app import db
+    from app.models import User, UserMovieReview, UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    user_id = admin_id(app)
+    with app.app_context():
+        movie = make_movie(
+            "Funnel Page Film", 1994, tmdb_id=9601, tmdb_data_as_of=datetime.utcnow()
+        )
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [{"movie_id": movie_id, "score": 1.0, "because": []}],
+            }
+        ),
+    )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "On your watchlist" in page
+    assert "Might interest you" in page
+    assert 'badge-info mr-1">Seen' not in page
+
+    with app.app_context():
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(
+            UserMovieReview(
+                user_id=admin.id,
+                movie_id=movie_id,
+                rating=8,
+                modified_rating=8,
+                whole_stars=4,
+                half_stars=0,
+            )
+        )
+        # The direct diary row bypasses the log path's auto-remove, so
+        # the entry persists — the state a post-watch re-add would
+        # produce: Seen and the watchlist badge coexist
+        db.session.commit()
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Seen &mdash; rated 8" in page
+    assert "On your watchlist" in page
+    assert "Might interest you" not in page
+
+
 def test_manual_log_clears_the_watchlist_entry(app, admin_client):
     from app import db
     from app.models import UserWatchlist

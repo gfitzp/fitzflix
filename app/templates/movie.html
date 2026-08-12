@@ -143,6 +143,21 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
+{# The personal funnel: Seen (this user's diary), On your watchlist,
+   Might interest you — seen and might-interest never show together #}
+{% if review or on_watchlist or might_interest %}
+<div class="mt-1">
+	{% if review %}
+	<span class="badge badge-info mr-1">Seen{% if review.rating is not none %} &mdash; rated {{ review.rating }}{% endif %}</span>
+	{% endif %}
+	{% if on_watchlist %}
+	<span class="badge badge-warning mr-1">On your watchlist</span>
+	{% endif %}
+	{% if might_interest %}
+	<span class="badge badge-info mr-1">Might interest you</span>
+	{% endif %}
+</div>
+{% endif %}
 {# Watchlist: any film can be wanted — unowned ones as the funnel stage
    before the shopping list, owned ones to track which of the library's
    many films this user specifically means to watch #}

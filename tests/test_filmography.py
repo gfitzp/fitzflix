@@ -233,6 +233,83 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
     )
 
 
+def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monkeypatch):
+    """Owned rows carry the full funnel: the library badge no longer
+    hides Seen, and a watchlisted owned film badges the watchlist."""
+
+    import app.main.routes as main_routes
+
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        user_id = User.query.first().id
+        person = TMDBCredit(id=737373, name="Funnel Actor")
+        db.session.add(person)
+        owned_seen = make_movie("Funnel Owned Seen Film", 1960, tmdb_id=400)
+        make_movie_file(owned_seen, "Bluray-1080p")
+        owned_wanted = make_movie("Funnel Owned Wanted Film", 1965, tmdb_id=401)
+        make_movie_file(owned_wanted, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=owned_seen.id,
+                review="",
+                **star_rating_fields(4),
+            )
+        )
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=owned_wanted.id))
+        db.session.flush()
+        make_cast(person, owned_seen)
+        make_cast(person, owned_wanted)
+        db.session.commit()
+
+    class FakeTMDb:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def fake_tmdb_get(url, **kwargs):
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 400,
+                            "title": "Funnel Owned Seen Film",
+                            "release_date": "1960-01-01",
+                            "character": "The Lead",
+                        },
+                        {
+                            "id": 401,
+                            "title": "Funnel Owned Wanted Film",
+                            "release_date": "1965-01-01",
+                            "character": "The Rival",
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb({"name": "Funnel Actor"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
+    assert page.count('title="In your Fitzflix library"') == 2
+    assert page.count('badge-info mr-1">Seen') == 1
+    assert page.count("On your watchlist") == 1
+    assert page.index("Funnel Owned Seen Film (1960)") < page.index(
+        'badge-info mr-1">Seen'
+    )
+    assert page.index("Funnel Owned Wanted Film (1965)") < page.index(
+        "On your watchlist"
+    )
+
+
 def test_filmography_serves_people_without_local_credit_rows(
     app, admin_client, monkeypatch
 ):

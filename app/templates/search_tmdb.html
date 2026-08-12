@@ -42,6 +42,15 @@
 				{% if match.library_id %}
 				{{ library_badge() }}
 				{% endif %}
+				{# The personal funnel: Seen, On your watchlist, Might
+				   interest you — seen and might-interest never show
+				   together #}
+				{% if match.seen %}
+				<span class="badge badge-info mr-1">Seen</span>
+				{% endif %}
+				{% if match.watchlisted %}
+				<span class="badge badge-warning mr-1">On your watchlist</span>
+				{% endif %}
 				{% if match.might_interest %}
 				<span class="badge badge-info mr-1">Might interest you</span>
 				{% endif %}

@@ -879,9 +879,18 @@ def movie_library():
         filmography = sorted(
             rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
         )
+        watchlisted = {
+            movie_id
+            for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+            .filter(UserWatchlist.user_id == int(current_user.id))
+            .filter(UserWatchlist.movie_id.in_(list(local.keys()) or [0]))
+        }
         for row in filmography:
             row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
             row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
+            row["watchlisted"] = (
+                row["movie"] is not None and row["movie"].id in watchlisted
+            )
 
         # "Might interest you" markers: unowned films score at render
         # time from the already-cached credits payload against the
@@ -1431,6 +1440,33 @@ def movie(movie_id):
         else None
     )
 
+    # The personal funnel badge state: "Seen" is any diary row of the
+    # current user's (review is their latest); "Might interest you"
+    # never shows on a seen film — its watch already feeds the taste
+    # profile. Owned films badge when the nightly recompute ranked them
+    # in the stored recommendations; unowned records score through the
+    # coarse scorer against the profile-relative bar, like the TMDb
+    # search results
+
+    might_interest = False
+    if review is None:
+        if films:
+            might_interest = movie.id in recommended_movie_ids(
+                current_app.redis, current_user.id
+            )
+        else:
+            profile = stored_profile(current_app.redis, current_user.id)
+            if profile:
+                year = (
+                    movie.tmdb_release_date.year
+                    if movie.tmdb_release_date
+                    else movie.year
+                )
+                score = coarse_interest_score(
+                    profile, [genre.id for genre in movie.genres], year
+                )
+                might_interest = score > marker_bar(profile)
+
     return render_template(
         "movie.html",
         title=title,
@@ -1448,6 +1484,7 @@ def movie(movie_id):
         streaming=streaming,
         watchlist_form=watchlist_form,
         on_watchlist=on_watchlist,
+        might_interest=might_interest,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
@@ -3963,7 +4000,6 @@ def _movie_search_results(wildcard, limit=50):
             .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
             .first()
         )
-        review = movie.ratings.first()
         results.append(
             {
                 "movie": movie,
@@ -3974,7 +4010,6 @@ def _movie_search_results(wildcard, limit=50):
                     and (best.fullscreen or best.quality.preference < upgrade_threshold)
                     and not (movie.shopping_list_exclude == 1)
                 ),
-                "rating": review.rating if review else None,
                 "excluded": movie.shopping_list_exclude == 1,
             }
         )
@@ -4130,28 +4165,40 @@ def search():
         tv_results = _tv_search_results(wildcard)
         people_results = _people_search_results(wildcard)
 
-        # Owned films the engine ranked among the user's stored
-        # recommendations badge "might interest you" here too — the
-        # rail, the search pages, and filmographies should agree on
-        # what's recommended. The stored set already excludes films
-        # the user had logged at compute time; the fresh check covers
-        # anything logged since the nightly run
+        # The personal funnel badges: "Might interest you" (in the
+        # stored recommendations — the library rail's own set) →
+        # "On your watchlist" → "Seen". Watchlist coexists with either
+        # neighbor, but a seen film already feeds the taste profile, so
+        # seen and might-interest are exclusive. All three are about
+        # the CURRENT user — their diary, their list, their profile
 
         if movie_results:
             rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
-            if rec_ids:
-                result_ids = [result["movie"].id for result in movie_results]
-                logged = {
-                    movie_id
-                    for (movie_id,) in db.session.query(UserMovieReview.movie_id)
-                    .filter(UserMovieReview.user_id == int(current_user.id))
-                    .filter(UserMovieReview.movie_id.in_(result_ids))
-                }
-                for result in movie_results:
-                    result["might_interest"] = (
-                        result["movie"].id in rec_ids
-                        and result["movie"].id not in logged
-                    )
+            result_ids = [result["movie"].id for result in movie_results]
+            ratings = {}
+            for movie_id, rating in (
+                db.session.query(UserMovieReview.movie_id, UserMovieReview.rating)
+                .filter(UserMovieReview.user_id == int(current_user.id))
+                .filter(UserMovieReview.movie_id.in_(result_ids))
+                .order_by(UserMovieReview.date_watched.asc())
+            ):
+                # Later rows win, but a bare rewatch doesn't erase a rating
+                if rating is not None or movie_id not in ratings:
+                    ratings[movie_id] = rating
+            watchlisted = {
+                movie_id
+                for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+                .filter(UserWatchlist.user_id == int(current_user.id))
+                .filter(UserWatchlist.movie_id.in_(result_ids))
+            }
+            for result in movie_results:
+                movie_id = result["movie"].id
+                result["seen"] = movie_id in ratings
+                result["rating"] = ratings.get(movie_id)
+                result["watchlisted"] = movie_id in watchlisted
+                result["might_interest"] = (
+                    movie_id in rec_ids and movie_id not in ratings
+                )
 
     return render_template(
         "search.html",
@@ -4294,31 +4341,50 @@ def search_tmdb():
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
 
-        # Might-interest markers. Unowned matches score through the
-        # coarse scorer the filmography markers use, minus the person
-        # term (a bare search result has no person context); owned
-        # matches badge when the nightly recompute ranked them in the
-        # stored recommendations — the library rail's own set — unless
-        # the user has logged them since
+        # The personal funnel badges. "Seen" and "On your watchlist"
+        # hang off any local record, file or not (a review-only record
+        # remembers a logged unowned film). "Might interest you" scores
+        # unowned matches through the coarse scorer minus the person
+        # term (a bare search result has no person context) and badges
+        # owned matches ranked in the stored recommendations — and
+        # never shows on a seen film, whose watch already feeds the
+        # taste profile
 
-        profile = stored_profile(current_app.redis, current_user.id)
-        rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
-        owned_logged = set()
-        owned_ids = [m["library_id"] for m in movie_matches if m["library_id"]]
-        if owned_ids and rec_ids:
-            owned_logged = {
+        record_ids = {}
+        movie_tmdb_ids = [m["tmdb_id"] for m in movie_matches if m["tmdb_id"]]
+        if movie_tmdb_ids:
+            record_ids = dict(
+                db.session.query(Movie.tmdb_id, Movie.id).filter(
+                    Movie.tmdb_id.in_(movie_tmdb_ids)
+                )
+            )
+        seen_ids = set()
+        watchlisted_ids = set()
+        if record_ids:
+            seen_ids = {
                 movie_id
                 for (movie_id,) in db.session.query(UserMovieReview.movie_id)
                 .filter(UserMovieReview.user_id == int(current_user.id))
-                .filter(UserMovieReview.movie_id.in_(owned_ids))
+                .filter(UserMovieReview.movie_id.in_(list(record_ids.values())))
             }
+            watchlisted_ids = {
+                movie_id
+                for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+                .filter(UserWatchlist.user_id == int(current_user.id))
+                .filter(UserWatchlist.movie_id.in_(list(record_ids.values())))
+            }
+
+        profile = stored_profile(current_app.redis, current_user.id)
+        rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
         bar = marker_bar(profile) if profile else None
         for match in movie_matches:
+            record_id = record_ids.get(match["tmdb_id"])
+            match["seen"] = record_id in seen_ids
+            match["watchlisted"] = record_id in watchlisted_ids
+            if match["seen"]:
+                continue
             if match["library_id"] is not None:
-                if (
-                    match["library_id"] in rec_ids
-                    and match["library_id"] not in owned_logged
-                ):
+                if match["library_id"] in rec_ids:
                     match["might_interest"] = True
                 continue
             if profile is None:

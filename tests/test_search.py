@@ -157,6 +157,138 @@ def test_search_badges_recommended_owned_films(app, admin_client):
     )
 
 
+def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
+    """The funnel on the library search: watchlist coexists with
+    might-interest while unseen, and with Seen after logging — but a
+    seen film never badges might-interest, even when it's still in the
+    stored recommendations."""
+
+    import json
+
+    from app.models import UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    with app.app_context():
+        fresh = make_movie("Funnel Fresh Pick", 1990)
+        make_movie_file(fresh, "DVD")
+        seen = make_movie("Funnel Seen Rewatch", 1991)
+        make_movie_file(seen, "DVD")
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(
+            UserMovieReview(
+                user_id=admin.id,
+                movie_id=seen.id,
+                rating=9,
+                modified_rating=9,
+                whole_stars=4,
+                half_stars=1,
+            )
+        )
+        db.session.add(UserWatchlist(user_id=admin.id, movie_id=fresh.id))
+        db.session.add(UserWatchlist(user_id=admin.id, movie_id=seen.id))
+        db.session.commit()
+        user_id = admin.id
+        rec_ids = [fresh.id, seen.id]
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [
+                    {"movie_id": movie_id, "score": 1.0, "because": []}
+                    for movie_id in rec_ids
+                ],
+            }
+        ),
+    )
+
+    page = admin_client.get("/search?q=funnel").get_data(as_text=True)
+    assert page.count("On your watchlist") == 2
+    assert page.count("Might interest you") == 1
+    assert "Seen &mdash; rated 9" in page
+    assert page.index("Might interest you") < page.index("Funnel Seen Rewatch (1991)")
+
+
+def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
+    """The funnel on TMDb results: a seen film badges Seen and never
+    might-interest (even review-only records, whose watch already feeds
+    the profile); a watchlisted unowned record badges the watchlist."""
+
+    import json
+
+    from app.models import UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    with app.app_context():
+        owned_seen = make_movie("Funnel Owned Seen", 1975, tmdb_id=678)
+        make_movie_file(owned_seen, "DVD")
+        wanted = make_movie("Funnel Wanted", 1978, tmdb_id=679)
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(
+            UserMovieReview(
+                user_id=admin.id,
+                movie_id=owned_seen.id,
+                rating=7,
+                modified_rating=7,
+                whole_stars=3,
+                half_stars=1,
+            )
+        )
+        db.session.add(UserWatchlist(user_id=admin.id, movie_id=wanted.id))
+        db.session.commit()
+        user_id = admin.id
+        owned_seen_id = owned_seen.id
+
+    # The seen film sits in the stored recommendations, proving the
+    # suppression is the diary, not absence from the set
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [{"movie_id": owned_seen_id, "score": 1.0, "because": []}],
+            }
+        ),
+    )
+
+    import app.main.routes as main_routes
+
+    class FakeResponse:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                [
+                    {
+                        "id": 678,
+                        "title": "Funnel Owned Seen",
+                        "release_date": "1975-06-20",
+                    },
+                    {"id": 679, "title": "Funnel Wanted", "release_date": "1978-06-16"},
+                ]
+            )
+        return FakeResponse([])
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
+    assert page.count("Might interest you") == 0
+    assert page.count('badge-info mr-1">Seen') == 1
+    assert page.count("On your watchlist") == 1
+    assert page.index("Funnel Wanted (1978)") < page.index("On your watchlist")
+
+
 def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
     """An owned TMDb match that sits in the stored recommendations
     carries the might-interest badge next to its library badge."""
