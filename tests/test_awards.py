@@ -1,13 +1,14 @@
 """Film awards from Wikidata: the batched SPARQL refresh with its
-current-truth replacement semantics, the movie-page award strip, and
-the capped quality prior the recommendation engine folds in."""
+current-truth replacement semantics, the person-item craft backfill
+that merges on top of it, the movie-page award strip, and the capped
+quality prior the recommendation engine folds in."""
 
 from datetime import datetime
 
 import pytest
 
 from app import db
-from app.models import MovieAward
+from app.models import MovieAward, MovieCast, MovieCrew, TMDBCredit
 from tests.factories import make_movie, make_movie_file
 from tests.test_recommendations import admin_id, genre, log_watch
 
@@ -23,6 +24,23 @@ def binding(ext, award_q, label, kind, year=None):
     }
     if year:
         row["year"] = {"value": str(year)}
+    return row
+
+
+def person_binding(award_q, label, kind, year=None, imdb=None, tmdb=None):
+    """A person-pass SPARQL row: the for-work film's ids, no person."""
+
+    row = {
+        "award": {"value": f"http://www.wikidata.org/entity/{award_q}"},
+        "awardLabel": {"value": label},
+        "kind": {"value": kind},
+    }
+    if year:
+        row["year"] = {"value": str(year)}
+    if imdb:
+        row["workImdb"] = {"value": imdb}
+    if tmdb:
+        row["workTmdb"] = {"value": tmdb}
     return row
 
 
@@ -101,6 +119,184 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
         (tmdb_movie_id, "National Board of Review Award", True, None),
     }
     assert result == "Refreshed awards for 3 films, 2 with award records"
+
+
+def test_person_backfill_attributes_craft_awards(app, monkeypatch):
+    """Craft awards on person items attribute to their for-work films
+    (IMDb id first, TMDb fallback), merge without duplicating what the
+    film items already list — year-less film rows still suppress their
+    dated person copies, but a win lands when only the nomination is
+    on record — and only credited cast + key crew are queried."""
+
+    import app.awards as awards
+
+    with app.app_context():
+        waterfront = make_movie(
+            "Backfill Waterfront", 1954, imdb_id="tt0047296", tmdb_id=654
+        )
+        ryan = make_movie("Backfill Ryan", 1998, tmdb_id=857)
+
+        # What the film pass already found on the film's own item
+
+        db.session.add_all(
+            [
+                MovieAward(
+                    movie_id=waterfront.id,
+                    award_id="Q103618",
+                    award_name="Academy Award for Best Picture",
+                    win=True,
+                    year=1955,
+                ),
+                MovieAward(
+                    movie_id=waterfront.id,
+                    award_id="Q106291",
+                    award_name="BAFTA Award for Best Film",
+                    win=False,
+                ),
+                MovieAward(
+                    movie_id=waterfront.id,
+                    award_id="Q103360",
+                    award_name="Academy Award for Best Directing",
+                    win=False,
+                    year=1955,
+                ),
+            ]
+        )
+
+        db.session.add_all(
+            [
+                TMDBCredit(id=951001, name="Backfill Director"),
+                TMDBCredit(id=951002, name="Backfill Actor"),
+                TMDBCredit(id=951003, name="Backfill Extra"),
+                TMDBCredit(id=951004, name="Backfill Gaffer"),
+            ]
+        )
+        db.session.add_all(
+            [
+                MovieCrew(
+                    movie_id=waterfront.id,
+                    credit_id=951001,
+                    department="Directing",
+                    job="Director",
+                ),
+                MovieCast(
+                    movie_id=waterfront.id,
+                    credit_id=951002,
+                    character="Terry",
+                    billing_order=0,
+                ),
+                MovieCast(
+                    movie_id=waterfront.id,
+                    credit_id=951003,
+                    character="Dock Worker (uncredited)",
+                    billing_order=40,
+                ),
+                MovieCrew(
+                    movie_id=waterfront.id,
+                    credit_id=951004,
+                    department="Lighting",
+                    job="Gaffer",
+                ),
+            ]
+        )
+        db.session.commit()
+        waterfront_id, ryan_id = waterfront.id, ryan.id
+
+    def fake_sparql(query):
+        """Canned person-item bindings; the id set must stay bounded."""
+
+        assert "P4985" in query
+        assert '"951001"' in query and '"951002"' in query
+        assert '"951003"' not in query and '"951004"' not in query
+        return [
+            # The craft win the film pass misses, by the work's IMDb id
+            person_binding(
+                "Q103360",
+                "Academy Award for Best Directing",
+                "win",
+                1955,
+                imdb="tt0047296",
+                tmdb="654",
+            ),
+            # The same statement via a second honoree dedupes
+            person_binding(
+                "Q103360",
+                "Academy Award for Best Directing",
+                "win",
+                1955,
+                imdb="tt0047296",
+                tmdb="654",
+            ),
+            # The film item already lists this win: exact duplicate
+            person_binding(
+                "Q103618",
+                "Academy Award for Best Picture",
+                "win",
+                1955,
+                imdb="tt0047296",
+            ),
+            # The film item has this award with no year recorded: the
+            # dated person copy is still the same event
+            person_binding(
+                "Q106291",
+                "BAFTA Award for Best Film",
+                "nomination",
+                1955,
+                imdb="tt0047296",
+            ),
+            # No IMDb id on the work item: TMDb fallback resolves it
+            person_binding(
+                "Q131520",
+                "Academy Award for Best Cinematography",
+                "win",
+                1999,
+                tmdb="857",
+            ),
+            # For-work outside the library never attaches
+            person_binding(
+                "Q103916",
+                "Academy Award for Best Actor",
+                "win",
+                1973,
+                imdb="tt0068646",
+                tmdb="238",
+            ),
+            # A label-service miss echoes the QID back; useless badge
+            person_binding("Q555", "Q555", "win", 1955, imdb="tt0047296"),
+        ]
+
+    monkeypatch.setattr(awards, "_wikidata_sparql", fake_sparql)
+    monkeypatch.setattr(awards.time, "sleep", lambda seconds: None)
+    monkeypatch.setitem(
+        app.config, "WIKIDATA_SPARQL_URL", "https://example.test/sparql"
+    )
+
+    with app.app_context():
+        result = awards.refresh_person_awards()
+        stored = {
+            (row.movie_id, row.award_id, row.win, row.year)
+            for row in MovieAward.query.all()
+        }
+
+    assert stored == {
+        (waterfront_id, "Q103618", True, 1955),
+        (waterfront_id, "Q106291", False, None),
+        (waterfront_id, "Q103360", False, 1955),
+        (waterfront_id, "Q103360", True, 1955),
+        (ryan_id, "Q131520", True, 1999),
+    }
+    assert result == (
+        "Scanned 2 credited people, added 2 craft award records for 2 films"
+    )
+
+    # Standalone reruns are idempotent: everything now dedupes
+
+    with app.app_context():
+        rerun = awards.refresh_person_awards()
+        assert MovieAward.query.count() == 5
+    assert rerun == (
+        "Scanned 2 credited people, added 0 craft award records for 0 films"
+    )
 
 
 def test_award_prior_math(app):

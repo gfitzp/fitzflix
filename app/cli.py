@@ -223,11 +223,13 @@ def register(app):
     @recs.command()
     def awards():
         """Refresh every film's Wikidata award records now, instead of
-        waiting for the weekly run."""
+        waiting for the weekly run — the film-item pass first, then the
+        person-item craft backfill layered on top of it."""
 
-        from app.awards import refresh_movie_awards
+        from app.awards import refresh_movie_awards, refresh_person_awards
 
         click.echo(refresh_movie_awards())
+        click.echo(refresh_person_awards())
 
     @app.cli.group()
     def triage():
