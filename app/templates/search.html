@@ -2,10 +2,15 @@
 {% from "_search_form.html" import global_search_form %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-{# The navbar's search box again, pre-filled — a fruitless search can
-   be reworked right here instead of round-tripping through the navbar #}
-{{ global_search_form("mb-3", value=q, width="min(20rem, 100%)") }}
+{# The navbar's search box again, pre-filled and right-aligned on the
+   heading row like the index page's log-a-film form — a fruitless
+   search can be reworked right here instead of via the navbar #}
+<div class="row mt-n2">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		{{ global_search_form("float-sm-right mb-2", value=q, width="min(20rem, 100%)") }}
+	</div>
+</div>
 <hr>
 {% if not q %}
 <p class="text-muted">Type a movie or TV series title, or a person's name, into the search box to see whether it's in the library.</p>

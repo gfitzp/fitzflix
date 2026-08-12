@@ -3,10 +3,16 @@
 {% from "_search_form.html" import global_search_form %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-{# The same box as the local results page, but submitting straight back
-   to TMDb — no type-ahead, since the suggestions only know the library #}
-{{ global_search_form("mb-3", action=url_for('main.search_tmdb'), value=q, placeholder="Search TMDb", width="min(20rem, 100%)", typeahead=False) }}
+{# The same box as the local results page — right-aligned on the
+   heading row like the index page's log-a-film form — but submitting
+   straight back to TMDb; no type-ahead, since the suggestions only
+   know the library #}
+<div class="row mt-n2">
+	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		{{ global_search_form("float-sm-right mb-2", action=url_for('main.search_tmdb'), value=q, placeholder="Search TMDb", width="min(20rem, 100%)", typeahead=False) }}
+	</div>
+</div>
 <hr>
 {% if error %}
 <div class="alert alert-warning" role="alert">{{ error }}</div>
