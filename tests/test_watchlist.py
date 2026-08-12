@@ -424,3 +424,20 @@ def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
     assert body.index("Library Wanted (1995)") < body.index(
         "Library Unwanted High (1994)"
     )
+
+
+def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
+    """A just-created record has its tmdb id but no tmdb_data_as_of yet —
+    the page a watchlist add or log redirects to must render while the
+    refresh is still in the queue."""
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Watchlist Fresh Record", 2020, tmdb_id=9310)
+        db.session.commit()
+        movie_id = movie.id
+
+    response = admin_client.get(f"/movie/{movie_id}")
+    assert response.status_code == 200
+    assert "TMDB data refreshing" in response.get_data(as_text=True)

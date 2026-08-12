@@ -76,7 +76,7 @@
 			</div>
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
-		{% if tv.tmdb_id %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}
+		{% if tv.tmdb_id and tv.tmdb_data_as_of %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">

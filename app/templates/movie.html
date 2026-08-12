@@ -169,7 +169,10 @@
 			</div>
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
-		{% if movie.tmdb_id %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% endif %}
+		{# tmdb_data_as_of lags tmdb_id on a just-created record: the page
+		   renders immediately after a watchlist add or log, while the
+		   enrichment refresh is still in the queue #}
+		{% if movie.tmdb_id and movie.tmdb_data_as_of %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% elif movie.tmdb_id %}<em class="small">TMDB data refreshing&hellip;</em>{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
