@@ -142,6 +142,7 @@
 		{% endif %}
 	</div>
 </div>
+{% include "_streaming_strip.html" %}
 <hr>
 <h5>Movie Data</h5>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>

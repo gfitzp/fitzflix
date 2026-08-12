@@ -1,0 +1,20 @@
+{# Streaming availability for the current user's services. Rendered only
+   when the route supplies `streaming` (the user picked services on their
+   Profile). The JustWatch attribution is mandatory — TMDb licenses this
+   data from JustWatch and revokes API access without the credit. #}
+{% if streaming %}
+<div class="mt-1">
+	{% if streaming.matches %}
+		<span class="small text-muted mr-1">Streaming on</span>
+		{% for provider in streaming.matches %}
+		<span class="badge badge-light border align-middle mr-1">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ provider.provider_name }}{% if provider.kind == "ads" %} (with ads){% endif %}</span>
+		{% endfor %}
+	{% elif streaming.known %}
+		<span class="small text-muted mr-1">Not streaming on your services.</span>
+	{% else %}
+		<span class="small text-muted mr-1">Streaming availability unknown right now.</span>
+	{% endif %}
+	{% if streaming.link %}<a class="small mr-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
+	<span class="small text-muted">Streaming data by JustWatch</span>
+</div>
+{% endif %}

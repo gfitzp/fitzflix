@@ -94,4 +94,5 @@
 		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 	</div>
 </div>
+{% include "_streaming_strip.html" %}
 {% endblock %}

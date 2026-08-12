@@ -787,6 +787,16 @@ class User(UserMixin, db.Model):
     date_reviews_exported = db.Column(db.DateTime)
     last_export_review_id = db.Column(db.Integer)
 
+    # The streaming services this user subscribes to — availability
+    # displays are customized per user, never site-wide
+
+    streaming_providers = db.relationship(
+        "UserStreamingProvider",
+        backref="user",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
+
     def __repr__(self):
         return f"<User '{self.email}'>"
 
@@ -1020,6 +1030,24 @@ class User(UserMixin, db.Model):
             + len(current_app.file_queue.job_ids)
         )
         return jobs_in_queue
+
+
+class UserStreamingProvider(db.Model):
+    """One streaming service on a user's profile, from TMDb's
+    watch-provider registry (the underlying data is JustWatch's). The
+    name and logo are copied at pick time so displays survive registry
+    outages."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    provider_id = db.Column(db.Integer, nullable=False)
+    name = db.Column(db.String(64))
+    logo_path = db.Column(db.String(64))
+
+    __table_args__ = (db.UniqueConstraint("user_id", "provider_id"),)
+
+    def __repr__(self):
+        return f"<UserStreamingProvider '{self.user_id}:{self.name}'>"
 
 
 class UserMovieReview(db.Model):

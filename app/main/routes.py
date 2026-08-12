@@ -71,6 +71,7 @@ from app.main.forms import (
     TranscodeForm,
     TVShoppingFilterForm,
     PlexUsernameForm,
+    StreamingProvidersForm,
     UpdateAPIKeyForm,
 )
 from app.models import (
@@ -85,6 +86,7 @@ from app.models import (
     TVSeries,
     User,
     UserMovieReview,
+    UserStreamingProvider,
     movie_file_rank,
     tmdb_get,
     tv_file_rank,
@@ -96,6 +98,14 @@ from app.recommendations import (
     credit_interest_markers,
     stored_profile,
     stored_recommendations,
+)
+from app.streaming import (
+    PICKER_PROVIDER_LIMIT,
+    provider_registry,
+    streaming_matches,
+    title_availability,
+    user_provider_ids,
+    user_streaming,
 )
 from app.videos import (
     evaluate_filename,
@@ -1145,6 +1155,17 @@ def movie(movie_id):
         return redirect(url_for("main.movie", movie_id=movie.id))
     criterion_form.process()
 
+    # Streaming availability for this user's services; quiet for users
+    # who picked none. Owned films only show a strip when something
+    # matches, but a film with no local files says so either way —
+    # that's where knowing "not on your services" matters
+
+    streaming = (
+        user_streaming(movie.tmdb_id, current_user, negative=not films)
+        if movie.tmdb_id
+        else None
+    )
+
     return render_template(
         "movie.html",
         title=title,
@@ -1159,6 +1180,7 @@ def movie(movie_id):
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
         criterion_form=criterion_form,
+        streaming=streaming,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
@@ -2994,12 +3016,50 @@ def profile():
                 flash("Removed your Plex username mapping.", "success")
         return redirect(url_for("main.profile"))
 
+    # Form to pick the streaming services availability displays are
+    # customized to — a per-user setting, never site-wide. The picker
+    # offers the registry's top providers by JustWatch display priority,
+    # plus whatever the user already picked
+
+    registry = provider_registry()
+    subscribed = {row.provider_id: row for row in current_user.streaming_providers}
+    picker = registry[:PICKER_PROVIDER_LIMIT] + [
+        p for p in registry[PICKER_PROVIDER_LIMIT:] if p["provider_id"] in subscribed
+    ]
+    streaming_form = StreamingProvidersForm()
+    streaming_form.providers.choices = [
+        (p["provider_id"], p["provider_name"]) for p in picker
+    ]
+    if streaming_form.providers_submit.data and streaming_form.validate_on_submit():
+        chosen = set(streaming_form.providers.data or [])
+        registry_by_id = {p["provider_id"]: p for p in registry}
+        for provider_id, row in subscribed.items():
+            if provider_id not in chosen:
+                db.session.delete(row)
+        for provider_id in chosen - set(subscribed):
+            details = registry_by_id.get(provider_id) or {}
+            db.session.add(
+                UserStreamingProvider(
+                    user_id=current_user.id,
+                    provider_id=provider_id,
+                    name=details.get("provider_name"),
+                    logo_path=details.get("logo_path"),
+                )
+            )
+        db.session.commit()
+        flash("Updated your streaming services.", "success")
+        return redirect(url_for("main.profile"))
+    if not streaming_form.providers_submit.data:
+        streaming_form.providers.data = list(subscribed)
+
     return render_template(
         "profile.html",
         title="Profile",
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         plex_form=plex_form,
+        streaming_form=streaming_form,
+        provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )
 
 
@@ -3926,6 +3986,7 @@ def search_tmdb():
     movie_matches = []
     tv_matches = []
     error = None
+    streaming_attribution = False
 
     if q and not current_app.config["TMDB_API_KEY"]:
         error = "TMDB_API_KEY is not configured, so TMDb can't be searched."
@@ -3978,6 +4039,24 @@ def search_tmdb():
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
 
+        # Streaming badges on unowned movie matches, filtered to this
+        # user's services (lookups are day-cached per title); the flag
+        # turns on the mandatory JustWatch credit
+
+        provider_ids = user_provider_ids(current_user)
+        if provider_ids:
+            for match in movie_matches:
+                if match["library_id"] is not None or match["tmdb_id"] is None:
+                    continue
+                availability = title_availability(match["tmdb_id"])
+                names = [
+                    provider["provider_name"]
+                    for provider in streaming_matches(availability, provider_ids)
+                ]
+                if names:
+                    match["streaming"] = names
+                    streaming_attribution = True
+
     return render_template(
         "search_tmdb.html",
         title=f"TMDb results for '{q}'" if q else "TMDb search",
@@ -3985,6 +4064,7 @@ def search_tmdb():
         movie_matches=movie_matches,
         tv_matches=tv_matches,
         error=error,
+        streaming_attribution=streaming_attribution,
     )
 
 
@@ -4164,6 +4244,7 @@ def review_tmdb(tmdb_id):
         cast=cast,
         movie_review_form=movie_review_form,
         movie=store_lookup,
+        streaming=user_streaming(tmdb_id, current_user, negative=True),
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 

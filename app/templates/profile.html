@@ -39,4 +39,28 @@
     	<p class="small text-muted mt-1">Plex watches by this account are recorded in your diary. Leave blank to unmap.</p>
     </div>
 </div>
+<hr>
+<h5>Streaming Services</h5>
+<p class="small text-muted">Pick the services you subscribe to: movie pages and TMDb search results will show when a film streams on them. This is your setting alone, not the household's. Streaming data by JustWatch.</p>
+{% if streaming_form.providers.choices %}
+<form action="" method="post">
+	{{ streaming_form.hidden_tag() }}
+	<div class="row">
+		{% for option in streaming_form.providers %}
+		<div class="col-12 col-sm-6 col-md-4 col-lg-3">
+			<div class="form-check">
+				{{ option(class_="form-check-input") }}
+				<label class="form-check-label" for="{{ option.id }}">
+					{% set logo = provider_logos.get(option.data) %}
+					{% if logo %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ logo }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ option.label.text }}
+				</label>
+			</div>
+		</div>
+		{% endfor %}
+	</div>
+	{{ streaming_form.providers_submit(class_="btn btn-sm btn-warning mt-2") }}
+</form>
+{% else %}
+<p class="text-muted">The provider list couldn't be loaded from TMDb right now; try again later.</p>
+{% endif %}
 {% endblock %}

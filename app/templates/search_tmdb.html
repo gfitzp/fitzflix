@@ -22,6 +22,9 @@
 				{% if match.year %}
 				<a class="btn btn-outline-primary btn-sm py-0" href="{{ url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}">Log</a>
 				{% endif %}
+				{% if match.streaming %}
+				<span class="badge badge-light border">Streaming on {{ match.streaming|join(", ") }}</span>
+				{% endif %}
 				<span class="badge badge-secondary">Not in library</span>
 			</span>
 			{% endif %}
@@ -59,5 +62,8 @@
 <p class="lead">TMDb has no matches for &lsquo;<strong>{{ q }}</strong>&rsquo; either.</p>
 {% endif %}
 
+{% if streaming_attribution %}
+<p class="small text-muted">Streaming data by JustWatch</p>
+{% endif %}
 <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.search', q=q) }}">&laquo; Back to library search</a>
 {% endblock %}

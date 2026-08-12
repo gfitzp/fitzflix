@@ -190,6 +190,22 @@ class TVShoppingFilterForm(FlaskForm):
     filter_submit = SubmitField("Filter")
 
 
+class StreamingProvidersForm(FlaskForm):
+    """Profile page: which streaming services this user subscribes to.
+
+    Availability displays (movie pages, TMDb search) are customized to
+    these picks per user — explicitly not a site-wide setting.
+    """
+
+    providers = SelectMultipleField(
+        "Streaming services",
+        coerce=int,
+        option_widget=widgets.CheckboxInput(),
+        widget=widgets.ListWidget(prefix_label=False),
+    )
+    providers_submit = SubmitField("Save Streaming Services")
+
+
 class ReviewExportForm(FlaskForm):
     """History page: email the Letterboxd-format review export. The default
     export covers only entries added or edited since the last export; the
