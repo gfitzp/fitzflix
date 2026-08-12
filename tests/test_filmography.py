@@ -42,9 +42,11 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
     assert "bi-person-fill" in page
     assert "Owned Credit Film" in page
     # DVD is below the Blu-ray threshold, so it badges as an upgrade candidate
-    assert 'badge-warning">DVD' in page
+    assert 'badge-warning mr-1">DVD' in page
     assert "Unowned Credit Film" in page
-    assert "Not in library" in page
+    # The TMDb-search row grammar dropped the "Not in library" badge:
+    # absence of a quality badge says it
+    assert "Not in library" not in page
     assert "only shows films with local records" in page
 
 
@@ -110,6 +112,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
                             "release_date": "1999-09-09",
                             "character": "The Cameo",
                             "poster_path": "/unknown.jpg",
+                            "overview": "A cameo-laden curiosity from 1999.",
                         },
                     ]
                 }
@@ -134,14 +137,18 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "Died May 2, 1999 (aged 79)" in page
     assert "Worked steadily for decades." in page
     # Owned: Blu-ray is at the threshold, so it badges as final
-    assert 'badge-success">Bluray-1080p' in page
+    assert 'badge-success mr-1">Bluray-1080p' in page
     # Seen but unowned: info badge plus the liked heart
-    assert 'badge-info">Seen' in page
+    assert 'badge-info mr-1">Seen' in page
     assert "bi-heart-fill" in page
     # No local record at all: listed from TMDb, linking to the review form
     assert "Career Unknown Film" in page
     assert "/review/tmdb/200" in page
     assert "The Cameo" in page
+
+    # The credits payload's overview renders as the muted synopsis line
+
+    assert "A cameo-laden curiosity from 1999." in page
 
 
 def test_filmography_serves_people_without_local_credit_rows(
@@ -198,7 +205,7 @@ def test_filmography_serves_people_without_local_credit_rows(
     assert "Wandered into pictures by accident." in page
     assert "Wanderer Unknown Film" in page
     assert "/review/tmdb/300" in page
-    assert "Not in library" in page
+    assert "Not in library" not in page
 
 
 def test_filmography_unknown_person_is_404(app, admin_client):
