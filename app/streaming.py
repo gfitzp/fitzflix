@@ -12,11 +12,20 @@ deep links; the only outbound link is the film's TMDb watch page.
 import json
 import traceback
 
+from concurrent.futures import ThreadPoolExecutor
+
 import requests
 
 from flask import current_app
+from werkzeug.local import LocalProxy
 
+from app import get_app
 from app.videos import tmdb_get
+
+# This process's app instance, resolved lazily so the warm task can run
+# on a worker without building a second application
+
+app = LocalProxy(get_app)
 
 WATCH_REGION = "US"
 CACHE_SECONDS = 86400
@@ -115,6 +124,56 @@ def title_availability(tmdb_id):
         ]
     current_app.redis.set(cache_key, json.dumps(payload), ex=CACHE_SECONDS)
     return payload
+
+
+def batch_title_availability(tmdb_ids, max_workers=20, fetch_limit=None):
+    """(payloads, deferred): availability for many titles at once, as
+    {tmdb_id: payload-or-None} plus the ids that weren't fetched.
+
+    Cache hits are read directly; misses fetch concurrently, each
+    through title_availability so caching and 404 handling match the
+    single-title path. All fetches share tmdb_get's app-wide rate
+    limiter, so fetch_limit bounds how long a render can stall behind
+    it — leftover ids come back for the caller to warm in the
+    background instead."""
+
+    results = {}
+    misses = []
+    for tmdb_id in {int(t) for t in tmdb_ids if t is not None}:
+        cached = current_app.redis.get(AVAILABILITY_KEY.format(tmdb_id=tmdb_id))
+        if cached:
+            results[tmdb_id] = json.loads(cached)
+        else:
+            misses.append(tmdb_id)
+    if not misses or not current_app.config["TMDB_API_KEY"]:
+        return results, []
+
+    deferred = []
+    if fetch_limit is not None:
+        misses, deferred = misses[:fetch_limit], misses[fetch_limit:]
+
+    flask_app = current_app._get_current_object()
+
+    def fetch(tmdb_id):
+        """One title's availability under its own app context."""
+
+        with flask_app.app_context():
+            return tmdb_id, title_availability(tmdb_id)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for tmdb_id, payload in pool.map(fetch, misses):
+            results[tmdb_id] = payload
+    return results, deferred
+
+
+def warm_title_availability(tmdb_ids):
+    """Background task: fill the availability cache for the given
+    titles — the remainder a bounded filmography render deferred — so
+    the next visit has every badge without waiting."""
+
+    with app.app_context():
+        batch_title_availability(tmdb_ids)
+        return True
 
 
 def user_provider_ids(user):

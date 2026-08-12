@@ -100,6 +100,7 @@ from app.recommendations import (
     stored_recommendations,
 )
 from app.streaming import (
+    batch_title_availability,
     provider_registry,
     streaming_matches,
     title_availability,
@@ -709,6 +710,44 @@ def movie_library():
         for row in filmography:
             row["might_interest"] = row["tmdb_id"] in interesting
 
+        # Streaming badges on films without a local file, filtered to
+        # this user's services. Availability is batch-fetched cache-first,
+        # but a career can span hundreds of films and every fetch shares
+        # the app-wide TMDb rate limiter, so a render fetches at most 50
+        # and a background task warms the rest for the next visit
+
+        streaming_attribution = False
+        provider_ids = user_provider_ids(current_user)
+        if provider_ids:
+            availability_by_id, deferred = batch_title_availability(
+                (
+                    row["tmdb_id"]
+                    for row in filmography
+                    if row["tmdb_id"] and not row["quality"]
+                ),
+                fetch_limit=50,
+            )
+            if deferred and current_app.redis.set(
+                f"fitzflix:streaming:warm:{int(credit)}", "1", nx=True, ex=900
+            ):
+                current_app.maintenance_queue.enqueue(
+                    "app.streaming.warm_title_availability",
+                    args=(deferred,),
+                    job_timeout="30m",
+                    description=(
+                        f"Warming streaming availability for {len(deferred)} films"
+                    ),
+                )
+            for row in filmography:
+                if row["quality"] or not row["tmdb_id"]:
+                    continue
+                matches = streaming_matches(
+                    availability_by_id.get(row["tmdb_id"]), provider_ids
+                )
+                if matches:
+                    row["streaming"] = matches
+                    streaming_attribution = True
+
         return render_template(
             "filmography.html",
             title=f"Movies starring {person_name}",
@@ -718,6 +757,7 @@ def movie_library():
             filmography=filmography,
             tmdb_unavailable=tmdb_credits is None,
             upgrade_threshold=_upgrade_threshold(),
+            streaming_attribution=streaming_attribution,
         )
 
     elif q:

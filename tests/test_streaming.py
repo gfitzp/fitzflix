@@ -532,3 +532,191 @@ def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
 
     assert len(calls) == 1
     assert first["flatrate"] == [] and second["flatrate"] == []
+
+
+def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
+    """The batch helper reads cached titles directly and fetches only
+    the misses, which then land in the cache like any single lookup."""
+
+    import app.streaming as streaming
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+
+    plant_availability(
+        app,
+        900,
+        {"link": None, "flatrate": [MAX], "ads": [], "rent": [], "buy": []},
+    )
+
+    with app.app_context():
+        results, deferred = streaming.batch_title_availability([900, 901, None, 900])
+
+    assert deferred == []
+    assert len(calls) == 1 and "/movie/901/" in calls[0]
+    assert results[900]["flatrate"] == [MAX]
+    assert results[901]["flatrate"] == [NETFLIX]
+    assert app.redis.get(streaming.AVAILABILITY_KEY.format(tmdb_id=901))
+
+    # A fetch limit defers the overflow instead of stalling the render
+
+    with app.app_context():
+        results, deferred = streaming.batch_title_availability(
+            [900, 902], fetch_limit=0
+        )
+
+    assert results[900]["flatrate"] == [MAX]
+    assert deferred == [902]
+    assert len(calls) == 1
+
+
+def test_filmography_badges_unowned_films_on_your_services(
+    app, admin_client, monkeypatch
+):
+    """Career rows without a local file get the same logo badges as the
+    other surfaces; owned rows keep their quality badge unadorned."""
+
+    import app.main.routes as main_routes
+
+    from app import db
+    from app.models import TMDBCredit, MovieCast
+
+    with app.app_context():
+        person = TMDBCredit(id=777003, name="Streaming Actor")
+        db.session.add(person)
+        owned = make_movie(
+            "Filmography Owned",
+            1980,
+            tmdb_id=910,
+            tmdb_data_as_of=datetime.utcnow(),
+        )
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.flush()
+        db.session.add(
+            MovieCast(
+                movie_id=owned.id,
+                credit_id=person.id,
+                character="Lead",
+                billing_order=0,
+            )
+        )
+        db.session.commit()
+
+    def fake_tmdb_get(url, **kwargs):
+        """Person details and a two-film career."""
+
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 910,
+                            "title": "Filmography Owned",
+                            "release_date": "1980-05-01",
+                            "character": "Lead",
+                        },
+                        {
+                            "id": 911,
+                            "title": "Filmography Unowned",
+                            "release_date": "1999-09-09",
+                            "character": "Cameo",
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb({"name": "Streaming Actor"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    subscribe(app, 8, "Netflix")
+
+    # Both films stream on Netflix, but only the unowned row may badge
+
+    for tmdb_id in (910, 911):
+        plant_availability(
+            app,
+            tmdb_id,
+            {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []},
+        )
+
+    page = admin_client.get("/library/movie?credit=777003").get_data(as_text=True)
+    assert page.count('title="Streaming on Netflix"') == 1
+    assert page.index("Filmography Unowned") < page.index(
+        'title="Streaming on Netflix"'
+    )
+    assert "/w45/netflix.jpg" in page
+    assert "Streaming data by JustWatch" in page
+
+
+def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypatch):
+    """When the bounded batch defers ids, one warm task lands on the
+    maintenance queue and the marker stops reload storms."""
+
+    import app.main.routes as main_routes
+
+    from app import db
+    from app.models import MovieCast, TMDBCredit
+
+    with app.app_context():
+        person = TMDBCredit(id=777004, name="Deferred Actor")
+        db.session.add(person)
+        owned = make_movie(
+            "Deferred Owned",
+            1980,
+            tmdb_id=920,
+            tmdb_data_as_of=datetime.utcnow(),
+        )
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.flush()
+        db.session.add(
+            MovieCast(
+                movie_id=owned.id,
+                credit_id=person.id,
+                character="Lead",
+                billing_order=0,
+            )
+        )
+        db.session.commit()
+
+    def fake_tmdb_get(url, **kwargs):
+        """Person details and a one-film career."""
+
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 921,
+                            "title": "Deferred Unowned",
+                            "release_date": "1999-09-09",
+                        }
+                    ]
+                }
+            )
+        return FakeTMDb({"name": "Deferred Actor"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(
+        main_routes, "batch_title_availability", lambda ids, **kw: ({}, [921])
+    )
+
+    subscribe(app, 8, "Netflix")
+
+    for _ in range(2):
+        admin_client.get("/library/movie?credit=777004")
+
+    warm_jobs = [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.streaming.warm_title_availability"
+    ]
+    assert len(warm_jobs) == 1
+    assert warm_jobs[0].args == ([921],)

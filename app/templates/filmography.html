@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_availability_badges.html" import provider_badge %}
 
 {% block app_content %}
 {# Portrait on the left, lifespan and biography in a column to its
@@ -63,6 +64,9 @@
 				<div class="d-flex w-100 justify-content-between">
 					<h6 class="mb-1"><span class="text-body">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</span></h6>
 					<span class="text-nowrap ml-2">
+						{% for provider in row.streaming or [] %}
+						{{ provider_badge(provider, suffix=" (with ads)" if provider.kind == "ads" else "") }}
+						{% endfor %}
 						{% if row.liked %}
 							<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
 								<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
@@ -90,5 +94,8 @@
 </div>
 {% if not filmography %}
 <p class="lead">No films found for this person.</p>
+{% endif %}
+{% if streaming_attribution %}
+<p class="small text-muted mt-2">Streaming data by JustWatch</p>
 {% endif %}
 {% endblock %}
