@@ -587,5 +587,5 @@ def test_search_json_includes_people(app, admin_client):
     people = [r for r in data["results"] if r["type"] == "Person"]
     assert len(people) == 1
     assert people[0]["title"] == "Typeahead Thespian"
-    assert people[0]["detail"] == "1 film"
+    assert people[0]["detail"] == "Actor · 1 film"
     assert "credit=903" in people[0]["url"]

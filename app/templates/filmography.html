@@ -91,8 +91,10 @@
 				{% for provider in (row.streaming or []) + (row.rentals or []) %}
 				{{ availability_badge(provider) }}
 				{% endfor %}
-				{% if row.characters %}
-				<p class="mb-0 mt-1 small text-muted">as {{ row.characters | join(", ") }}</p>
+				{# Crew roles and characters share the credit line:
+				   "Director · Writer · as The Cameo" #}
+				{% if row.jobs or row.characters %}
+				<p class="mb-0 mt-1 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
 				{% endif %}
 				{% if row.overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ row.overview|truncate(240) }}</p>

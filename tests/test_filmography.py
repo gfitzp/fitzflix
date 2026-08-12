@@ -367,6 +367,149 @@ def test_filmography_serves_people_without_local_credit_rows(
     assert "Not in library" not in page
 
 
+def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
+    """A director's TMDb career renders: key crew credits become rows,
+    share a row with acting credits on the same film, non-key jobs stay
+    out, and owned crew films attach their local record through
+    MovieCrew."""
+
+    import app.main.routes as main_routes
+
+    from app.models import MovieCrew
+
+    with app.app_context():
+        person = TMDBCredit(id=838383, name="Career Director")
+        db.session.add(person)
+        owned = make_movie("Directed Owned Film", 1970, tmdb_id=500)
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.flush()
+        db.session.add(
+            MovieCrew(
+                movie_id=owned.id,
+                credit_id=person.id,
+                department="Directing",
+                job="Director",
+            )
+        )
+        db.session.commit()
+
+    class FakeTMDb:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def fake_tmdb_get(url, **kwargs):
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 500,
+                            "title": "Directed Owned Film",
+                            "release_date": "1970-01-01",
+                            "character": "The Cameo",
+                        }
+                    ],
+                    "crew": [
+                        {
+                            "id": 500,
+                            "title": "Directed Owned Film",
+                            "release_date": "1970-01-01",
+                            "department": "Directing",
+                            "job": "Director",
+                        },
+                        {
+                            "id": 501,
+                            "title": "Directed Unknown Film",
+                            "release_date": "1975-01-01",
+                            "department": "Directing",
+                            "job": "Director",
+                        },
+                        {
+                            "id": 501,
+                            "title": "Directed Unknown Film",
+                            "release_date": "1975-01-01",
+                            "department": "Writing",
+                            "job": "Screenplay",
+                        },
+                        {
+                            "id": 502,
+                            "title": "Thanked Film",
+                            "release_date": "1980-01-01",
+                            "department": "Crew",
+                            "job": "Thanks",
+                        },
+                    ],
+                }
+            )
+        return FakeTMDb({"name": "Career Director"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=838383").get_data(as_text=True)
+
+    # The owned film merges its cast and crew credits into one row,
+    # carrying the library badge through the MovieCrew local join
+
+    assert "Directed Owned Film (1970)" in page
+    assert "Director &middot; as The Cameo" in page
+    assert page.count('title="In your Fitzflix library"') == 1
+
+    # A crew-only film rows up with its role labels; non-key jobs don't
+
+    assert "Directed Unknown Film (1975)" in page
+    assert "Director &middot; Writer" in page
+    assert "Thanked Film" not in page
+
+
+def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monkeypatch):
+    """Day-cached credits payloads written before crew credits joined
+    the filmography are bare cast lists; the page still renders them."""
+
+    import json
+
+    import app.main.routes as main_routes
+
+    with app.app_context():
+        person = TMDBCredit(id=848484, name="Cached Actor")
+        db.session.add(person)
+        db.session.commit()
+
+    app.redis.set(
+        "fitzflix:tmdb:person:848484:credits",
+        json.dumps(
+            [
+                {
+                    "id": 600,
+                    "title": "Old Cache Film",
+                    "release_date": "1990-01-01",
+                    "character": "The Lead",
+                }
+            ]
+        ),
+    )
+
+    class FakeTMDb:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"name": "Cached Actor"}
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", lambda url, **kwargs: FakeTMDb())
+
+    page = admin_client.get("/library/movie?credit=848484").get_data(as_text=True)
+    assert "Old Cache Film (1990)" in page
+    assert "as The Lead" in page
+
+
 def test_filmography_unknown_person_is_404(app, admin_client):
     """No local row and no TMDb key to ask: the id can't be resolved."""
 

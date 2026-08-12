@@ -81,6 +81,7 @@ from app.models import (
     FileSubtitleTrack,
     Movie,
     MovieCast,
+    MovieCrew,
     RefFeatureType,
     RefQuality,
     TMDBCredit,
@@ -97,6 +98,7 @@ from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
 from app.recommendations import (
+    CREW_ROLE_JOBS,
     coarse_interest_score,
     credit_interest_markers,
     marker_bar,
@@ -140,6 +142,15 @@ from functools import wraps
 # list always surfaces without ever crowding out discovery
 
 WATCHLIST_PIN_LIMIT = 4
+
+# The crew jobs that count as key roles for search and filmographies —
+# the same roles the taste engine scores, labeled as nouns (Glenn's
+# call: only these join the film-count ordering, so grips and gaffers
+# don't outrank directors)
+
+CREW_ROLE_LABELS = {
+    job: role.capitalize() for role, (jobs, _) in CREW_ROLE_JOBS.items() for job in jobs
+}
 
 
 def _watched_timestamp(watched_date):
@@ -760,22 +771,31 @@ def movie_library():
         best_file_ids = db.session.query(ranked_files.c.id).filter(
             ranked_files.c.rank == 1
         )
-        local_rows = (
-            db.session.query(File, Movie, RefQuality)
-            .select_from(Movie)
-            .join(MovieCast, (MovieCast.movie_id == Movie.id))
-            .outerjoin(
-                File,
-                db.and_(
-                    File.movie_id == Movie.id,
-                    File.feature_type_id == None,
-                    File.id.in_(best_file_ids),
-                ),
+
+        def local_credit_rows(credit_table):
+            """The person's local films through a credit join table, each
+            with its best owned file outer-joined."""
+
+            query = (
+                db.session.query(File, Movie, RefQuality)
+                .select_from(Movie)
+                .join(credit_table, (credit_table.movie_id == Movie.id))
+                .outerjoin(
+                    File,
+                    db.and_(
+                        File.movie_id == Movie.id,
+                        File.feature_type_id == None,
+                        File.id.in_(best_file_ids),
+                    ),
+                )
+                .outerjoin(RefQuality, (RefQuality.id == File.quality_id))
+                .filter(credit_table.credit_id == int(credit))
             )
-            .outerjoin(RefQuality, (RefQuality.id == File.quality_id))
-            .filter(MovieCast.credit_id == int(credit))
-            .all()
-        )
+            if credit_table is MovieCrew:
+                query = query.filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+            return query.all()
+
+        local_rows = local_credit_rows(MovieCast) + local_credit_rows(MovieCrew)
 
         # Best owned copy per movie (a movie can have several rank-1
         # editions; the filmography shows one entry per film)
@@ -823,10 +843,24 @@ def movie_library():
                         timeout=10,
                     )
                     r.raise_for_status()
-                    tmdb_credits = r.json().get("cast") or []
+                    payload = r.json()
+                    tmdb_credits = {
+                        "cast": payload.get("cast") or [],
+                        "crew": [
+                            crew_credit
+                            for crew_credit in payload.get("crew") or []
+                            if crew_credit.get("job") in CREW_ROLE_LABELS
+                        ],
+                    }
                     current_app.redis.set(cache_key, json.dumps(tmdb_credits), ex=86400)
                 except Exception:
                     current_app.logger.warning(traceback.format_exc())
+
+        # Day-cached payloads written before crew credits joined the
+        # filmography are bare cast lists
+
+        if isinstance(tmdb_credits, list):
+            tmdb_credits = {"cast": tmdb_credits, "crew": []}
 
         # Merge: one row per film, TMDb credits first (deduped by film,
         # combining characters), then any local credits TMDb didn't list
@@ -837,28 +871,46 @@ def movie_library():
             if entry["movie"].tmdb_id is not None
         }
         rows = {}
-        for cast_credit in tmdb_credits or []:
-            tmdb_id = cast_credit.get("id")
-            if tmdb_id is None:
-                continue
-            release_year = (cast_credit.get("release_date") or "")[:4]
+
+        def credit_row(entry):
+            """The merged filmography row for a TMDb credit entry,
+            created on first sight — cast and crew credits for the same
+            film share one row."""
+
+            tmdb_id = entry.get("id")
             row = rows.get(tmdb_id)
             if row is None:
-                entry = local_by_tmdb_id.get(tmdb_id)
+                release_year = (entry.get("release_date") or "")[:4]
+                local_entry = local_by_tmdb_id.get(tmdb_id)
                 row = rows[tmdb_id] = {
                     "tmdb_id": tmdb_id,
-                    "title": cast_credit.get("title"),
+                    "title": entry.get("title"),
                     "year": int(release_year) if release_year.isdigit() else None,
-                    "poster_path": cast_credit.get("poster_path"),
-                    "genre_ids": cast_credit.get("genre_ids") or [],
-                    "overview": cast_credit.get("overview"),
+                    "poster_path": entry.get("poster_path"),
+                    "genre_ids": entry.get("genre_ids") or [],
+                    "overview": entry.get("overview"),
                     "characters": [],
-                    "movie": entry["movie"] if entry else None,
-                    "file": entry["file"] if entry else None,
-                    "quality": entry["quality"] if entry else None,
+                    "jobs": [],
+                    "movie": local_entry["movie"] if local_entry else None,
+                    "file": local_entry["file"] if local_entry else None,
+                    "quality": local_entry["quality"] if local_entry else None,
                 }
+            return row
+
+        for cast_credit in (tmdb_credits or {}).get("cast") or []:
+            if cast_credit.get("id") is None:
+                continue
+            row = credit_row(cast_credit)
             if cast_credit.get("character"):
                 row["characters"].append(cast_credit["character"])
+
+        for crew_credit in (tmdb_credits or {}).get("crew") or []:
+            if crew_credit.get("id") is None:
+                continue
+            row = credit_row(crew_credit)
+            label = CREW_ROLE_LABELS.get(crew_credit.get("job"))
+            if label and label not in row["jobs"]:
+                row["jobs"].append(label)
 
         matched_tmdb_ids = set(rows.keys())
         for entry in local.values():
@@ -871,6 +923,7 @@ def movie_library():
                 "poster_path": entry["movie"].tmdb_poster_path,
                 "overview": entry["movie"].tmdb_overview,
                 "characters": [],
+                "jobs": [],
                 "movie": entry["movie"],
                 "file": entry["file"],
                 "quality": entry["quality"],
@@ -1833,17 +1886,21 @@ def movie_poster(movie_id):
 def people():
     """Browse every credited person across the library's films.
 
-    Defaults to people appearing in multiple films, since the long tail is
-    one-appearance day players; searching by name widens to everyone, and
-    uncredited-only roles never count toward the filter (Glenn's spec from
-    GitHub #13). Each person links to their filmography page.
+    Cast and key crew roles both count (Glenn's #27 call: only key
+    roles join the film-count ordering, so day players still register
+    but grips don't outrank directors). Defaults to people appearing in
+    multiple films, since the long tail is one-appearance day players;
+    searching by name widens to everyone, and uncredited-only roles
+    never count toward the filter (Glenn's spec from GitHub #13). Each
+    person links to their filmography page.
     """
 
     page = request.args.get("page", 1, type=int)
     query_text = (request.args.get("q") or "").strip()
     minimum_films = 1 if query_text else 2
 
-    film_count = db.func.count(db.distinct(MovieCast.movie_id)).label("film_count")
+    pairs = _credited_film_pairs()
+    film_count = db.func.count(db.distinct(pairs.c.movie_id)).label("film_count")
     people_query = (
         db.session.query(
             TMDBCredit.id,
@@ -1851,13 +1908,7 @@ def people():
             TMDBCredit.tmdb_profile_path,
             film_count,
         )
-        .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
-        .filter(
-            db.or_(
-                MovieCast.character == None,
-                db.not_(MovieCast.character.like("%(uncredited)%")),
-            )
-        )
+        .join(pairs, pairs.c.credit_id == TMDBCredit.id)
         .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
     )
     if query_text:
@@ -1880,6 +1931,7 @@ def people():
         "people.html",
         title="People",
         people=people_page.items,
+        roles=_dominant_roles([person.id for person in people_page.items]),
         pages=people_page,
         query_text=query_text,
         next_url=(
@@ -4113,28 +4165,102 @@ def _tv_search_results(wildcard, limit=50):
     ]
 
 
-def _people_search_results(wildcard, limit=12):
-    """Credited people whose names match, with their library film counts.
+# Tie-break order for a person's dominant role: a director-actor
+# reads as Director, a bit-part-everything reads as Actor before the
+# narrower crafts
 
-    Mirrors the People page's rules: uncredited-only roles never count,
-    and matches order by film count with the surname tie-break.
-    """
+ROLE_PRECEDENCE = (
+    "Director",
+    "Actor",
+    "Cinematographer",
+    "Composer",
+    "Writer",
+    "Editor",
+)
 
-    film_count = db.func.count(db.distinct(MovieCast.movie_id)).label("film_count")
-    return (
-        db.session.query(
-            TMDBCredit.id,
-            TMDBCredit.name,
-            TMDBCredit.tmdb_profile_path,
-            film_count,
+
+def _credited_film_pairs():
+    """(credit_id, movie_id) pairs every people surface counts: credited
+    cast rows unioned with key crew roles, deduplicated."""
+
+    cast_pairs = db.session.query(
+        MovieCast.credit_id.label("credit_id"),
+        MovieCast.movie_id.label("movie_id"),
+    ).filter(
+        db.or_(
+            MovieCast.character == None,
+            db.not_(MovieCast.character.like("%(uncredited)%")),
         )
-        .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
+    )
+    crew_pairs = db.session.query(
+        MovieCrew.credit_id.label("credit_id"),
+        MovieCrew.movie_id.label("movie_id"),
+    ).filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+    return cast_pairs.union(crew_pairs).subquery()
+
+
+def _dominant_roles(credit_ids):
+    """Each person's dominant credited role — the key role covering the
+    most distinct library films, ties broken by ROLE_PRECEDENCE."""
+
+    if not credit_ids:
+        return {}
+    counts = {}
+    for credit_id, tally in (
+        db.session.query(
+            MovieCast.credit_id, db.func.count(db.distinct(MovieCast.movie_id))
+        )
+        .filter(MovieCast.credit_id.in_(credit_ids))
         .filter(
             db.or_(
                 MovieCast.character == None,
                 db.not_(MovieCast.character.like("%(uncredited)%")),
             )
         )
+        .group_by(MovieCast.credit_id)
+    ):
+        counts.setdefault(credit_id, {})["Actor"] = tally
+    for credit_id, job, tally in (
+        db.session.query(
+            MovieCrew.credit_id,
+            MovieCrew.job,
+            db.func.count(db.distinct(MovieCrew.movie_id)),
+        )
+        .filter(MovieCrew.credit_id.in_(credit_ids))
+        .filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .group_by(MovieCrew.credit_id, MovieCrew.job)
+    ):
+        label = CREW_ROLE_LABELS[job]
+        role_counts = counts.setdefault(credit_id, {})
+        role_counts[label] = role_counts.get(label, 0) + tally
+    return {
+        credit_id: max(
+            role_counts,
+            key=lambda role: (role_counts[role], -ROLE_PRECEDENCE.index(role)),
+        )
+        for credit_id, role_counts in counts.items()
+    }
+
+
+def _people_search_results(wildcard, limit=12):
+    """Credited people whose names match, with their library film counts
+    and dominant role.
+
+    Mirrors the People page's rules: cast plus key crew roles count,
+    uncredited-only roles never do, and matches order by film count
+    with the surname tie-break.
+    """
+
+    pairs = _credited_film_pairs()
+    film_count = db.func.count(db.distinct(pairs.c.movie_id)).label("film_count")
+    matches = (
+        db.session.query(
+            TMDBCredit.id,
+            TMDBCredit.name,
+            TMDBCredit.tmdb_profile_path,
+            film_count,
+        )
+        .join(pairs, pairs.c.credit_id == TMDBCredit.id)
         .filter(TMDBCredit.name.ilike(f"%{wildcard}%"))
         .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
         .order_by(
@@ -4145,6 +4271,17 @@ def _people_search_results(wildcard, limit=12):
         .limit(limit)
         .all()
     )
+    roles = _dominant_roles([person.id for person in matches])
+    return [
+        {
+            "id": person.id,
+            "name": person.name,
+            "tmdb_profile_path": person.tmdb_profile_path,
+            "film_count": person.film_count,
+            "role": roles.get(person.id),
+        }
+        for person in matches
+    ]
 
 
 @bp.route("/search")
@@ -4262,12 +4399,13 @@ def search_json():
             results.append(
                 {
                     "type": "Person",
-                    "title": person.name,
+                    "title": person["name"],
                     "detail": (
-                        f"{person.film_count} film"
-                        f"{'s' if person.film_count != 1 else ''}"
+                        (f"{person['role']} · " if person["role"] else "")
+                        + f"{person['film_count']} film"
+                        + ("s" if person["film_count"] != 1 else "")
                     ),
-                    "url": url_for("main.movie_library", credit=person.id),
+                    "url": url_for("main.movie_library", credit=person["id"]),
                 }
             )
 
