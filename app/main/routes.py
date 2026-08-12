@@ -36,7 +36,6 @@ from werkzeug.utils import secure_filename
 
 from app import db, enqueue_import_scan, safe_job_id
 from app.main.forms import (
-    CriterionFilterForm,
     CriterionForm,
     CriterionRefreshForm,
     CustomPosterRemoveForm,
@@ -138,6 +137,8 @@ from app.triage import (
 from app.videos import (
     evaluate_filename,
     clear_watchlist,
+    criterion_release_lookups,
+    get_criterion_collection_from_wikidata,
     parse_letterboxd_export,
     star_rating_fields,
     track_metadata_scan,
@@ -1263,36 +1264,65 @@ def movie_library():
     )
 
 
-@bp.route("/library/criterion-collection", methods=["GET", "POST"])
+CRITERION_CHANNEL_PROVIDER_ID = 258
+CRITERION_CATALOG_PER_PAGE = 120
+
+
+def _page_window(current, last):
+    """Page numbers for a pagination bar, with None marking a gap.
+
+    The same shape Flask-SQLAlchemy's iter_pages renders on the people
+    page: the first and last couple of pages, a window around the
+    current one, ellipses between.
+    """
+
+    numbers = []
+    previous = 0
+    for number in range(1, last + 1):
+        if number <= 2 or abs(number - current) <= 2 or number > last - 2:
+            if previous and number - previous > 1:
+                numbers.append(None)
+            numbers.append(number)
+            previous = number
+    return numbers
+
+
+@bp.route("/library/criterion-collection")
 @login_required
 def criterion_collection():
-    """Show all films in the library that have a Criterion Collection release."""
+    """The full Criterion Collection spine catalog, library and beyond.
 
-    # Get the page filter status
-    # - all  : show all movies that have a Criterion Collection release, whether or not
-    #          I own the disc
-    # - owned: show only those movies where I actually own the Criterion Collection disc
+    Every release from the Wikidata spine cache renders, not just the
+    library's films: owned films keep their settled/amber verdicts,
+    releases the library lacks render like TMDb search rows (their row
+    opens the log page, so they're watchlistable), and the handful of
+    releases Wikidata has no TMDb id for list as plain spine rows. A
+    Criterion Channel badge marks what's streaming there right now.
+    """
 
-    filter_status = request.form.get("filter_status", "all")
+    filter_status = request.args.get("filter", "all")
+    if filter_status not in ("all", "library", "settled"):
+        filter_status = "all"
+    page = max(request.args.get("page", 1, type=int) or 1, 1)
 
-    # Form to filter the Criterion Collection listing
+    # The whole spine catalog from the weekly Wikidata cache; the page
+    # degrades to library-only rows if the cache is cold and Wikidata
+    # is unreachable
 
-    filter_form = CriterionFilterForm()
+    try:
+        releases = get_criterion_collection_from_wikidata()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        releases = []
+    by_tmdb_id, by_title_year = criterion_release_lookups(releases)
+    release_tmdb_ids = [
+        release["tmdb_id"] for release in releases if release.get("tmdb_id")
+    ]
 
-    # Set the filter status default to what was last submitted
-    filter_form.filter_status.default = filter_status
-    filter_form.process()
-
-    if filter_form.validate_on_submit():
-        return redirect(url_for("main.criterion_collection"))
-
-    if filter_status == "owned":
-        owned = True
-
-    else:
-        owned = False
-
-    # Subquery to get the best movie files
+    # Library rows: best main-feature file per film, for films marked
+    # with Criterion metadata OR matching a release by TMDb id (a film
+    # whose record predates its release never got marked, but the
+    # catalog knows its spine)
 
     ranked_files = (
         db.session.query(
@@ -1311,40 +1341,20 @@ def criterion_collection():
         .join(ranked_files, (ranked_files.c.id == File.id))
         .filter(File.feature_type_id == None)
         .filter(ranked_files.c.rank == 1)
+        .filter(File.edition == None)
         .filter(
             db.or_(
                 Movie.criterion_spine_number != None,
                 Movie.criterion_set_title != None,
+                Movie.tmdb_id.in_(release_tmdb_ids or [0]),
             )
-        )
-        .filter(File.edition == None)
-        .filter(
-            db.or_(
-                Movie.criterion_disc_owned == True, Movie.criterion_disc_owned == owned
-            )
-        )
-        .order_by(
-            db.case((Movie.criterion_spine_number != None, 1), else_=0).desc(),
-            Movie.criterion_spine_number.asc(),
-            Movie.criterion_set_title.asc(),
-            db.case(
-                (Movie.tmdb_title != None, Movie.tmdb_release_date), else_=Movie.year
-            ).asc(),
-            db.func.regexp_replace(
-                db.case(
-                    (Movie.tmdb_title != None, Movie.tmdb_title), else_=Movie.title
-                ),
-                "^(The|A|An) ",
-                "",
-            ).asc(),
-            File.edition.asc(),
         )
         .all()
     )
 
-    # A row is SETTLED — the Fitzflix library badge, nothing to do —
-    # when the Criterion disc is owned AND the local file matches the
-    # release's own format, with the bar CAPPED at the app-wide
+    # A library row is SETTLED — the Fitzflix library badge, nothing to
+    # do — when the Criterion disc is owned AND the local file matches
+    # the release's own format, with the bar CAPPED at the app-wide
     # threshold (Glenn: an owned disc with a Bluray-1080p file is
     # settled here even if Criterion re-released it in 2160p — chasing
     # that upgrade is the shopping list's job, not this page's). The
@@ -1361,44 +1371,233 @@ def criterion_collection():
     )
     threshold = _upgrade_threshold()
 
-    # The personal funnel, per-user like everywhere else: seen films
-    # never badge might-interest
+    # Each library film consumes its catalog release (TMDb id first,
+    # title+year fallback — the import's own matching order), so the
+    # remainder renders as beyond-the-library rows. A film with both a
+    # standalone release and a set membership consumes both through its
+    # shared TMDb id
 
+    consumed_tmdb = set()
+    consumed_title_year = set()
+    library_rows = []
+    for file, movie, quality in results:
+        release = by_tmdb_id.get(movie.tmdb_id) if movie.tmdb_id else None
+        if release is None and movie.title and movie.year:
+            release = by_title_year.get((movie.title.upper(), movie.year))
+        if movie.tmdb_id:
+            consumed_tmdb.add(movie.tmdb_id)
+        if release:
+            if release.get("tmdb_id"):
+                consumed_tmdb.add(release["tmdb_id"])
+            if release.get("title") and release.get("year"):
+                consumed_title_year.add((release["title"], release["year"]))
+        target = min(criterion_prefs.get(movie.id) or threshold, threshold)
+        upgradable = bool(file.fullscreen) or quality.preference < target
+        library_rows.append(
+            {
+                "kind": "library",
+                "file": file,
+                "movie": movie,
+                "quality": quality,
+                "settled": bool(movie.criterion_disc_owned) and not upgradable,
+                "tmdb_id": movie.tmdb_id,
+                "title": movie.tmdb_title or movie.title,
+                "year": (
+                    movie.tmdb_release_date.year
+                    if movie.tmdb_title and movie.tmdb_release_date
+                    else movie.year
+                ),
+                "spine": movie.criterion_spine_number
+                or (release or {}).get("spine_number"),
+                "set_title": movie.criterion_set_title
+                or (release or {}).get("set_title"),
+            }
+        )
+
+    # The rest of the catalog. Standalone entries precede set entries
+    # in the cache, so a film with both keeps its own spine; releases
+    # without a TMDb id render as plain spine rows
+
+    catalog_rows = []
+    catalog_keys = set()
+    for release in releases:
+        tmdb_id = release.get("tmdb_id")
+        if tmdb_id and tmdb_id in consumed_tmdb:
+            continue
+        title_year = (release.get("title"), release.get("year"))
+        if title_year in consumed_title_year:
+            continue
+        key = tmdb_id or title_year
+        if key in catalog_keys:
+            continue
+        catalog_keys.add(key)
+        catalog_rows.append(
+            {
+                "kind": "tmdb" if tmdb_id else "plain",
+                "movie": None,
+                "tmdb_id": tmdb_id,
+                "title": release.get("label") or release.get("title"),
+                "year": release.get("year"),
+                "spine": release.get("spine_number"),
+                "set_title": release.get("set_title"),
+            }
+        )
+
+    # File-less local records (logged or watchlisted unowned films)
+    # dress their catalog rows with the stored title, poster, and
+    # overview — and carry the funnel badges
+
+    records = {}
+    catalog_tmdb_ids = [row["tmdb_id"] for row in catalog_rows if row["tmdb_id"]]
+    if catalog_tmdb_ids:
+        records = {
+            record.tmdb_id: record
+            for record in Movie.query.filter(Movie.tmdb_id.in_(catalog_tmdb_ids))
+        }
+    for row in catalog_rows:
+        record = records.get(row["tmdb_id"]) if row["tmdb_id"] else None
+        if record is None:
+            continue
+        row["movie"] = record
+        if record.tmdb_title:
+            row["title"] = record.tmdb_title
+            if record.tmdb_release_date:
+                row["year"] = record.tmdb_release_date.year
+
+    # The personal funnel, per-user like everywhere else: seen films
+    # never badge might-interest. Owned films badge on stored-ranking
+    # membership; catalog rows with a refreshed record score through
+    # the coarse scorer against the profile-relative bar (rows without
+    # a record have no genres to score — they stay unmarked)
+
+    funnel_ids = movie_ids + [record.id for record in records.values()]
     seen_ids = {
         movie_id
         for (movie_id,) in db.session.query(UserMovieReview.movie_id)
         .filter(UserMovieReview.user_id == int(current_user.id))
-        .filter(UserMovieReview.movie_id.in_(movie_ids or [0]))
+        .filter(UserMovieReview.movie_id.in_(funnel_ids or [0]))
     }
     watchlisted_ids = {
         movie_id
         for (movie_id,) in db.session.query(UserWatchlist.movie_id)
         .filter(UserWatchlist.user_id == int(current_user.id))
-        .filter(UserWatchlist.movie_id.in_(movie_ids or [0]))
+        .filter(UserWatchlist.movie_id.in_(funnel_ids or [0]))
     }
     rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+    profile = stored_profile(current_app.redis, current_user.id)
+    bar = marker_bar(profile) if profile else None
 
-    rows = []
-    for file, movie, quality in results:
-        target = min(criterion_prefs.get(movie.id) or threshold, threshold)
-        upgradable = bool(file.fullscreen) or quality.preference < target
-        rows.append(
-            {
-                "file": file,
-                "movie": movie,
-                "quality": quality,
-                "settled": bool(movie.criterion_disc_owned) and not upgradable,
-                "seen": movie.id in seen_ids,
-                "watchlisted": movie.id in watchlisted_ids,
-                "might_interest": movie.id in rec_ids and movie.id not in seen_ids,
-            }
+    for row in library_rows:
+        movie_id = row["movie"].id
+        row["seen"] = movie_id in seen_ids
+        row["watchlisted"] = movie_id in watchlisted_ids
+        row["might_interest"] = movie_id in rec_ids and movie_id not in seen_ids
+    for row in catalog_rows:
+        record = row["movie"]
+        row["seen"] = record is not None and record.id in seen_ids
+        row["watchlisted"] = record is not None and record.id in watchlisted_ids
+        row["might_interest"] = False
+        if record is not None and profile is not None and not row["seen"]:
+            genre_ids = [genre.id for genre in record.genres]
+            if genre_ids:
+                score = coarse_interest_score(profile, genre_ids, row["year"])
+                row["might_interest"] = score > bar
+
+    # One spine order across owned and unowned: set members sort at
+    # their set's spine (year, then title within), spine-less local
+    # rows keep their old place at the end
+
+    def sort_key(row):
+        """Spine order, set members at their set's number."""
+
+        spine = row.get("spine")
+        title = re.sub(
+            r"^(The|A|An)\s+", "", row.get("title") or "", flags=re.IGNORECASE
         )
+        return (
+            0 if spine is not None else 1,
+            spine if spine is not None else 0,
+            row.get("set_title") or "",
+            row.get("year") or 9999,
+            title.upper(),
+        )
+
+    merged = sorted(library_rows + catalog_rows, key=sort_key)
+
+    counts = {
+        "all": len(merged),
+        "library": len(library_rows),
+        "settled": sum(1 for row in library_rows if row["settled"]),
+    }
+    if filter_status == "library":
+        filtered = [row for row in merged if row["kind"] == "library"]
+    elif filter_status == "settled":
+        filtered = [
+            row for row in merged if row["kind"] == "library" and row["settled"]
+        ]
+    else:
+        filtered = merged
+
+    last_page = max(
+        (len(filtered) + CRITERION_CATALOG_PER_PAGE - 1) // CRITERION_CATALOG_PER_PAGE,
+        1,
+    )
+    page = min(page, last_page)
+    start = (page - 1) * CRITERION_CATALOG_PER_PAGE
+    rows = filtered[start : start + CRITERION_CATALOG_PER_PAGE]
+
+    # The Criterion Channel badge (provider 258), for the rows on this
+    # page only: availability is day-cached per title and fetches are
+    # bounded like the filmography pages — at most 50 synchronous
+    # misses, the rest warmed in the background for the next visit
+
+    streaming_attribution = False
+    availability_by_id, deferred = batch_title_availability(
+        (row["tmdb_id"] for row in rows if row["tmdb_id"]),
+        fetch_limit=50,
+    )
+    if deferred and current_app.redis.set(
+        f"fitzflix:streaming:warm:criterion:{filter_status}:{page}",
+        "1",
+        nx=True,
+        ex=900,
+    ):
+        current_app.maintenance_queue.enqueue(
+            "app.streaming.warm_title_availability",
+            args=(deferred,),
+            job_timeout="30m",
+            description=(f"Warming streaming availability for {len(deferred)} films"),
+        )
+    for row in rows:
+        if not row["tmdb_id"]:
+            continue
+        matches = streaming_matches(
+            availability_by_id.get(row["tmdb_id"]),
+            {CRITERION_CHANNEL_PROVIDER_ID},
+        )
+        if matches:
+            row["streaming"] = matches
+            streaming_attribution = True
 
     return render_template(
         "library_criterion.html",
         title="Criterion Collection films",
         rows=rows,
-        filter_form=filter_form,
+        filter_status=filter_status,
+        counts=counts,
+        page_numbers=_page_window(page, last_page),
+        current_page=page,
+        streaming_attribution=streaming_attribution,
+        prev_url=(
+            url_for("main.criterion_collection", filter=filter_status, page=page - 1)
+            if page > 1
+            else None
+        ),
+        next_url=(
+            url_for("main.criterion_collection", filter=filter_status, page=page + 1)
+            if page < last_page
+            else None
+        ),
     )
 
 

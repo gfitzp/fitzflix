@@ -5137,10 +5137,16 @@ def _parse_criterion_binding(binding):
     title = (binding.get("filmLabel", {}).get("value") or "").strip()
     year = binding.get("year", {}).get("value", "")
 
+    # "title" is uppercased for matching; "label" keeps Wikidata's own
+    # casing for display (the catalog page shows releases the library
+    # has no record for). Cached payloads from before the label was
+    # stored simply lack the key, so readers must fall back to "title"
+
     return {
         "spine_number": int(spine),
         "tmdb_id": int(tmdb_id) if tmdb_id.isdigit() else None,
         "title": title.upper(),
+        "label": title,
         "year": int(year) if year.isdigit() else None,
         "criterion_film_id": binding.get("criterionId", {}).get("value") or None,
         "set_title": None,

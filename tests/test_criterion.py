@@ -315,6 +315,176 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     assert f'href="/movie/{settled_id}"' in page
 
 
+def _seed_release_cache(app, releases):
+    """Store a canned spine catalog where the page reads it from."""
+
+    app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps(releases))
+
+
+def release(spine, title, year, tmdb_id=None, set_title=None):
+    """One cached release dict, the shape the Wikidata parser stores."""
+
+    return {
+        "spine_number": spine,
+        "tmdb_id": tmdb_id,
+        "title": title.upper(),
+        "label": title,
+        "year": year,
+        "criterion_film_id": None,
+        "set_title": set_title,
+    }
+
+
+def test_criterion_page_shows_full_catalog(app, admin_client):
+    """The page lists the whole spine catalog: library films consume
+    their releases (TMDb id or title+year, never duplicated), an owned
+    film the refresh never marked still rows up with its catalog spine,
+    releases beyond the library render as log-page links with funnel
+    badges off any local record, TMDb-less releases render as plain
+    rows, and the Criterion Channel badge marks what's streaming."""
+
+    from app.models import User, UserWatchlist
+    from app.streaming import AVAILABILITY_KEY
+    from tests.factories import make_movie_file, quality
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        bluray_id = quality("Bluray-1080p").id
+
+        owned = make_movie(
+            "Criterion Settled",
+            1954,
+            tmdb_id=555001,
+            criterion_spine_number=100,
+            criterion_disc_owned=True,
+            criterion_quality_id=bluray_id,
+        )
+        make_movie_file(owned, "Bluray-1080p")
+
+        # In the library and in the catalog, but the refresh never
+        # stamped its criterion fields — the TMDb id connects them
+
+        unmarked = make_movie("Unmarked Owned", 1980, tmdb_id=555003)
+        make_movie_file(unmarked, "Bluray-1080p")
+
+        # Criterion-marked but TMDb-less: consumes its release by
+        # title and year, so the catalog must not repeat it
+
+        by_title = make_movie(
+            "Title Match", 1990, criterion_spine_number=500, criterion_disc_owned=False
+        )
+        make_movie_file(by_title, "DVD")
+
+        # A file-less record for a catalog release (a watchlisted film
+        # logged through TMDb): dresses the row and carries the funnel
+
+        record = make_movie(
+            "Catalog Only",
+            1962,
+            tmdb_id=555002,
+            tmdb_title="Catalog Only",
+            tmdb_overview="A spine the library lacks.",
+        )
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=record.id))
+        db.session.commit()
+
+    _seed_release_cache(
+        app,
+        [
+            release(100, "Criterion Settled", 1954, tmdb_id=555001),
+            release(200, "Catalog Only", 1962, tmdb_id=555002),
+            release(300, "No Tmdb Release", 1971),
+            release(400, "Unmarked Owned", 1980, tmdb_id=555003),
+            release(500, "Title Match", 1990),
+        ],
+    )
+
+    # The catalog release is streaming on the Criterion Channel (day
+    # cache seeded, so no TMDb call happens)
+
+    app.redis.set(
+        AVAILABILITY_KEY.format(tmdb_id=555002),
+        json.dumps(
+            {
+                "link": "https://example.test/watch",
+                "flatrate": [
+                    {
+                        "provider_id": 258,
+                        "provider_name": "The Criterion Channel",
+                        "logo_path": "/criterion.jpg",
+                    }
+                ],
+                "ads": [],
+                "rent": [],
+                "buy": [],
+            }
+        ),
+    )
+
+    page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
+
+    # Every spine rows up exactly once, in spine order
+
+    assert page.count("Criterion Settled (1954)") == 1
+    assert page.count("Catalog Only (1962)") == 1
+    assert page.count("Title Match (1990)") == 1
+    assert "#300 &ndash; No Tmdb Release (1971)" in page
+    assert "#400 &ndash; Unmarked Owned (1980)" in page
+    assert (
+        page.index("#100 &ndash;")
+        < page.index("#200 &ndash;")
+        < page.index("#300 &ndash;")
+        < page.index("#400 &ndash;")
+        < page.index("#500 &ndash;")
+    )
+
+    # The catalog row opens the log page, wears the record's funnel
+    # badge and overview, and shows the Criterion Channel badge with
+    # the mandatory JustWatch credit
+
+    assert 'href="/review/tmdb/555002"' in page
+    assert "On your watchlist" in page
+    assert "A spine the library lacks." in page
+    assert 'title="Streaming on The Criterion Channel"' in page
+    assert "Streaming data by JustWatch" in page
+
+    # The plain row has nothing to link
+
+    assert 'href="/review/tmdb/555003"' not in page  # library row links home
+    with app.app_context():
+        unmarked_id = Movie.query.filter_by(tmdb_id=555003).first().id
+    assert f'href="/movie/{unmarked_id}"' in page
+
+    # The filters: "library" drops catalog rows, "settled" keeps only
+    # settled library rows — the unmarked film has no owned disc, the
+    # DVD rip lags its release, so only the settled film remains
+
+    library_page = admin_client.get(
+        "/library/criterion-collection?filter=library"
+    ).get_data(as_text=True)
+    assert "Catalog Only (1962)" not in library_page
+    assert "No Tmdb Release" not in library_page
+    assert "Unmarked Owned (1980)" in library_page
+
+    settled_page = admin_client.get(
+        "/library/criterion-collection?filter=settled"
+    ).get_data(as_text=True)
+    assert "Criterion Settled (1954)" in settled_page
+    assert "Unmarked Owned (1980)" not in settled_page
+    assert "Title Match (1990)" not in settled_page
+
+
+def test_criterion_catalog_pagination():
+    """The page-number window keeps the ends and the neighborhood of
+    the current page, with gaps marked."""
+
+    from app.main.routes import _page_window
+
+    assert _page_window(1, 1) == [1]
+    assert _page_window(2, 3) == [1, 2, 3]
+    assert _page_window(6, 12) == [1, 2, None, 4, 5, 6, 7, 8, None, 11, 12]
+
+
 def test_shopping_list_links_direct_to_criterion_film_page(
     app, admin_client, monkeypatch
 ):

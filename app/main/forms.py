@@ -137,19 +137,6 @@ class CriterionRefreshForm(FlaskForm):
     criterion_refresh = SubmitField("Refresh Criterion Collection Info")
 
 
-class CriterionFilterForm(FlaskForm):
-    """Criterion page: all releases versus owned discs."""
-
-    filter_status = RadioField(
-        "Library",
-        choices=[
-            ("all", "All films with a Criterion release"),
-            ("owned", "Owned Criterion releases"),
-        ],
-    )
-    filter_submit = SubmitField("Filter")
-
-
 class MovieShoppingFilterForm(FlaskForm):
     """Movie shopping list: library, media, and quality-range filters."""
 

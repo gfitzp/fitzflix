@@ -1,32 +1,72 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import library_badge %}
+{% from "_availability_badges.html" import availability_badge, library_badge %}
+
+{% macro pagination_nav() %}
+{% if page_numbers|length > 1 %}
+<nav aria-label="Criterion catalog pages">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% for number in page_numbers %}
+			{% if number %}
+			<li class="page-item{% if number == current_page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.criterion_collection', filter=filter_status, page=number) }}">{{ number }}</a></li>
+			{% else %}
+			<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{% endif %}
+{% endmacro %}
+
+{% macro funnel_badges(row) %}
+{# The personal funnel: Seen, On your watchlist, Might interest you —
+   seen and might-interest never show together #}
+{% if row.seen %}
+<span class="badge badge-info mr-1">Seen</span>
+{% endif %}
+{% if row.watchlisted %}
+<span class="badge badge-warning mr-1">On your watchlist</span>
+{% endif %}
+{% if row.might_interest %}
+<span class="badge badge-info mr-1">Might interest you</span>
+{% endif %}
+{% for provider in row.streaming or [] %}
+{{ availability_badge(provider) }}
+{% endfor %}
+{% endmacro %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
-		<form action="" method="post">
-			{{ filter_form.hidden_tag() }}
-			{% for subfield in filter_form.filter_status %}
+		<form class="float-sm-right mb-2" action="{{ url_for('main.criterion_collection') }}" method="get">
+			{% for value, label in [("all", "All releases"), ("library", "In library"), ("settled", "Owned & settled")] %}
 			<div class="form-check form-check-inline">
-				{{ subfield(class_="form-check-input") }}
-				{{ subfield.label(class_="form-check-label") }}
+				<input class="form-check-input" type="radio" name="filter" id="criterion-filter-{{ value }}" value="{{ value }}"{% if filter_status == value %} checked{% endif %}>
+				<label class="form-check-label" for="criterion-filter-{{ value }}">{{ label }} ({{ counts[value] }})</label>
 			</div>
 			{% endfor %}
-			{{ filter_form.filter_submit(class_="btn btn-sm btn-primary mb-2") }}
+			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
 		</form>
 	</div>
 </div>
 <hr>
 {% if rows %}
+{{ pagination_nav() }}
 <div class="list-group mb-4">
 	{% for row in rows %}
 	{% set movie = row.movie %}
+	{% if row.kind == "library" %}
 	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
 		<div class="media">
 			{% include "_movie_poster_small.html" %}
 			<div class="media-body">
-				<h5 class="mb-1">{% if movie.criterion_spine_number %}#{{ movie.criterion_spine_number }} &ndash; {% endif %}{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</h5>
+				<h5 class="mb-1">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</h5>
 				{# Settled — the Criterion disc is owned and the file
 				   matches its format — wears the library badge; anything
 				   else shows its amber quality tier: go find the
@@ -36,20 +76,9 @@
 				{% else %}
 				<span class="badge badge-warning mr-1">{{ row.quality.quality_title }}{% if row.file.fullscreen %} &mdash; full screen{% endif %}</span>
 				{% endif %}
-				{# The personal funnel: Seen, On your watchlist, Might
-				   interest you — seen and might-interest never show
-				   together #}
-				{% if row.seen %}
-				<span class="badge badge-info mr-1">Seen</span>
-				{% endif %}
-				{% if row.watchlisted %}
-				<span class="badge badge-warning mr-1">On your watchlist</span>
-				{% endif %}
-				{% if row.might_interest %}
-				<span class="badge badge-info mr-1">Might interest you</span>
-				{% endif %}
-				{% if movie.criterion_set_title %}
-				<p class="mb-0 mt-1 small text-muted">Part of the {{ movie.criterion_set_title }} collector's set</p>
+				{{ funnel_badges(row) }}
+				{% if row.set_title %}
+				<p class="mb-0 mt-1 small text-muted">Part of the {{ row.set_title }} collector's set</p>
 				{% endif %}
 				{% if movie.tmdb_overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
@@ -57,9 +86,56 @@
 			</div>
 		</div>
 	</a>
+	{% elif row.kind == "tmdb" %}
+	{# A release the library lacks, in the TMDb search rows' grammar:
+	   the row opens the log page, so it's watchlistable from there; a
+	   file-less local record dresses the row with its stored poster
+	   and overview #}
+	{% if row.year %}
+	<a href="{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}" class="list-group-item list-group-item-action">
+	{% else %}
+	<div class="list-group-item">
+	{% endif %}
+		<div class="media">
+			{% if movie %}
+			{% include "_movie_poster_small.html" %}
+			{% else %}
+			<div class="rounded mr-3 border d-flex justify-content-center align-items-center text-secondary" style="height: 130px; width: 92px; flex-shrink: 0;">
+				<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+					<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
+				</svg>
+			</div>
+			{% endif %}
+			<div class="media-body">
+				<h5 class="mb-1">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</h5>
+				{{ funnel_badges(row) }}
+				{% if row.set_title %}
+				<p class="mb-0 mt-1 small text-muted">Part of the {{ row.set_title }} collector's set</p>
+				{% endif %}
+				{% if movie and movie.tmdb_overview %}
+				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
+				{% endif %}
+			</div>
+		</div>
+	{% if row.year %}</a>{% else %}</div>{% endif %}
+	{% else %}
+	{# Wikidata knows this release but not its TMDb id, so there's
+	   nothing to link or look up — a plain spine row, like the
+	   leaving page's "Also leaving" list #}
+	<div class="list-group-item">
+		<span>{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</span>
+		{% if row.set_title %}
+		<span class="small text-muted">&mdash; part of the {{ row.set_title }} collector's set</span>
+		{% endif %}
+	</div>
+	{% endif %}
 	{% endfor %}
 </div>
+{{ pagination_nav() }}
 {% else %}
-<h5>There are no Criterion Collection films in the library.</h5>
+<h5>There are no Criterion Collection films to show.</h5>
+{% endif %}
+{% if streaming_attribution %}
+<p class="small text-muted">Streaming data by JustWatch</p>
 {% endif %}
 {% endblock %}
