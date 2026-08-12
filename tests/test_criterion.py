@@ -204,6 +204,99 @@ def test_refresh_survives_wikidata_outage(app, monkeypatch):
         assert db.session.get(Movie, movie_id).criterion_spine_number is None
 
 
+def test_criterion_page_row_grammar_and_badges(app, admin_client):
+    """The Criterion page speaks the search-row grammar: the library
+    badge only when the disc is owned AND the file matches the
+    release's own format, an amber quality tier otherwise (go find the
+    Criterion version), plus the personal funnel badges."""
+
+    from app.models import User, UserMovieReview, UserWatchlist
+    from app.recommendations import RECS_KEY
+    from tests.factories import make_movie_file, quality
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        bluray_id = quality("Bluray-1080p").id
+
+        settled = make_movie(
+            "Criterion Settled",
+            1954,
+            criterion_spine_number=100,
+            criterion_disc_owned=True,
+            criterion_quality_id=bluray_id,
+            tmdb_overview="A settled classic.",
+        )
+        make_movie_file(settled, "Bluray-1080p")
+
+        # Disc owned but the rip lags the release's format
+
+        ripless = make_movie(
+            "Criterion Disc Unripped",
+            1960,
+            criterion_spine_number=101,
+            criterion_disc_owned=True,
+            criterion_quality_id=bluray_id,
+        )
+        make_movie_file(ripless, "DVD")
+
+        # Topped-out file, but no Criterion disc — still amber
+
+        unowned = make_movie(
+            "Criterion Unowned Disc",
+            1965,
+            criterion_spine_number=102,
+            criterion_set_title="Essential Arthouse",
+            criterion_disc_owned=False,
+        )
+        make_movie_file(unowned, "Bluray-2160p Remux")
+
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=ripless.id))
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=settled.id,
+                rating=9,
+                modified_rating=9,
+                whole_stars=4,
+                half_stars=1,
+            )
+        )
+        db.session.commit()
+        settled_id, unowned_id = settled.id, unowned.id
+
+    # Both films sit in the stored recommendations — the seen one must
+    # not badge might-interest anyway
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [
+                    {"movie_id": unowned_id, "score": 1.0, "because": []},
+                    {"movie_id": settled_id, "score": 0.9, "because": []},
+                ],
+            }
+        ),
+    )
+
+    page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
+
+    assert "#100 &ndash; Criterion Settled (1954)" in page
+    assert page.count('title="In your Fitzflix library"') == 1
+    assert 'badge-warning mr-1">DVD' in page
+    assert 'badge-warning mr-1">Bluray-2160p Remux' in page
+    assert 'badge-info mr-1">Seen' in page
+    assert "On your watchlist" in page
+    assert page.count("Might interest you") == 1
+    assert page.index("Criterion Unowned Disc (1965)") < page.index(
+        "Might interest you"
+    )
+    assert "Part of the Essential Arthouse collector's set" in page
+    assert "A settled classic." in page
+    assert f'href="/movie/{settled_id}"' in page
+
+
 def test_shopping_list_links_direct_to_criterion_film_page(
     app, admin_client, monkeypatch
 ):

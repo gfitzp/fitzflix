@@ -1212,7 +1212,7 @@ def criterion_collection():
         .subquery()
     )
 
-    movies = (
+    results = (
         db.session.query(File, Movie, RefQuality)
         .join(Movie, (Movie.id == File.movie_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
@@ -1250,10 +1250,58 @@ def criterion_collection():
         .all()
     )
 
+    # A row is SETTLED — the Fitzflix library badge, nothing to do —
+    # when the Criterion disc is owned AND the local file matches the
+    # release's own format (falling back to the app-wide upgrade
+    # threshold when the release quality was never recorded); anything
+    # else shows its amber quality tier: go find the Criterion version
+
+    movie_ids = [movie.id for _, movie, _ in results]
+    CriterionQuality = db.aliased(RefQuality)
+    criterion_prefs = dict(
+        db.session.query(Movie.id, CriterionQuality.preference)
+        .join(CriterionQuality, CriterionQuality.id == Movie.criterion_quality_id)
+        .filter(Movie.id.in_(movie_ids or [0]))
+    )
+    threshold = _upgrade_threshold()
+
+    # The personal funnel, per-user like everywhere else: seen films
+    # never badge might-interest
+
+    seen_ids = {
+        movie_id
+        for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .filter(UserMovieReview.movie_id.in_(movie_ids or [0]))
+    }
+    watchlisted_ids = {
+        movie_id
+        for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+        .filter(UserWatchlist.user_id == int(current_user.id))
+        .filter(UserWatchlist.movie_id.in_(movie_ids or [0]))
+    }
+    rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+
+    rows = []
+    for file, movie, quality in results:
+        target = criterion_prefs.get(movie.id) or threshold
+        upgradable = bool(file.fullscreen) or quality.preference < target
+        rows.append(
+            {
+                "file": file,
+                "movie": movie,
+                "quality": quality,
+                "settled": bool(movie.criterion_disc_owned) and not upgradable,
+                "seen": movie.id in seen_ids,
+                "watchlisted": movie.id in watchlisted_ids,
+                "might_interest": movie.id in rec_ids and movie.id not in seen_ids,
+            }
+        )
+
     return render_template(
         "library_criterion.html",
         title="Criterion Collection films",
-        movies=movies,
+        rows=rows,
         filter_form=filter_form,
     )
 

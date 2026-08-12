@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_availability_badges.html" import library_badge %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -17,44 +18,48 @@
 	</div>
 </div>
 <hr>
-{% if movies %}
-<div class="d-none d-sm-block">
-	{% for file, movie, quality in movies %}
-	<div class="media mb-2">
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
+{% if rows %}
+<div class="list-group mb-4">
+	{% for row in rows %}
+	{% set movie = row.movie %}
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
+		<div class="media">
 			{% include "_movie_poster_small.html" %}
-		</a>
-		<div class="media-body">
-			<h5>{% if movie.criterion_spine_number %}#{{ movie.criterion_spine_number }} - {% endif %}<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></h5>
-			<p class="mt-n2 text-muted">
-				{% if file.edition %}{{ file.edition }}<br>{% endif %}
-				{% if file.fullscreen %}Full Screen<br>{% endif %}
-				{{ quality.quality_title }}
-			</p>
-		</div>
-	</div>
-	{% endfor %}
-</div>
-
-<!-- Display differently on mobile device -->
-
-<div class="d-block d-sm-none mt-n2">
-	<div class="list-group d-flex">
-	{% for file, movie, quality in movies %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
-			<div>
-				{% include "_movie_poster_small.html" %}
-				<h6><span class="text-body">{% if movie.criterion_spine_number %}#{{ movie.criterion_spine_number }} - {% endif %}{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
-				<p class="mt-n2">
-					<span class="text-muted">{% if file.edition %}<span class="text-body">{{ file.edition }}</span>&nbsp;–&nbsp;{% endif %}{{ quality.quality_title }}</span>
-				</p>
+			<div class="media-body">
+				<h5 class="mb-1">{% if movie.criterion_spine_number %}#{{ movie.criterion_spine_number }} &ndash; {% endif %}{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</h5>
+				{# Settled — the Criterion disc is owned and the file
+				   matches its format — wears the library badge; anything
+				   else shows its amber quality tier: go find the
+				   Criterion version #}
+				{% if row.settled %}
+				{{ library_badge() }}
+				{% else %}
+				<span class="badge badge-warning mr-1">{{ row.quality.quality_title }}{% if row.file.fullscreen %} &mdash; full screen{% endif %}</span>
+				{% endif %}
+				{# The personal funnel: Seen, On your watchlist, Might
+				   interest you — seen and might-interest never show
+				   together #}
+				{% if row.seen %}
+				<span class="badge badge-info mr-1">Seen</span>
+				{% endif %}
+				{% if row.watchlisted %}
+				<span class="badge badge-warning mr-1">On your watchlist</span>
+				{% endif %}
+				{% if row.might_interest %}
+				<span class="badge badge-info mr-1">Might interest you</span>
+				{% endif %}
+				{% if movie.criterion_set_title %}
+				<p class="mb-0 mt-1 small text-muted">Part of the {{ movie.criterion_set_title }} collector's set</p>
+				{% endif %}
+				{% if movie.tmdb_overview %}
+				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
+				{% endif %}
 			</div>
-		</a>
+		</div>
+	</a>
 	{% endfor %}
-	</div>
 </div>
-
 {% else %}
-	<h5>There are no Criterion Collection films in the library.</h5>
+<h5>There are no Criterion Collection films in the library.</h5>
 {% endif %}
 {% endblock %}
