@@ -45,6 +45,9 @@
 		</form>
 	</div>
 </div>
+{% endif %}
+{# The strip renders even when the card pool is spent — suggestions
+   outlive the last featured film #}
 {% if suggestions and anchor %}
 <hr>
 {# Enjoyment picks earned by the last positive rating — each can be
@@ -69,16 +72,19 @@
 			{% endif %}
 			<p class="small mb-1">{{ movie.title }} ({{ movie.year }})</p>
 		</a>
+		{# Already seen it? Rate it right here (rating a suggestion
+		   re-anchors the drive to it); otherwise bank it #}
 		<form action="" method="post">
 			{{ form.csrf_token }}
 			{{ form.movie_id(value=movie.id) }}
+			{{ rating_ladder(compact=true) }}
 			{{ form.want_suggestion_submit(class_="btn btn-sm btn-outline-primary py-0") }}
 		</form>
 	</div>
 	{% endfor %}
 </div>
 {% endif %}
-{% else %}
+{% if not featured %}
 <p class="lead">Nothing left to offer right now.</p>
 <p class="text-muted">You've answered for every eligible film in the library &mdash; skipped films rest for a week, and anything on your watchlist or already in your diary stays out. New arrivals will show up here.</p>
 {% endif %}

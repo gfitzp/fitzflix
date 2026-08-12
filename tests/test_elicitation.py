@@ -311,6 +311,183 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
         assert float(review.rating) == 4.0
 
 
+def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
+    """A 3+ ladder tap on the movie page earns the "since you liked"
+    strip on the redirect back to that page — and only that page; a
+    banked suggestion joins the watchlist without moving the anchor."""
+
+    import json
+
+    from app.elicitation import last_response
+
+    with app.app_context():
+        user_id = admin_id()
+        western = genre(37, "Western")
+        auteur = make_person(777006, "Page Strip Director")
+        anchor = make_candidate(
+            "Page Strip Anchor", 1960, genre_row=western, director=auteur
+        )
+        similar = make_candidate(
+            "Page Strip Similar", 1961, genre_row=western, director=auteur
+        )
+        similar_two = make_candidate(
+            "Page Strip Similar Two", 1962, genre_row=western, director=auteur
+        )
+        drama = genre(18, "Drama")
+        unrelated = make_candidate("Page Strip Unrelated", 1999, genre_row=drama)
+        db.session.commit()
+        anchor_id, similar_id = anchor.id, similar.id
+        similar_two_id, unrelated_id = similar_two.id, unrelated.id
+
+    app.redis.set(
+        f"fitzflix:recs:profile:{user_id}",
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:37": {
+                        "class": "genre",
+                        "label": "Western",
+                        "count": 3,
+                        "score": 0.5,
+                    }
+                },
+                "movies": 3,
+            }
+        ),
+    )
+
+    page = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
+    token = csrf_token_from(page)
+    response = admin_client.post(
+        f"/movie/{anchor_id}",
+        data={"csrf_token": token, "quick_rating": "4"},
+        follow_redirects=True,
+    )
+    body = response.get_data(as_text=True)
+    assert "Since you liked Page Strip Anchor" in body
+    assert "Page Strip Similar (1961)" in body
+
+    # The strip belongs to the anchor's page alone
+
+    other = admin_client.get(f"/movie/{unrelated_id}").get_data(as_text=True)
+    assert "Since you liked" not in other
+
+    # Banking a suggestion adds it to the watchlist and leaves the
+    # anchor (and the steering) untouched
+
+    response = admin_client.post(
+        f"/movie/{anchor_id}",
+        data={
+            "csrf_token": token,
+            "movie_id": str(similar_id),
+            "add_watchlist_submit": "Add to Watchlist",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=similar_id).first()
+            is not None
+        )
+        assert last_response(app.redis, user_id)["movie_id"] == anchor_id
+
+    # First GET renders the one-shot flash (which names the film); the
+    # second shows the steady state: the banked film left the strip,
+    # its sibling remains
+
+    admin_client.get(f"/movie/{anchor_id}")
+    page = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
+    assert "Page Strip Similar (1961)" not in page
+    assert "Page Strip Similar Two (1962)" in page
+
+    # Rating a suggestion from the strip rates THAT film, date-less,
+    # without moving the anchor — the strip refreshes minus the film
+
+    response = admin_client.post(
+        f"/movie/{anchor_id}",
+        data={
+            "csrf_token": token,
+            "movie_id": str(similar_two_id),
+            "quick_rating": "2",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=similar_two_id
+        ).one()
+        assert float(row.rating) == 2.0
+        assert row.date_watched is None
+        assert last_response(app.redis, user_id)["movie_id"] == anchor_id
+
+    admin_client.get(f"/movie/{anchor_id}")
+    page = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
+    assert "Page Strip Similar Two (1962)" not in page
+
+
+def test_rate_suggestions_are_rateable_and_reanchor(app, admin_client):
+    """On the drive, a ladder tap on a suggestion card rates that film
+    and RE-ANCHORS the session to it — the chain continues from the
+    film just rated."""
+
+    import json
+
+    from app.elicitation import last_response
+
+    with app.app_context():
+        user_id = admin_id()
+        western = genre(37, "Western")
+        auteur = make_person(777007, "Chain Director")
+        anchor = make_candidate(
+            "Chain Anchor", 1960, genre_row=western, director=auteur
+        )
+        similar = make_candidate(
+            "Chain Similar", 1961, genre_row=western, director=auteur
+        )
+        db.session.commit()
+        anchor_id, similar_id = anchor.id, similar.id
+
+    app.redis.set(
+        f"fitzflix:recs:profile:{user_id}",
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:37": {
+                        "class": "genre",
+                        "label": "Western",
+                        "count": 3,
+                        "score": 0.5,
+                    }
+                },
+                "movies": 3,
+            }
+        ),
+    )
+
+    page = admin_client.get("/rate").get_data(as_text=True)
+    token = csrf_token_from(page)
+    admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(anchor_id), "quick_rating": "4"},
+    )
+
+    strip = admin_client.get("/rate").get_data(as_text=True)
+    assert "Chain Similar (1961)" in strip
+
+    admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(similar_id), "quick_rating": "5"},
+    )
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=similar_id
+        ).one()
+        assert float(row.rating) == 5.0
+        state = last_response(app.redis, user_id)
+        assert state["movie_id"] == similar_id
+        assert state["positive"] is True
+
+
 def test_rate_page_shows_featured_details_only(app, admin_client):
     """One card at a time — what's next stays a mystery, the carrot
     for answering."""

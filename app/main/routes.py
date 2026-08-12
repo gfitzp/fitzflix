@@ -168,6 +168,21 @@ CREW_ROLE_LABELS = {
 CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
 
 
+def _enqueue_profile_recompute():
+    """Fold fresh ratings into the stored profile within minutes,
+    instead of waiting for the 1:45 AM run — NX-marked so a rating
+    session enqueues at most one recompute per five minutes."""
+
+    if current_app.redis.set(
+        f"fitzflix:elicit:recompute:{int(current_user.id)}", "1", nx=True, ex=300
+    ):
+        current_app.maintenance_queue.enqueue(
+            "app.recommendations.recompute_recommendations",
+            job_timeout="1h",
+            description="Recomputing film recommendations",
+        )
+
+
 def _quick_rating():
     """(present, rating) from the quick-answer ladder's submission.
 
@@ -1423,9 +1438,16 @@ def movie(movie_id):
             return redirect(url_for("main.movie", movie_id=movie.id))
         # The ladder is the only rating input; Log Watch without a tap
         # is a bare diary entry. 3+ stars auto-flag liked. The date and
-        # review text submit as they stand either way.
+        # review text submit as they stand either way. A tap on a
+        # SUGGESTION card carries that film's movie_id and rates it
+        # (date-less), while the strip stays anchored to this page
 
         rating = quick_rating
+        target = movie
+        if quick_present:
+            form_movie_id = (request.form.get("movie_id") or "").strip()
+            if form_movie_id.isdigit() and int(form_movie_id) != movie.id:
+                target = db.session.get(Movie, int(form_movie_id)) or movie
         # A bare submission (no rating or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier
@@ -1436,13 +1458,13 @@ def movie(movie_id):
         )
         rewatch = (
             db.session.query(UserMovieReview.id)
-            .filter_by(user_id=current_user.id, movie_id=movie.id)
+            .filter_by(user_id=current_user.id, movie_id=target.id)
             .first()
             is not None
         )
         review = UserMovieReview(
             user_id=current_user.id,
-            movie_id=movie.id,
+            movie_id=target.id,
             review=movie_review_form.review.data,
             liked=rating is not None and rating >= 3,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
@@ -1451,10 +1473,32 @@ def movie(movie_id):
             **star_rating_fields(rating),
         )
         db.session.add(review)
-        clear_watchlist(current_user.id, movie.id)
+        clear_watchlist(current_user.id, target.id)
         db.session.commit()
+        target_title = (
+            title
+            if target.id == movie.id
+            else (
+                f"{target.tmdb_title if target.tmdb_title else target.title} "
+                f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
+            )
+        )
         if rating is not None:
-            flash(f"Rated '{title}' {rating:g} out of 5 stars", "success")
+            # The same last-response state the rating drive keeps: a
+            # positive rating earns the "since you liked…" strip on the
+            # redirect back here, and steers the drive's next card too.
+            # Rating a suggestion doesn't move the anchor — the strip
+            # refreshes in place with the rated film gone
+            if target.id == movie.id:
+                set_last_response(
+                    current_app.redis,
+                    current_user.id,
+                    movie.id,
+                    "rated",
+                    positive=rating >= 3,
+                )
+            _enqueue_profile_recompute()
+            flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
         elif is_review:
             flash(f"Logged review for '{title}'", "success")
         else:
@@ -1473,10 +1517,22 @@ def movie(movie_id):
         is not None
     )
     if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
-        if not on_watchlist:
-            db.session.add(UserWatchlist(user_id=current_user.id, movie_id=movie.id))
+        # A movie_id in the form banks a film from the suggestion strip;
+        # without one, the toggle adds THIS film. Banking doesn't touch
+        # the last-response state, so the strip stays anchored and the
+        # banked film simply drops out of it
+        target_id = watchlist_form.movie_id.data or movie.id
+        target = db.session.get(Movie, target_id) or movie
+        if not UserWatchlist.query.filter_by(
+            user_id=int(current_user.id), movie_id=target.id
+        ).first():
+            db.session.add(UserWatchlist(user_id=current_user.id, movie_id=target.id))
             db.session.commit()
-        flash(f"Added '{title}' to your watchlist", "success")
+        target_title = (
+            f"{target.tmdb_title if target.tmdb_title else target.title} "
+            f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
+        )
+        flash(f"Added '{target_title}' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
     if (
         watchlist_form.remove_watchlist_submit.data
@@ -1594,6 +1650,22 @@ def movie(movie_id):
         else None
     )
 
+    # The "since you liked…" strip renders when the session's last
+    # positive rating was for THIS film — right after the log's
+    # redirect lands back here (review_tmdb logs land here too)
+
+    anchor_id, suggested_ids = suggestions_after_rating(current_user.id)
+    suggestions = []
+    if anchor_id == movie.id and suggested_ids:
+        suggested_movies = {
+            m.id: m for m in Movie.query.filter(Movie.id.in_(suggested_ids))
+        }
+        suggestions = [
+            suggested_movies[movie_id]
+            for movie_id in suggested_ids
+            if movie_id in suggested_movies
+        ]
+
     # The personal funnel badge state: "Seen" is any diary row of the
     # current user's (review is their latest); "Might interest you"
     # never shows on a seen film — its watch already feeds the taste
@@ -1640,6 +1712,7 @@ def movie(movie_id):
         watchlist_form=watchlist_form,
         on_watchlist=on_watchlist,
         might_interest=might_interest,
+        suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
@@ -4819,19 +4892,7 @@ def rate():
                 "rated",
                 positive=rating >= 3,
             )
-            # Fold fresh ratings into the stored profile every few
-            # minutes during a session, instead of waiting for 1:45 AM
-            if current_app.redis.set(
-                f"fitzflix:elicit:recompute:{int(current_user.id)}",
-                "1",
-                nx=True,
-                ex=300,
-            ):
-                current_app.maintenance_queue.enqueue(
-                    "app.recommendations.recompute_recommendations",
-                    job_timeout="1h",
-                    description="Recomputing film recommendations",
-                )
+            _enqueue_profile_recompute()
             flash(f"Rated '{title}' {rating:g} out of 5", "success")
         elif form.watchlist_submit.data or form.want_suggestion_submit.data:
             if not UserWatchlist.query.filter_by(
@@ -4909,12 +4970,18 @@ def rate():
     )
 
 
-def _find_or_create_tmdb_movie(tmdb_id, film_title, year):
+def _find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
     """(movie, created): the record for a TMDb film — reusing an existing
     row by tmdb id, or a colliding canonical title+year record, before
     creating a review-only one. The movie may have appeared since the
     caller's redirect check (an import or a concurrent log). Callers
-    commit and, when created, enqueue the standard TMDb refresh."""
+    commit and, when created, enqueue the standard TMDb refresh.
+
+    The caller's live TMDb payload (details) primes the display fields
+    — title, date, overview, poster, runtime — so the movie page the
+    redirect lands on isn't bare while the queued refresh completes;
+    tmdb_data_as_of stays unset until the full refresh stamps it.
+    """
 
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie is None:
@@ -4925,6 +4992,22 @@ def _find_or_create_tmdb_movie(tmdb_id, film_title, year):
     if created:
         movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
         db.session.add(movie)
+    if details and movie.tmdb_title is None:
+        # Title and date prime together — display code treats a set
+        # tmdb_title as a promise that the release date exists
+        try:
+            release_date = datetime.strptime(
+                details.get("release_date") or "", "%Y-%m-%d"
+            )
+        except ValueError:
+            release_date = None
+        if release_date is not None:
+            movie.tmdb_title = details.get("title")
+            movie.tmdb_release_date = release_date
+        movie.tmdb_overview = movie.tmdb_overview or details.get("overview")
+        movie.tmdb_poster_path = movie.tmdb_poster_path or details.get("poster_path")
+        movie.tmdb_runtime = movie.tmdb_runtime or details.get("runtime")
+    if created:
         db.session.flush()
     return movie, created
 
@@ -5013,7 +5096,9 @@ def review_tmdb(tmdb_id):
 
     watchlist_form = WatchlistForm()
     if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
-        movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
+        movie, created = _find_or_create_tmdb_movie(
+            tmdb_id, film_title, year, details=details
+        )
         listed = UserWatchlist.query.filter_by(
             user_id=int(current_user.id), movie_id=movie.id
         ).first()
@@ -5043,7 +5128,9 @@ def review_tmdb(tmdb_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
-        movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
+        movie, created = _find_or_create_tmdb_movie(
+            tmdb_id, film_title, year, details=details
+        )
 
         rating = quick_rating
         # A bare submission (no rating or text) is a plain diary
@@ -5073,6 +5160,19 @@ def review_tmdb(tmdb_id):
         db.session.add(review)
         clear_watchlist(current_user.id, movie.id)
         db.session.commit()
+        if rating is not None:
+            # The redirect lands on the movie page, where a positive
+            # rating earns the "since you liked…" strip (a just-created
+            # record has no features yet, so its strip stays empty
+            # until the enrichment lands — harmless)
+            set_last_response(
+                current_app.redis,
+                current_user.id,
+                movie.id,
+                "rated",
+                positive=rating >= 3,
+            )
+            _enqueue_profile_recompute()
 
         if created:
             current_app.request_queue.enqueue(

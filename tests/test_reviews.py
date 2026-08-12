@@ -824,6 +824,15 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         ]
         assert len(refresh_jobs) == 1
 
+        # The positive log primes the "since you liked…" strip on the
+        # movie page the redirect lands on
+
+        from app.elicitation import last_response
+
+        state = last_response(app.redis, user_id)
+        assert state["movie_id"] == movie.id
+        assert state["positive"] is True
+
 
 def test_review_tmdb_redirects_when_film_in_library(app, admin_client):
     from app import db

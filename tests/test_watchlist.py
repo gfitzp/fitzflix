@@ -368,6 +368,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
                 "title": "Wanted Unknown",
                 "release_date": "1999-09-09",
                 "overview": "Not in the library.",
+                "poster_path": "/wanted.jpg",
                 "runtime": 90,
                 "genres": [],
                 "credits": {"cast": []},
@@ -387,8 +388,8 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
             "csrf_token": csrf_token_from(page),
             "add_watchlist_submit": "Add to Watchlist",
         },
+        follow_redirects=True,
     )
-    assert response.status_code == 302
 
     user_id = admin_id(app)
     with app.app_context():
@@ -401,6 +402,22 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
             and job.args[1] == movie.id
         ]
         assert len(refresh_jobs) == 1
+
+        # The live payload primes the display fields, so the movie page
+        # the redirect lands on isn't bare while the refresh is queued —
+        # the refresh stamp itself stays unset until the full pass
+
+        assert movie.tmdb_title == "Wanted Unknown"
+        assert movie.tmdb_overview == "Not in the library."
+        assert movie.tmdb_poster_path == "/wanted.jpg"
+        assert movie.tmdb_runtime == 90
+        assert movie.tmdb_data_as_of is None
+
+    body = response.get_data(as_text=True)
+    assert "Not in the library." in body
+    assert "/wanted.jpg" in body
+    assert "90&nbsp;minutes" in body
+    assert "TMDB data refreshing" in body
 
 
 def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
