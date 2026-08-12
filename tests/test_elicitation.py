@@ -202,6 +202,86 @@ def test_rate_page_actions_flow(app, admin_client):
     assert "Nothing left to offer right now." in page
 
 
+def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
+    """The one-tap ladder writes ordinary date-less diary rows — Loved
+    it = 5 (positive, steers), Not interested = 0 (retires the film and
+    weighs against its features), Didn't like it = 2 (not positive) —
+    and nonsense values write nothing."""
+
+    from app.elicitation import elicitation_candidates, last_response
+
+    with app.app_context():
+        user_id = admin_id()
+        loved = make_candidate("Quick Loved", 1980)
+        shunned = make_candidate("Quick Shunned", 1981)
+        disliked = make_candidate("Quick Disliked", 1982)
+        untouched = make_candidate("Quick Untouched", 1983)
+        db.session.commit()
+        loved_id, shunned_id = loved.id, shunned.id
+        disliked_id, untouched_id = disliked.id, untouched.id
+
+    page = admin_client.get("/rate").get_data(as_text=True)
+    token = csrf_token_from(page)
+    for label in (
+        "Not interested",
+        "Hated it",
+        "Didn't like it",
+        "Liked it",
+        "Really liked it",
+        "Loved it",
+    ):
+        assert label in page
+
+    response = admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(loved_id), "quick_rating": "5"},
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=loved_id
+        ).one()
+        assert float(review.rating) == 5.0
+        assert review.date_watched is None
+        assert last_response(app.redis, user_id)["positive"] is True
+
+    admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(shunned_id), "quick_rating": "0"},
+    )
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=shunned_id
+        ).one()
+        assert float(review.rating) == 0.0
+        assert last_response(app.redis, user_id)["positive"] is False
+        assert shunned_id not in elicitation_candidates(user_id)
+
+    admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(disliked_id), "quick_rating": "2"},
+    )
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=disliked_id
+        ).one()
+        assert float(review.rating) == 2.0
+
+    # A nonsense value writes nothing
+
+    admin_client.post(
+        "/rate",
+        data={"csrf_token": token, "movie_id": str(untouched_id), "quick_rating": "7"},
+    )
+    with app.app_context():
+        assert (
+            UserMovieReview.query.filter_by(
+                user_id=user_id, movie_id=untouched_id
+            ).first()
+            is None
+        )
+
+
 def test_rate_page_shows_featured_details_only(app, admin_client):
     """One card at a time — what's next stays a mystery, the carrot
     for answering."""

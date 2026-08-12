@@ -4759,8 +4759,22 @@ def rate():
             f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
             f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
         )
-        if form.rate_submit.data:
-            rating = float(form.rating.data) if form.rating.data is not None else None
+        # The quick-answer ladder maps one tap onto whole stars —
+        # "Not interested" is a genuine 0-star diary row, which retires
+        # the film from the drive and every recommendation surface and
+        # weighs hard against its features in the profile
+
+        quick_value = (request.form.get("quick_rating") or "").strip()
+        if quick_value and quick_value not in {"0", "1", "2", "3", "4", "5"}:
+            flash("That rating didn't make sense", "warning")
+            return redirect(url_for("main.rate"))
+        if form.rate_submit.data or quick_value:
+            if quick_value:
+                rating = float(quick_value)
+            else:
+                rating = (
+                    float(form.rating.data) if form.rating.data is not None else None
+                )
             if rating is None and not form.liked.data:
                 flash("Pick a rating (or at least a like) first", "warning")
                 return redirect(url_for("main.rate"))
