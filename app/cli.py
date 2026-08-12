@@ -209,6 +209,16 @@ def register(app):
         click.echo("Streaming rail recomputed")
 
     @recs.command()
+    def leaving():
+        """Fetch and store the leaving-Criterion film set now, instead
+        of waiting for the monthly run."""
+
+        from app.leaving_criterion import refresh_leaving_criterion
+
+        refresh_leaving_criterion()
+        click.echo("Leaving-Criterion set refreshed")
+
+    @recs.command()
     @click.option(
         "--weights",
         default=None,

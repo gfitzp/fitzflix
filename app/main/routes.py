@@ -108,6 +108,7 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
+from app.leaving_criterion import leaving_shelf
 from app.streaming_rail import stored_rail
 from app.videos import (
     evaluate_filename,
@@ -363,6 +364,22 @@ def index():
                 description="Computing the streaming rail",
             )
 
+    # The departure shelf: what leaves the Criterion Channel at month's
+    # end, taste-ranked, for Criterion subscribers. The runtime filter
+    # applies like everywhere else
+
+    shelf = leaving_shelf(current_user)
+    shelf_items = []
+    shelf_departs = None
+    if shelf:
+        shelf_departs = shelf["departs"].strftime("%B %-d")
+        for item in shelf["items"]:
+            if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
+                continue
+            shelf_items.append(item)
+            if len(shelf_items) == 12:
+                break
+
     return render_template(
         "index.html",
         title="Home",
@@ -371,6 +388,8 @@ def index():
         has_history=has_history,
         rail=rail,
         rail_computed_at=rail_computed_at,
+        shelf=shelf_items,
+        shelf_departs=shelf_departs,
         minutes=minutes,
     )
 

@@ -428,6 +428,19 @@ def create_app(config_class=Config, watch_import_dir=False):
         description="Recomputing film recommendations",
     )
 
+    # Refresh the leaving-Criterion set monthly: the new leaving page
+    # appears at the start of each month, and the shelf hides itself
+    # once a departure date passes
+
+    register_cron(
+        app.maintenance_scheduler,
+        "30 3 1 * *",
+        func="app.leaving_criterion.refresh_leaving_criterion",
+        job_id="leaving-criterion-refresh",
+        timeout="1h",
+        description="Refreshing the leaving-Criterion film set",
+    )
+
     # Rebuild the per-user "Streaming on your services" rail nightly,
     # after the taste profiles recompute at 1:45 — the rail scores
     # discover-pool candidates against those profiles
