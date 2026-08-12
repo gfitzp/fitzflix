@@ -4054,6 +4054,7 @@ def search_tmdb():
                             "title": result.get(title_key),
                             "year": (result.get(date_key) or "")[:4],
                             "overview": result.get("overview"),
+                            "poster_path": result.get("poster_path"),
                             "library_id": None,
                         }
                     )

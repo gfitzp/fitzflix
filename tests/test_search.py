@@ -233,6 +233,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
                         "title": "Jaws 2",
                         "release_date": "1978-06-16",
                         "overview": "The shark is back.",
+                        "poster_path": "/jaws2.jpg",
                     },
                 ]
             )
@@ -247,6 +248,12 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     assert "In library" in page
     assert "Jaws 2 (1978)" in page
     assert "Not in library" in page
+
+    # Rows render like the local search: a poster thumbnail, and the
+    # whole unowned row links to the log page
+
+    assert "/w185/jaws2.jpg" in page
+    assert "/review/tmdb/579" in page
 
 
 def test_search_tmdb_without_api_key_explains(app, admin_client):
