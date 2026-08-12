@@ -4048,12 +4048,9 @@ def search_tmdb():
                 if match["library_id"] is not None or match["tmdb_id"] is None:
                     continue
                 availability = title_availability(match["tmdb_id"])
-                names = [
-                    provider["provider_name"]
-                    for provider in streaming_matches(availability, provider_ids)
-                ]
-                if names:
-                    match["streaming"] = names
+                matches = streaming_matches(availability, provider_ids)
+                if matches:
+                    match["streaming"] = matches
                     streaming_attribution = True
 
     return render_template(

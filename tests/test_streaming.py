@@ -352,7 +352,11 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
     )
 
     page = admin_client.get("/search/tmdb?q=streamable").get_data(as_text=True)
-    assert "Streaming on Netflix" in page
+
+    # The same logo badge as the movie-page strip, tooltip and all
+
+    assert 'title="Streaming on Netflix"' in page
+    assert "/w45/netflix.jpg" in page
     assert "Streaming data by JustWatch" in page
 
 

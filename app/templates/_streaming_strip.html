@@ -8,16 +8,17 @@
    from JustWatch and revokes API access without the credit — but the
    library badge alone shows none of their data, so it carries no
    credit. #}
+{% from "_availability_badges.html" import provider_badge %}
 {% if streaming %}
 <div class="mt-1">
 	{% if streaming.local %}
 	<span class="badge badge-light border align-middle mr-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="mr-1">In library</span>
 	{% endif %}
 	{% for provider in streaming.matches %}
-	<span class="badge badge-light border align-middle mr-1" title="Streaming on {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ provider.provider_name }}{% if provider.kind == "ads" %} (with ads){% endif %}</span>
+	{{ provider_badge(provider, suffix=" (with ads)" if provider.kind == "ads" else "") }}
 	{% endfor %}
 	{% for provider in streaming.rentals %}
-	<span class="badge badge-light border align-middle mr-1" title="Rent from {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ provider.provider_name }} (rent)</span>
+	{{ provider_badge(provider, action="Rent from", suffix=" (rent)") }}
 	{% endfor %}
 	{% if not streaming.local and not streaming.matches and not streaming.rentals %}
 		{% if streaming.known %}
