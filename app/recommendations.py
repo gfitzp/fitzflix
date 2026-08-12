@@ -110,7 +110,12 @@ RATING_SPREAD = 2.5
 RECS_KEY = "fitzflix:recs:{user_id}"
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
-STORED_RECOMMENDATIONS = 100
+# Deep enough that the landing page's no-repeat partition (12 films a
+# day, one per quality tier) cycles the whole set roughly monthly —
+# the library pool measured 2,800+ positive-scoring films, so depth
+# costs nothing but Redis bytes
+
+STORED_RECOMMENDATIONS = 400
 
 # Filmography "might interest you" markers: how many films to mark at
 # most, and the coarse score a film must clear to qualify
@@ -338,6 +343,29 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
 
     ranked.sort(key=lambda rec: rec["score"], reverse=True)
     return profile, ranked[:limit]
+
+
+def rotate_partition(items, count, day_index):
+    """A no-repeat daily walk through a ranked list.
+
+    The ranking splits into `count` contiguous quality tiers and each
+    day shows one film from each tier, indexed by a continuous day
+    counter — so every film appears exactly once per cycle (cycle
+    length = tier size, about len/count days), every day mixes all
+    quality tiers, and the whole set refreshes before anything
+    repeats. Deterministic per day; short lists pass through whole.
+    """
+
+    if len(items) <= count:
+        return list(items)
+    tier_size = -(-len(items) // count)
+    picks = []
+    for tier in range(count):
+        tier_items = items[tier * tier_size : (tier + 1) * tier_size]
+        if not tier_items:
+            break
+        picks.append(tier_items[day_index % len(tier_items)])
+    return picks
 
 
 def rotate_daily(items, count, seed, decay=0.93):

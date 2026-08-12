@@ -99,6 +99,7 @@ from app.recommendations import (
     coarse_interest_score,
     credit_interest_markers,
     rotate_daily,
+    rotate_partition,
     stored_profile,
     stored_recommendations,
 )
@@ -313,12 +314,11 @@ def index():
                 continue
             recs.append({"movie": movie, "because": item.get("because", [])[:3]})
 
-        # A day-seeded rotation through the stored ranking, so the rail
-        # doesn't show an identical set for days on end
+        # A no-repeat daily partition through the deep stored ranking:
+        # twelve films a day, one per quality tier, cycling the whole
+        # set (~400 films, roughly monthly) before anything repeats
 
-        recs = rotate_daily(
-            recs, 18, f"recs:{int(current_user.id)}:{date.today().isoformat()}"
-        )
+        recs = rotate_partition(recs, 12, date.today().toordinal())
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
         # reviewer): compute once now instead of waiting for tonight; the

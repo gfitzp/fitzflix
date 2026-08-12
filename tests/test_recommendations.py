@@ -672,3 +672,38 @@ def test_rotate_daily_varies_by_day_and_holds_within_one(app):
     # A list no longer than the display count passes through whole
 
     assert rotate_daily([1, 2, 3], 18, "recs:1:2026-08-10") == [1, 2, 3]
+
+
+def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
+    """One film per quality tier per day, no repeats until the whole
+    set has shown, every day quality-mixed, deterministic per day."""
+
+    from app.recommendations import rotate_partition
+
+    items = list(range(372))  # 12 tiers x 31 films
+
+    days = [rotate_partition(items, 12, day) for day in range(31)]
+
+    # Every day serves 12, deterministically
+
+    assert all(len(day) == 12 for day in days)
+    assert rotate_partition(items, 12, 5) == days[5]
+
+    # Each day draws one film from each quality tier (tier size 31)
+
+    assert [rank // 31 for rank in days[0]] == list(range(12))
+
+    # A full cycle shows every film exactly once — no repeats
+
+    shown = [rank for day in days for rank in day]
+    assert len(shown) == len(set(shown)) == 372
+
+    # Day 32 wraps back to day 1's picks; short lists pass through
+
+    assert rotate_partition(items, 12, 31) == days[0]
+    assert rotate_partition([1, 2, 3], 12, 7) == [1, 2, 3]
+
+    # Pools that don't divide evenly still serve a full row daily
+
+    ragged = list(range(100))
+    assert all(len(rotate_partition(ragged, 12, day)) == 12 for day in range(20))
