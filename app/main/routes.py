@@ -840,7 +840,6 @@ def movie_library():
             bio=bio,
             filmography=filmography,
             tmdb_unavailable=tmdb_credits is None,
-            upgrade_threshold=_upgrade_threshold(),
             streaming_attribution=streaming_attribution,
         )
 

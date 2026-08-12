@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge %}
+{% from "_availability_badges.html" import availability_badge, library_badge %}
 
 {% block app_content %}
 {# Portrait on the left, lifespan and biography in a column to its
@@ -65,8 +65,11 @@
 				   left-aligned badge line (status first, then availability),
 				   then the muted detail lines #}
 				<h5 class="mb-1"><span class="text-body">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</span></h5>
+				{# Ownership shows as the Fitzflix library badge, like the
+				   TMDb search page; file-quality tiers stay on the local
+				   film search #}
 				{% if row.quality %}
-					<span class="badge badge-{{ 'success' if (row.movie.shopping_list_exclude or (not row.file.fullscreen and row.quality.preference >= upgrade_threshold)) else 'warning' }} mr-1">{% if row.file.fullscreen %}Full Screen {% endif %}{{ row.quality.quality_title }}</span>
+					{{ library_badge() }}
 				{% elif row.seen %}
 					<span class="badge badge-info mr-1">Seen</span>
 				{% else %}

@@ -41,8 +41,10 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
     # No stored profile path, so the header shows the silhouette placeholder
     assert "bi-person-fill" in page
     assert "Owned Credit Film" in page
-    # DVD is below the Blu-ray threshold, so it badges as an upgrade candidate
-    assert 'badge-warning mr-1">DVD' in page
+    # Ownership shows as the Fitzflix library badge; quality tiers live
+    # on the local film search instead
+    assert page.count('title="In your Fitzflix library"') == 1
+    assert ">DVD<" not in page
     assert "Unowned Credit Film" in page
     # The TMDb-search row grammar dropped the "Not in library" badge:
     # absence of a quality badge says it
@@ -136,8 +138,9 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "Born January 10, 1920" in page
     assert "Died May 2, 1999 (aged 79)" in page
     assert "Worked steadily for decades." in page
-    # Owned: Blu-ray is at the threshold, so it badges as final
-    assert 'badge-success mr-1">Bluray-1080p' in page
+    # Owned: the Fitzflix library badge, not a quality tier
+    assert 'title="In your Fitzflix library"' in page
+    assert "Bluray-1080p" not in page
     # Seen but unowned: info badge plus the liked heart
     assert 'badge-info mr-1">Seen' in page
     assert "bi-heart-fill" in page
