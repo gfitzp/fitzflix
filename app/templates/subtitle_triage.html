@@ -41,7 +41,7 @@
 					{% for item in entry.tracks %}
 					<tr{% if item.aids %} class="border-bottom-0"{% endif %}>
 						{% if file.container == "Matroska" %}
-						<td><input type="checkbox" name="track_ids" value="{{ item.track.id }}" checked aria-label="Flag track {{ item.track.track }} as forced"></td>
+						<td><input type="checkbox" name="track_ids" value="{{ item.track.id }}" aria-label="Flag track {{ item.track.track }} as forced"></td>
 						{% endif %}
 						<td>{{ item.track.track }}</td>
 						<td>{{ item.track.language_name }}</td>
