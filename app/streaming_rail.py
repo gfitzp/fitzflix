@@ -459,7 +459,7 @@ def compute_user_rail(user):
                 "year": payload.get("year"),
                 "poster_path": payload.get("poster_path"),
                 "runtime": payload.get("runtime"),
-                "providers": [m["provider_name"] for m in matches],
+                "providers": matches,
                 "because": because[:4],
                 "score": round(score, 4),
             }

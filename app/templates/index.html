@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_availability_badges.html" import availability_badge %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -87,7 +88,7 @@
 		</a>
 		<p class="mb-0">
 			{% for provider in item.providers %}
-			<span class="badge badge-primary font-weight-normal">{{ provider }}</span>
+			{{ availability_badge(provider) }}
 			{% endfor %}
 			{% for label in item.because[:3] %}
 			<span class="badge badge-light border font-weight-normal">{{ label }}</span>

@@ -227,7 +227,13 @@ def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
     top = items[0]
     assert top["tmdb_id"] == 5001
     assert top["title"] == "Rail Comedy"
-    assert top["providers"] == ["Netflix"]
+
+    # Providers are stored as full match dicts so the landing page can
+    # render the standard logo badges
+
+    assert [p["provider_name"] for p in top["providers"]] == ["Netflix"]
+    assert top["providers"][0]["kind"] == "flatrate"
+    assert top["providers"][0]["logo_path"] == "/netflix.jpg"
     assert top["because"][0] == "popular on Netflix"
     assert "Comedy" in top["because"]
     assert "Rail Actor" in top["because"]
@@ -285,7 +291,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
                         "year": "1994",
                         "poster_path": "/rail.jpg",
                         "runtime": 95,
-                        "providers": ["Netflix"],
+                        "providers": [{**NETFLIX, "kind": "flatrate"}],
                         "because": ["popular on Netflix", "Comedy"],
                         "score": 1.0,
                     },
@@ -295,7 +301,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
                         "year": "1994",
                         "poster_path": None,
                         "runtime": 90,
-                        "providers": ["Netflix"],
+                        "providers": [{**NETFLIX, "kind": "flatrate"}],
                         "because": ["popular on Netflix"],
                         "score": 0.9,
                     },
@@ -305,7 +311,7 @@ def test_landing_page_renders_the_rail(app, admin_client):
                         "year": "1994",
                         "poster_path": None,
                         "runtime": 90,
-                        "providers": ["Netflix"],
+                        "providers": [{**NETFLIX, "kind": "flatrate"}],
                         "because": ["popular on Netflix"],
                         "score": 0.8,
                     },
@@ -318,6 +324,11 @@ def test_landing_page_renders_the_rail(app, admin_client):
     assert "Streaming on your services" in body
     assert "Rail Showpiece (1994)" in body
     assert "/review/tmdb/6001" in body
+
+    # The provider renders as the standard logo badge, tooltip and all
+
+    assert 'title="Streaming on Netflix"' in body
+    assert "/w45/netflix.jpg" in body
     assert "popular on Netflix" in body
     assert "Streaming data by JustWatch" in body
     assert "last run 2026-08-12 02:15" in body
@@ -365,7 +376,7 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
             "year": "1994",
             "poster_path": None,
             "runtime": runtime,
-            "providers": ["Netflix"],
+            "providers": [{**NETFLIX, "kind": "flatrate"}],
             "because": ["popular on Netflix"],
             "score": 1.0,
         }
