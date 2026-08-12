@@ -20,26 +20,15 @@
 		<form action="" method="post">
 			{{ movie_review_form.hidden_tag() }}
 			{{ rating_ladder() }}
+			{# A ladder tap re-rates this viewing in place; saving without
+			   one keeps the stars exactly as they are #}
 			<div class="row">
-				<div class="form-group col-sm-5">
-					{{ movie_review_form.rating.label }}
-					{{ movie_review_form.rating(size=10, class_="form-control form-control-sm") }}
-					{% for error in movie_review_form.rating.errors %}
-					<div class="text-danger small">{{ error }}</div>
-					{% endfor %}
-				</div>
 				<div class="form-group col-sm-5">
 					{{ movie_review_form.date_watched.label }}
 					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
 					{% for error in movie_review_form.date_watched.errors %}
 					<div class="text-danger small">{{ error }}</div>
 					{% endfor %}
-				</div>
-				<div class="form-group col-sm-2">
-					<div class="form-check mt-4 pt-2">
-						{{ movie_review_form.liked(class_="form-check-input") }}
-						{{ movie_review_form.liked.label(class_="form-check-label") }}
-					</div>
 				</div>
 			</div>
 			<div class="form-group">

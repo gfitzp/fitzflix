@@ -1408,7 +1408,12 @@ def movie(movie_id):
     # (tastes change!), so this just adds an additional review to the UserMovieReview
     # table for this film.
 
-    movie_review_form = MovieReviewForm(date_watched=datetime.now())
+    # The date field starts BLANK: the default log is date-less ("seen
+    # sometime, unknown when") — Plex supplies real timestamps for
+    # watches it sees, and the field is there for the times a date is
+    # actually known
+
+    movie_review_form = MovieReviewForm()
     quick_present, quick_rating = _quick_rating()
     if (
         movie_review_form.review_submit.data or quick_present
@@ -1416,28 +1421,18 @@ def movie(movie_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.movie", movie_id=movie.id))
-        # The rating is optional — a review can be just a like and/or text.
-        # A ladder tap overrides the rating field; the date, like, and
-        # review text submit as they stand. star_rating_fields rounds a
-        # given rating to the nearest half star for display.
+        # The ladder is the only rating input; Log Watch without a tap
+        # is a bare diary entry. 3+ stars auto-flag liked. The date and
+        # review text submit as they stand either way.
 
-        if quick_rating is not None:
-            rating = quick_rating
-        else:
-            rating = (
-                float(movie_review_form.rating.data)
-                if movie_review_form.rating.data is not None
-                else None
-            )
-        # A bare submission (no rating, like, or text) is a plain diary
+        rating = quick_rating
+        # A bare submission (no rating or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier
         # row for this user and film makes this a repeat viewing.
 
         is_review = bool(
-            rating is not None
-            or movie_review_form.liked.data
-            or (movie_review_form.review.data or "").strip()
+            rating is not None or (movie_review_form.review.data or "").strip()
         )
         rewatch = (
             db.session.query(UserMovieReview.id)
@@ -1449,7 +1444,7 @@ def movie(movie_id):
             user_id=current_user.id,
             movie_id=movie.id,
             review=movie_review_form.review.data,
-            liked=movie_review_form.liked.data,
+            liked=rating is not None and rating >= 3,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
             date_reviewed=datetime.now() if is_review else None,
             rewatch=rewatch,
@@ -3114,17 +3109,14 @@ def review_edit(review_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.review_edit", review_id=review_id))
+        # Only a ladder tap changes the stars (and the liked flag that
+        # follows them) — saving a text or date edit must never wipe
+        # the viewing's existing rating
+
         if quick_rating is not None:
-            rating = quick_rating
-        else:
-            rating = (
-                float(movie_review_form.rating.data)
-                if movie_review_form.rating.data is not None
-                else None
-            )
-        for field, value in star_rating_fields(rating).items():
-            setattr(user_review, field, value)
-        user_review.liked = movie_review_form.liked.data
+            for field, value in star_rating_fields(quick_rating).items():
+                setattr(user_review, field, value)
+            user_review.liked = quick_rating >= 3
 
         # The date-only form field can't improve on a stored timestamp
         # (e.g. a Plex watch's actual clock time), so only replace the
@@ -3157,8 +3149,6 @@ def review_edit(review_id):
 
     if request.method == "GET":
         movie_review_form = MovieReviewForm(
-            rating=user_review.rating,
-            liked=user_review.liked,
             review=user_review.review,
             date_watched=(
                 user_review.date_watched.date() if user_review.date_watched else None
@@ -4798,28 +4788,21 @@ def rate():
         # The quick-answer ladder maps one tap onto whole stars —
         # "Not interested" is a genuine 0-star diary row, which retires
         # the film from the drive and every recommendation surface and
-        # weighs hard against its features in the profile
+        # weighs hard against its features in the profile. 3+ stars
+        # auto-flag liked (Glenn's rule: liked means a positive verdict)
 
         quick_present, quick_rating = _quick_rating()
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.rate"))
-        if form.rate_submit.data or quick_present:
-            if quick_rating is not None:
-                rating = quick_rating
-            else:
-                rating = (
-                    float(form.rating.data) if form.rating.data is not None else None
-                )
-            if rating is None and not form.liked.data:
-                flash("Pick a rating (or at least a like) first", "warning")
-                return redirect(url_for("main.rate"))
+        if quick_present:
+            rating = quick_rating
             # An elicited rating is an ordinary diary row with no watch
             # date — the film was seen sometime before Fitzflix
             review = UserMovieReview(
                 user_id=current_user.id,
                 movie_id=movie.id,
-                liked=form.liked.data,
+                liked=rating >= 3,
                 date_watched=None,
                 date_reviewed=datetime.now(),
                 rewatch=False,
@@ -4829,13 +4812,12 @@ def rate():
             clear_watchlist(current_user.id, movie.id)
             db.session.commit()
             # A positive answer unlocks the "since you liked…" strip
-            positive = bool(form.liked.data) or (rating is not None and rating >= 3.5)
             set_last_response(
                 current_app.redis,
                 current_user.id,
                 movie.id,
                 "rated",
-                positive=positive,
+                positive=rating >= 3,
             )
             # Fold fresh ratings into the stored profile every few
             # minutes during a session, instead of waiting for 1:45 AM
@@ -4850,10 +4832,7 @@ def rate():
                     job_timeout="1h",
                     description="Recomputing film recommendations",
                 )
-            if rating is not None:
-                flash(f"Rated '{title}' {rating:g} out of 5", "success")
-            else:
-                flash(f"Marked '{title}' as liked", "success")
+            flash(f"Rated '{title}' {rating:g} out of 5", "success")
         elif form.watchlist_submit.data or form.want_suggestion_submit.data:
             if not UserWatchlist.query.filter_by(
                 user_id=int(current_user.id), movie_id=movie.id
@@ -5053,7 +5032,10 @@ def review_tmdb(tmdb_id):
         flash(f"Added '{film_title} ({year})' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    movie_review_form = MovieReviewForm(date_watched=datetime.now())
+    # Like the movie page, the date starts blank — a date-less verdict
+    # by default, with the field there when the date is actually known
+
+    movie_review_form = MovieReviewForm()
     quick_present, quick_rating = _quick_rating()
     if (
         movie_review_form.review_submit.data or quick_present
@@ -5063,23 +5045,14 @@ def review_tmdb(tmdb_id):
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
         movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
 
-        if quick_rating is not None:
-            rating = quick_rating
-        else:
-            rating = (
-                float(movie_review_form.rating.data)
-                if movie_review_form.rating.data is not None
-                else None
-            )
-        # A bare submission (no rating, like, or text) is a plain diary
+        rating = quick_rating
+        # A bare submission (no rating or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier
         # row for this user and film makes this a repeat viewing.
 
         is_review = bool(
-            rating is not None
-            or movie_review_form.liked.data
-            or (movie_review_form.review.data or "").strip()
+            rating is not None or (movie_review_form.review.data or "").strip()
         )
         rewatch = (
             db.session.query(UserMovieReview.id)
@@ -5091,7 +5064,7 @@ def review_tmdb(tmdb_id):
             user_id=current_user.id,
             movie_id=movie.id,
             review=movie_review_form.review.data,
-            liked=movie_review_form.liked.data,
+            liked=rating is not None and rating >= 3,
             date_watched=_watched_timestamp(movie_review_form.date_watched.data),
             date_reviewed=datetime.now() if is_review else None,
             rewatch=rewatch,

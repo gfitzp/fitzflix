@@ -145,21 +145,17 @@ def test_rate_page_actions_flow(app, admin_client):
     assert "Rate Films" in page
     token = csrf_token_from(page)
 
-    # Rate: an ordinary diary row, with no watch date
+    # Rate: an ordinary diary row, with no watch date, liked auto-set
 
     response = admin_client.post(
         "/rate",
-        data={
-            "csrf_token": token,
-            "movie_id": str(ids[0]),
-            "rating": "4.5",
-            "rate_submit": "Rate It",
-        },
+        data={"csrf_token": token, "movie_id": str(ids[0]), "quick_rating": "4"},
     )
     assert response.status_code == 302
     with app.app_context():
         review = UserMovieReview.query.filter_by(user_id=user_id, movie_id=ids[0]).one()
-        assert float(review.rating) == 4.5
+        assert float(review.rating) == 4.0
+        assert review.liked is True
         assert review.date_watched is None
         assert review.date_reviewed is not None
         assert ids[0] not in elicitation_candidates(user_id)
@@ -246,6 +242,7 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
             user_id=user_id, movie_id=loved_id
         ).one()
         assert float(review.rating) == 5.0
+        assert review.liked is True
         assert review.date_watched is None
         assert last_response(app.redis, user_id)["positive"] is True
 
@@ -270,6 +267,7 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
             user_id=user_id, movie_id=disliked_id
         ).one()
         assert float(review.rating) == 2.0
+        assert review.liked is False
 
     # A nonsense value writes nothing
 
@@ -409,12 +407,7 @@ def test_positive_rating_earns_suggestions(app, admin_client):
 
     response = admin_client.post(
         "/rate",
-        data={
-            "csrf_token": token,
-            "movie_id": str(anchor_id),
-            "rating": "4.5",
-            "rate_submit": "Rate It",
-        },
+        data={"csrf_token": token, "movie_id": str(anchor_id), "quick_rating": "4"},
     )
     assert response.status_code == 302
 
@@ -458,12 +451,7 @@ def test_positive_rating_earns_suggestions(app, admin_client):
         sour_id = sour.id
     admin_client.post(
         "/rate",
-        data={
-            "csrf_token": token,
-            "movie_id": str(sour_id),
-            "rating": "2.0",
-            "rate_submit": "Rate It",
-        },
+        data={"csrf_token": token, "movie_id": str(sour_id), "quick_rating": "2"},
     )
     page = admin_client.get("/rate").get_data(as_text=True)
     assert "Since you liked" not in page

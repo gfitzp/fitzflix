@@ -5,7 +5,6 @@ from flask_wtf.file import FileField, FileRequired
 from wtforms import (
     BooleanField,
     DateField,
-    DecimalField,
     HiddenField,
     IntegerField,
     PasswordField,
@@ -70,19 +69,16 @@ class ImportForm(FlaskForm):
 
 
 class MovieReviewForm(FlaskForm):
-    """Log or edit a viewing: rating, liked, review text, watch date."""
+    """Log or edit a viewing. Ratings come from the quick-answer
+    ladder riding the form (3+ stars auto-flag liked); the date is
+    optional — blank means seen sometime, unknown when — and the
+    submit logs a bare unrated watch."""
 
-    rating = DecimalField("Rating (out of 5)", places=1, validators=[Optional()])
-    liked = BooleanField("Liked")
     review = TextAreaField("Review")
-    date_watched = DateField("Date Watched", format="%Y-%m-%d", validators=[Optional()])
-    review_submit = SubmitField("Log Movie")
-
-    def validate_rating(self, rating):
-        """Keep ratings between 0 and 5 stars."""
-
-        if rating.data is not None and (rating.data < 0 or rating.data > 5):
-            raise ValidationError("Please enter a rating between 0 and 5 stars.")
+    date_watched = DateField(
+        "Date watched (optional)", format="%Y-%m-%d", validators=[Optional()]
+    )
+    review_submit = SubmitField("Log Watch")
 
     def validate_date_watched(self, date_watched):
         """Reject watch dates in the future."""
@@ -216,25 +212,16 @@ class WatchlistForm(FlaskForm):
 
 
 class RateFilmForm(FlaskForm):
-    """The rating drive's response card: rate the film, want it,
-    haven't seen it, or skip it for now."""
+    """The rating drive's response card: the quick-answer ladder plus
+    want it, haven't seen it, or skip it for now."""
 
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
-    rating = DecimalField("Your rating (out of 5)", places=1, validators=[Optional()])
-    liked = BooleanField("Liked")
-    rate_submit = SubmitField("Rate It")
     watchlist_submit = SubmitField("Add to Watchlist")
     unseen_submit = SubmitField("Haven't Seen It")
     skip_submit = SubmitField("Skip")
     # Adds a SUGGESTED film to the watchlist without touching the
     # drive's steering, unlike watchlist_submit on the featured card
     want_suggestion_submit = SubmitField("Add to Watchlist")
-
-    def validate_rating(self, rating):
-        """Keep ratings between 0 and 5 stars."""
-
-        if rating.data is not None and not 0 <= rating.data <= 5:
-            raise ValidationError("Ratings run from 0 to 5 stars.")
 
 
 class ReviewExportForm(FlaskForm):

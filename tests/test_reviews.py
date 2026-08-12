@@ -636,37 +636,45 @@ JAWS_2_DETAILS = {
 }
 
 
-def test_movie_page_review_accepts_like_without_rating(app, admin_client):
+def test_movie_page_ladder_auto_flags_liked_at_three_stars(app, admin_client):
+    """3+ stars auto-flag liked (Glenn's rule: liked means a positive
+    verdict); below 3 doesn't. The tap defaults to a date-less row."""
+
     from app import db
     from app.models import User, UserMovieReview
 
     with app.app_context():
         user_id = User.query.first().id
-        movie = make_movie("Like Only Film", 1994)
+        liked_film = make_movie("Auto Liked Film", 1994)
+        meh_film = make_movie("Auto Meh Film", 1995)
         db.session.commit()
-        movie_id = movie.id
+        liked_id, meh_id = liked_film.id, meh_film.id
 
-    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    page = admin_client.get(f"/movie/{liked_id}").get_data(as_text=True)
     response = admin_client.post(
-        f"/movie/{movie_id}",
-        data={
-            "csrf_token": csrf_token_from(page),
-            "review_submit": "Log Movie",
-            "rating": "",
-            "liked": "y",
-            "review": "",
-            "date_watched": "",
-        },
+        f"/movie/{liked_id}",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "3"},
     )
     assert response.status_code == 302
 
     with app.app_context():
         review = UserMovieReview.query.filter_by(
-            user_id=user_id, movie_id=movie_id
+            user_id=user_id, movie_id=liked_id
         ).one()
         assert review.liked is True
-        assert review.rating is None
-        assert review.whole_stars is None
+        assert float(review.rating) == 3.0
+        assert review.whole_stars == 3
+        assert review.date_watched is None
+
+    page = admin_client.get(f"/movie/{meh_id}").get_data(as_text=True)
+    admin_client.post(
+        f"/movie/{meh_id}",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "2"},
+    )
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(user_id=user_id, movie_id=meh_id).one()
+        assert review.liked is False
+        assert float(review.rating) == 2.0
 
 
 def test_movie_page_logs_bare_watches(app, admin_client):
@@ -744,7 +752,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Jaws 2 (1978)" in page
     assert "isn&#39;t in the library" in page or "isn't in the library" in page
-    assert 'name="liked"' in page
+    assert 'name="quick_rating"' in page
     # Runtime, genres, and the US certification badge, like the movie page
     assert "116&nbsp;minutes" in page
     assert "Horror" in page and "Thriller" in page
@@ -786,9 +794,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         "/review/tmdb/579",
         data={
             "csrf_token": csrf_token_from(page),
-            "review_submit": "Log Movie",
-            "rating": "3.5",
-            "liked": "y",
+            "quick_rating": "4",
             "review": "Still a decent shark.",
             "date_watched": "2026-08-01",
         },
@@ -804,8 +810,8 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         review = UserMovieReview.query.filter_by(
             user_id=user_id, movie_id=movie.id
         ).one()
-        assert review.rating == 3.5
-        assert review.whole_stars == 3 and review.half_stars == 1
+        assert float(review.rating) == 4.0
+        assert review.whole_stars == 4 and review.half_stars == 0
         assert review.liked is True
         assert review.review == "Still a decent shark."
         assert review.date_watched == datetime(2026, 8, 1)
@@ -932,12 +938,12 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
     assert "First impressions." in page
     assert 'value="2024-01-05"' in page
 
+    # A text-only save must not touch the stars
+
     response = admin_client.post(
         f"/review/{row_id}/edit",
         data={
             "csrf_token": csrf_token_from(page),
-            "rating": "4.5",
-            "liked": "y",
             "date_watched": "2024-01-05",
             "review": "On reflection, better than I thought.",
             "review_submit": "Save Review",
@@ -949,9 +955,7 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
     with app.app_context():
         db.session.expire_all()
         row = db.session.get(UserMovieReview, row_id)
-        assert row.rating == 4.5
-        assert row.whole_stars == 4 and row.half_stars == 1
-        assert row.liked is True
+        assert float(row.rating) == 3.0
         assert row.review == "On reflection, better than I thought."
         # The row had no review date, so the text change set one (a first
         # review, not an update)
@@ -962,6 +966,25 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
             UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
             == 1
         )
+
+    # A ladder tap re-rates the viewing in place, auto-flagging liked
+
+    page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
+    admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "date_watched": "2024-01-05",
+            "review": "On reflection, better than I thought.",
+            "quick_rating": "4",
+        },
+    )
+    with app.app_context():
+        db.session.expire_all()
+        row = db.session.get(UserMovieReview, row_id)
+        assert float(row.rating) == 4.0
+        assert row.whole_stars == 4 and row.half_stars == 0
+        assert row.liked is True
 
 
 def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):

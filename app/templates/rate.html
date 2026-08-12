@@ -39,19 +39,6 @@
 			{{ form.csrf_token }}
 			{{ form.movie_id(value=featured.id) }}
 			{{ rating_ladder() }}
-			<div class="form-row align-items-center mb-2">
-				<div class="col-auto">
-					{{ form.rating.label(class_="small mb-0") }}
-					{{ form.rating(class_="form-control form-control-sm", type="number", min="0", max="5", step="0.5", style="width: 6rem;") }}
-				</div>
-				<div class="col-auto align-self-end">
-					<div class="form-check mb-1">
-						{{ form.liked(class_="form-check-input") }}
-						{{ form.liked.label(class_="form-check-label") }}
-					</div>
-				</div>
-			</div>
-			{{ form.rate_submit(class_="btn btn-sm btn-primary mr-1") }}
 			{{ form.watchlist_submit(class_="btn btn-sm btn-outline-primary mr-1") }}
 			{{ form.unseen_submit(class_="btn btn-sm btn-outline-secondary mr-1") }}
 			{{ form.skip_submit(class_="btn btn-sm btn-outline-secondary") }}
