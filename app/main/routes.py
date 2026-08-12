@@ -80,6 +80,7 @@ from app.models import (
     FileAudioTrack,
     FileSubtitleTrack,
     Movie,
+    MovieAward,
     MovieCast,
     MovieCrew,
     RefFeatureType,
@@ -1275,6 +1276,13 @@ def movie(movie_id):
         .all()
     ]
     genres = [genre.name for genre in movie.genres]
+    awards = (
+        MovieAward.query.filter_by(movie_id=movie.id)
+        .order_by(
+            MovieAward.win.desc(), MovieAward.year.asc(), MovieAward.award_name.asc()
+        )
+        .all()
+    )
     review = (
         UserMovieReview.query.filter_by(user_id=int(current_user.id), movie_id=movie.id)
         .order_by(UserMovieReview.date_reviewed.desc())
@@ -1533,6 +1541,7 @@ def movie(movie_id):
         movie=movie,
         cast=cast,
         genres=genres,
+        awards=awards,
         review=review,
         films=films,
         features=features,

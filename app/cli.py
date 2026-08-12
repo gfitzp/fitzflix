@@ -220,6 +220,15 @@ def register(app):
         refresh_leaving_criterion()
         click.echo("Leaving-Criterion set refreshed")
 
+    @recs.command()
+    def awards():
+        """Refresh every film's Wikidata award records now, instead of
+        waiting for the weekly run."""
+
+        from app.awards import refresh_movie_awards
+
+        click.echo(refresh_movie_awards())
+
     @app.cli.group()
     def triage():
         """Manage the subtitle-triage inspection aids."""

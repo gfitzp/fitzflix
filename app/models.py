@@ -1175,6 +1175,12 @@ class Movie(db.Model, TMDBMixin, Utilities):
         lazy="dynamic",
         cascade="all,delete,delete-orphan",
     )
+    awards = db.relationship(
+        "MovieAward",
+        backref="movie",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
     watchlist_entries = db.relationship(
         "UserWatchlist",
         backref="movie",
@@ -1915,6 +1921,34 @@ class MovieCrew(db.Model):
 
     def __repr__(self):
         return f"<MovieCrew '{self.movie_id}:{self.credit_id}:{self.job}'>"
+
+
+class MovieAward(db.Model):
+    """An award win or nomination for a film, read from Wikidata.
+
+    Rows are current-truth: the weekly refresh replaces a film's rows
+    wholesale, so absence means Wikidata lists nothing (or the film has
+    no Wikidata item) — coverage is strong for major ceremonies and
+    patchy for niche festivals, so surfaces must never imply
+    completeness.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    movie_id = db.Column(
+        db.Integer, db.ForeignKey("movie.id"), index=True, nullable=False
+    )
+    award_id = db.Column(db.String(32))
+    award_name = db.Column(db.String(512))
+    win = db.Column(db.Boolean, nullable=False, default=False)
+    year = db.Column(db.Integer)
+
+    __table_args__ = (db.UniqueConstraint("movie_id", "award_id", "win", "year"),)
+
+    def __repr__(self):
+        return (
+            f"<MovieAward '{self.movie_id}:{self.award_name}:"
+            f"{'win' if self.win else 'nomination'}'>"
+        )
 
 
 class TVCast(db.Model):

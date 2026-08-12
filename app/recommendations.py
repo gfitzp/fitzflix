@@ -26,6 +26,7 @@ from app import db, get_app
 from app.models import (
     File,
     Movie,
+    MovieAward,
     MovieCast,
     MovieCrew,
     TMDBCredit,
@@ -322,6 +323,50 @@ def score_movie(features, profile, class_weights=None):
     return score, contributions
 
 
+# The award prior: a capped quality bump from Wikidata wins and
+# nominations, added AFTER a film already scores positive on taste —
+# awards alone can't recommend a taste-mismatched film, and the cap
+# keeps a festival darling's hundred citations from drowning the
+# taste signal (top library scores run ~2-3)
+
+AWARD_WIN_WEIGHT = 0.1
+AWARD_NOMINATION_WEIGHT = 0.025
+AWARD_PRIOR_CAP = 0.3
+
+
+def movie_award_counts():
+    """(wins, nominations) tallies per movie id, for the quality prior."""
+
+    counts = {}
+    for movie_id, win, tally in db.session.query(
+        MovieAward.movie_id, MovieAward.win, db.func.count()
+    ).group_by(MovieAward.movie_id, MovieAward.win):
+        wins, nominations = counts.get(movie_id, (0, 0))
+        if win:
+            wins += tally
+        else:
+            nominations += tally
+        counts[movie_id] = (wins, nominations)
+    return counts
+
+
+def award_prior(wins, nominations):
+    """The capped score bump a film's award record earns."""
+
+    return min(
+        wins * AWARD_WIN_WEIGHT + nominations * AWARD_NOMINATION_WEIGHT,
+        AWARD_PRIOR_CAP,
+    )
+
+
+def award_label(wins, nominations):
+    """The because-chip text for an awarded film."""
+
+    if wins:
+        return f"won {wins} award{'s' if wins != 1 else ''}"
+    return "award-nominated"
+
+
 def local_candidates(user_id):
     """Movie ids with a local full-feature file, minus films the user has
     already logged: the landing page only recommends what's on the shelf
@@ -373,6 +418,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         index = min(len(baseline) - 1, int(len(baseline) * MARKER_BASELINE_PERCENTILE))
         profile["marker_bar"] = round(baseline[index], 4)
 
+    award_counts = movie_award_counts()
     ranked = []
     for movie_id in candidates:
         movie_features = features.get(movie_id, [])
@@ -384,6 +430,11 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         because = [
             label for contribution, label in contributions[:4] if contribution > 0
         ]
+        wins, nominations = award_counts.get(movie_id, (0, 0))
+        prior = award_prior(wins, nominations)
+        if prior > 0:
+            score += prior
+            because.append(award_label(wins, nominations))
         ranked.append(
             {"movie_id": movie_id, "score": round(score, 4), "because": because}
         )

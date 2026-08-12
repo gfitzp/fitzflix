@@ -441,6 +441,20 @@ def create_app(config_class=Config, watch_import_dir=False):
         description="Refreshing the leaving-Criterion film set",
     )
 
+    # Refresh film awards from Wikidata weekly, early Monday: the whole
+    # library resolves in a couple dozen polite SPARQL batches, and the
+    # nightly recommendation recompute folds the results in as a
+    # quality prior
+
+    register_cron(
+        app.maintenance_scheduler,
+        "15 4 * * 1",
+        func="app.awards.refresh_awards",
+        job_id="awards-refresh",
+        timeout="2h",
+        description="Refreshing film awards from Wikidata",
+    )
+
     # Rebuild the per-user "Streaming on your services" rail nightly,
     # after the taste profiles recompute at 1:45 — the rail scores
     # discover-pool candidates against those profiles
