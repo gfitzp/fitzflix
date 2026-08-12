@@ -110,6 +110,7 @@ from app.recommendations import (
     rotate_partition,
     stored_profile,
     stored_recommendations,
+    watch_again_shelf,
 )
 from app.streaming import (
     batch_title_availability,
@@ -445,6 +446,55 @@ def index():
                 description="Computing film recommendations",
             )
 
+    # The rewatch shelf: owned films the user liked whose last watch is
+    # long past — old favorites otherwise have no surface, since the
+    # engine's candidates exclude logged films. Watchlisted ones
+    # (re-added = declared rewatch intent) pin first under the same cap
+    # as the other rails; the rest rotates daily
+
+    again_items = []
+    again_ranked = watch_again_shelf(current_user.id)
+    if again_ranked:
+        again_movies = {
+            m.id: m
+            for m in Movie.query.filter(
+                Movie.id.in_([item["movie_id"] for item in again_ranked])
+            )
+        }
+        again_watchlisted = {
+            movie_id
+            for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
+                UserWatchlist.user_id == int(current_user.id)
+            )
+        }
+        again_rows = []
+        for item in again_ranked:
+            again_movie = again_movies.get(item["movie_id"])
+            if again_movie is None:
+                continue
+            if minutes and not (
+                again_movie.tmdb_runtime and again_movie.tmdb_runtime <= minutes
+            ):
+                continue
+            again_rows.append(
+                {
+                    "movie": again_movie,
+                    "last_watched": item["last_watched"],
+                    "watchlisted": item["movie_id"] in again_watchlisted,
+                }
+            )
+        again_pinned = rotate_partition(
+            [row for row in again_rows if row["watchlisted"]],
+            WATCHLIST_PIN_LIMIT,
+            date.today().toordinal(),
+        )
+        again_rest = [row for row in again_rows if not row["watchlisted"]]
+        again_items = again_pinned + rotate_daily(
+            again_rest,
+            12 - len(again_pinned),
+            f"again:{int(current_user.id)}:{date.today().isoformat()}",
+        )
+
     # The second rail: films streaming on this user's services, from the
     # nightly discover-pool recompute. Films logged or acquired since
     # the run drop out immediately; a user with a profile and provider
@@ -547,6 +597,7 @@ def index():
         recs=recs,
         computed_at=computed_at,
         has_history=has_history,
+        again=again_items,
         rail=rail,
         rail_computed_at=rail_computed_at,
         shelf=shelf_items,

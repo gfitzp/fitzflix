@@ -443,6 +443,72 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     return profile, ranked[:limit]
 
 
+# The "Watch it again" shelf: owned films the user liked whose last
+# watch is long past — the complement of the engine, whose candidates
+# deliberately exclude logged films. Sentiment reuses the diary
+# weights; staleness adds a bonus on top, saturating at the horizon.
+# Date-less rows (drive ratings, pre-Fitzflix watches) count as the
+# oldest. The 2-year bar was measured before choosing: 475 of Glenn's
+# 556 liked owned films sit beyond it — plenty for a 12-card rotation
+
+REWATCH_STALENESS_YEARS = 2
+REWATCH_STALENESS_WEIGHT = 0.5
+REWATCH_STALENESS_HORIZON_YEARS = 10
+
+
+def watch_again_shelf(user_id, today=None):
+    """Ranked rewatch candidates for one user: owned films they liked
+    (the liked flag, or a rating above their own mean) whose last
+    watch — if any is recorded — is at least the staleness bar ago.
+    Best-loved-and-longest-unseen first."""
+
+    today = today or datetime.now()
+    rows = (
+        db.session.query(
+            UserMovieReview.movie_id,
+            db.func.max(UserMovieReview.date_watched),
+            db.func.max(UserMovieReview.rating),
+            db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
+        )
+        .join(Movie, Movie.id == UserMovieReview.movie_id)
+        .filter(UserMovieReview.user_id == int(user_id))
+        .filter(Movie.files.any(File.feature_type_id.is_(None)))
+        .group_by(UserMovieReview.movie_id)
+        .all()
+    )
+    ratings = [float(rating) for _, _, rating, _ in rows if rating is not None]
+    mean_rating = sum(ratings) / len(ratings) if ratings else 0.0
+    weights = user_movie_weights(user_id)
+
+    items = []
+    for movie_id, last_watched, rating, liked in rows:
+        positive = bool(liked) or (rating is not None and float(rating) > mean_rating)
+        if not positive:
+            continue
+        if last_watched is None:
+            years = float(REWATCH_STALENESS_HORIZON_YEARS)
+        else:
+            years = (today - last_watched).days / 365.25
+        if years < REWATCH_STALENESS_YEARS:
+            continue
+        staleness = (
+            min(years, REWATCH_STALENESS_HORIZON_YEARS)
+            / REWATCH_STALENESS_HORIZON_YEARS
+        )
+        items.append(
+            {
+                "movie_id": movie_id,
+                "last_watched": last_watched,
+                "score": round(
+                    weights.get(movie_id, 0.0) + REWATCH_STALENESS_WEIGHT * staleness,
+                    4,
+                ),
+            }
+        )
+    items.sort(key=lambda item: item["score"], reverse=True)
+    return items
+
+
 def rotate_partition(items, count, day_index):
     """A no-repeat daily walk through a ranked list.
 

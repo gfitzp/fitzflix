@@ -674,6 +674,125 @@ def test_rotate_daily_varies_by_day_and_holds_within_one(app):
     assert rotate_daily([1, 2, 3], 18, "recs:1:2026-08-10") == [1, 2, 3]
 
 
+def test_watch_again_shelf_picks_stale_favorites(app):
+    """The rewatch shelf keeps owned films the user liked whose last
+    watch is at least the staleness bar ago — date-less rows count as
+    the oldest — and drops fresh watches, below-mean films, and films
+    without a local file."""
+
+    from datetime import datetime, timedelta
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.recommendations import watch_again_shelf
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+
+        def diary_row(movie, rating=None, liked=False, watched=None):
+            """One viewing row with an explicit watch date."""
+
+            db.session.add(
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=movie.id,
+                    liked=liked,
+                    date_watched=watched,
+                    **star_rating_fields(rating),
+                )
+            )
+
+        stale_liked = make_movie("Again Stale Liked", 1980)
+        make_movie_file(stale_liked, "Bluray-1080p")
+        diary_row(
+            stale_liked, liked=True, watched=datetime.now() - timedelta(days=1200)
+        )
+
+        fresh_liked = make_movie("Again Fresh Liked", 1981)
+        make_movie_file(fresh_liked, "Bluray-1080p")
+        diary_row(fresh_liked, liked=True, watched=datetime.now() - timedelta(days=180))
+
+        dateless = make_movie("Again Dateless Favorite", 1982)
+        make_movie_file(dateless, "Bluray-1080p")
+        diary_row(dateless, rating=5)
+
+        meh = make_movie("Again Meh", 1983)
+        make_movie_file(meh, "Bluray-1080p")
+        diary_row(meh, rating=2, watched=datetime.now() - timedelta(days=1200))
+
+        unowned = make_movie("Again Unowned Liked", 1984)
+        diary_row(unowned, liked=True, watched=datetime.now() - timedelta(days=1200))
+
+        db.session.commit()
+
+        items = watch_again_shelf(user_id)
+        ids = [item["movie_id"] for item in items]
+
+        # The stale like outranks the dateless favorite (like weight
+        # beats the extra staleness), and nothing else qualifies
+
+        assert ids == [stale_liked.id, dateless.id]
+        assert items[1]["last_watched"] is None
+
+
+def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
+    """The landing page's rewatch shelf shows stale favorites with
+    last-watched badges, watchlisted ones pinned first."""
+
+    from datetime import datetime, timedelta
+
+    from app import db
+    from app.models import UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        favorite = make_movie("Shelf Old Favorite", 1975)
+        make_movie_file(favorite, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=favorite.id,
+                liked=True,
+                date_watched=datetime.now() - timedelta(days=1500),
+                **star_rating_fields(4.0),
+            )
+        )
+
+        # Seen, liked, and re-watchlisted: declared rewatch intent
+
+        wanted_again = make_movie("Shelf Wanted Again", 1976)
+        make_movie_file(wanted_again, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=wanted_again.id,
+                liked=True,
+                date_watched=None,
+                **star_rating_fields(5.0),
+            )
+        )
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted_again.id))
+        db.session.commit()
+        old_year = (datetime.now() - timedelta(days=1500)).strftime("%Y")
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Watch it again" in body
+    assert "Shelf Old Favorite (1975)" in body
+    assert f"Last watched {old_year}" in body
+    assert "Shelf Wanted Again (1976)" in body
+    assert "Seen ages ago" in body
+    assert "haven't watched in at least two years" in body
+
+    # The re-watchlisted film pins ahead with the amber badge
+
+    assert body.index("Shelf Wanted Again (1976)") < body.index(
+        "Shelf Old Favorite (1975)"
+    )
+    assert "On your watchlist" in body
+
+
 def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
     """One film per quality tier per day, no repeats until the whole
     set has shown, every day quality-mixed, deterministic per day."""
