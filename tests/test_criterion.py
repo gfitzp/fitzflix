@@ -250,6 +250,19 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         )
         make_movie_file(unowned, "Bluray-2160p Remux")
 
+        # Owned disc with a 1080p file counts as settled on this page
+        # even though Criterion re-released it in 2160p — chasing that
+        # upgrade is the shopping list's job (Glenn's rule)
+
+        good_enough = make_movie(
+            "Criterion Good Enough",
+            1970,
+            criterion_spine_number=103,
+            criterion_disc_owned=True,
+            criterion_quality_id=quality("Bluray-2160p Remux").id,
+        )
+        make_movie_file(good_enough, "Bluray-1080p")
+
         db.session.add(UserWatchlist(user_id=user_id, movie_id=ripless.id))
         db.session.add(
             UserMovieReview(
@@ -283,9 +296,14 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
 
     assert "#100 &ndash; Criterion Settled (1954)" in page
-    assert page.count('title="In your Fitzflix library"') == 1
+
+    # Two settled rows: the format match, and the 1080p-file-vs-2160p-
+    # release case the page deliberately calls done
+
+    assert page.count('title="In your Fitzflix library"') == 2
     assert 'badge-warning mr-1">DVD' in page
     assert 'badge-warning mr-1">Bluray-2160p Remux' in page
+    assert 'badge-warning mr-1">Bluray-1080p' not in page
     assert 'badge-info mr-1">Seen' in page
     assert "On your watchlist" in page
     assert page.count("Might interest you") == 1

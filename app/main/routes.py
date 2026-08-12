@@ -1252,9 +1252,13 @@ def criterion_collection():
 
     # A row is SETTLED — the Fitzflix library badge, nothing to do —
     # when the Criterion disc is owned AND the local file matches the
-    # release's own format (falling back to the app-wide upgrade
-    # threshold when the release quality was never recorded); anything
-    # else shows its amber quality tier: go find the Criterion version
+    # release's own format, with the bar CAPPED at the app-wide
+    # threshold (Glenn: an owned disc with a Bluray-1080p file is
+    # settled here even if Criterion re-released it in 2160p — chasing
+    # that upgrade is the shopping list's job, not this page's). The
+    # threshold also covers releases whose quality was never recorded.
+    # Anything else shows its amber quality tier: go find the Criterion
+    # version
 
     movie_ids = [movie.id for _, movie, _ in results]
     CriterionQuality = db.aliased(RefQuality)
@@ -1284,7 +1288,7 @@ def criterion_collection():
 
     rows = []
     for file, movie, quality in results:
-        target = criterion_prefs.get(movie.id) or threshold
+        target = min(criterion_prefs.get(movie.id) or threshold, threshold)
         upgradable = bool(file.fullscreen) or quality.preference < target
         rows.append(
             {
