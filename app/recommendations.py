@@ -353,50 +353,60 @@ def stored_profile(redis, user_id):
     return json.loads(payload) if payload else None
 
 
+def coarse_interest_score(profile, genre_ids, year, person_affinity=0.0):
+    """The might-interest markers' coarse score, computable from any
+    payload that carries genre ids and a year: matched genre affinities
+    soft-averaged, the release decade, and an optional affinity for a
+    person the film features. No TMDb calls, nothing stored."""
+
+    affinities = profile.get("affinities", {}) if profile else {}
+    score = person_affinity * FEATURE_CLASS_WEIGHTS["actor"]
+
+    genre_scores = [
+        affinities[f"genre:{genre_id}"]["score"]
+        for genre_id in genre_ids or []
+        if f"genre:{genre_id}" in affinities
+    ]
+    if genre_scores:
+        score += (
+            FEATURE_CLASS_WEIGHTS["genre"] * sum(genre_scores) / (len(genre_scores) + 1)
+        )
+
+    year = str(year or "")[:4]
+    if year.isdigit():
+        decade = int(year) // 10 * 10
+        entry = affinities.get(f"decade:{decade}")
+        if entry:
+            score += FEATURE_CLASS_WEIGHTS["decade"] * entry["score"] / 2
+
+    return score
+
+
 def credit_interest_markers(profile, credit_id, filmography_rows):
-    """The tmdb ids on a filmography page worth a modest "might interest
-    you" marker.
+    """The tmdb ids on a filmography page worth a "might interest you"
+    marker.
 
     Scores only films without a local record (owned films get the full
     engine), using nothing beyond the cached credits payload: genre
-    ids, release decade, and the user's affinity for this person. No
-    TMDb calls, nothing stored.
+    ids, release decade, and the user's affinity for this person —
+    capped at the strongest few per career page.
     """
 
     if not profile:
         return set()
     affinities = profile.get("affinities", {})
-
-    def affinity(key):
-        entry = affinities.get(key)
-        return entry["score"] if entry else 0.0
-
     person = max(
-        affinity(f"{cls}:{int(credit_id)}") for cls in ("actor", *CREW_ROLE_JOBS)
+        (affinities.get(f"{cls}:{int(credit_id)}") or {}).get("score", 0.0)
+        for cls in ("actor", *CREW_ROLE_JOBS)
     )
 
     scored = []
     for row in filmography_rows:
         if row.get("movie") is not None or row.get("tmdb_id") is None:
             continue
-        score = person * FEATURE_CLASS_WEIGHTS["actor"]
-
-        genre_scores = [
-            affinities[f"genre:{genre_id}"]["score"]
-            for genre_id in row.get("genre_ids") or []
-            if f"genre:{genre_id}" in affinities
-        ]
-        if genre_scores:
-            score += (
-                FEATURE_CLASS_WEIGHTS["genre"]
-                * sum(genre_scores)
-                / (len(genre_scores) + 1)
-            )
-
-        if row.get("year"):
-            decade = int(row["year"]) // 10 * 10
-            score += FEATURE_CLASS_WEIGHTS["decade"] * affinity(f"decade:{decade}") / 2
-
+        score = coarse_interest_score(
+            profile, row.get("genre_ids"), row.get("year"), person_affinity=person
+        )
         if score > MARKER_THRESHOLD:
             scored.append((score, row["tmdb_id"]))
 

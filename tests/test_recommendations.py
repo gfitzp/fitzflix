@@ -549,3 +549,100 @@ def test_runtime_filter_trims_the_library_rail(app, admin_client):
     assert "Filter Long (1991)" in body
     assert "Filter Unknown (1992)" in body
     assert "95 min" not in body
+
+
+def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
+    """Unowned TMDb search matches run the filmography markers' coarse
+    scorer, minus the person term: on-profile films badge, off-profile
+    films don't, and owned matches never do."""
+
+    import app.main.routes as main_routes
+
+    from app import db
+    from app.recommendations import PROFILE_KEY
+    from app.models import User
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        owned = make_movie(
+            "Search Marker Owned",
+            1955,
+            tmdb_id=9103,
+        )
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.commit()
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:80": {
+                        "class": "genre",
+                        "label": "Crime",
+                        "count": 5,
+                        "score": 1.0,
+                    },
+                    "decade:1950": {
+                        "class": "decade",
+                        "label": "1950s",
+                        "count": 5,
+                        "score": 0.9,
+                    },
+                },
+                "movies": 5,
+            }
+        ),
+    )
+
+    class FakeTMDb:
+        """Canned TMDb response."""
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            """Never an HTTP error."""
+
+        def json(self):
+            """The canned payload."""
+
+            return self.payload
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        """Search results: a strong match, a non-match, an owned match."""
+
+        if url.endswith("/search/movie"):
+            return FakeTMDb(
+                {
+                    "results": [
+                        {
+                            "id": 9101,
+                            "title": "Search Marker Hit",
+                            "release_date": "1955-08-01",
+                            "genre_ids": [80],
+                        },
+                        {
+                            "id": 9102,
+                            "title": "Search Marker Miss",
+                            "release_date": "2005-02-14",
+                            "genre_ids": [10749],
+                        },
+                        {
+                            "id": 9103,
+                            "title": "Search Marker Owned",
+                            "release_date": "1955-08-01",
+                            "genre_ids": [80],
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb({"results": []})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/search/tmdb?q=search+marker").get_data(as_text=True)
+    assert page.count("Might interest you") == 1
+    assert page.index("Search Marker Hit") < page.index("Might interest you")
+    assert page.index("Might interest you") < page.index("Search Marker Miss")

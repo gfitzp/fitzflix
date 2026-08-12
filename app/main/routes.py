@@ -95,6 +95,8 @@ from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
 from app.recommendations import (
+    MARKER_THRESHOLD,
+    coarse_interest_score,
     credit_interest_markers,
     stored_profile,
     stored_recommendations,
@@ -4139,6 +4141,7 @@ def search_tmdb():
                             "year": (result.get(date_key) or "")[:4],
                             "overview": result.get("overview"),
                             "poster_path": result.get("poster_path"),
+                            "genre_ids": result.get("genre_ids") or [],
                             "library_id": None,
                         }
                     )
@@ -4169,6 +4172,21 @@ def search_tmdb():
             )
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
+
+        # Might-interest markers on unowned movie matches: the same
+        # coarse scorer the filmography markers use, minus the person
+        # term (a bare search result has no person context)
+
+        profile = stored_profile(current_app.redis, current_user.id)
+        if profile:
+            for match in movie_matches:
+                if match["library_id"] is not None:
+                    continue
+                score = coarse_interest_score(
+                    profile, match["genre_ids"], match["year"]
+                )
+                if score > MARKER_THRESHOLD:
+                    match["might_interest"] = True
 
         # Streaming and rent/buy badges on unowned movie matches, both
         # filtered to this user's services (lookups are day-cached per

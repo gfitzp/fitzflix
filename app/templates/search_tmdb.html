@@ -42,6 +42,9 @@
 				{% if match.library_id %}
 				{{ library_badge() }}
 				{% endif %}
+				{% if match.might_interest %}
+				<span class="badge badge-info mr-1">Might interest you</span>
+				{% endif %}
 				{% for provider in (match.streaming or []) + (match.rentals or []) %}
 				{{ availability_badge(provider) }}
 				{% endfor %}
