@@ -646,3 +646,29 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     assert page.count("Might interest you") == 1
     assert page.index("Search Marker Hit") < page.index("Might interest you")
     assert page.index("Might interest you") < page.index("Search Marker Miss")
+
+
+def test_rotate_daily_varies_by_day_and_holds_within_one(app):
+    """The rotation is deterministic for a given day (reloads are
+    stable) but different days sample different subsets, favoring the
+    top of the ranking; short lists pass through untouched."""
+
+    from app.recommendations import rotate_daily
+
+    items = list(range(100))
+
+    monday = rotate_daily(items, 18, "recs:1:2026-08-10")
+    monday_again = rotate_daily(items, 18, "recs:1:2026-08-10")
+    tuesday = rotate_daily(items, 18, "recs:1:2026-08-11")
+
+    assert monday == monday_again
+    assert monday != tuesday
+    assert len(monday) == 18
+    # Rank order is preserved within a day's selection
+    assert monday == sorted(monday)
+    # The top of the ranking dominates the sample
+    assert sum(1 for rank in monday if rank < 30) >= 12
+
+    # A list no longer than the display count passes through whole
+
+    assert rotate_daily([1, 2, 3], 18, "recs:1:2026-08-10") == [1, 2, 3]

@@ -98,6 +98,7 @@ from app.recommendations import (
     MARKER_THRESHOLD,
     coarse_interest_score,
     credit_interest_markers,
+    rotate_daily,
     stored_profile,
     stored_recommendations,
 )
@@ -311,8 +312,13 @@ def index():
             if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
                 continue
             recs.append({"movie": movie, "because": item.get("because", [])[:3]})
-            if len(recs) == 18:
-                break
+
+        # A day-seeded rotation through the stored ranking, so the rail
+        # doesn't show an identical set for days on end
+
+        recs = rotate_daily(
+            recs, 18, f"recs:{int(current_user.id)}:{date.today().isoformat()}"
+        )
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
         # reviewer): compute once now instead of waiting for tonight; the
@@ -357,8 +363,9 @@ def index():
             if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
                 continue
             rail.append(item)
-            if len(rail) == 12:
-                break
+        rail = rotate_daily(
+            rail, 12, f"rail:{int(current_user.id)}:{date.today().isoformat()}"
+        )
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id
     ):
@@ -380,12 +387,22 @@ def index():
     shelf_departs = None
     if shelf:
         shelf_departs = shelf["departs"].strftime("%B %-d")
-        for item in shelf["items"]:
-            if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
-                continue
-            shelf_items.append(item)
-            if len(shelf_items) == 12:
-                break
+        fitting = [
+            item
+            for item in shelf["items"]
+            if not minutes or (item.get("runtime") and item["runtime"] <= minutes)
+        ]
+
+        # Shopping-list urgencies stay pinned; the rest rotates daily so
+        # a month-long departure set doesn't look frozen
+
+        pinned = [item for item in fitting if item.get("shopping")][:12]
+        rest = [item for item in fitting if not item.get("shopping")]
+        shelf_items = pinned + rotate_daily(
+            rest,
+            12 - len(pinned),
+            f"shelf:{int(current_user.id)}:{date.today().isoformat()}",
+        )
 
     return render_template(
         "index.html",

@@ -15,6 +15,7 @@ a weighted sum of soft per-class averages.
 """
 
 import json
+import random
 
 from datetime import datetime
 
@@ -337,6 +338,29 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
 
     ranked.sort(key=lambda rec: rec["score"], reverse=True)
     return profile, ranked[:limit]
+
+
+def rotate_daily(items, count, seed, decay=0.93):
+    """A day-varying selection of `count` items from a ranked list.
+
+    Weighted sampling without replacement, geometrically favoring the
+    top of the ranking so quality holds while the middle rotates; the
+    seed should embed the user and the calendar day, keeping the page
+    stable across reloads but fresh across days. The selection comes
+    back in original rank order. Deterministic for a given seed.
+    """
+
+    if len(items) <= count:
+        return list(items)
+    rng = random.Random(seed)
+    pool = list(enumerate(items))
+    selected = []
+    while pool and len(selected) < count:
+        weights = [decay**rank for rank, _ in pool]
+        pick = rng.choices(range(len(pool)), weights=weights, k=1)[0]
+        selected.append(pool.pop(pick))
+    selected.sort(key=lambda pair: pair[0])
+    return [item for _, item in selected]
 
 
 def stored_recommendations(redis, user_id):
