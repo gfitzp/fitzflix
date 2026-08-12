@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge %}
+{% from "_availability_badges.html" import availability_badge, library_badge %}
 
 {% block app_content %}
 <h2 class="mt-n2">{{ title }}</h2>
@@ -36,11 +36,11 @@
 			<div class="media-body">
 				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
 				{# Badges sit left-aligned under the title, like the local
-				   search rows: library status first, then availability #}
+				   search rows, in the movie-page strip's grammar: the
+				   Fitzflix badge for owned matches, availability badges
+				   otherwise — absence says "not in library" #}
 				{% if match.library_id %}
-				<span class="badge badge-success mr-1">In library</span>
-				{% else %}
-				<span class="badge badge-secondary mr-1">Not in library</span>
+				{{ library_badge() }}
 				{% endif %}
 				{% for provider in (match.streaming or []) + (match.rentals or []) %}
 				{{ availability_badge(provider) }}
@@ -79,9 +79,7 @@
 			<div class="media-body">
 				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
 				{% if match.library_id %}
-				<span class="badge badge-success mr-1">In library</span>
-				{% else %}
-				<span class="badge badge-secondary mr-1">Not in library</span>
+				{{ library_badge() }}
 				{% endif %}
 				{% if match.overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ match.overview|truncate(240) }}</p>

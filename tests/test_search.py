@@ -245,9 +245,13 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
     assert f"/movie/{owned_id}" in page
-    assert "In library" in page
     assert "Jaws 2 (1978)" in page
-    assert "Not in library" in page
+
+    # The owned match carries the movie-page strip's Fitzflix badge; an
+    # unowned row simply has no library badge
+
+    assert page.count('title="In your Fitzflix library"') == 1
+    assert "Not in library" not in page
 
     # Rows render like the local search: a poster thumbnail, and the
     # whole unowned row links to the log page

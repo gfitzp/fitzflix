@@ -3,6 +3,10 @@
    phrasing in the tooltip. Used by the movie-page strip, TMDb search
    results, and filmography rows so every surface renders providers
    identically. #}
+{% macro library_badge() -%}
+<span class="badge badge-light border align-middle mr-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="mr-1">In library</span>
+{%- endmacro %}
+
 {% macro availability_badge(provider) -%}
 {%- set action = {"rent": "Rent from"}.get(provider.kind, "Streaming on") -%}
 {%- set suffix = {"ads": " (with ads)", "rent": " (rent)"}.get(provider.kind, "") -%}

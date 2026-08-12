@@ -8,11 +8,11 @@
    from JustWatch and revokes API access without the credit — but the
    library badge alone shows none of their data, so it carries no
    credit. #}
-{% from "_availability_badges.html" import availability_badge %}
+{% from "_availability_badges.html" import availability_badge, library_badge %}
 {% if streaming %}
 <div class="mt-1">
 	{% if streaming.local %}
-	<span class="badge badge-light border align-middle mr-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="mr-1">In library</span>
+	{{ library_badge() }}
 	{% endif %}
 	{% for provider in streaming.matches + streaming.rentals %}
 	{{ availability_badge(provider) }}
