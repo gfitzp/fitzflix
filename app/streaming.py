@@ -148,7 +148,9 @@ def user_streaming(tmdb_id, user, negative=False):
     nothing matched, so unowned-film pages can say "not on your
     services" instead of nothing — and only those pages also list where
     the film can be rented or bought, since that's where the purchase
-    decision is live (rent/buy never counts as a subscription match)."""
+    decision is live. Rentals are filtered to the user's chosen services
+    too (renting elsewhere is a click away via the watch-page link), and
+    rent/buy never counts as a subscription match."""
 
     provider_ids = user_provider_ids(user)
     if not provider_ids:
@@ -163,9 +165,10 @@ def user_streaming(tmdb_id, user, negative=False):
         seen = set()
         for kind in ("rent", "buy"):
             for provider in (availability or {}).get(kind) or []:
-                if provider["provider_id"] not in seen:
-                    seen.add(provider["provider_id"])
-                    rentals.append(provider["provider_name"])
+                if provider["provider_id"] in provider_ids:
+                    if provider["provider_id"] not in seen:
+                        seen.add(provider["provider_id"])
+                        rentals.append(provider["provider_name"])
 
     return {
         "matches": matches,

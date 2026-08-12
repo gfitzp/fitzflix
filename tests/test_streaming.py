@@ -402,6 +402,7 @@ def test_review_tmdb_page_says_not_on_your_services(app, admin_client, monkeypat
     monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
+    subscribe(app, 2, "Apple TV")
     plant_availability(
         app,
         800,
@@ -416,11 +417,12 @@ def test_review_tmdb_page_says_not_on_your_services(app, admin_client, monkeypat
 
     # A film with no local file is exactly where "not on your services"
     # is worth saying out loud — along with where it can be rented,
-    # deduped across the rent and buy lists
+    # filtered to the user's own services (Amazon isn't one of them)
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
     assert "Not streaming on your services." in page
-    assert "Rentable on Amazon Video, Apple TV." in page
+    assert "Rentable on Apple TV." in page
+    assert "Amazon Video" not in page
     assert "Streaming data by JustWatch" in page
 
 
@@ -443,6 +445,7 @@ def test_unowned_movie_record_shows_rentable_line(app, admin_client, monkeypatch
         movie_id = movie.id
 
     subscribe(app, 8, "Netflix")
+    subscribe(app, 10, "Amazon Video")
     plant_availability(
         app,
         801,
