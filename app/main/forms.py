@@ -354,11 +354,15 @@ class MovieMergeForm(FlaskForm):
 
 
 class SubtitleTriageForm(FlaskForm):
-    """Per-row actions on the possibly-forced subtitles triage page."""
+    """Per-file actions on the possibly-forced subtitles triage page.
 
-    track_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    Track selection travels as plain track_ids checkboxes (a file can
+    hide more than one forced track); the form carries the file and
+    the two actions.
+    """
+
     file_id = IntegerField(validators=[Optional()], widget=HiddenInput())
-    mark_forced_submit = SubmitField("Mark forced")
+    mark_forced_submit = SubmitField("Flag selected as forced")
     dismiss_submit = SubmitField("Nothing forced here")
 
 

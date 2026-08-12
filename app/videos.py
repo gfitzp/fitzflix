@@ -1867,6 +1867,13 @@ def finalize_localization(
             current_app.logger.info(f"{file} File ID {file.id}")
 
             if possibly_forced_subtitle == True:
+                # Generate the triage page's inspection aids proactively,
+                # while the file is fresh and certainly local
+
+                from app.triage import maybe_enqueue_triage_snapshots
+
+                maybe_enqueue_triage_snapshots(file.id)
+
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email_async(
                     "Fitzflix - Possibly forced subtitle track",

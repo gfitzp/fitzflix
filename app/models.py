@@ -1406,6 +1406,12 @@ class File(db.Model):
         except OSError:
             pass
 
+        # Triage snapshots are only useful while the local copy exists
+
+        from app.triage import remove_triage_snapshots
+
+        remove_triage_snapshots(self.id)
+
         # Optionally delete the directory tree, even if the library file itself
         # was already gone, so deleting a record purges its empty folder too
 

@@ -72,6 +72,7 @@ class Config(object):
     MKVMERGE_BIN                        = os.environ.get("MKVMERGE_BIN") or "/opt/homebrew/bin/mkvmerge"
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/opt/homebrew/bin/mkvpropedit"
     FFMPEG_BIN                          = os.environ.get("FFMPEG_BIN") or "/opt/homebrew/bin/ffmpeg"
+    FFPROBE_BIN                         = os.environ.get("FFPROBE_BIN") or "/opt/homebrew/bin/ffprobe"
 
     # AWS configuration
     ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
@@ -107,6 +108,11 @@ class Config(object):
     BACKUP_PASSPHRASE                   = os.environ.get("BACKUP_PASSPHRASE") or None
     ENV_FILE                            = os.environ.get("ENV_FILE") or os.path.join(basedir, ".env")
     CUSTOM_ARTWORK_DIR                  = os.environ.get("CUSTOM_ARTWORK_DIR") or os.path.join(basedir, "app", "static", "custom")
+
+    # Subtitle-triage inspection aids: static-served but outside the
+    # custom-artwork tree, so backups ignore them
+
+    TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "app", "static", "triage")
 
     # AWS Glacier restore cost estimation, in USD: a per-object retrieval
     # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.

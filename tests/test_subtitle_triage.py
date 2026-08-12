@@ -163,8 +163,9 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             "/maintenance/subtitles",
             data={
                 "csrf_token": csrf_token_from(page),
-                "track_id": small_id,
-                "mark_forced_submit": "Mark forced",
+                "file_id": file_id,
+                "track_ids": [small_id],
+                "mark_forced_submit": "Flag selected as forced",
             },
             follow_redirects=True,
         )
@@ -189,7 +190,7 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         file, small = build_candidate(
             title="MP4 Suspect", year=2006, container="MPEG-4"
         )
-        small_id = small.id
+        file_id, small_id = file.id, small.id
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert "MP4 Suspect" in page  # listed, but without a mark button
@@ -199,8 +200,9 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         "/maintenance/subtitles",
         data={
             "csrf_token": csrf_token_from(page),
-            "track_id": small_id,
-            "mark_forced_submit": "Mark forced",
+            "file_id": file_id,
+            "track_ids": [small_id],
+            "mark_forced_submit": "Flag selected as forced",
         },
         follow_redirects=True,
     )
@@ -210,3 +212,163 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
 
 def test_subtitle_triage_requires_admin(user_client):
     assert user_client.get("/maintenance/subtitles").status_code == 302
+
+
+def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
+    """Two suspected tracks, one checkbox each, one mkvpropedit
+    invocation carrying both."""
+
+    with app.app_context():
+        file, small = build_candidate(title="Two Suspects", year=2011)
+        third = add_subtitle(file, 3, 50)
+        db.session.commit()
+        file_id, small_id, third_id = file.id, small.id, third.id
+
+        local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(b"mkv bytes")
+
+    try:
+        page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+        response = admin_client.post(
+            "/maintenance/subtitles",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "file_id": file_id,
+                "track_ids": [small_id, third_id],
+                "mark_forced_submit": "Flag selected as forced",
+            },
+            follow_redirects=True,
+        )
+        assert "Marking tracks 2, 3" in response.get_data(as_text=True)
+
+        jobs = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert len(jobs) == 1
+        assert jobs[0].args == (file_id, None, "1", ["2", "3"])
+    finally:
+        os.remove(local_path)
+
+
+def test_triage_actions_retire_the_inspection_aids(app, admin_client):
+    """Dismissing (or flagging) a file deletes its snapshot directory."""
+
+    from app.triage import triage_snapshot_dir
+
+    with app.app_context():
+        file, _ = build_candidate(title="Aids Cleanup", year=2012)
+        file_id = file.id
+        aids_dir = os.path.join(triage_snapshot_dir(file_id), "2")
+        os.makedirs(aids_dir, exist_ok=True)
+        with open(os.path.join(aids_dir, "timeline.json"), "w") as f:
+            f.write("{}")
+
+    page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+    admin_client.post(
+        "/maintenance/subtitles",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "file_id": file_id,
+            "dismiss_submit": "Nothing forced here",
+        },
+    )
+    with app.app_context():
+        assert not os.path.isdir(triage_snapshot_dir(file_id))
+
+
+def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
+    """The generation task writes the timeline and frames from the
+    (stubbed) probes, and the triage page renders the density strip,
+    cue bounds, and snapshot thumbnails."""
+
+    import app.triage as triage
+
+    with app.app_context():
+        file, small = build_candidate(title="Snapshot Subject", year=2013)
+        file_id = file.id
+        local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(b"mkv bytes")
+
+    monkeypatch.setattr(triage, "_probe_duration", lambda path: 6000.0)
+    monkeypatch.setattr(
+        triage,
+        "_probe_cue_times",
+        lambda path, streamorder: [10.0, 12.0, 15.0, 2500.0, 5900.0],
+    )
+
+    def fake_render(path, streamorder, at, out_path):
+        """Write a dummy frame."""
+
+        with open(out_path, "wb") as handle:
+            handle.write(b"jpg")
+        return True
+
+    monkeypatch.setattr(triage, "_render_snapshot", fake_render)
+
+    try:
+        assert triage.generate_triage_snapshots(file_id) is True
+
+        with app.app_context():
+            aids = triage.triage_presentation(file_id, 2)
+        assert aids["cues"] == 5
+        assert aids["first"] == "0:00:10"
+        assert aids["last"] == "1:38:20"
+        assert len(aids["snapshots"]) == 5
+        assert max(aids["buckets"]) == 100
+
+        page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+        assert "5 cues from 0:00:10 to 1:38:20" in page
+        assert f"triage/{file_id}/2/snap-1.jpg" in page
+        assert 'name="track_ids"' in page
+    finally:
+        os.remove(local_path)
+        with app.app_context():
+            triage.remove_triage_snapshots(file_id)
+
+
+def test_import_candidates_enqueue_snapshot_generation(app):
+    """The import-time hook queues generation for heuristic matches and
+    stays quiet for healthy files."""
+
+    from app.triage import maybe_enqueue_triage_snapshots
+
+    with app.app_context():
+        file, _ = build_candidate(title="Enqueue Subject", year=2014)
+        file_id = file.id
+        healthy = make_movie_file(make_movie("Enqueue Healthy", 2015), "DVD")
+        add_subtitle(healthy, 1, 1500)
+        add_subtitle(healthy, 2, 900)
+        db.session.commit()
+
+        assert maybe_enqueue_triage_snapshots(file_id) is True
+        assert maybe_enqueue_triage_snapshots(healthy.id) is False
+
+    jobs = [
+        job
+        for job in app.transcode_queue.jobs
+        if job.func_name == "app.triage.generate_triage_snapshots"
+    ]
+    assert len(jobs) == 1
+    assert jobs[0].args == (file_id,)
+
+
+def test_deleting_the_local_file_removes_triage_aids(app):
+    """delete_local_file covers both deletions and replacements."""
+
+    from app.triage import triage_snapshot_dir
+
+    with app.app_context():
+        file, _ = build_candidate(title="Delete Cleanup", year=2016)
+        aids_dir = os.path.join(triage_snapshot_dir(file.id), "2")
+        os.makedirs(aids_dir, exist_ok=True)
+        with open(os.path.join(aids_dir, "timeline.json"), "w") as f:
+            f.write("{}")
+
+        file.delete_local_file()
+        assert not os.path.isdir(triage_snapshot_dir(file.id))

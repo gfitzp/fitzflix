@@ -9,7 +9,7 @@
 </nav>
 <h2 class="mt-2 mb-n2">Possibly-forced subtitles</h2>
 <hr>
-<p class="small text-muted">Each of these unforced tracks holds a quarter or less of the elements of the largest same-language track in its file &mdash; the shape of a foreign-parts-only track. Marking a track forced rewrites the flag in place with mkvpropedit, keeping the file's current default tracks; "Nothing forced here" stops the file from being flagged again.</p>
+<p class="small text-muted">Each of these unforced tracks holds a quarter or less of the elements of the largest same-language track in its file &mdash; the shape of a foreign-parts-only track. The cue timeline shows when in the film a track speaks (sparse clusters look forced, an even spread looks like commentary), and the snapshots burn the track onto the film's own frames. Check the tracks that are really forced and flag them in one pass; "Nothing forced here" stops the file from being flagged again.</p>
 {% if candidates %}
 {% for entry in candidates %}
 {% set file = entry.file %}
@@ -24,36 +24,56 @@
 		</form>
 	</div>
 	<div class="card-body py-2">
-		<table class="table table-sm mb-0">
-			<thead class="thead-light">
-				<tr>
-					<th scope="col">Track</th>
-					<th scope="col">Language</th>
-					<th scope="col">Format</th>
-					<th scope="col">Elements</th>
-					<th scope="col"></th>
-				</tr>
-			</thead>
-			<tbody>
-				{% for item in entry.tracks %}
-				<tr>
-					<td>{{ item.track.track }}</td>
-					<td>{{ item.track.language_name }}</td>
-					<td>{{ item.track.format }}</td>
-					<td>{{ item.track.elements }} of {{ item.max_elements }} in the fullest {{ item.track.language_name }} track</td>
-					<td>
+		<form action="" method="post">
+			{{ triage_form.csrf_token }}
+			{{ triage_form.file_id(value=file.id) }}
+			<table class="table table-sm mb-0">
+				<thead class="thead-light">
+					<tr>
+						{% if file.container == "Matroska" %}<th scope="col" style="width: 2rem;"></th>{% endif %}
+						<th scope="col">Track</th>
+						<th scope="col">Language</th>
+						<th scope="col">Format</th>
+						<th scope="col">Elements</th>
+					</tr>
+				</thead>
+				<tbody>
+					{% for item in entry.tracks %}
+					<tr{% if item.aids %} class="border-bottom-0"{% endif %}>
 						{% if file.container == "Matroska" %}
-						<form action="" method="post">
-							{{ triage_form.csrf_token }}
-							{{ triage_form.track_id(value=item.track.id) }}
-							{{ triage_form.mark_forced_submit(class_="btn btn-sm btn-warning") }}
-						</form>
+						<td><input type="checkbox" name="track_ids" value="{{ item.track.id }}" checked aria-label="Flag track {{ item.track.track }} as forced"></td>
 						{% endif %}
-					</td>
-				</tr>
-				{% endfor %}
-			</tbody>
-		</table>
+						<td>{{ item.track.track }}</td>
+						<td>{{ item.track.language_name }}</td>
+						<td>{{ item.track.format }}</td>
+						<td>{{ item.track.elements }} of {{ item.max_elements }} in the fullest {{ item.track.language_name }} track</td>
+					</tr>
+					{% if item.aids %}
+					<tr>
+						{% if file.container == "Matroska" %}<td class="border-top-0"></td>{% endif %}
+						<td colspan="4" class="border-top-0 pt-0">
+							{# Cue density across the runtime: where this track speaks #}
+							<div class="d-flex align-items-end" style="height: 22px; gap: 1px; max-width: 480px;">
+								{% for pct in item.aids.buckets %}
+								<div class="flex-fill {{ 'bg-info' if pct else 'bg-light' }} rounded-top" style="height: {{ [pct, 4] | max }}%;"></div>
+								{% endfor %}
+							</div>
+							<p class="small text-muted mb-1">{{ item.aids.cues }} cues from {{ item.aids.first }} to {{ item.aids.last }}</p>
+							<div>
+								{% for snap in item.aids.snapshots %}
+								<a href="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" target="_blank"><img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px;" class="border rounded mr-1 mb-1" alt="Track {{ item.track.track }} burned onto the film"></a>
+								{% endfor %}
+							</div>
+						</td>
+					</tr>
+					{% endif %}
+					{% endfor %}
+				</tbody>
+			</table>
+			{% if file.container == "Matroska" %}
+			{{ triage_form.mark_forced_submit(class_="btn btn-sm btn-warning mt-2") }}
+			{% endif %}
+		</form>
 	</div>
 </div>
 {% endfor %}
