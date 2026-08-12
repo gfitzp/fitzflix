@@ -69,6 +69,10 @@
 			</div>
 			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
 		</form>
+		<form action="" method="post" class="mt-2">
+			{{ watchlist_form.hidden_tag() }}
+			<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
+		</form>
 	</div>
 </div>
 <hr>

@@ -143,6 +143,20 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
+{# Watchlist: adding is for films without a local copy (the funnel
+   stage before the shopping list); removal shows whenever listed #}
+{% if on_watchlist or not films %}
+<div class="mt-2">
+	<form action="" method="post" class="d-inline">
+		{{ watchlist_form.hidden_tag() }}
+		{% if on_watchlist %}
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary">Remove from Watchlist</button>
+		{% else %}
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
+		{% endif %}
+	</form>
+</div>
+{% endif %}
 <hr>
 <h5>Movie Data</h5>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>

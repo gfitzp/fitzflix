@@ -206,6 +206,15 @@ class StreamingProvidersForm(FlaskForm):
     providers_submit = SubmitField("Save Streaming Services")
 
 
+class WatchlistForm(FlaskForm):
+    """Watchlist toggles on film pages, and per-row removal on the
+    watchlist page itself (movie_id rides in the hidden field there)."""
+
+    movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
+    add_watchlist_submit = SubmitField("Add to Watchlist")
+    remove_watchlist_submit = SubmitField("Remove from Watchlist")
+
+
 class ReviewExportForm(FlaskForm):
     """History page: email the Letterboxd-format review export. The default
     export covers only entries added or edited since the last export; the

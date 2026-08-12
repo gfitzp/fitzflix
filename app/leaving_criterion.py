@@ -13,9 +13,9 @@ landing page ranks it against the viewer's taste profile for Criterion
 subscribers.
 
 Shelf semantics: owned films are excluded (no urgency — the shelf is
-about watch-it-before-it-leaves), diary films are excluded unless they
-sit on the shopping list, and a leaving film on the shopping list is
-the strongest signal of all — watch now, or buy the disc.
+about watch-it-before-it-leaves), diary films are excluded unless
+they're on the user's watchlist, and a leaving film on the watchlist
+is the strongest signal of all — watch it now, or buy the disc.
 """
 
 import calendar
@@ -32,7 +32,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, Movie, UserMovieReview
+from app.models import File, Movie, UserMovieReview, UserWatchlist
 from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
 from app.videos import tmdb_get
@@ -225,8 +225,8 @@ def leaving_shelf(user):
 
     Renders only for Criterion subscribers with a stored set that
     hasn't departed yet. Owned films drop out; diary films drop out
-    unless they're on the shopping list (a record with no file, not
-    excluded), which instead badges them as the watch-now-or-buy case.
+    unless they're on the user's watchlist, and a watchlisted leaving
+    film badges and sorts first — the watch-it-now-or-buy-it case.
     """
 
     subscribed = {row.provider_id for row in user.streaming_providers}
@@ -259,16 +259,12 @@ def leaving_shelf(user):
         .filter(Movie.tmdb_id.in_(tmdb_ids))
         .filter(UserMovieReview.user_id == int(user.id))
     }
-    shopping = {
+    watchlisted = {
         tmdb_id
         for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+        .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
         .filter(Movie.tmdb_id.in_(tmdb_ids))
-        .filter(~Movie.files.any(File.feature_type_id.is_(None)))
-        .filter(
-            db.or_(
-                Movie.shopping_list_exclude.is_(None), Movie.shopping_list_exclude != 1
-            )
-        )
+        .filter(UserWatchlist.user_id == int(user.id))
     }
 
     items = []
@@ -276,7 +272,7 @@ def leaving_shelf(user):
         tmdb_id = item["tmdb_id"]
         if tmdb_id in owned:
             continue
-        if tmdb_id in logged and tmdb_id not in shopping:
+        if tmdb_id in logged and tmdb_id not in watchlisted:
             continue
         score, contributions = score_movie(_payload_features(item), profile)
         items.append(
@@ -286,7 +282,7 @@ def leaving_shelf(user):
                 "year": item.get("year"),
                 "poster_path": item.get("poster_path"),
                 "runtime": item.get("runtime"),
-                "shopping": tmdb_id in shopping,
+                "watchlisted": tmdb_id in watchlisted,
                 "because": [
                     label
                     for contribution, label in contributions[:3]
@@ -296,5 +292,5 @@ def leaving_shelf(user):
             }
         )
 
-    items.sort(key=lambda item: (item["shopping"], item["score"]), reverse=True)
+    items.sort(key=lambda item: (item["watchlisted"], item["score"]), reverse=True)
     return {"departs": departs, "items": items}

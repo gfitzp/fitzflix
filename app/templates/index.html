@@ -87,6 +87,9 @@
 			<h6 class="mb-1">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}{% if minutes %} <span class="small text-muted font-weight-normal">&middot; {{ item.runtime }} min</span>{% endif %}</h6>
 		</a>
 		<p class="mb-0">
+			{% if item.watchlisted %}
+			<span class="badge badge-warning font-weight-normal" title="On your watchlist">On your watchlist</span>
+			{% endif %}
 			{% for provider in item.providers %}
 			{{ availability_badge(provider) }}
 			{% endfor %}
@@ -118,8 +121,8 @@
 			<h6 class="mb-1">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}{% if minutes %} <span class="small text-muted font-weight-normal">&middot; {{ item.runtime }} min</span>{% endif %}</h6>
 		</a>
 		<p class="mb-0">
-			{% if item.shopping %}
-			<span class="badge badge-warning font-weight-normal" title="On your shopping list — watch it before it leaves, or buy the disc">On your shopping list</span>
+			{% if item.watchlisted %}
+			<span class="badge badge-warning font-weight-normal" title="On your watchlist — watch it before it leaves, or buy the disc">On your watchlist</span>
 			{% endif %}
 			{% for label in item.because[:3] %}
 			<span class="badge badge-light border font-weight-normal">{{ label }}</span>
@@ -128,6 +131,6 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Departing films from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>, ranked by your taste profile. Amber means the film is on your shopping list &mdash; watch it before it leaves, or buy the disc.</p>
+<p class="small text-muted">Departing films from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>, ranked by your taste profile. Amber means the film is on your watchlist &mdash; watch it before it leaves, or buy the disc.</p>
 {% endif %}
 {% endblock %}

@@ -32,6 +32,7 @@ from app.models import (
     TMDBGenre,
     TMDBKeyword,
     UserMovieReview,
+    UserWatchlist,
     movie_genres,
     movie_keywords,
 )
@@ -104,6 +105,11 @@ BARE_WATCH_WEIGHT = 0.3
 REWATCH_WEIGHT = 0.25
 REWATCH_CAP = 2
 RATING_SPREAD = 2.5
+
+# A watchlist add is interest, not approval: weaker than choosing to
+# watch, but a real signal about taste
+
+WATCHLIST_WEIGHT = 0.2
 
 # Redis keys written by the nightly recompute
 
@@ -217,8 +223,9 @@ def collect_features(movie_ids):
 
 
 def user_movie_weights(user_id):
-    """Per-movie sentiment weights from the user's own diary rows only —
-    never the household shopping-cart priority."""
+    """Per-movie sentiment weights from the user's own diary rows —
+    never the household shopping-cart priority — plus a mild interest
+    weight for unwatched films on their watchlist."""
 
     rows = (
         db.session.query(
@@ -249,6 +256,12 @@ def user_movie_weights(user_id):
         if viewings > 1:
             weight += REWATCH_WEIGHT * min(viewings - 1, REWATCH_CAP)
         weights[movie_id] = weight
+
+    for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
+        UserWatchlist.user_id == int(user_id)
+    ):
+        if movie_id not in weights:
+            weights[movie_id] = WATCHLIST_WEIGHT
 
     return weights
 

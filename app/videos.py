@@ -47,10 +47,20 @@ from app.models import (
     TVSeries,
     User,
     UserMovieReview,
+    UserWatchlist,
     movie_file_rank,
     tmdb_get,
     tv_file_rank,
 )
+
+
+def clear_watchlist(user_id, movie_id):
+    """Drop a film from a user's watchlist, if present — watching it,
+    however the watch arrives, is what completes a watchlist entry.
+    Callers commit."""
+
+    UserWatchlist.query.filter_by(user_id=int(user_id), movie_id=int(movie_id)).delete()
+
 
 EIGHT_MEGABYTES = 8388608
 
@@ -3171,6 +3181,7 @@ def parse_letterboxd_export(zip_bytes):
                 "year": key[1],
                 "rating": None,
                 "liked": False,
+                "watchlist": False,
                 "entries": {},
             }
         return films[key]
@@ -3185,6 +3196,14 @@ def parse_letterboxd_export(zip_bytes):
             key = film_key(row)
             if key:
                 film(key)["liked"] = True
+
+        # watchlist.csv is the CURRENT want-to-watch list, so it wins
+        # over any past watches in the same export
+
+        for row in rows(zf, "watchlist.csv"):
+            key = film_key(row)
+            if key:
+                film(key)["watchlist"] = True
 
         # Diary rows and review rows describe the same watch when they
         # share a watched date, so entries are keyed by that date
@@ -3234,7 +3253,7 @@ def parse_letterboxd_export(zip_bytes):
                     "rewatch": None,
                 }
             ]
-        if f["entries"]:
+        if f["entries"] or f["watchlist"]:
             results.append(f)
     return results
 
@@ -3444,6 +3463,21 @@ def apply_letterboxd_import(user_id, films):
                     review.liked = review.liked or film["liked"]
                     imported += 1
 
+                # A watched import completes any old watchlist entry, but
+                # watchlist.csv reflects Letterboxd's CURRENT list — so it
+                # re-adds afterwards and wins over past watches
+
+                if film["entries"]:
+                    clear_watchlist(user_id, movie.id)
+                if film.get("watchlist"):
+                    listed = UserWatchlist.query.filter_by(
+                        user_id=user_id, movie_id=movie.id
+                    ).first()
+                    if listed is None:
+                        db.session.add(
+                            UserWatchlist(user_id=user_id, movie_id=movie.id)
+                        )
+
             db.session.commit()
 
             # Enrich the newly created movies through the standard two-phase
@@ -3526,8 +3560,10 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 user = User.query.filter_by(plex_username=plex_username).first()
 
             if user is not None:
-                # One diary row per calendar day, whatever the exact times
+                # The watch completes any watchlist entry, and one diary
+                # row per calendar day, whatever the exact times
 
+                clear_watchlist(user.id, movie.id)
                 existing = UserMovieReview.query.filter(
                     UserMovieReview.user_id == user.id,
                     UserMovieReview.movie_id == movie.id,

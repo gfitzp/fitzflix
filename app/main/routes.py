@@ -69,6 +69,7 @@ from app.main.forms import (
     TMDBRefreshForm,
     TrackMetadataScanForm,
     TranscodeForm,
+    WatchlistForm,
     TVShoppingFilterForm,
     PlexUsernameForm,
     StreamingProvidersForm,
@@ -87,6 +88,7 @@ from app.models import (
     User,
     UserMovieReview,
     UserStreamingProvider,
+    UserWatchlist,
     movie_file_rank,
     tmdb_get,
     tv_file_rank,
@@ -121,6 +123,7 @@ from app.triage import (
 )
 from app.videos import (
     evaluate_filename,
+    clear_watchlist,
     parse_letterboxd_export,
     star_rating_fields,
     track_metadata_scan,
@@ -357,14 +360,32 @@ def index():
                 .filter(UserMovieReview.user_id == int(current_user.id))
             )
             dropped = {t for (t,) in owned_now} | {t for (t,) in logged_now}
+        # A watchlisted film on the rail is the best kind of match —
+        # wanted, and streaming on a service already paid for — so it
+        # pins ahead of the daily rotation
+
+        watchlisted_now = set()
+        if rail_ids:
+            watchlisted_now = {
+                tmdb_id
+                for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+                .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
+                .filter(Movie.tmdb_id.in_(rail_ids))
+                .filter(UserWatchlist.user_id == int(current_user.id))
+            }
         for item in rail_payload.get("items", []):
             if item["tmdb_id"] in dropped:
                 continue
             if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
                 continue
+            item["watchlisted"] = item["tmdb_id"] in watchlisted_now
             rail.append(item)
-        rail = rotate_daily(
-            rail, 12, f"rail:{int(current_user.id)}:{date.today().isoformat()}"
+        pinned = [item for item in rail if item["watchlisted"]][:12]
+        rest = [item for item in rail if not item["watchlisted"]]
+        rail = pinned + rotate_daily(
+            rest,
+            12 - len(pinned),
+            f"rail:{int(current_user.id)}:{date.today().isoformat()}",
         )
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id
@@ -393,11 +414,11 @@ def index():
             if not minutes or (item.get("runtime") and item["runtime"] <= minutes)
         ]
 
-        # Shopping-list urgencies stay pinned; the rest rotates daily so
-        # a month-long departure set doesn't look frozen
+        # Watchlist urgencies stay pinned; the rest rotates daily so a
+        # month-long departure set doesn't look frozen
 
-        pinned = [item for item in fitting if item.get("shopping")][:12]
-        rest = [item for item in fitting if not item.get("shopping")]
+        pinned = [item for item in fitting if item.get("watchlisted")][:12]
+        rest = [item for item in fitting if not item.get("watchlisted")]
         shelf_items = pinned + rotate_daily(
             rest,
             12 - len(pinned),
@@ -1199,6 +1220,7 @@ def movie(movie_id):
             **star_rating_fields(rating),
         )
         db.session.add(review)
+        clear_watchlist(current_user.id, movie.id)
         db.session.commit()
         if rating is not None:
             flash(f"Rated '{title}' {rating:g} out of 5 stars", "success")
@@ -1206,6 +1228,32 @@ def movie(movie_id):
             flash(f"Logged review for '{title}'", "success")
         else:
             flash(f"Logged '{title}' in your history", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
+    # Watchlist toggle: adds only make sense for films with no local
+    # copy (the funnel stage before the shopping list), but removal is
+    # offered whenever the film is on the list — even after acquiring it
+
+    watchlist_form = WatchlistForm()
+    on_watchlist = (
+        UserWatchlist.query.filter_by(
+            user_id=int(current_user.id), movie_id=movie.id
+        ).first()
+        is not None
+    )
+    if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
+        if not on_watchlist:
+            db.session.add(UserWatchlist(user_id=current_user.id, movie_id=movie.id))
+            db.session.commit()
+        flash(f"Added '{title}' to your watchlist", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+    if (
+        watchlist_form.remove_watchlist_submit.data
+        and watchlist_form.validate_on_submit()
+    ):
+        clear_watchlist(current_user.id, movie.id)
+        db.session.commit()
+        flash(f"Removed '{title}' from your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     transcode_form = TranscodeForm()
@@ -1330,6 +1378,8 @@ def movie(movie_id):
         tmdb_lookup_form=tmdb_lookup_form,
         criterion_form=criterion_form,
         streaming=streaming,
+        watchlist_form=watchlist_form,
+        on_watchlist=on_watchlist,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 
@@ -4199,6 +4249,106 @@ def search_tmdb():
     )
 
 
+@bp.route("/watchlist", methods=["GET", "POST"])
+@login_required
+def watchlist():
+    """The user's want-to-watch list: the funnel stage before the
+    shopping list, with streaming and rental availability on every row
+    so "how can I watch this" is answered in place."""
+
+    watchlist_form = WatchlistForm()
+    if (
+        watchlist_form.remove_watchlist_submit.data
+        and watchlist_form.validate_on_submit()
+        and watchlist_form.movie_id.data
+    ):
+        clear_watchlist(current_user.id, watchlist_form.movie_id.data)
+        db.session.commit()
+        flash("Removed from your watchlist", "success")
+        return redirect(url_for("main.watchlist"))
+
+    entries = (
+        UserWatchlist.query.filter_by(user_id=int(current_user.id))
+        .join(Movie, Movie.id == UserWatchlist.movie_id)
+        .order_by(UserWatchlist.date_added.desc())
+        .all()
+    )
+
+    # Availability like the other list surfaces: batch cache-first with
+    # at most 50 fetches per render, the rest warmed in the background
+
+    provider_ids = user_provider_ids(current_user)
+    availability_by_id = {}
+    if provider_ids:
+        availability_by_id, deferred = batch_title_availability(
+            (entry.movie.tmdb_id for entry in entries if entry.movie.tmdb_id),
+            fetch_limit=50,
+        )
+        if deferred and current_app.redis.set(
+            f"fitzflix:streaming:warm:watchlist:{int(current_user.id)}",
+            "1",
+            nx=True,
+            ex=900,
+        ):
+            current_app.maintenance_queue.enqueue(
+                "app.streaming.warm_title_availability",
+                args=(deferred,),
+                job_timeout="30m",
+                description=(
+                    f"Warming streaming availability for {len(deferred)} films"
+                ),
+            )
+
+    rows = []
+    streaming_attribution = False
+    for entry in entries:
+        movie = entry.movie
+        streaming = []
+        rentals = []
+        if provider_ids and movie.tmdb_id:
+            availability = availability_by_id.get(movie.tmdb_id)
+            streaming = streaming_matches(availability, provider_ids)
+            rentals = rental_matches(availability, provider_ids)
+            if streaming or rentals:
+                streaming_attribution = True
+        rows.append(
+            {
+                "movie": movie,
+                "date_added": entry.date_added,
+                "streaming": streaming,
+                "rentals": rentals,
+            }
+        )
+
+    return render_template(
+        "watchlist.html",
+        title="My Watchlist",
+        rows=rows,
+        watchlist_form=watchlist_form,
+        streaming_attribution=streaming_attribution,
+    )
+
+
+def _find_or_create_tmdb_movie(tmdb_id, film_title, year):
+    """(movie, created): the record for a TMDb film — reusing an existing
+    row by tmdb id, or a colliding canonical title+year record, before
+    creating a review-only one. The movie may have appeared since the
+    caller's redirect check (an import or a concurrent log). Callers
+    commit and, when created, enqueue the standard TMDb refresh."""
+
+    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    if movie is None:
+        movie = Movie.query.filter_by(title=film_title, year=year).first()
+        if movie is not None and movie.tmdb_id is None:
+            movie.tmdb_id = tmdb_id
+    created = movie is None
+    if created:
+        movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
+        db.session.add(movie)
+        db.session.flush()
+    return movie, created
+
+
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
@@ -4278,23 +4428,33 @@ def review_tmdb(tmdb_id):
         return redirect(url_for("main.history"))
     year = int(release_year)
 
+    # Watchlist add: creates the same review-only record a log would, so
+    # the film is enriched and first-class from the moment it's wanted
+
+    watchlist_form = WatchlistForm()
+    if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
+        movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
+        listed = UserWatchlist.query.filter_by(
+            user_id=int(current_user.id), movie_id=movie.id
+        ).first()
+        if listed is None:
+            db.session.add(UserWatchlist(user_id=current_user.id, movie_id=movie.id))
+        db.session.commit()
+        if created:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("Movies", movie.id, tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=(
+                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                ),
+            )
+        flash(f"Added '{film_title} ({year})' to your watchlist", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     movie_review_form = MovieReviewForm(date_watched=datetime.now())
     if movie_review_form.review_submit.data and movie_review_form.validate_on_submit():
-        # The movie may have appeared since the redirect check above (an
-        # import or concurrent review), and the canonical name may collide
-        # with an existing record — reuse rather than violating the unique
-        # title + year constraint
-
-        movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
-        if movie is None:
-            movie = Movie.query.filter_by(title=film_title, year=year).first()
-            if movie is not None and movie.tmdb_id is None:
-                movie.tmdb_id = tmdb_id
-        created = movie is None
-        if created:
-            movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
-            db.session.add(movie)
-            db.session.flush()
+        movie, created = _find_or_create_tmdb_movie(tmdb_id, film_title, year)
 
         rating = (
             float(movie_review_form.rating.data)
@@ -4328,6 +4488,7 @@ def review_tmdb(tmdb_id):
             **star_rating_fields(rating),
         )
         db.session.add(review)
+        clear_watchlist(current_user.id, movie.id)
         db.session.commit()
 
         if created:
@@ -4376,6 +4537,7 @@ def review_tmdb(tmdb_id):
         movie_review_form=movie_review_form,
         movie=store_lookup,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
+        watchlist_form=watchlist_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 

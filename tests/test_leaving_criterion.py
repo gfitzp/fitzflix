@@ -216,7 +216,7 @@ def subscribe_criterion(app):
 
 def test_shelf_ranks_excludes_and_badges(app, admin_client):
     from app import db
-    from app.models import UserMovieReview
+    from app.models import UserMovieReview, UserWatchlist
     from app.videos import star_rating_fields
 
     user_id = subscribe_criterion(app)
@@ -225,8 +225,8 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
         owned = make_movie("Shelf Owned", 1956, tmdb_id=8102)
         make_movie_file(owned, "Bluray-1080p")
 
-        # Review-only record: logged, no file, not excluded — the
-        # shopping-list watch-now-or-buy case
+        # Watchlisted (and even previously logged): the urgency case —
+        # watch it before it leaves, or buy the disc
 
         wanted = make_movie("Shelf Wanted", 1956, tmdb_id=8103)
         db.session.add(
@@ -234,12 +234,11 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
                 user_id=user_id, movie_id=wanted.id, **star_rating_fields(4.0)
             )
         )
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
 
-        # Logged and excluded from the shopping list: drops entirely
+        # Logged but not watchlisted: seen, not wanted — drops entirely
 
-        dismissed = make_movie(
-            "Shelf Dismissed", 1956, tmdb_id=8104, shopping_list_exclude=1
-        )
+        dismissed = make_movie("Shelf Dismissed", 1956, tmdb_id=8104)
         db.session.add(
             UserMovieReview(
                 user_id=user_id, movie_id=dismissed.id, **star_rating_fields(3.0)
@@ -261,14 +260,14 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Leaving the Criterion Channel" in body
     assert "Shelf Fresh (1956)" in body
     assert "Shelf Wanted (1956)" in body
-    assert "On your shopping list" in body
+    assert "On your watchlist" in body
     assert "Shelf Owned" not in body
     assert "Shelf Dismissed" not in body
     assert "Western" in body
     assert "criterionchannel.com" in body
 
-    # The shopping-list film sorts first — it's the urgency case —
-    # and the runtime filter applies like everywhere else
+    # The watchlisted film sorts first — it's the urgency case — and
+    # the runtime filter applies like everywhere else
 
     assert body.index("Shelf Wanted") < body.index("Shelf Fresh")
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)

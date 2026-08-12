@@ -797,6 +797,15 @@ class User(UserMixin, db.Model):
         cascade="all,delete,delete-orphan",
     )
 
+    # Films this user wants to watch — the stage before the shopping list
+
+    watchlist = db.relationship(
+        "UserWatchlist",
+        backref="user",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
+
     def __repr__(self):
         return f"<User '{self.email}'>"
 
@@ -1050,6 +1059,29 @@ class UserStreamingProvider(db.Model):
         return f"<UserStreamingProvider '{self.user_id}:{self.name}'>"
 
 
+class UserWatchlist(db.Model):
+    """A film the user wants to watch — the funnel stage before the
+    shopping list.
+
+    Adds reuse review-only Movie records, so watchlisted films are
+    enriched and first-class everywhere; watching the film (a manual
+    log, a Plex scrobble, or a Letterboxd import) removes the entry,
+    and graduation to the shopping list then happens organically via
+    the likes and ratings the shopping list already reads. Timestamps
+    are local wall-clock, like the diary's.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"), nullable=False)
+    date_added = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "movie_id"),)
+
+    def __repr__(self):
+        return f"<UserWatchlist '{self.user_id}:{self.movie_id}'>"
+
+
 class UserMovieReview(db.Model):
     """One viewing: a diary/review row from the movie page, a Letterboxd
     import, or a Plex watch.
@@ -1139,6 +1171,12 @@ class Movie(db.Model, TMDBMixin, Utilities):
     )
     ratings = db.relationship(
         "UserMovieReview",
+        backref="movie",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
+    watchlist_entries = db.relationship(
+        "UserWatchlist",
         backref="movie",
         lazy="dynamic",
         cascade="all,delete,delete-orphan",
