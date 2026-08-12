@@ -76,6 +76,12 @@ def subscribe(app, provider_id, name, email=None):
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
 MAX = {"provider_id": 1899, "provider_name": "Max", "logo_path": "/max.jpg"}
+AMAZON = {
+    "provider_id": 10,
+    "provider_name": "Amazon Video",
+    "logo_path": "/amazon.jpg",
+}
+APPLE = {"provider_id": 2, "provider_name": "Apple TV", "logo_path": "/apple.jpg"}
 TUBI = {"provider_id": 73, "provider_name": "Tubi TV", "logo_path": "/tubi.jpg"}
 
 
@@ -236,8 +242,8 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
             "link": "https://www.themoviedb.org/movie/603/watch",
             "flatrate": [NETFLIX],
             "ads": [],
-            "rent": [],
-            "buy": [],
+            "rent": [AMAZON],
+            "buy": [AMAZON],
         },
     )
 
@@ -246,6 +252,10 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
     assert "Netflix" in page
     assert "Streaming data by JustWatch" in page
     assert "All watch options" in page
+
+    # Owned films never advertise rentals — the film is on the shelf
+
+    assert "Rentable on" not in page
 
 
 def test_owned_movie_with_no_match_stays_quiet(app, admin_client, monkeypatch):
@@ -393,12 +403,80 @@ def test_review_tmdb_page_says_not_on_your_services(app, admin_client, monkeypat
 
     subscribe(app, 8, "Netflix")
     plant_availability(
-        app, 800, {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
+        app,
+        800,
+        {
+            "link": None,
+            "flatrate": [],
+            "ads": [],
+            "rent": [AMAZON, APPLE],
+            "buy": [AMAZON],
+        },
     )
 
     # A film with no local file is exactly where "not on your services"
-    # is worth saying out loud
+    # is worth saying out loud — along with where it can be rented,
+    # deduped across the rent and buy lists
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
     assert "Not streaming on your services." in page
+    assert "Rentable on Amazon Video, Apple TV." in page
     assert "Streaming data by JustWatch" in page
+
+
+def test_unowned_movie_record_shows_rentable_line(app, admin_client, monkeypatch):
+    """A review-only movie record (no local files) gets the rentable
+    line on its movie page."""
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+
+    with app.app_context():
+        movie = make_movie(
+            "Streaming Fileless",
+            1999,
+            tmdb_id=801,
+            tmdb_data_as_of=datetime.utcnow(),
+        )
+        from app import db
+
+        db.session.commit()
+        movie_id = movie.id
+
+    subscribe(app, 8, "Netflix")
+    plant_availability(
+        app,
+        801,
+        {"link": None, "flatrate": [], "ads": [], "rent": [AMAZON], "buy": []},
+    )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Not streaming on your services." in page
+    assert "Rentable on Amazon Video." in page
+    assert "Streaming data by JustWatch" in page
+
+
+def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
+    """A 404 is TMDb's answer (stale or wrong tmdb id), not an outage:
+    it caches as an empty payload instead of re-querying per view."""
+
+    import requests
+
+    import app.streaming as streaming
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        response = requests.Response()
+        response.status_code = 404
+        raise requests.exceptions.HTTPError(response=response)
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        first = streaming.title_availability(999999)
+        second = streaming.title_availability(999999)
+
+    assert len(calls) == 1
+    assert first["flatrate"] == [] and second["flatrate"] == []

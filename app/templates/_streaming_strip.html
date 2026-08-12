@@ -14,6 +14,9 @@
 	{% else %}
 		<span class="small text-muted mr-1">Streaming availability unknown right now.</span>
 	{% endif %}
+	{% if streaming.rentals %}
+		<span class="small text-muted mr-1">Rentable on {{ streaming.rentals|join(", ") }}.</span>
+	{% endif %}
 	{% if streaming.link %}<a class="small mr-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
 	<span class="small text-muted">Streaming data by JustWatch</span>
 </div>

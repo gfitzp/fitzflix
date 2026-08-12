@@ -12,6 +12,8 @@ deep links; the only outbound link is the film's TMDb watch page.
 import json
 import traceback
 
+import requests
+
 from flask import current_app
 
 from app.videos import tmdb_get
@@ -87,6 +89,16 @@ def title_availability(tmdb_id):
         )
         r.raise_for_status()
         region = (r.json().get("results") or {}).get(WATCH_REGION) or {}
+    except requests.exceptions.HTTPError as e:
+        # A 404 is TMDb's answer, not an outage — the id has no watch
+        # record (a stale or wrong tmdb id) — so cache it as empty
+        # rather than re-querying on every page view
+
+        if e.response is not None and e.response.status_code == 404:
+            region = {}
+        else:
+            current_app.logger.warning(traceback.format_exc())
+            return None
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return None
@@ -134,7 +146,9 @@ def user_streaming(tmdb_id, user, negative=False):
     TMDb watch-page link, or None when the user picked no services (the
     surfaces stay quiet for them). negative=True keeps the payload when
     nothing matched, so unowned-film pages can say "not on your
-    services" instead of nothing."""
+    services" instead of nothing — and only those pages also list where
+    the film can be rented or bought, since that's where the purchase
+    decision is live (rent/buy never counts as a subscription match)."""
 
     provider_ids = user_provider_ids(user)
     if not provider_ids:
@@ -143,8 +157,19 @@ def user_streaming(tmdb_id, user, negative=False):
     matches = streaming_matches(availability, provider_ids)
     if not matches and not negative:
         return None
+
+    rentals = []
+    if negative:
+        seen = set()
+        for kind in ("rent", "buy"):
+            for provider in (availability or {}).get(kind) or []:
+                if provider["provider_id"] not in seen:
+                    seen.add(provider["provider_id"])
+                    rentals.append(provider["provider_name"])
+
     return {
         "matches": matches,
         "link": (availability or {}).get("link"),
         "known": availability is not None,
+        "rentals": rentals,
     }
