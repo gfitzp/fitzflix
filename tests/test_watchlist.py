@@ -44,6 +44,30 @@ def entries_for(app, user_id):
         ]
 
 
+def remove_form_fields(page_html, movie_id):
+    """The watchlist page's remove form for one movie, submitted the way
+    a browser would: every input the form renders, in DOM order, plus
+    the submit button — so template/route field mismatches surface."""
+
+    form_match = re.search(
+        r"<form[^>]*>(?:(?!</form>).)*?"
+        rf'value="{movie_id}"(?:(?!</form>).)*?</form>',
+        page_html,
+        re.DOTALL,
+    )
+    assert form_match, f"no remove form found for movie {movie_id}"
+    from werkzeug.datastructures import MultiDict
+
+    fields = [
+        (name, value)
+        for name, value in re.findall(
+            r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', form_match.group(0)
+        )
+    ]
+    fields.append(("remove_watchlist_submit", "Remove from Watchlist"))
+    return MultiDict(fields)
+
+
 def test_movie_page_toggle_adds_and_removes(app, admin_client):
     from app import db
 
@@ -296,25 +320,16 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
     assert page.count("stretched-link") == 2
     assert f'href="/movie/{owned_id}"' in page
 
-    response = admin_client.post(
-        "/watchlist",
-        data={
-            "csrf_token": csrf_token_from(page),
-            "movie_id": str(movie_id),
-            "remove_watchlist_submit": "Remove from Watchlist",
-        },
-    )
+    # Removal posts the form EXACTLY as rendered — a handcrafted POST
+    # once hid a template bug where hidden_tag() emitted a second,
+    # empty movie_id input that WTForms read instead of the real one
+
+    response = admin_client.post("/watchlist", data=remove_form_fields(page, movie_id))
     assert response.status_code == 302
     assert entries_for(app, user_id) == [owned_id]
 
-    response = admin_client.post(
-        "/watchlist",
-        data={
-            "csrf_token": csrf_token_from(page),
-            "movie_id": str(owned_id),
-            "remove_watchlist_submit": "Remove from Watchlist",
-        },
-    )
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    response = admin_client.post("/watchlist", data=remove_form_fields(page, owned_id))
     assert response.status_code == 302
     assert entries_for(app, user_id) == []
 

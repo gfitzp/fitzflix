@@ -28,9 +28,12 @@
 			<div class="media-body">
 				<div class="d-flex w-100 justify-content-between">
 					<h5 class="mb-1"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="stretched-link text-body text-decoration-none">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</a></h5>
+					{# The form's own movie_id field carries the value —
+					   hidden_tag() would render a second, empty movie_id
+					   input, and WTForms reads the first one submitted #}
 					<form action="" method="post" class="ml-2 position-relative" style="z-index: 2;">
-						{{ watchlist_form.hidden_tag() }}
-						<input type="hidden" name="movie_id" value="{{ movie.id }}">
+						{{ watchlist_form.csrf_token }}
+						{{ watchlist_form.movie_id(value=movie.id) }}
 						<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
 					</form>
 				</div>
