@@ -443,9 +443,9 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     # Refresh film awards from Wikidata weekly, early Monday: the film
     # pass resolves the library in a couple dozen polite SPARQL batches,
-    # the person pass rebuilds the craft categories on top (~300 more
-    # batches over the credited people), and the nightly recommendation
-    # recompute folds the results in as a quality prior
+    # the craft pass rebuilds the person-held for-work categories on top
+    # (a second sweep of the same film batches), and the nightly
+    # recommendation recompute folds the results in as a quality prior
 
     register_cron(
         app.maintenance_scheduler,

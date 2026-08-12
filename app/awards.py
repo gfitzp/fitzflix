@@ -17,10 +17,14 @@ statements off film items, but Wikidata records craft categories
 (Best Director, Best Actor, Best Cinematography…) on PERSON items
 with a "for work" (P1686) qualifier naming the film — On the
 Waterfront's item knows Best Picture while Kazan's item holds the
-Best Director win — so a second pass reads the library's credited
-people (matched by TMDb person id, P4985) and attributes their
-for-work awards back to the films. Person awards without a for-work
-qualifier (career honors, knighthoods) are ignored.
+Best Director win — so a second pass finds every award statement
+whose for-work qualifier names a library film, whoever's item holds
+it, and attributes it to the film. Querying from the film side
+matters: the qualifier lookup anchored on a bound film resolves a
+200-film batch in under a second, where sweeping the library's
+61,000 credited people timed WDQS out on every batch. Person awards
+without a for-work qualifier (career honors, knighthoods) never
+match.
 """
 
 import time
@@ -32,8 +36,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import Movie, MovieAward, MovieCast, MovieCrew
-from app.recommendations import CREW_ROLE_JOBS
+from app.models import Movie, MovieAward
 
 # This process's app instance, resolved lazily so importing this module
 # from a process that already has an application doesn't build a second one
@@ -61,21 +64,20 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
 }}
 """
 
-# The person pass matches people by TMDb person id (P4985) and only
-# keeps statements carrying a "for work" qualifier; the work's own
-# external ids come back in the same query so no second lookup runs
+# The craft pass anchors on the FILM and walks backwards into any
+# award statement whose "for work" qualifier names it — the holder's
+# item (usually a person's) never needs naming, so the query stays
+# selective enough for WDQS's 60-second limit
 
-PERSON_AWARDS_QUERY = """
-SELECT ?award ?awardLabel ?kind (YEAR(?when) AS ?year) ?workImdb ?workTmdb WHERE {{
+CRAFT_AWARDS_QUERY = """
+SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
   VALUES ?ext {{ {values} }}
-  ?person wdt:P4985 ?ext .
-  {{ ?person p:P166 ?statement . ?statement ps:P166 ?award . BIND("win" AS ?kind) }}
+  ?film wdt:{id_prop} ?ext .
+  ?statement pq:P1686 ?film .
+  {{ ?statement ps:P166 ?award . BIND("win" AS ?kind) }}
   UNION
-  {{ ?person p:P1411 ?statement . ?statement ps:P1411 ?award . BIND("nomination" AS ?kind) }}
-  ?statement pq:P1686 ?work .
+  {{ ?statement ps:P1411 ?award . BIND("nomination" AS ?kind) }}
   OPTIONAL {{ ?statement pq:P585 ?when . }}
-  OPTIONAL {{ ?work wdt:P345 ?workImdb . }}
-  OPTIONAL {{ ?work wdt:P4947 ?workTmdb . }}
   SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
 }}
 """
@@ -132,32 +134,6 @@ def _award_rows(bindings, movie_ids_by_ext):
     for binding in bindings:
         ext = binding.get("ext", {}).get("value")
         movie_id = movie_ids_by_ext.get(ext)
-        if movie_id is None:
-            continue
-        parsed = _parse_award(binding)
-        if parsed is None:
-            continue
-        rows.setdefault(movie_id, set()).add(parsed)
-    return rows
-
-
-def _person_award_rows(bindings, work_by_imdb, work_by_tmdb):
-    """Person-pass bindings as {movie_id: {(award_id, name, win, year)}}.
-
-    Attribution goes to the for-work FILM, not the person: the work
-    resolves to a library movie through its IMDb id first, TMDb id as
-    fallback (the film pass's matching order). Works outside the
-    library — other films, TV — simply don't resolve and drop. The
-    same statement can arrive once per honored person (two writers
-    sharing a screenplay award), so the per-film set dedupe matters
-    here even more than in the film pass.
-    """
-
-    rows = {}
-    for binding in bindings:
-        movie_id = work_by_imdb.get(binding.get("workImdb", {}).get("value"))
-        if movie_id is None:
-            movie_id = work_by_tmdb.get(binding.get("workTmdb", {}).get("value"))
         if movie_id is None:
             continue
         parsed = _parse_award(binding)
@@ -235,89 +211,63 @@ def _merge_person_awards(rows):
     return films, inserted
 
 
-def _credited_person_ids():
-    """TMDb person ids with library credits: credited cast + key crew.
-
-    The cast side follows the /people page's convention — people whose
-    only roles are "(uncredited)" don't count — and the crew side is
-    restricted to the taste profile's key roles (director, writer,
-    cinematographer, composer, editor); grips and gaffers carry no
-    craft categories worth a 300-batch crawl.
-    """
-
-    key_jobs = [job for jobs, _ in CREW_ROLE_JOBS.values() for job in jobs]
-    cast = (
-        db.session.query(MovieCast.credit_id)
-        .filter(MovieCast.credit_id.isnot(None))
-        .filter(
-            db.or_(
-                MovieCast.character.is_(None),
-                db.not_(MovieCast.character.like("%(uncredited)%")),
-            )
-        )
-        .distinct()
-    )
-    crew = (
-        db.session.query(MovieCrew.credit_id)
-        .filter(MovieCrew.credit_id.isnot(None))
-        .filter(MovieCrew.job.in_(key_jobs))
-        .distinct()
-    )
-    return {row[0] for row in cast} | {row[0] for row in crew}
-
-
 def refresh_person_awards():
-    """Backfill craft awards from person items, in polite batches.
+    """Backfill for-work craft awards, in the film pass's own batches.
 
+    The same IMDb-first/TMDb-fallback id maps as refresh_movie_awards,
+    but the query walks from each film into award statements that name
+    it as their "for work" — the craft categories person items hold.
     Runs AFTER refresh_movie_awards in the weekly task: the film pass
-    replaces rows wholesale, so the person-derived rows are rebuilt on
-    top of each fresh baseline (and the merge dedupes against it).
-    Standalone runs are idempotent — already-stored rows just skip.
+    replaces rows wholesale, so the craft rows are rebuilt on top of
+    each fresh baseline (and the merge dedupes against it). Standalone
+    runs are idempotent — already-stored rows just skip.
     """
 
     if not current_app.config["WIKIDATA_SPARQL_URL"]:
         return "WIKIDATA_SPARQL_URL is not configured, skipping awards refresh"
 
-    # Full work maps, unlike the film pass's either/or split: a film
-    # queried by IMDb id must still resolve when the work item only
-    # carries its TMDb id, and vice versa
-
-    work_by_imdb = {
+    by_imdb = {
         imdb_id: movie_id
         for movie_id, imdb_id in db.session.query(Movie.id, Movie.imdb_id).filter(
             Movie.imdb_id.isnot(None), Movie.imdb_id != ""
         )
     }
-    work_by_tmdb = {
+    by_tmdb = {
         str(tmdb_id): movie_id
-        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id).filter(
-            Movie.tmdb_id.isnot(None)
-        )
+        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.tmdb_id.isnot(None))
+        .filter(db.or_(Movie.imdb_id.is_(None), Movie.imdb_id == ""))
     }
 
-    person_ids = sorted(_credited_person_ids())
-    films = set()
+    films = 0
+    touched = set()
     inserted = 0
-    for start in range(0, len(person_ids), AWARDS_BATCH_SIZE):
-        batch = person_ids[start : start + AWARDS_BATCH_SIZE]
-        values = " ".join(f'"{ext}"' for ext in batch)
-        try:
-            bindings = _wikidata_sparql(PERSON_AWARDS_QUERY.format(values=values))
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
-            current_app.logger.warning(
-                f"Person-awards batch failed ({len(batch)} ids), moving on"
-            )
-            continue
-        rows = _person_award_rows(bindings, work_by_imdb, work_by_tmdb)
-        batch_films, batch_inserted = _merge_person_awards(rows)
-        films |= batch_films
-        inserted += batch_inserted
-        time.sleep(AWARDS_BATCH_PAUSE_SECONDS)
+    for id_prop, mapping in (("P345", by_imdb), ("P4947", by_tmdb)):
+        ext_ids = sorted(mapping)
+        for start in range(0, len(ext_ids), AWARDS_BATCH_SIZE):
+            batch = ext_ids[start : start + AWARDS_BATCH_SIZE]
+            values = " ".join(f'"{ext}"' for ext in batch)
+            try:
+                bindings = _wikidata_sparql(
+                    CRAFT_AWARDS_QUERY.format(values=values, id_prop=id_prop)
+                )
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                current_app.logger.warning(
+                    f"Craft-awards batch failed ({id_prop}, {len(batch)} ids), "
+                    f"moving on"
+                )
+                continue
+            rows = _award_rows(bindings, mapping)
+            batch_films, batch_inserted = _merge_person_awards(rows)
+            films += len(batch)
+            touched |= batch_films
+            inserted += batch_inserted
+            time.sleep(AWARDS_BATCH_PAUSE_SECONDS)
 
     return (
-        f"Scanned {len(person_ids)} credited people, "
-        f"added {inserted} craft award records for {len(films)} films"
+        f"Scanned {films} films for craft awards, "
+        f"added {inserted} records for {len(touched)} films"
     )
 
 
