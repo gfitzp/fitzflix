@@ -5,10 +5,10 @@
 {# The navbar's search box again, pre-filled and right-aligned on the
    heading row like the index page's log-a-film form — a fruitless
    search can be reworked right here instead of via the navbar #}
-<div class="row mt-n2">
+<div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
-		{{ global_search_form("float-sm-right mb-2", value=q, width="min(20rem, 100%)") }}
+		{{ global_search_form("float-sm-right mb-2", value=q, width="min(20rem, 100%)", typeahead=False) }}
 	</div>
 </div>
 <hr>

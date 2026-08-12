@@ -7,7 +7,7 @@
    heading row like the index page's log-a-film form — but submitting
    straight back to TMDb; no type-ahead, since the suggestions only
    know the library #}
-<div class="row mt-n2">
+<div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto mr-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
 		{{ global_search_form("float-sm-right mb-2", action=url_for('main.search_tmdb'), value=q, placeholder="Search TMDb", width="min(20rem, 100%)", typeahead=False) }}
