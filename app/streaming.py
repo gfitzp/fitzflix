@@ -21,11 +21,6 @@ CACHE_SECONDS = 86400
 REGISTRY_KEY = "fitzflix:tmdb:watch-providers:registry"
 AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
-# How many registry providers the Profile picker offers, by JustWatch
-# display priority; a user's existing picks always stay listed
-
-PICKER_PROVIDER_LIMIT = 50
-
 
 def provider_registry():
     """US movie watch providers from TMDb's registry, sorted by display

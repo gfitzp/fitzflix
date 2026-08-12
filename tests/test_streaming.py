@@ -169,6 +169,11 @@ def test_profile_picker_saves_and_removes_services(app, admin_client, monkeypatc
     assert "Netflix" in page and "Max" in page
     assert "Streaming data by JustWatch" in page
 
+    # The picker lists alphabetically, not by JustWatch display priority
+    # (Netflix outranks Max in priority but follows it in the alphabet)
+
+    assert page.index("Max") < page.index("Netflix")
+
     token = csrf_token_from(page)
     response = admin_client.post(
         "/profile",

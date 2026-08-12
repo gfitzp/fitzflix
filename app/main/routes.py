@@ -100,7 +100,6 @@ from app.recommendations import (
     stored_recommendations,
 )
 from app.streaming import (
-    PICKER_PROVIDER_LIMIT,
     provider_registry,
     streaming_matches,
     title_availability,
@@ -3018,14 +3017,11 @@ def profile():
 
     # Form to pick the streaming services availability displays are
     # customized to — a per-user setting, never site-wide. The picker
-    # offers the registry's top providers by JustWatch display priority,
-    # plus whatever the user already picked
+    # offers every registry provider, alphabetically
 
     registry = provider_registry()
     subscribed = {row.provider_id: row for row in current_user.streaming_providers}
-    picker = registry[:PICKER_PROVIDER_LIMIT] + [
-        p for p in registry[PICKER_PROVIDER_LIMIT:] if p["provider_id"] in subscribed
-    ]
+    picker = sorted(registry, key=lambda p: (p["provider_name"] or "").lower())
     streaming_form = StreamingProvidersForm()
     streaming_form.providers.choices = [
         (p["provider_id"], p["provider_name"]) for p in picker
