@@ -1,8 +1,12 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
+{% from "_search_form.html" import global_search_form %}
 
 {% block app_content %}
 <h2 class="mt-n2">{{ title }}</h2>
+{# The same box as the local results page, but submitting straight back
+   to TMDb — no type-ahead, since the suggestions only know the library #}
+{{ global_search_form("mb-3", action=url_for('main.search_tmdb'), value=q, placeholder="Search TMDb", width="min(20rem, 100%)", typeahead=False) }}
 <hr>
 {% if error %}
 <div class="alert alert-warning" role="alert">{{ error }}</div>

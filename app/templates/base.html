@@ -4,17 +4,7 @@
 	{% if title %}Fitzflix - {{ title }}{% else %}Fitzflix{% endif %}
 {% endblock %}
 
-{% macro global_search_form(extra_classes) %}
-{# The global search box, with its type-ahead dropdown; rendered twice —
-   outside the collapse for phones, inside the right-side menu for desktop —
-   so the class-based type-ahead script binds to both #}
-<form class="form-inline flex-nowrap {{ extra_classes }}" action="{{ url_for('main.search') }}" method="get" autocomplete="off" role="search">
-	<div class="position-relative" style="width: 10rem;">
-		<input class="form-control form-control-sm w-100 global-search-input" type="search" name="q" placeholder="Search library" aria-label="Search library">
-		<div class="dropdown-menu dropdown-menu-right w-100 global-search-suggestions" style="max-height: 50vh; overflow-y: auto;"></div>
-	</div>
-</form>
-{% endmacro %}
+{% from "_search_form.html" import global_search_form %}
 
 {% block navbar %}
 <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">

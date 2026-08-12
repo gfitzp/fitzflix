@@ -524,6 +524,20 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     assert "/review/tmdb/579" in page
 
 
+def test_results_pages_carry_prefilled_search_boxes(app, admin_client):
+    """Both results pages re-offer the search box pre-filled, so a
+    fruitless query can be reworked in place instead of round-tripping
+    through the navbar; the TMDb page's box submits back to TMDb."""
+
+    page = admin_client.get("/search?q=jaws").get_data(as_text=True)
+    assert 'value="jaws"' in page
+
+    page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
+    assert 'action="/search/tmdb"' in page
+    assert 'value="jaws"' in page
+    assert 'placeholder="Search TMDb"' in page
+
+
 def test_search_tmdb_without_api_key_explains(app, admin_client):
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "TMDB_API_KEY is not configured" in page
