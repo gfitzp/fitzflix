@@ -707,3 +707,112 @@ def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
 
     ragged = list(range(100))
     assert all(len(rotate_partition(ragged, 12, day)) == 12 for day in range(20))
+
+
+def test_marker_bar_rides_with_the_profile(app):
+    """The nightly recompute stores the baseline-percentile marker bar
+    on the profile, computed from the user's own candidates."""
+
+    from app import db
+    from app.recommendations import PROFILE_KEY, recompute_recommendations
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+        liked = make_movie("Bar Liked", 1994)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, liked=True)
+        candidate = make_movie("Bar Candidate", 1995)
+        candidate.genres.append(comedy)
+        make_movie_file(candidate, "Bluray-1080p")
+        db.session.commit()
+
+    assert recompute_recommendations() is True
+    profile = json.loads(app.redis.get(PROFILE_KEY.format(user_id=user_id)))
+    assert profile["marker_bar"] > 0
+
+
+def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
+    """A stored marker bar gates the badge: a film must beat the user's
+    own baseline percentile, not just match a liked genre."""
+
+    import app.main.routes as main_routes
+
+    from app.recommendations import PROFILE_KEY
+    from app.models import User
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:80": {
+                        "class": "genre",
+                        "label": "Crime",
+                        "count": 5,
+                        "score": 1.0,
+                    },
+                    "decade:1950": {
+                        "class": "decade",
+                        "label": "1950s",
+                        "count": 5,
+                        "score": 0.9,
+                    },
+                },
+                "movies": 5,
+                "marker_bar": 0.7,
+            }
+        ),
+    )
+
+    class FakeTMDb:
+        """Canned TMDb response."""
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            """Never an HTTP error."""
+
+        def json(self):
+            """The canned payload."""
+
+            return self.payload
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        """One film over the bar, one merely genre-matched."""
+
+        if url.endswith("/search/movie"):
+            return FakeTMDb(
+                {
+                    "results": [
+                        {
+                            # Crime + 1950s: 0.5 + 0.27 = 0.77 > 0.7
+                            "id": 9201,
+                            "title": "Bar Clearing Hit",
+                            "release_date": "1955-08-01",
+                            "genre_ids": [80],
+                        },
+                        {
+                            # Crime alone: 0.5 < 0.7 — a liked genre is
+                            # no longer enough
+                            "id": 9202,
+                            "title": "Bar Missing Match",
+                            "release_date": "2005-02-14",
+                            "genre_ids": [80],
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb({"results": []})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/search/tmdb?q=bar").get_data(as_text=True)
+    assert page.count("Might interest you") == 1
+    assert page.index("Bar Clearing Hit") < page.index("Might interest you")
+    assert page.index("Might interest you") < page.index("Bar Missing Match")

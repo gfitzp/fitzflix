@@ -95,9 +95,9 @@ from app.main import bp
 from app.email import send_email
 from app.maintenance import system_health
 from app.recommendations import (
-    MARKER_THRESHOLD,
     coarse_interest_score,
     credit_interest_markers,
+    marker_bar,
     rotate_daily,
     rotate_partition,
     stored_profile,
@@ -4159,13 +4159,14 @@ def search_tmdb():
 
         profile = stored_profile(current_app.redis, current_user.id)
         if profile:
+            bar = marker_bar(profile)
             for match in movie_matches:
                 if match["library_id"] is not None:
                     continue
                 score = coarse_interest_score(
                     profile, match["genre_ids"], match["year"]
                 )
-                if score > MARKER_THRESHOLD:
+                if score > bar:
                     match["might_interest"] = True
 
         # Streaming and rent/buy badges on unowned movie matches, both

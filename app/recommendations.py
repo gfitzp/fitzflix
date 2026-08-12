@@ -117,11 +117,25 @@ PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
 STORED_RECOMMENDATIONS = 400
 
-# Filmography "might interest you" markers: how many films to mark at
-# most, and the coarse score a film must clear to qualify
+# "Might interest you" markers: how many films a filmography page marks
+# at most, the absolute floor a film must clear, and the percentile of
+# the user's own candidate library that sets the real bar — a saturated
+# profile scores almost every film highly on raw affinity, so the badge
+# means "notably above your typical film", not "matches a liked genre"
 
 MARKER_LIMIT = 5
 MARKER_THRESHOLD = 0.05
+MARKER_BASELINE_PERCENTILE = 0.9
+
+
+def marker_bar(profile):
+    """The coarse score a film must beat to earn a marker: the stored
+    baseline percentile of the user's own candidate library, floored at
+    the absolute threshold (new or sparse profiles fall back there)."""
+
+    if not profile:
+        return MARKER_THRESHOLD
+    return max(MARKER_THRESHOLD, profile.get("marker_bar") or 0.0)
 
 
 def collect_features(movie_ids):
@@ -326,6 +340,26 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     features = collect_features(list(set(candidates) | set(weights)))
     profile = build_profile(weights, features)
 
+    # The marker bar rides along with the profile: the baseline
+    # percentile of coarse scores across this user's own candidates. A
+    # saturated profile rates almost everything highly, so "might
+    # interest you" only means anything relative to that baseline
+
+    baseline = []
+    for movie_id in candidates:
+        genre_ids = []
+        year = None
+        for cls, key, _ in features.get(movie_id, []):
+            if cls == "genre":
+                genre_ids.append(int(key.split(":", 1)[1]))
+            elif cls == "decade":
+                year = int(key.split(":", 1)[1])
+        baseline.append(coarse_interest_score(profile, genre_ids, year))
+    if baseline:
+        baseline.sort()
+        index = min(len(baseline) - 1, int(len(baseline) * MARKER_BASELINE_PERCENTILE))
+        profile["marker_bar"] = round(baseline[index], 4)
+
     ranked = []
     for movie_id in candidates:
         movie_features = features.get(movie_id, [])
@@ -452,6 +486,7 @@ def credit_interest_markers(profile, credit_id, filmography_rows):
         for cls in ("actor", *CREW_ROLE_JOBS)
     )
 
+    bar = marker_bar(profile)
     scored = []
     for row in filmography_rows:
         if row.get("movie") is not None or row.get("tmdb_id") is None:
@@ -459,7 +494,7 @@ def credit_interest_markers(profile, credit_id, filmography_rows):
         score = coarse_interest_score(
             profile, row.get("genre_ids"), row.get("year"), person_affinity=person
         )
-        if score > MARKER_THRESHOLD:
+        if score > bar:
             scored.append((score, row["tmdb_id"]))
 
     scored.sort(reverse=True)
