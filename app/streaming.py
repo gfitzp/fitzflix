@@ -171,7 +171,7 @@ def user_streaming(tmdb_id, user, negative=False, local=False):
                 if provider["provider_id"] in provider_ids:
                     if provider["provider_id"] not in seen:
                         seen.add(provider["provider_id"])
-                        rentals.append(provider["provider_name"])
+                        rentals.append(dict(provider))
 
     return {
         "matches": matches,

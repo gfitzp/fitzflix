@@ -249,17 +249,17 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
 
-    # The local copy gets top billing; streaming is the "also"
+    # The library badge leads, then the streaming match as a logo badge
 
-    assert "In your library" in page
-    assert "also streaming on" in page
-    assert "Netflix" in page
+    assert "In library" in page
+    assert 'title="Streaming on Netflix"' in page
+    assert page.index("In library") < page.index('title="Streaming on Netflix"')
     assert "Streaming data by JustWatch" in page
     assert "All watch options" in page
 
     # Owned films never advertise rentals — the film is on the shelf
 
-    assert "Rentable on" not in page
+    assert "(rent)" not in page
 
 
 def test_owned_movie_with_no_match_notes_the_local_copy(app, admin_client, monkeypatch):
@@ -286,12 +286,12 @@ def test_owned_movie_with_no_match_notes_the_local_copy(app, admin_client, monke
     )
 
     # The film streams somewhere, but not on the user's services — an
-    # owned film notes the local copy instead of a negative, and a bare
-    # local note shows no JustWatch data so it carries no credit
+    # owned film shows the library badge instead of a negative, and a
+    # bare library badge shows no JustWatch data so it carries no credit
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "In your library" in page
-    assert "Not streaming on your services" not in page
+    assert "In library" in page
+    assert "Not on your services" not in page
     assert "Streaming data by JustWatch" not in page
 
 
@@ -319,7 +319,7 @@ def test_movie_page_without_subscriptions_shows_nothing(app, admin_client, monke
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Streaming data by JustWatch" not in page
-    assert "In your library" not in page
+    assert "In library" not in page
 
 
 def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
@@ -390,7 +390,9 @@ def test_search_results_without_matches_carry_no_attribution(
     assert "Streaming data by JustWatch" not in page
 
 
-def test_review_tmdb_page_says_not_on_your_services(app, admin_client, monkeypatch):
+def test_review_tmdb_page_shows_rental_badge_for_your_stores(
+    app, admin_client, monkeypatch
+):
     import app.main.routes as main_routes
 
     def fake_tmdb_get(url, **kwargs):
@@ -423,20 +425,20 @@ def test_review_tmdb_page_says_not_on_your_services(app, admin_client, monkeypat
         },
     )
 
-    # A film with no local file is exactly where "not on your services"
-    # is worth saying out loud — along with where it can be rented,
-    # filtered to the user's own services (Amazon isn't one of them)
+    # A film with no local file shows where it can be rented as a logo
+    # badge, filtered to the user's own services (Amazon isn't one of
+    # them) — and with a rental in hand there's no negative badge
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
-    assert "Not streaming on your services." in page
-    assert "Rentable on Apple TV." in page
+    assert "Apple TV (rent)" in page
     assert "Amazon Video" not in page
+    assert "Not on your services" not in page
     assert "Streaming data by JustWatch" in page
 
 
-def test_unowned_movie_record_shows_rentable_line(app, admin_client, monkeypatch):
-    """A review-only movie record (no local files) gets the rentable
-    line on its movie page."""
+def test_unowned_movie_record_shows_rental_badge(app, admin_client, monkeypatch):
+    """A review-only movie record (no local files) gets the rental
+    badge on its movie page."""
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
 
@@ -461,10 +463,44 @@ def test_unowned_movie_record_shows_rentable_line(app, admin_client, monkeypatch
     )
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "Not streaming on your services." in page
-    assert "Rentable on Amazon Video." in page
+    assert "Amazon Video (rent)" in page
+    assert "Not on your services" not in page
     assert "Streaming data by JustWatch" in page
-    assert "In your library" not in page
+    assert "In library" not in page
+
+
+def test_unowned_film_with_nothing_shows_the_negative_badge(
+    app, admin_client, monkeypatch
+):
+    """No streaming match and no rentals on the user's services — the
+    rental elsewhere is filtered out — so the secondary badge says so,
+    with the credit."""
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+
+    with app.app_context():
+        movie = make_movie(
+            "Streaming Nowhere",
+            1999,
+            tmdb_id=802,
+            tmdb_data_as_of=datetime.utcnow(),
+        )
+        from app import db
+
+        db.session.commit()
+        movie_id = movie.id
+
+    subscribe(app, 8, "Netflix")
+    plant_availability(
+        app,
+        802,
+        {"link": None, "flatrate": [], "ads": [], "rent": [AMAZON], "buy": []},
+    )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Not on your services" in page
+    assert "(rent)" not in page
+    assert "Streaming data by JustWatch" in page
 
 
 def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
