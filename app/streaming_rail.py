@@ -305,6 +305,7 @@ def enriched_movie(tmdb_id):
         "year": (payload.get("release_date") or "")[:4],
         "poster_path": payload.get("poster_path"),
         "runtime": payload.get("runtime"),
+        "overview": payload.get("overview"),
         "original_language": payload.get("original_language"),
         "genres": [
             {"id": g.get("id"), "name": g.get("name")}

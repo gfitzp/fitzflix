@@ -98,27 +98,26 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
     def fake_tmdb_get(url, params=None, **kwargs):
         if "/search/movie" in url:
+            # Only The Searchers matches: Love & Mercy exercises the
+            # unmatched-films path
             if params.get("query") == "The Searchers":
                 return FakeResponse(payload={"results": [{"id": 3110}]})
-            return FakeResponse(payload={"results": [{"id": 3111}]})
-        for tmdb_id, title, year in (
-            (3110, "The Searchers", "1956-05-16"),
-            (3111, "Love & Mercy", "2015-06-05"),
-        ):
-            if url.endswith(f"/movie/{tmdb_id}"):
-                return FakeResponse(
-                    payload={
-                        "id": tmdb_id,
-                        "title": title,
-                        "release_date": year,
-                        "poster_path": f"/{tmdb_id}.jpg",
-                        "runtime": 119,
-                        "original_language": "en",
-                        "genres": [{"id": 37, "name": "Western"}],
-                        "keywords": {"keywords": []},
-                        "credits": {"cast": [], "crew": []},
-                    }
-                )
+            return FakeResponse(payload={"results": []})
+        if url.endswith("/movie/3110"):
+            return FakeResponse(
+                payload={
+                    "id": 3110,
+                    "title": "The Searchers",
+                    "release_date": "1956-05-16",
+                    "poster_path": "/3110.jpg",
+                    "runtime": 119,
+                    "overview": "An obsessive frontier search.",
+                    "original_language": "en",
+                    "genres": [{"id": 37, "name": "Western"}],
+                    "keywords": {"keywords": []},
+                    "credits": {"cast": [], "crew": []},
+                }
+            )
         return FakeResponse(payload={"results": []})
 
     import app.streaming_rail as streaming_rail
@@ -134,8 +133,16 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["departs"]
     assert stored["source"].startswith("https://www.criterionchannel.com/leaving-")
     ids = [item["tmdb_id"] for item in stored["items"]]
-    assert ids == [3110, 3111]
+    assert ids == [3110, None]
     assert stored["items"][0]["genres"] == [{"id": 37, "name": "Western"}]
+    assert stored["items"][0]["overview"] == "An obsessive frontier search."
+
+    # The unmatched film keeps its scraped facts so the /leaving page
+    # can still list it
+
+    assert stored["items"][1]["title"] == "Love & Mercy"
+    assert stored["items"][1]["director"] == "Bill Pohlad"
+    assert stored["items"][1]["year"] == 2015
 
 
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
@@ -253,6 +260,13 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
             shelf_item(8102, "Shelf Owned"),
             shelf_item(8103, "Shelf Wanted", runtime=200),
             shelf_item(8104, "Shelf Dismissed"),
+            # An unmatched film: the shelf must skip it quietly
+            {
+                "title": "Shelf Unmatched",
+                "director": "Jane Doe",
+                "year": 1962,
+                "tmdb_id": None,
+            },
         ],
     )
 
@@ -266,13 +280,9 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Western" in body
     assert "criterionchannel.com" in body
 
-    # The heading links to the month's own leaving page
+    # The heading's "See more…" opens the in-app departure inventory
 
-    assert (
-        '<a href="https://www.criterionchannel.com/leaving-august-31"'
-        ' target="_blank" rel="noreferrer" class="text-body text-decoration-none">'
-        "Leaving the Criterion Channel" in body
-    )
+    assert 'href="/leaving"' in body
 
     # The watchlisted film sorts first — it's the urgency case — and
     # the runtime filter applies like everywhere else
@@ -283,9 +293,9 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Shelf Wanted" not in filtered
 
 
-def test_shelf_heading_link_survives_pre_url_payloads(app, admin_client):
+def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
     """A stored set from before the source key existed still gets a
-    heading link, reconstructed from the departure date."""
+    source link on /leaving, reconstructed from the departure date."""
 
     import calendar
 
@@ -304,12 +314,85 @@ def test_shelf_heading_link_survives_pre_url_payloads(app, admin_client):
         ),
     )
 
-    body = admin_client.get("/").get_data(as_text=True)
+    body = admin_client.get("/leaving").get_data(as_text=True)
     expected = (
         "https://www.criterionchannel.com/leaving-"
         f"{calendar.month_name[departs.month].lower()}-{departs.day}"
     )
     assert f'<a href="{expected}"' in body
+
+
+def test_leaving_page_lists_the_complete_inventory(app, admin_client):
+    """/leaving shows every departing film — owned with the library
+    badge, seen badged, watchlisted first, owned last — plus unmatched
+    scraped rows and overview excerpts; empty state without a set."""
+
+    from app import db
+    from app.models import UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    empty = admin_client.get("/leaving").get_data(as_text=True)
+    assert "Nothing is currently scheduled to leave." in empty
+
+    user_id = subscribe_criterion(app)
+    with app.app_context():
+        owned = make_movie("Shelf Owned", 1956, tmdb_id=8102)
+        make_movie_file(owned, "Bluray-1080p")
+        owned_id = owned.id
+        wanted = make_movie("Shelf Wanted", 1956, tmdb_id=8103)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
+        dismissed = make_movie("Shelf Dismissed", 1956, tmdb_id=8104)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=dismissed.id, **star_rating_fields(3.0)
+            )
+        )
+        db.session.commit()
+
+    plant_shelf(
+        app,
+        [
+            {
+                **shelf_item(8101, "Shelf Fresh"),
+                "overview": "A stranger rides into town.",
+            },
+            shelf_item(8102, "Shelf Owned"),
+            shelf_item(8103, "Shelf Wanted"),
+            shelf_item(8104, "Shelf Dismissed"),
+            {
+                "title": "Unmatched Gem",
+                "director": "Jane Doe",
+                "year": 1962,
+                "tmdb_id": None,
+            },
+        ],
+    )
+
+    body = admin_client.get("/leaving").get_data(as_text=True)
+
+    # Everything departing is listed — including owned and seen films
+    # the home shelf hides — with the funnel vocabulary
+
+    for title in ("Shelf Fresh", "Shelf Owned", "Shelf Wanted", "Shelf Dismissed"):
+        assert f"{title} (1956)" in body
+    assert body.count('title="In your Fitzflix library"') == 1
+    assert 'badge-info mr-1">Seen' in body
+    assert "On your watchlist" in body
+    assert "A stranger rides into town." in body
+
+    # Watchlisted films lead, owned films trail; owned rows open their
+    # movie page while the rest open the log page
+
+    assert body.index("Shelf Wanted (1956)") < body.index("Shelf Fresh (1956)")
+    assert body.index("Shelf Fresh (1956)") < body.index("Shelf Owned (1956)")
+    assert f'href="/movie/{owned_id}"' in body
+    assert 'href="/review/tmdb/8101"' in body
+
+    # The unmatched film appears from the scrape alone
+
+    assert "Also leaving" in body
+    assert "Unmatched Gem (1962)" in body
+    assert "Directed by Jane Doe" in body
 
 
 def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):

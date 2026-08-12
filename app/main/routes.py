@@ -118,7 +118,7 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.leaving_criterion import leaving_shelf
+from app.leaving_criterion import leaving_inventory, leaving_shelf
 from app.streaming_rail import stored_rail
 from app.triage import (
     forced_subtitle_candidates,
@@ -1558,6 +1558,19 @@ def movie(movie_id):
         on_watchlist=on_watchlist,
         might_interest=might_interest,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
+    )
+
+
+@bp.route("/leaving")
+@login_required
+def leaving():
+    """The complete leaving-Criterion departure inventory: every film
+    on the month's leaving page, owned and seen included."""
+
+    return render_template(
+        "leaving.html",
+        title="Leaving the Criterion Channel",
+        inventory=leaving_inventory(current_user),
     )
 
 

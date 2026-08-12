@@ -192,15 +192,20 @@ def refresh_leaving_criterion():
             )
             return True
 
+        # Films the TMDb matcher can't resolve still make the stored
+        # set, carrying just the scraped facts (title, director, year)
+        # — the /leaving page lists them as plain rows so the departure
+        # inventory stays complete; the home shelf skips them (its
+        # cards need posters and taste features)
+
         items = []
         for film in films:
             tmdb_id = match_tmdb_id(film["title"], film["year"])
-            if tmdb_id is None:
-                continue
-            payload = enriched_movie(tmdb_id)
-            if not payload:
-                continue
-            items.append({**payload, "tmdb_id": tmdb_id})
+            payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
+            if payload:
+                items.append({**payload, "tmdb_id": tmdb_id})
+            else:
+                items.append({**film, "tmdb_id": None})
 
         current_app.redis.set(
             LEAVING_KEY,
@@ -243,7 +248,7 @@ def leaving_shelf(user):
     if not profile:
         return None
 
-    tmdb_ids = [item["tmdb_id"] for item in stored.get("items", [])]
+    tmdb_ids = [item["tmdb_id"] for item in stored.get("items", []) if item["tmdb_id"]]
     if not tmdb_ids:
         return None
     owned = {
@@ -270,6 +275,8 @@ def leaving_shelf(user):
     items = []
     for item in stored.get("items", []):
         tmdb_id = item["tmdb_id"]
+        if tmdb_id is None:
+            continue
         if tmdb_id in owned:
             continue
         if tmdb_id in logged and tmdb_id not in watchlisted:
@@ -293,13 +300,117 @@ def leaving_shelf(user):
         )
 
     items.sort(key=lambda item: (item["watchlisted"], item["score"]), reverse=True)
+    return {"departs": departs, "url": _source_url(stored, departs), "items": items}
 
-    # The scraped page's own URL, so the shelf heading can link to it;
-    # payloads stored before the key existed reconstruct it from the
-    # departure date (the same shape the candidate list builds)
 
-    url = stored.get("source") or (
+def _source_url(stored, departs):
+    """The scraped page's own URL; payloads stored before the source
+    key existed reconstruct it from the departure date (the same shape
+    the candidate list builds)."""
+
+    return stored.get("source") or (
         "https://www.criterionchannel.com/leaving-"
         f"{calendar.month_name[departs.month].lower()}-{departs.day}"
     )
-    return {"departs": departs, "url": url, "items": items}
+
+
+def leaving_inventory(user):
+    """The complete departing set for the /leaving page, or None.
+
+    Unlike the home shelf, nothing is excluded: owned films stay
+    listed with their library badge (the relaxing case — the disc is
+    on the shelf), seen films stay with their Seen badge, and films
+    the TMDb matcher couldn't resolve trail as plain scraped rows so
+    the inventory is the whole departure set. Watchlisted films lead,
+    then unowned films by taste score, owned films after.
+    """
+
+    payload = current_app.redis.get(LEAVING_KEY)
+    if not payload:
+        return None
+    stored = json.loads(payload)
+    departs = date.fromisoformat(stored["departs"])
+    if departs < date.today():
+        return None
+    profile = stored_profile(current_app.redis, user.id)
+
+    matched = [item for item in stored.get("items", []) if item.get("tmdb_id")]
+    unmatched = [item for item in stored.get("items", []) if not item.get("tmdb_id")]
+    tmdb_ids = [item["tmdb_id"] for item in matched]
+
+    owned = {}
+    seen = set()
+    watchlisted = set()
+    if tmdb_ids:
+        owned = dict(
+            db.session.query(Movie.tmdb_id, Movie.id)
+            .filter(Movie.tmdb_id.in_(tmdb_ids))
+            .filter(Movie.files.any(File.feature_type_id.is_(None)))
+        )
+        seen = {
+            tmdb_id
+            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+            .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
+            .filter(Movie.tmdb_id.in_(tmdb_ids))
+            .filter(UserMovieReview.user_id == int(user.id))
+        }
+        watchlisted = {
+            tmdb_id
+            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+            .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
+            .filter(Movie.tmdb_id.in_(tmdb_ids))
+            .filter(UserWatchlist.user_id == int(user.id))
+        }
+
+    items = []
+    for item in matched:
+        tmdb_id = item["tmdb_id"]
+        if profile:
+            score, contributions = score_movie(_payload_features(item), profile)
+        else:
+            score, contributions = 0.0, []
+        items.append(
+            {
+                "tmdb_id": tmdb_id,
+                "title": item.get("title"),
+                "year": item.get("year"),
+                "poster_path": item.get("poster_path"),
+                "runtime": item.get("runtime"),
+                "overview": item.get("overview"),
+                "movie_id": owned.get(tmdb_id),
+                "owned": tmdb_id in owned,
+                "seen": tmdb_id in seen,
+                "watchlisted": tmdb_id in watchlisted,
+                "because": [
+                    label
+                    for contribution, label in contributions[:3]
+                    if contribution > 0
+                ],
+                "score": round(score, 4),
+            }
+        )
+    items.sort(
+        key=lambda item: (
+            not item["watchlisted"],
+            item["owned"],
+            -item["score"],
+            (item["title"] or "").lower(),
+        )
+    )
+    unmatched = sorted(
+        (
+            {
+                "title": film.get("title"),
+                "year": film.get("year"),
+                "director": film.get("director"),
+            }
+            for film in unmatched
+        ),
+        key=lambda film: (film["title"] or "").lower(),
+    )
+    return {
+        "departs": departs,
+        "url": _source_url(stored, departs),
+        "items": items,
+        "unmatched": unmatched,
+    }
