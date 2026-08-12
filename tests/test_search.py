@@ -103,6 +103,122 @@ def test_search_omits_reviewed_movies_without_files(app, admin_client):
     assert "No copy in library" not in page
 
 
+def test_search_badges_recommended_owned_films(app, admin_client):
+    """An owned film the nightly recompute ranked in the stored
+    recommendations badges "Might interest you" on the library search —
+    the rail and the search pages agree on what's recommended. Unranked
+    films and films logged since the run don't badge."""
+
+    import json
+
+    from app.recommendations import RECS_KEY
+
+    with app.app_context():
+        recommended = make_movie("Jaws", 1975)
+        make_movie_file(recommended, "DVD")
+        logged_since = make_movie("Jaws 2", 1978)
+        make_movie_file(logged_since, "DVD")
+        unranked = make_movie("Jaws 3-D", 1983)
+        make_movie_file(unranked, "DVD")
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(
+            UserMovieReview(
+                user_id=admin.id,
+                movie_id=logged_since.id,
+                rating=6,
+                modified_rating=6,
+                whole_stars=3,
+                half_stars=0,
+            )
+        )
+        db.session.commit()
+        user_id = admin.id
+        rec_ids = [recommended.id, logged_since.id]
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [
+                    {"movie_id": movie_id, "score": 1.0, "because": []}
+                    for movie_id in rec_ids
+                ],
+            }
+        ),
+    )
+
+    page = admin_client.get("/search?q=jaws").get_data(as_text=True)
+    assert page.count("Might interest you") == 1
+    assert (
+        page.index("Jaws (1975)")
+        < page.index("Might interest you")
+        < page.index("Jaws 2 (1978)")
+    )
+
+
+def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
+    """An owned TMDb match that sits in the stored recommendations
+    carries the might-interest badge next to its library badge."""
+
+    import json
+
+    from app.recommendations import RECS_KEY
+
+    with app.app_context():
+        recommended = make_movie("Jaws", 1975, tmdb_id=578)
+        make_movie_file(recommended, "DVD")
+        unranked = make_movie("Jaws 2", 1978, tmdb_id=579)
+        make_movie_file(unranked, "DVD")
+        db.session.commit()
+        admin = User.query.filter_by(admin=True).first()
+        user_id = admin.id
+        recommended_id = recommended.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [{"movie_id": recommended_id, "score": 1.0, "because": []}],
+            }
+        ),
+    )
+
+    import app.main.routes as main_routes
+
+    class FakeResponse:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                [
+                    {"id": 578, "title": "Jaws", "release_date": "1975-06-20"},
+                    {"id": 579, "title": "Jaws 2", "release_date": "1978-06-16"},
+                ]
+            )
+        return FakeResponse([])
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
+    assert page.count("Might interest you") == 1
+    assert (
+        page.index("Jaws (1975)")
+        < page.index("Might interest you")
+        < page.index("Jaws 2 (1978)")
+    )
+
+
 def test_search_finds_tv_series(app, admin_client):
     with app.app_context():
         build_library(app)

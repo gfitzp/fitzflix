@@ -21,6 +21,9 @@
 				{% if result.rating is not none %}
 				<span class="badge badge-info">Seen &mdash; rated {{ result.rating }}</span>
 				{% endif %}
+				{% if result.might_interest %}
+				<span class="badge badge-info">Might interest you</span>
+				{% endif %}
 				{% if movie.tmdb_overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
 				{% endif %}

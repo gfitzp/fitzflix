@@ -100,6 +100,7 @@ from app.recommendations import (
     coarse_interest_score,
     credit_interest_markers,
     marker_bar,
+    recommended_movie_ids,
     rotate_daily,
     rotate_partition,
     stored_profile,
@@ -882,14 +883,26 @@ def movie_library():
             row["seen"] = row["movie"] is not None and row["movie"].id in reviewed
             row["liked"] = bool(row["movie"] and reviewed.get(row["movie"].id))
 
-        # Modest "might interest you" markers on unowned films, scored at
-        # render time from the already-cached credits payload against the
-        # user's stored taste profile — no TMDb calls, nothing persisted
+        # "Might interest you" markers: unowned films score at render
+        # time from the already-cached credits payload against the
+        # user's stored taste profile (no TMDb calls, nothing
+        # persisted); owned unwatched films badge when the nightly
+        # recompute ranked them in the stored recommendations, so
+        # filmographies agree with the library rail and search pages
 
         profile = stored_profile(current_app.redis, current_user.id)
+        rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
         interesting = credit_interest_markers(profile, int(credit), filmography)
         for row in filmography:
-            row["might_interest"] = row["tmdb_id"] in interesting
+            unowned_marker = (
+                row["quality"] is None
+                and not row["seen"]
+                and row["tmdb_id"] in interesting
+            )
+            owned_marker = bool(
+                row["movie"] and not row["seen"] and row["movie"].id in rec_ids
+            )
+            row["might_interest"] = unowned_marker or owned_marker
 
         # Streaming badges on films without a local file, filtered to
         # this user's services. Availability is batch-fetched cache-first,
@@ -4117,6 +4130,29 @@ def search():
         tv_results = _tv_search_results(wildcard)
         people_results = _people_search_results(wildcard)
 
+        # Owned films the engine ranked among the user's stored
+        # recommendations badge "might interest you" here too — the
+        # rail, the search pages, and filmographies should agree on
+        # what's recommended. The stored set already excludes films
+        # the user had logged at compute time; the fresh check covers
+        # anything logged since the nightly run
+
+        if movie_results:
+            rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+            if rec_ids:
+                result_ids = [result["movie"].id for result in movie_results]
+                logged = {
+                    movie_id
+                    for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+                    .filter(UserMovieReview.user_id == int(current_user.id))
+                    .filter(UserMovieReview.movie_id.in_(result_ids))
+                }
+                for result in movie_results:
+                    result["might_interest"] = (
+                        result["movie"].id in rec_ids
+                        and result["movie"].id not in logged
+                    )
+
     return render_template(
         "search.html",
         title=f"Search results for '{q}'" if q else "Search",
@@ -4258,21 +4294,38 @@ def search_tmdb():
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
 
-        # Might-interest markers on unowned movie matches: the same
+        # Might-interest markers. Unowned matches score through the
         # coarse scorer the filmography markers use, minus the person
-        # term (a bare search result has no person context)
+        # term (a bare search result has no person context); owned
+        # matches badge when the nightly recompute ranked them in the
+        # stored recommendations — the library rail's own set — unless
+        # the user has logged them since
 
         profile = stored_profile(current_app.redis, current_user.id)
-        if profile:
-            bar = marker_bar(profile)
-            for match in movie_matches:
-                if match["library_id"] is not None:
-                    continue
-                score = coarse_interest_score(
-                    profile, match["genre_ids"], match["year"]
-                )
-                if score > bar:
+        rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+        owned_logged = set()
+        owned_ids = [m["library_id"] for m in movie_matches if m["library_id"]]
+        if owned_ids and rec_ids:
+            owned_logged = {
+                movie_id
+                for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+                .filter(UserMovieReview.user_id == int(current_user.id))
+                .filter(UserMovieReview.movie_id.in_(owned_ids))
+            }
+        bar = marker_bar(profile) if profile else None
+        for match in movie_matches:
+            if match["library_id"] is not None:
+                if (
+                    match["library_id"] in rec_ids
+                    and match["library_id"] not in owned_logged
+                ):
                     match["might_interest"] = True
+                continue
+            if profile is None:
+                continue
+            score = coarse_interest_score(profile, match["genre_ids"], match["year"])
+            if score > bar:
+                match["might_interest"] = True
 
         # Streaming and rent/buy badges on unowned movie matches, both
         # filtered to this user's services (lookups are day-cached per

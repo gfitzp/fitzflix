@@ -72,10 +72,9 @@
 					{{ library_badge() }}
 				{% elif row.seen %}
 					<span class="badge badge-info mr-1">Seen</span>
-				{% else %}
-					{% if row.might_interest %}
-						<span class="badge badge-info mr-1">Might interest you</span>
-					{% endif %}
+				{% endif %}
+				{% if row.might_interest %}
+					<span class="badge badge-info mr-1">Might interest you</span>
 				{% endif %}
 				{% if row.liked %}
 					<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1 mr-1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">

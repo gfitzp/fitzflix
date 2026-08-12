@@ -154,6 +154,85 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "A cameo-laden curiosity from 1999." in page
 
 
+def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypatch):
+    """An owned unwatched film in the stored recommendations carries the
+    might-interest badge on filmographies, alongside its library badge —
+    the same claim the library rail makes."""
+
+    import json
+
+    import app.main.routes as main_routes
+
+    from app.recommendations import RECS_KEY
+
+    with app.app_context():
+        user_id = User.query.first().id
+        person = TMDBCredit(id=636363, name="Ranked Actor")
+        db.session.add(person)
+        recommended = make_movie("Ranked Owned Film", 1946, tmdb_id=300)
+        make_movie_file(recommended, "Bluray-1080p")
+        unranked = make_movie("Unranked Owned Film", 1950, tmdb_id=301)
+        make_movie_file(unranked, "Bluray-1080p")
+        db.session.flush()
+        make_cast(person, recommended)
+        make_cast(person, unranked)
+        db.session.commit()
+        recommended_id = recommended.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [{"movie_id": recommended_id, "score": 1.0, "because": []}],
+            }
+        ),
+    )
+
+    class FakeTMDb:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    def fake_tmdb_get(url, **kwargs):
+        if url.endswith("/movie_credits"):
+            return FakeTMDb(
+                {
+                    "cast": [
+                        {
+                            "id": 300,
+                            "title": "Ranked Owned Film",
+                            "release_date": "1946-08-23",
+                            "character": "The Detective",
+                        },
+                        {
+                            "id": 301,
+                            "title": "Unranked Owned Film",
+                            "release_date": "1950-03-01",
+                            "character": "The Heavy",
+                        },
+                    ]
+                }
+            )
+        return FakeTMDb({"name": "Ranked Actor"})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=636363").get_data(as_text=True)
+    assert page.count("Might interest you") == 1
+    assert (
+        page.index("Ranked Owned Film (1946)")
+        < page.index("Might interest you")
+        < page.index("Unranked Owned Film (1950)")
+    )
+
+
 def test_filmography_serves_people_without_local_credit_rows(
     app, admin_client, monkeypatch
 ):

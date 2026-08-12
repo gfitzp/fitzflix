@@ -453,6 +453,19 @@ def stored_profile(redis, user_id):
     return json.loads(payload) if payload else None
 
 
+def recommended_movie_ids(redis, user_id):
+    """The movie ids in the user's stored library recommendations.
+
+    Membership means the nightly recompute ranked the film among the
+    user's top candidates — the same set that feeds the landing page's
+    library rail — so other surfaces can badge owned films as "might
+    interest you" without rescoring anything.
+    """
+
+    stored = stored_recommendations(redis, user_id)
+    return {item["movie_id"] for item in (stored or {}).get("items", [])}
+
+
 def coarse_interest_score(profile, genre_ids, year, person_affinity=0.0):
     """The might-interest markers' coarse score, computable from any
     payload that carries genre ids and a year: matched genre affinities
