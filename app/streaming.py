@@ -141,7 +141,7 @@ def streaming_matches(availability, provider_ids):
     return matches
 
 
-def user_streaming(tmdb_id, user, negative=False):
+def user_streaming(tmdb_id, user, negative=False, local=False):
     """The template payload for one film: the user's matches and the
     TMDb watch-page link, or None when the user picked no services (the
     surfaces stay quiet for them). negative=True keeps the payload when
@@ -150,14 +150,17 @@ def user_streaming(tmdb_id, user, negative=False):
     the film can be rented or bought, since that's where the purchase
     decision is live. Rentals are filtered to the user's chosen services
     too (renting elsewhere is a click away via the watch-page link), and
-    rent/buy never counts as a subscription match."""
+    rent/buy never counts as a subscription match. local=True marks an
+    owned film: the strip leads with "In your library" so a streaming
+    badge never upstages the copy on the shelf, and the payload survives
+    an empty match list to say so."""
 
     provider_ids = user_provider_ids(user)
     if not provider_ids:
         return None
     availability = title_availability(tmdb_id)
     matches = streaming_matches(availability, provider_ids)
-    if not matches and not negative:
+    if not matches and not negative and not local:
         return None
 
     rentals = []
@@ -175,4 +178,5 @@ def user_streaming(tmdb_id, user, negative=False):
         "link": (availability or {}).get("link"),
         "known": availability is not None,
         "rentals": rentals,
+        "local": local,
     }

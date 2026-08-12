@@ -1155,12 +1155,15 @@ def movie(movie_id):
     criterion_form.process()
 
     # Streaming availability for this user's services; quiet for users
-    # who picked none. Owned films only show a strip when something
-    # matches, but a film with no local files says so either way —
-    # that's where knowing "not on your services" matters
+    # who picked none. Owned films lead with "In your library" (with or
+    # without a streaming match), while a film with no local files says
+    # "not on your services" — that's where the watch-or-buy decision
+    # actually lives
 
     streaming = (
-        user_streaming(movie.tmdb_id, current_user, negative=not films)
+        user_streaming(
+            movie.tmdb_id, current_user, negative=not films, local=bool(films)
+        )
         if movie.tmdb_id
         else None
     )

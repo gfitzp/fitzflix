@@ -248,7 +248,11 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
     )
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "Streaming on" in page
+
+    # The local copy gets top billing; streaming is the "also"
+
+    assert "In your library" in page
+    assert "also streaming on" in page
     assert "Netflix" in page
     assert "Streaming data by JustWatch" in page
     assert "All watch options" in page
@@ -258,7 +262,7 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
     assert "Rentable on" not in page
 
 
-def test_owned_movie_with_no_match_stays_quiet(app, admin_client, monkeypatch):
+def test_owned_movie_with_no_match_notes_the_local_copy(app, admin_client, monkeypatch):
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
 
     with app.app_context():
@@ -282,9 +286,12 @@ def test_owned_movie_with_no_match_stays_quiet(app, admin_client, monkeypatch):
     )
 
     # The film streams somewhere, but not on the user's services — an
-    # owned film shows nothing rather than a negative
+    # owned film notes the local copy instead of a negative, and a bare
+    # local note shows no JustWatch data so it carries no credit
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "In your library" in page
+    assert "Not streaming on your services" not in page
     assert "Streaming data by JustWatch" not in page
 
 
@@ -312,6 +319,7 @@ def test_movie_page_without_subscriptions_shows_nothing(app, admin_client, monke
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Streaming data by JustWatch" not in page
+    assert "In your library" not in page
 
 
 def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
@@ -456,6 +464,7 @@ def test_unowned_movie_record_shows_rentable_line(app, admin_client, monkeypatch
     assert "Not streaming on your services." in page
     assert "Rentable on Amazon Video." in page
     assert "Streaming data by JustWatch" in page
+    assert "In your library" not in page
 
 
 def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
