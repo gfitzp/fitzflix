@@ -547,6 +547,64 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         assert Movie.query.count() == before
 
 
+def test_catalog_exclusion_blocks_recreation_and_rendering(
+    app, monkeypatch, admin_client
+):
+    """`flask catalog exclude` deletes a bogus record and bars its TMDb
+    id: later full refreshes don't recreate it, the catalog page stops
+    rendering its release, and records with real library data refuse."""
+
+    from tests.factories import make_movie_file
+
+    fake_sparql(monkeypatch)
+
+    # CLI commands attach in the fitzflix.py entrypoint, not create_app,
+    # so the test app registers them itself
+
+    from app import cli as app_cli
+
+    if "catalog" not in app.cli.commands:
+        app_cli.register(app)
+
+    with app.app_context():
+        assert refresh_criterion_collection_info() is True
+        movie = Movie.query.filter_by(tmdb_id=1863).first()
+        assert movie is not None
+        movie_id = movie.id
+
+    runner = app.test_cli_runner()
+    result = runner.invoke(args=["catalog", "exclude", str(movie_id)])
+    assert result.exit_code == 0
+    assert "Deleted" in result.output and "1863" in result.output
+
+    with app.app_context():
+        assert Movie.query.filter_by(tmdb_id=1863).first() is None
+
+        # The next full refresh skips the excluded id instead of
+        # recreating the record
+
+        assert refresh_criterion_collection_info() is True
+        assert Movie.query.filter_by(tmdb_id=1863).first() is None
+
+    # The catalog page neither renders the release nor links it
+
+    _seed_release_cache(app, [release(1, "La Grande Illusion", 1937, tmdb_id=1863)])
+    page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
+    assert "La Grande Illusion" not in page
+
+    # A record with files is library data, never catalog junk
+
+    with app.app_context():
+        owned = make_movie("Exclusion Owned", 1960, tmdb_id=555009)
+        make_movie_file(owned, "DVD")
+        db.session.commit()
+        owned_id = owned.id
+    result = runner.invoke(args=["catalog", "exclude", str(owned_id)])
+    assert "has files" in result.output
+    with app.app_context():
+        assert db.session.get(Movie, owned_id) is not None
+
+
 def test_criterion_catalog_pagination():
     """The page-number window keeps the ends and the neighborhood of
     the current page, with gaps marked."""

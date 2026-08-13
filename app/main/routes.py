@@ -76,6 +76,7 @@ from app.main.forms import (
     UpdateAPIKeyForm,
 )
 from app.models import (
+    CatalogExclusion,
     File,
     FileAudioTrack,
     FileSubtitleTrack,
@@ -1439,6 +1440,9 @@ def criterion_collection():
     set_spines = {
         release["spine_number"] for release in releases if release.get("set_title")
     }
+    excluded_tmdb = {
+        tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)
+    }
     catalog_rows = []
     catalog_keys = set()
     for release in releases:
@@ -1448,6 +1452,10 @@ def criterion_collection():
             and not release.get("set_title")
             and release.get("spine_number") in set_spines
         ):
+            continue
+        # Hand-excluded ids (Wikidata junk — see CatalogExclusion)
+        # neither render nor get records created
+        if tmdb_id and tmdb_id in excluded_tmdb:
             continue
         if tmdb_id and tmdb_id in consumed_tmdb:
             continue

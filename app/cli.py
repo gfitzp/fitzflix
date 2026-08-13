@@ -244,6 +244,51 @@ def register(app):
         click.echo(build_copref_table(dataset))
 
     @app.cli.group()
+    def catalog():
+        """Manage the film catalog's exclusion list."""
+        pass
+
+    @catalog.command()
+    @click.argument("movie_id", type=int)
+    def exclude(movie_id):
+        """Delete a bogus catalog record and bar its TMDb id from ever
+        being auto-created again — for Wikidata junk like an unfinished
+        film carrying a stale TMDb id. Refuses records with files or
+        diary rows: those are real library data, not catalog junk."""
+
+        from app import db
+        from app.models import CatalogExclusion, Movie, UserMovieReview
+
+        movie = db.session.get(Movie, movie_id)
+        if movie is None:
+            click.echo(f"No movie record with id {movie_id}")
+            return
+        title = f"{movie.tmdb_title or movie.title} ({movie.year})"
+        if movie.files.count():
+            click.echo(f"'{title}' has files in the library — not catalog junk")
+            return
+        if UserMovieReview.query.filter_by(movie_id=movie.id).count():
+            click.echo(f"'{title}' has diary entries — not catalog junk")
+            return
+        if movie.tmdb_id is None:
+            click.echo(
+                f"'{title}' has no TMDb id, so the catalog loaders can't "
+                f"recreate it; deleting the record only"
+            )
+        elif not CatalogExclusion.query.filter_by(tmdb_id=movie.tmdb_id).first():
+            db.session.add(CatalogExclusion(tmdb_id=movie.tmdb_id, title=title))
+        db.session.delete(movie)
+        db.session.commit()
+        click.echo(
+            f"Deleted '{title}'"
+            + (
+                f" and excluded TMDb id {movie.tmdb_id} from catalog loads"
+                if movie.tmdb_id
+                else ""
+            )
+        )
+
+    @app.cli.group()
     def triage():
         """Manage the subtitle-triage inspection aids."""
         pass

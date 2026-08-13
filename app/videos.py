@@ -38,6 +38,7 @@ from app.email import send_email as send_email_async
 from app.email import task_send_email as send_email
 from app.maintenance import volume_alive
 from app.models import (
+    CatalogExclusion,
     File,
     FileAudioTrack,
     FileSubtitleTrack,
@@ -5644,11 +5645,16 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             Movie.tmdb_id.in_(tmdb_ids or [0])
         )
     }
+    # Hand-excluded ids (Wikidata junk like an unfinished film with a
+    # stale TMDb id) are never re-created — see CatalogExclusion
+    excluded = {tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)}
     to_refresh = []
     created_count = 0
     for release in criterion_collection:
         tmdb_id = release.get("tmdb_id")
         if not tmdb_id or tmdb_id in existing or not release.get("year"):
+            continue
+        if tmdb_id in excluded:
             continue
         existing.add(tmdb_id)
         title = release.get("label") or release.get("title")

@@ -1975,6 +1975,27 @@ class MovieCopref(db.Model):
         return f"<MovieCopref '{self.tmdb_id_a}~{self.tmdb_id_b}:{self.similarity}'>"
 
 
+class CatalogExclusion(db.Model):
+    """A TMDb id the catalog loaders must never auto-create again.
+
+    Wikidata's Criterion spine set occasionally lists a film that
+    doesn't really exist — an unfinished work carrying a stale TMDb id
+    (Eisenstein's Ivan the Terrible Part III was the first found).
+    Deleting the bogus Movie record isn't enough, since the next full
+    refresh would recreate it; `flask catalog exclude` deletes the
+    record AND stores its id here, and both the catalog-record creation
+    pass and the Criterion catalog page skip excluded ids thereafter.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    tmdb_id = db.Column(db.Integer, unique=True, nullable=False)
+    title = db.Column(db.String(256))
+    date_added = db.Column(db.DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<CatalogExclusion '{self.tmdb_id}:{self.title}'>"
+
+
 class TVCast(db.Model):
     """Join row: a credit's acting role on a TV series."""
 
