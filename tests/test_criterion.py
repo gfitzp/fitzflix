@@ -396,6 +396,12 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
             release(300, "No Tmdb Release", 1971),
             release(400, "Unmarked Owned", 1980, tmdb_id=555003),
             release(500, "Title Match", 1990),
+            # A box-set CONTAINER (the set item holds the spine, no TMDb
+            # id) plus its member: only the member may render
+            release(600, "Shadow Trilogy", 1944),
+            release(
+                600, "Shadow Part I", 1944, tmdb_id=555004, set_title="Shadow Trilogy"
+            ),
         ],
     )
 
@@ -451,6 +457,13 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert "A spine the library lacks." in page
     assert 'title="Streaming on The Criterion Channel"' in page
     assert "Streaming data by JustWatch" in page
+
+    # The box-set container never shadows its members: the member
+    # renders with its set line, the container row doesn't exist
+
+    assert "Shadow Part I (1944)" in page
+    assert "Part of the Shadow Trilogy collector's set" in page
+    assert "#600 &ndash; Shadow Trilogy" not in page
 
     # The plain row has nothing to link
 

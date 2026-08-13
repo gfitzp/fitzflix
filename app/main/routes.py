@@ -1429,12 +1429,26 @@ def criterion_collection():
 
     # The rest of the catalog. Standalone entries precede set entries
     # in the cache, so a film with both keeps its own spine; releases
-    # without a TMDb id render as plain spine rows
+    # without a TMDb id render as plain spine rows. Box-set CONTAINER
+    # items are redundant: Wikidata gives the set item the spine (and
+    # no TMDb id — TMDb has no set entries) while its member films
+    # arrive separately wearing the set title, so a TMDb-less row whose
+    # spine belongs to a set would just shadow its own members ("#88
+    # Ivan the Terrible" between the actual Parts I–III)
 
+    set_spines = {
+        release["spine_number"] for release in releases if release.get("set_title")
+    }
     catalog_rows = []
     catalog_keys = set()
     for release in releases:
         tmdb_id = release.get("tmdb_id")
+        if (
+            not tmdb_id
+            and not release.get("set_title")
+            and release.get("spine_number") in set_spines
+        ):
+            continue
         if tmdb_id and tmdb_id in consumed_tmdb:
             continue
         title_year = (release.get("title"), release.get("year"))
