@@ -530,12 +530,14 @@ def test_rate_page_shows_featured_details_only(app, admin_client):
     # billing order under the synopsis
 
     assert (
-        'Directed by <a href="/library/movie?credit=777004">Featured Director</a>'
-        in page
+        'Directed by <a href="/library/movie?credit=777004" '
+        'class="link-secondary text-secondary">Featured Director</a>' in page
     )
     assert (
-        'Starring <a href="/library/movie?credit=777104">Leading Lady</a>, '
-        '<a href="/library/movie?credit=777105">Second Banana</a>' in page
+        'Starring <a href="/library/movie?credit=777104" '
+        'class="link-secondary text-secondary">Leading Lady</a>, '
+        '<a href="/library/movie?credit=777105" '
+        'class="link-secondary text-secondary">Second Banana</a>' in page
     )
     assert "Up next" not in page
     assert "Drive Filler" not in page

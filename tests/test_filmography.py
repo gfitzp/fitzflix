@@ -4,7 +4,7 @@ films with no local record at all — and the movie library page badges
 each film's quality by upgrade eligibility."""
 
 from app import db
-from app.models import MovieCast, TMDBCredit, User, UserMovieReview
+from app.models import MovieCast, MovieCrew, TMDBCredit, User, UserMovieReview
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 
@@ -574,6 +574,17 @@ def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):
             db.session.add(person)
             db.session.flush()
             make_cast(person, movie, character=f"Passenger {order}", order=order)
+        director = TMDBCredit(id=700100, name="Ensemble Director")
+        db.session.add(director)
+        db.session.flush()
+        db.session.add(
+            MovieCrew(
+                movie_id=movie.id,
+                credit_id=director.id,
+                department="Directing",
+                job="Director",
+            )
+        )
         db.session.commit()
         movie_id = movie.id
 
@@ -587,3 +598,11 @@ def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):
     # Billing order is preserved left to right
     positions = [page.index(f"Ensemble Actor {order}") for order in range(8)]
     assert positions == sorted(positions)
+
+    # The director line links to the filmography page, muted like the
+    # rating drive's featured card
+
+    assert (
+        'Directed by <a href="/library/movie?credit=700100" '
+        'class="link-secondary text-secondary">Ensemble Director</a>' in page
+    )

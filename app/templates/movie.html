@@ -26,6 +26,9 @@
 					{{ movie.tmdb_overview }}{% if movie.tmdb_runtime %} —&nbsp;{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(",\u00A0") }}{% endif %}{% for c in movie.certifications %}{% if c.country == "US" %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ c.certification }}</span>{% endif %}{% endfor %}
 				</p>
 			{% endif %}
+			{% if directors %}
+				<p class="text-muted mb-2">Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+			{% endif %}
 			{# The user's own verdict renders whether or not TMDb data
 			   has arrived — it was trapped inside the overview paragraph #}
 			{% if review %}

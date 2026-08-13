@@ -1648,6 +1648,15 @@ def movie(movie_id):
         .order_by(MovieCast.billing_order.asc())
         .all()
     ]
+    # (credit id, name) pairs so the directed-by line links to
+    # filmography pages, like the rating drive's featured card
+    directors = list(
+        db.session.query(TMDBCredit.id, TMDBCredit.name)
+        .join(MovieCrew, MovieCrew.credit_id == TMDBCredit.id)
+        .filter(MovieCrew.movie_id == movie.id)
+        .filter(MovieCrew.job == "Director")
+        .distinct()
+    )
     genres = [genre.name for genre in movie.genres]
     awards = (
         MovieAward.query.filter_by(movie_id=movie.id)
@@ -1975,6 +1984,7 @@ def movie(movie_id):
         title=title,
         movie=movie,
         cast=cast,
+        directors=directors,
         genres=genres,
         awards=awards,
         review=review,
