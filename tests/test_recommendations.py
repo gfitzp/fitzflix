@@ -902,6 +902,129 @@ def test_evaluate_user_measures_copref(app):
     assert with_copref["hit_at_10"] == 1.0
 
 
+def test_estimated_rating_quantile_math(app):
+    """The calibration curve reads a score's position among the user's
+    own films out at the same position in their sorted ratings —
+    half-star rounded, clamped, and absent without a curve."""
+
+    from app.recommendations import estimated_rating
+
+    profile = {
+        "calibration": {
+            "scores": [0.0, 1.0, 2.0, 3.0],
+            "stars": [1.0, 2.0, 4.0, 5.0],
+        }
+    }
+
+    # Above every known score: the top of the rating distribution;
+    # below every known score: the bottom
+
+    assert estimated_rating(profile, 9.0) == 5.0
+    assert estimated_rating(profile, -1.0) == 1.0
+
+    # Midway up the scores reads midway up the stars: 2.0 sits at the
+    # 0.625 position, interpolating to 3.75 stars, rounded to 4.0
+
+    assert estimated_rating(profile, 2.0) == 4.0
+    assert estimated_rating(profile, 0.5) == 2.0
+
+    # No curve, no estimate
+
+    assert estimated_rating({"calibration": None}, 1.0) is None
+    assert estimated_rating(None, 1.0) is None
+
+
+def test_compute_stores_calibration_curve(app, monkeypatch):
+    """The nightly compute attaches the score→stars curve to the
+    profile once enough rated films exist, sorted and LOO-derived."""
+
+    import app.recommendations as recommendations
+
+    from app import db
+
+    monkeypatch.setattr(recommendations, "CALIBRATION_MIN_RATED", 3)
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+        for n, rating in enumerate((2.0, 3.5, 5.0)):
+            movie = make_movie(f"Calib Rated {n}", 1990 + n)
+            movie.genres.append(comedy)
+            log_watch(user_id, movie, rating=rating, liked=rating >= 3)
+        candidate = make_movie("Calib Candidate", 1995)
+        candidate.genres.append(comedy)
+        make_movie_file(candidate, "Bluray-1080p")
+        db.session.commit()
+
+        profile, ranked = recommendations.compute_user_recommendations(user_id)
+
+    curve = profile["calibration"]
+    assert curve is not None
+    assert curve["stars"] == [2.0, 3.5, 5.0]
+    assert len(curve["scores"]) == 3
+    assert curve["scores"] == sorted(curve["scores"])
+
+
+def test_movie_page_shows_estimated_rating(app, admin_client):
+    """An unlogged film in the stored ranking shows the engine's star
+    guess; logging it replaces the guess with the real verdict."""
+
+    import json as jsonlib
+
+    from app import db
+    from app.recommendations import PROFILE_KEY, RECS_KEY
+    from app.videos import star_rating_fields
+    from app.models import UserMovieReview
+
+    with app.app_context():
+        user_id = admin_id()
+        pick = make_movie("Estimate Pick", 1995)
+        make_movie_file(pick, "Bluray-1080p")
+        db.session.commit()
+        pick_id = pick.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        jsonlib.dumps(
+            {
+                "computed_at": "2026-08-12 01:45",
+                "items": [{"movie_id": pick_id, "score": 9.0, "because": []}],
+            }
+        ),
+    )
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        jsonlib.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
+    assert "You might rate this around" in page
+    assert "★★★★½" in page or "&#9733;&#9733;&#9733;&#9733;&#189;" in page
+
+    with app.app_context():
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=pick_id,
+                liked=True,
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+
+    page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
+    assert "You might rate this around" not in page
+
+
 def test_shuffle_daily_is_deterministic_per_seed(app):
     """The day's cards shuffle to a stable arrangement per seed — a
     permutation, identical on reload, different on another day."""

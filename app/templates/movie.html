@@ -50,6 +50,12 @@
 						{% endif %}
 				</p>
 			{% endif %}
+			{# The engine's guess, from the user's own rating distribution;
+			   a real verdict always replaces it #}
+			{% if not review and estimated_rating %}
+				{% set est_whole = estimated_rating|int %}
+				<p class="text-muted mb-2">You might rate this around <span class="text-nowrap">{% for n in range(est_whole) %}&#9733;{% endfor %}{% if estimated_rating - est_whole >= 0.5 %}&#189;{% endif %}</span></p>
+			{% endif %}
 			{% if movie.criterion_spine_number and movie.criterion_set_title %}
 				<p>Criterion Collection spine #{{ movie.criterion_spine_number }}, part of the {{ movie.criterion_set_title }} collector's set.</p>
 			{% elif movie.criterion_spine_number %}

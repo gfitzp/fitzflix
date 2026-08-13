@@ -104,6 +104,7 @@ from app.recommendations import (
     TOP_BILLING_CUTOFF,
     coarse_interest_score,
     credit_interest_markers,
+    estimated_rating,
     marker_bar,
     recommended_movie_ids,
     rotate_daily,
@@ -1968,6 +1969,29 @@ def movie(movie_id):
     # coarse scorer against the profile-relative bar, like the TMDb
     # search results
 
+    # The estimated rating (#45a): a film in the stored ranking carries
+    # its engine score, and the profile's calibration curve turns that
+    # into "you might rate this around ★★★★" — never shown once the
+    # user has a verdict of their own
+
+    estimated = None
+    if review is None:
+        stored = stored_recommendations(current_app.redis, current_user.id)
+        if stored:
+            item = next(
+                (
+                    entry
+                    for entry in stored.get("items", [])
+                    if entry["movie_id"] == movie.id
+                ),
+                None,
+            )
+            if item is not None:
+                estimated = estimated_rating(
+                    stored_profile(current_app.redis, current_user.id),
+                    item["score"],
+                )
+
     might_interest = False
     if review is None:
         if films:
@@ -2007,6 +2031,7 @@ def movie(movie_id):
         watchlist_form=watchlist_form,
         on_watchlist=on_watchlist,
         might_interest=might_interest,
+        estimated_rating=estimated,
         suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )

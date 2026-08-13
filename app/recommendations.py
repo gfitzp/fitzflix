@@ -14,6 +14,7 @@ centered ratings with Bayesian shrinkage toward zero, and scoring is
 a weighted sum of soft per-class averages.
 """
 
+import bisect
 import json
 import random
 
@@ -461,6 +462,82 @@ def _copref_top_anchor(entries):
     return best
 
 
+# Estimated ratings (#45a): quantile-match a candidate's engine score
+# onto the user's own star distribution. The curve comes from
+# leave-one-out scores of the user's rated films — each scored against
+# a profile built without it, so a film can't flatter its own estimate
+# — and needs enough rated films to mean anything
+
+CALIBRATION_MIN_RATED = 20
+
+
+def build_calibration(
+    user_id, weights, features, entries_by_tmdb, tmdb_of, award_counts
+):
+    """The score→stars calibration curve for one user, or None.
+
+    {"scores": [...], "stars": [...]}, each sorted ascending: a
+    candidate score's fractional position among the LOO scores reads
+    out at the same position in the sorted ratings. Scores follow the
+    stored-recommendation recipe exactly (taste + co-preference, award
+    prior when taste is positive) so stored scores translate directly.
+    """
+
+    ratings = dict(
+        db.session.query(UserMovieReview.movie_id, db.func.max(UserMovieReview.rating))
+        .filter(UserMovieReview.user_id == int(user_id))
+        .filter(UserMovieReview.movie_id.isnot(None))
+        .filter(UserMovieReview.rating.isnot(None))
+        .group_by(UserMovieReview.movie_id)
+    )
+    ratings = {
+        movie_id: rating
+        for movie_id, rating in ratings.items()
+        if features.get(movie_id)
+    }
+    if len(ratings) < CALIBRATION_MIN_RATED:
+        return None
+
+    scores = []
+    for movie_id in ratings:
+        remaining = {m: w for m, w in weights.items() if m != movie_id}
+        profile = build_profile(remaining, features)
+        taste, _ = score_movie(features[movie_id], profile)
+        held_tmdb = tmdb_of.get(movie_id)
+        total = taste + _copref_value(
+            entries_by_tmdb.get(held_tmdb, []), excluded=held_tmdb
+        )
+        wins, nominations = award_counts.get(movie_id, (0, 0))
+        if taste > 0:
+            total += award_prior(wins, nominations)
+        scores.append(round(total, 4))
+
+    return {
+        "scores": sorted(scores),
+        "stars": sorted(float(rating) for rating in ratings.values()),
+    }
+
+
+def estimated_rating(profile, score):
+    """The user's likely star rating for a film scoring `score`, from
+    the profile's stored calibration curve — half-star rounded, or
+    None when no curve is stored."""
+
+    calibration = (profile or {}).get("calibration") or {}
+    scores = calibration.get("scores") or []
+    stars = calibration.get("stars") or []
+    if not scores or not stars:
+        return None
+    low = bisect.bisect_left(scores, score)
+    high = bisect.bisect_right(scores, score)
+    position = (low + high) / 2 / len(scores)
+    index = position * (len(stars) - 1)
+    lower = stars[int(index)]
+    upper = stars[min(int(index) + 1, len(stars) - 1)]
+    value = lower + (upper - lower) * (index - int(index))
+    return max(0.5, min(5.0, round(value * 2) / 2))
+
+
 def local_candidates(user_id):
     """Movie ids with a local full-feature file, minus films the user has
     already logged: the landing page only recommends what's on the shelf
@@ -554,6 +631,15 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         }
 
     award_counts = movie_award_counts()
+
+    # The estimated-rating curve rides along in the stored profile,
+    # built from the same weights, similarities, and prior rules the
+    # ranking below uses — stored scores translate straight to stars
+
+    profile["calibration"] = build_calibration(
+        user_id, weights, features, entries_by_tmdb, tmdb_of, award_counts
+    )
+
     ranked = []
     for movie_id in candidates:
         movie_features = features.get(movie_id, [])
