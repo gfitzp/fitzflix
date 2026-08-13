@@ -436,7 +436,9 @@ def _copref_value(entries, excluded=None):
     return COPREF_WEIGHT * numerator / denominator
 
 
-# A chip only when the term meaningfully moved the score
+# A chip only when co-preference DOMINATES the pick (the term meets the
+# whole taste score): typical terms run ~2 across most of the library,
+# so an absolute floor alone would chip everything into noise
 
 COPREF_CHIP_THRESHOLD = 0.5
 
@@ -566,10 +568,10 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         because = [
             label for contribution, label in contributions[:4] if contribution > 0
         ]
-        if copref >= COPREF_CHIP_THRESHOLD:
+        if copref >= COPREF_CHIP_THRESHOLD and copref >= score:
             title = anchor_titles.get(_copref_top_anchor(entries))
             if title:
-                because.append(f"liked by people who liked {title}")
+                because.insert(0, f"liked by people who liked {title}")
         # The award prior keeps its original taste gate: awards only
         # decorate films the profile itself already scores positive
         wins, nominations = award_counts.get(movie_id, (0, 0))
