@@ -1070,6 +1070,109 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
     assert "You might rate this around" not in page
 
 
+def test_single_movie_score_matches_the_stored_recipe(app):
+    """A film scored live carries exactly the stored ranking's recipe —
+    taste + co-preference + award prior — so its estimate reads off the
+    same calibration curve as a stored film's."""
+
+    from datetime import datetime
+
+    from app import db
+    from app.models import MovieAward, MovieCopref
+    from app.recommendations import compute_user_recommendations, single_movie_score
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+
+        liked = make_movie("Recipe Liked", 1990, tmdb_id=711)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, rating=5.0, liked=True)
+        second = make_movie("Recipe Second", 1991, tmdb_id=712)
+        second.genres.append(comedy)
+        log_watch(user_id, second, rating=2.0)
+
+        pick = make_movie(
+            "Recipe Pick", 1992, tmdb_id=713, tmdb_data_as_of=datetime.utcnow()
+        )
+        pick.genres.append(comedy)
+        make_movie_file(pick, "Bluray-1080p")
+        db.session.add(
+            MovieAward(
+                movie_id=pick.id, award_id="Q1", award_name="Big Prize", win=True
+            )
+        )
+        db.session.add_all(
+            [
+                MovieCopref(tmdb_id_a=711, tmdb_id_b=713, similarity=0.4),
+                MovieCopref(tmdb_id_a=713, tmdb_id_b=711, similarity=0.4),
+            ]
+        )
+        db.session.commit()
+
+        profile, ranked = compute_user_recommendations(user_id)
+        item = next(rec for rec in ranked if rec["movie_id"] == pick.id)
+        live = single_movie_score(user_id, pick, profile)
+        assert live == pytest.approx(item["score"], abs=1e-4)
+
+        # A record whose TMDb data hasn't landed can't be scored — its
+        # near-empty feature list would read as a taste mismatch
+
+        bare = make_movie("Recipe Bare", 1993, tmdb_id=714)
+        db.session.flush()
+        assert single_movie_score(user_id, bare, profile) is None
+        assert single_movie_score(user_id, pick, None) is None
+
+
+def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client):
+    """An unowned refreshed record missing from the stored ranking is
+    scored live at render, so a LOW guess can warn off a watchlist add;
+    a record still waiting on its TMDb refresh shows no guess."""
+
+    import json as jsonlib
+    from datetime import datetime
+
+    from app import db
+    from app.recommendations import PROFILE_KEY, RECS_KEY
+
+    with app.app_context():
+        user_id = admin_id()
+        outsider = make_movie(
+            "Estimate Outsider", 1994, tmdb_id=721, tmdb_data_as_of=datetime.utcnow()
+        )
+        raw = make_movie("Estimate Raw", 1995, tmdb_id=722)
+        db.session.commit()
+        outsider_id, raw_id = outsider.id, raw.id
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        jsonlib.dumps({"computed_at": "2026-08-13 01:45", "items": []}),
+    )
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        jsonlib.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.5, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    # No affinities, no copref neighbors: the live score is 0.0, which
+    # sits below the whole curve and reads out at its lowest star
+
+    page = admin_client.get(f"/movie/{outsider_id}").get_data(as_text=True)
+    assert "You might rate this around" in page
+    assert 'You might rate this around <span class="text-nowrap">&#9733;</span>' in page
+
+    page = admin_client.get(f"/movie/{raw_id}").get_data(as_text=True)
+    assert "You might rate this around" not in page
+
+
 def test_shuffle_daily_is_deterministic_per_seed(app):
     """The day's cards shuffle to a stable arrangement per seed — a
     permutation, identical on reload, different on another day."""

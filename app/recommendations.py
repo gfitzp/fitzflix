@@ -552,6 +552,65 @@ def estimated_rating(profile, score):
     return max(0.5, min(5.0, round(value * 2) / 2))
 
 
+def single_movie_score(user_id, movie, profile):
+    """The stored-recommendation recipe scored live for one film —
+    taste plus co-preference plus the award prior — so films outside
+    the stored ranking (unowned records, sub-cut candidates, taste
+    mismatches) can still carry an estimated rating. None until the
+    film's TMDb data has landed: a record mid-refresh has only its
+    decade to score with, which would read as a taste mismatch and
+    estimate misleadingly low."""
+
+    if not profile or movie.tmdb_data_as_of is None:
+        return None
+
+    taste, _ = score_movie(collect_features([movie.id]).get(movie.id, []), profile)
+
+    # Co-preference from the film's own side of the pair table: its
+    # stored neighbors intersected with the user's weighted films —
+    # the same entries compute_user_recommendations builds anchor-side,
+    # without fetching every anchor's full neighbor list
+
+    copref = 0.0
+    if movie.tmdb_id:
+        neighbor_sims = dict(
+            db.session.query(MovieCopref.tmdb_id_b, MovieCopref.similarity).filter(
+                MovieCopref.tmdb_id_a == int(movie.tmdb_id)
+            )
+        )
+        if neighbor_sims:
+            weights = user_movie_weights(user_id)
+            weights_by_tmdb = {
+                tmdb_id: weights[movie_id]
+                for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
+                .filter(Movie.id.in_(list(weights) or [0]))
+                .filter(Movie.tmdb_id.in_(list(neighbor_sims)))
+            }
+            entries = sorted(
+                (
+                    (neighbor_sims[tmdb_id], tmdb_id, weight)
+                    for tmdb_id, weight in weights_by_tmdb.items()
+                ),
+                key=lambda entry: -entry[0],
+            )
+            copref = _copref_value(entries)
+
+    total = taste + copref
+    if taste > 0:
+        wins, nominations = 0, 0
+        for win, tally in (
+            db.session.query(MovieAward.win, db.func.count())
+            .filter(MovieAward.movie_id == movie.id)
+            .group_by(MovieAward.win)
+        ):
+            if win:
+                wins = tally
+            else:
+                nominations = tally
+        total += award_prior(wins, nominations)
+    return total
+
+
 def not_interested_movie_ids(user_id):
     """Movie ids the user has waved off — excluded from every
     recommendation surface."""

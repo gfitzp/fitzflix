@@ -113,6 +113,7 @@ from app.recommendations import (
     rotate_daily,
     rotate_partition,
     shuffle_daily,
+    single_movie_score,
     stored_profile,
     stored_recommendations,
     watch_again_shelf,
@@ -2039,46 +2040,44 @@ def movie(movie_id):
     # search results
 
     # The estimated rating (#45a): a film in the stored ranking carries
-    # its engine score, and the profile's calibration curve turns that
-    # into "you might rate this around ★★★★" — never shown once the
-    # user has a verdict of their own
+    # its engine score; any other unlogged film is scored live with the
+    # same recipe (Glenn's ask — a low guess warns off a watchlist add
+    # as usefully as a high one invites it), and the profile's
+    # calibration curve turns either into "you might rate this around
+    # ★★★★" — never shown once the user has a verdict of their own
 
     estimated = None
-    if review is None and not refused:
-        stored = stored_recommendations(current_app.redis, current_user.id)
-        if stored:
-            item = next(
-                (
-                    entry
-                    for entry in stored.get("items", [])
-                    if entry["movie_id"] == movie.id
-                ),
-                None,
-            )
-            if item is not None:
-                estimated = estimated_rating(
-                    stored_profile(current_app.redis, current_user.id),
-                    item["score"],
-                )
-
     might_interest = False
     if review is None and not refused:
+        profile = stored_profile(current_app.redis, current_user.id)
+        stored = stored_recommendations(current_app.redis, current_user.id)
+        item = next(
+            (
+                entry
+                for entry in (stored.get("items", []) if stored else [])
+                if entry["movie_id"] == movie.id
+            ),
+            None,
+        )
+        if item is not None:
+            estimated = estimated_rating(profile, item["score"])
+        else:
+            score = single_movie_score(current_user.id, movie, profile)
+            if score is not None:
+                estimated = estimated_rating(profile, score)
+
         if films:
             might_interest = movie.id in recommended_movie_ids(
                 current_app.redis, current_user.id
             )
-        else:
-            profile = stored_profile(current_app.redis, current_user.id)
-            if profile:
-                year = (
-                    movie.tmdb_release_date.year
-                    if movie.tmdb_release_date
-                    else movie.year
-                )
-                score = coarse_interest_score(
-                    profile, [genre.id for genre in movie.genres], year
-                )
-                might_interest = score > marker_bar(profile)
+        elif profile:
+            year = (
+                movie.tmdb_release_date.year if movie.tmdb_release_date else movie.year
+            )
+            coarse = coarse_interest_score(
+                profile, [genre.id for genre in movie.genres], year
+            )
+            might_interest = coarse > marker_bar(profile)
 
     return render_template(
         "movie.html",
