@@ -791,6 +791,117 @@ def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
     assert "On your watchlist" in body
 
 
+def test_copref_value_math(app):
+    """The co-preference term is a weighted average of anchor sentiment
+    over the K most similar neighbors, honoring the exclusion used for
+    leave-one-out purity."""
+
+    from app.recommendations import COPREF_WEIGHT, _copref_value
+
+    entries = [(0.5, 101, 2.0), (0.3, 102, 1.0), (0.1, 103, -1.0)]
+    expected = COPREF_WEIGHT * (0.5 * 2.0 + 0.3 * 1.0 + 0.1 * -1.0) / 0.9
+    assert _copref_value(entries) == pytest.approx(expected)
+
+    # Excluding the strongest anchor removes it from the average
+
+    excluded = COPREF_WEIGHT * (0.3 * 1.0 + 0.1 * -1.0) / 0.4
+    assert _copref_value(entries, excluded=101) == pytest.approx(excluded)
+    assert _copref_value([]) == 0.0
+
+
+def test_copref_reranks_and_explains(app):
+    """Between two candidates the profile scores identically, the one
+    co-preferred with a liked film ranks first and says why."""
+
+    from app import db
+    from app.models import MovieCopref
+    from app.recommendations import compute_user_recommendations
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+
+        liked = make_movie("Copref Liked", 1990, tmdb_id=701)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, liked=True)
+
+        similar = make_movie("Copref Similar", 1991, tmdb_id=702)
+        similar.genres.append(comedy)
+        make_movie_file(similar, "Bluray-1080p")
+
+        plain = make_movie("Copref Plain", 1992, tmdb_id=703)
+        plain.genres.append(comedy)
+        make_movie_file(plain, "Bluray-1080p")
+
+        db.session.add_all(
+            [
+                MovieCopref(tmdb_id_a=701, tmdb_id_b=702, similarity=0.4),
+                MovieCopref(tmdb_id_a=702, tmdb_id_b=701, similarity=0.4),
+            ]
+        )
+        db.session.commit()
+
+        _, ranked = compute_user_recommendations(user_id)
+        ranked_ids = [rec["movie_id"] for rec in ranked]
+
+        assert ranked_ids == [similar.id, plain.id]
+        because = ranked[0]["because"]
+        assert "liked by people who liked Copref Liked" in because
+        assert all("liked by people" not in chip for chip in ranked[1]["because"])
+
+
+def test_evaluate_user_measures_copref(app):
+    """With mutually co-preferred positives the held-out film outranks
+    taste-equal candidates, so the metrics improve over the bare
+    profile — the shipped term is what the harness measures."""
+
+    from app import db
+    from app.models import MovieCopref
+    from app.recommendations import evaluate_user
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+
+        positive_tmdb = (711, 712, 713)
+        for n, tmdb_id in enumerate(positive_tmdb):
+            movie = make_movie(f"Copref Positive {n}", 1990, tmdb_id=tmdb_id)
+            movie.genres.append(comedy)
+            make_movie_file(movie, "Bluray-1080p")
+            log_watch(user_id, movie, liked=True)
+
+        # A liked trainer whose star also carries the fillers: on taste
+        # alone the fillers strictly outrank a held-out positive, so
+        # the bare metrics have room to improve
+
+        star = make_person(888100, "Copref Star")
+        trainer = make_movie("Copref Trainer", 1990, tmdb_id=719)
+        trainer.genres.append(comedy)
+        log_watch(user_id, trainer, liked=True)
+        make_cast(star, trainer)
+        for n in range(5):
+            movie = make_movie(f"Copref Filler {n}", 1990, tmdb_id=720 + n)
+            movie.genres.append(comedy)
+            make_movie_file(movie, "Bluray-1080p")
+            make_cast(star, movie)
+        db.session.commit()
+
+        bare = evaluate_user(user_id)
+
+        for a in positive_tmdb:
+            for b in positive_tmdb:
+                if a != b:
+                    db.session.add(
+                        MovieCopref(tmdb_id_a=a, tmdb_id_b=b, similarity=0.5)
+                    )
+        db.session.commit()
+
+        with_copref = evaluate_user(user_id)
+
+    assert with_copref["mean_percentile"] < bare["mean_percentile"]
+    assert with_copref["hit_at_10"] == 1.0
+
+
 def test_shuffle_daily_is_deterministic_per_seed(app):
     """The day's cards shuffle to a stable arrangement per seed — a
     permutation, identical on reload, different on another day."""

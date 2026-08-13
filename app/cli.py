@@ -231,6 +231,18 @@ def register(app):
         click.echo(refresh_movie_awards())
         click.echo(refresh_person_awards())
 
+    @recs.command()
+    @click.argument("dataset", type=click.Path(exists=True, file_okay=False))
+    def copref(dataset):
+        """Rebuild the MovieLens co-preference similarity table from an
+        extracted ml-32m dataset directory. Needs numpy and scipy
+        installed ad hoc — they're build-time tools, not runtime
+        dependencies (see app/copref.py for the dataset source)."""
+
+        from app.copref import build_copref_table
+
+        click.echo(build_copref_table(dataset))
+
     @app.cli.group()
     def triage():
         """Manage the subtitle-triage inspection aids."""

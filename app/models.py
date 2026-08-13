@@ -1951,6 +1951,30 @@ class MovieAward(db.Model):
         )
 
 
+class MovieCopref(db.Model):
+    """Co-preference similarity between two films, from MovieLens.
+
+    Adjusted-cosine similarity over ML-32M's 32 million ratings, with
+    co-rater shrinkage — "people who loved A disproportionately loved
+    B", the taste signal content features can't see. Keyed by TMDb ids
+    (portable across record merges), positive similarities only, both
+    directions stored so anchor-side lookups are one indexed query.
+    Rebuilt only when a new MovieLens snapshot is adopted, via `flask
+    recs copref` (which needs numpy/scipy installed ad hoc — they are
+    deliberately not runtime dependencies).
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    tmdb_id_a = db.Column(db.Integer, index=True, nullable=False)
+    tmdb_id_b = db.Column(db.Integer, nullable=False)
+    similarity = db.Column(db.Float, nullable=False)
+
+    __table_args__ = (db.UniqueConstraint("tmdb_id_a", "tmdb_id_b"),)
+
+    def __repr__(self):
+        return f"<MovieCopref '{self.tmdb_id_a}~{self.tmdb_id_b}:{self.similarity}'>"
+
+
 class TVCast(db.Model):
     """Join row: a credit's acting role on a TV series."""
 

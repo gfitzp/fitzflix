@@ -28,6 +28,7 @@ from app.models import (
     Movie,
     MovieAward,
     MovieCast,
+    MovieCopref,
     MovieCrew,
     TMDBCredit,
     TMDBGenre,
@@ -367,6 +368,97 @@ def award_label(wins, nominations):
     return "award-nominated"
 
 
+# The co-preference term: what content features can't see, thirty-two
+# million MovieLens ratings can. A candidate's value is the weighted
+# average of the user's own sentiment over its K most-similar diary
+# films ("people who loved what you loved also loved this"), so the
+# term ranges with the diary weights themselves. The weight was chosen
+# by leave-one-out bake-off (Aug 2026): 2.0 sits on a flat optimum that
+# cut mean percentile from 0.324 to 0.266 and more than doubled hit@10;
+# the laurel person-prior alternative measured flat and was rejected
+
+COPREF_WEIGHT = 2.0
+COPREF_NEIGHBORS = 20
+
+
+def copref_anchor_sims(anchor_tmdb_ids):
+    """{anchor tmdb: {other tmdb: similarity}} for the given anchors,
+    from the movie_copref table (empty when the table's never built)."""
+
+    anchors = [int(t) for t in anchor_tmdb_ids if t]
+    if not anchors:
+        return {}
+    sims = {}
+    for tmdb_a, tmdb_b, similarity in db.session.query(
+        MovieCopref.tmdb_id_a, MovieCopref.tmdb_id_b, MovieCopref.similarity
+    ).filter(MovieCopref.tmdb_id_a.in_(anchors)):
+        sims.setdefault(tmdb_a, {})[tmdb_b] = similarity
+    return sims
+
+
+def copref_entries(weights_by_tmdb, sims_by_anchor):
+    """Per-film neighbor lists for co-preference scoring.
+
+    {film tmdb: [(similarity, anchor tmdb, anchor weight), ...]} sorted
+    most-similar first — the input to _copref_value, built once per
+    compute or evaluation and cheap to re-rank per fold.
+    """
+
+    buckets = {}
+    for anchor, sims in sims_by_anchor.items():
+        weight = weights_by_tmdb.get(anchor)
+        if weight is None:
+            continue
+        for other, similarity in sims.items():
+            buckets.setdefault(other, []).append((similarity, anchor, weight))
+    for entries in buckets.values():
+        entries.sort(key=lambda entry: -entry[0])
+    return buckets
+
+
+def _copref_value(entries, excluded=None):
+    """One film's co-preference term from its sorted neighbor list,
+    optionally excluding an anchor (leave-one-out purity)."""
+
+    numerator = 0.0
+    denominator = 0.0
+    taken = 0
+    for similarity, anchor, weight in entries:
+        if anchor == excluded:
+            continue
+        numerator += similarity * weight
+        denominator += similarity
+        taken += 1
+        if taken == COPREF_NEIGHBORS:
+            break
+    if denominator <= 0:
+        return 0.0
+    return COPREF_WEIGHT * numerator / denominator
+
+
+# A chip only when the term meaningfully moved the score
+
+COPREF_CHIP_THRESHOLD = 0.5
+
+
+def _copref_top_anchor(entries):
+    """The anchor doing the most lifting inside the top-K window — the
+    film named by the "liked by people who liked …" chip — or None."""
+
+    best = None
+    best_value = 0.0
+    taken = 0
+    for similarity, anchor, weight in entries:
+        value = similarity * weight
+        if value > best_value:
+            best_value = value
+            best = anchor
+        taken += 1
+        if taken == COPREF_NEIGHBORS:
+            break
+    return best
+
+
 def local_candidates(user_id):
     """Movie ids with a local full-feature file, minus films the user has
     already logged: the landing page only recommends what's on the shelf
@@ -433,6 +525,32 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         index = min(len(baseline) - 1, int(len(baseline) * MARKER_BASELINE_PERCENTILE))
         profile["marker_bar"] = round(baseline[index], 4)
 
+    # Co-preference: anchors are the user's own weighted films, matched
+    # into the similarity table by TMDb id; candidates collect their
+    # top-neighbor term the same way the evaluation measures it
+
+    tmdb_of = dict(
+        db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(set(candidates) | set(weights)) or [0]))
+        .filter(Movie.tmdb_id.isnot(None))
+    )
+    weights_by_tmdb = {
+        tmdb_of[movie_id]: weight
+        for movie_id, weight in weights.items()
+        if movie_id in tmdb_of
+    }
+    entries_by_tmdb = copref_entries(
+        weights_by_tmdb, copref_anchor_sims(weights_by_tmdb)
+    )
+    anchor_titles = {}
+    if entries_by_tmdb:
+        anchor_titles = {
+            tmdb_id: title or plain_title
+            for tmdb_id, title, plain_title in db.session.query(
+                Movie.tmdb_id, Movie.tmdb_title, Movie.title
+            ).filter(Movie.tmdb_id.in_(list(weights_by_tmdb)))
+        }
+
     award_counts = movie_award_counts()
     ranked = []
     for movie_id in candidates:
@@ -440,18 +558,27 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         if not movie_features:
             continue
         score, contributions = score_movie(movie_features, profile)
-        if score <= 0:
+        entries = entries_by_tmdb.get(tmdb_of.get(movie_id), [])
+        copref = _copref_value(entries)
+        total = score + copref
+        if total <= 0:
             continue
         because = [
             label for contribution, label in contributions[:4] if contribution > 0
         ]
+        if copref >= COPREF_CHIP_THRESHOLD:
+            title = anchor_titles.get(_copref_top_anchor(entries))
+            if title:
+                because.append(f"liked by people who liked {title}")
+        # The award prior keeps its original taste gate: awards only
+        # decorate films the profile itself already scores positive
         wins, nominations = award_counts.get(movie_id, (0, 0))
         prior = award_prior(wins, nominations)
-        if prior > 0:
-            score += prior
+        if score > 0 and prior > 0:
+            total += prior
             because.append(award_label(wins, nominations))
         ranked.append(
-            {"movie_id": movie_id, "score": round(score, 4), "because": because}
+            {"movie_id": movie_id, "score": round(total, 4), "because": because}
         )
 
     ranked.sort(key=lambda rec: rec["score"], reverse=True)
@@ -729,6 +856,24 @@ def evaluate_user(user_id, class_weights=None, positive_threshold=0.5):
     candidates = local_candidates(user_id)
     features = collect_features(list(set(candidates) | set(weights)))
 
+    # The shipped co-preference term rides in the evaluation too,
+    # leave-one-out pure: each fold's held-out film is dropped from
+    # every neighbor list it anchors
+
+    tmdb_of = dict(
+        db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(set(candidates) | set(weights)) or [0]))
+        .filter(Movie.tmdb_id.isnot(None))
+    )
+    weights_by_tmdb = {
+        tmdb_of[movie_id]: weight
+        for movie_id, weight in weights.items()
+        if movie_id in tmdb_of
+    }
+    entries_by_tmdb = copref_entries(
+        weights_by_tmdb, copref_anchor_sims(weights_by_tmdb)
+    )
+
     percentiles = []
     hits_at_10 = 0
     hits_at_25 = 0
@@ -741,11 +886,18 @@ def evaluate_user(user_id, class_weights=None, positive_threshold=0.5):
             if movie_id != held_out
         }
         profile = build_profile(remaining, features)
+        held_tmdb = tmdb_of.get(held_out)
 
         held_score, _ = score_movie(features[held_out], profile, class_weights)
+        held_score += _copref_value(
+            entries_by_tmdb.get(held_tmdb, []), excluded=held_tmdb
+        )
         rank = 1
         for movie_id in candidates:
             score, _ = score_movie(features.get(movie_id, []), profile, class_weights)
+            score += _copref_value(
+                entries_by_tmdb.get(tmdb_of.get(movie_id), []), excluded=held_tmdb
+            )
             if score > held_score:
                 rank += 1
         total = len(candidates) + 1
