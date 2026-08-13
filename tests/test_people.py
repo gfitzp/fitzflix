@@ -129,7 +129,7 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
         )
         db.session.commit()
 
-    page = admin_client.get("/people").get_data(as_text=True)
+    page = admin_client.get("/people?role=all").get_data(as_text=True)
     assert "Steady Director" in page
     assert "Director &middot; 3 films" in page
     assert "Hyphenate Auteur" in page
@@ -138,6 +138,63 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
     # Non-key crew jobs don't count as credits at all
 
     assert "Roving Gaffer" not in page
+
+
+def test_people_role_filter_defaults_to_cast(app, admin_client):
+    """The page filters by credit type — Cast by default (crew-only
+    people wait behind the Crew and Cast & crew filters), with film
+    counts following the selected type."""
+
+    with app.app_context():
+        movies = [make_movie(f"Role Filter Film {n}", 1960 + n) for n in range(3)]
+        make_person(841, "Pure Actor", movies[:2])
+        make_crew_person(
+            842,
+            "Pure Director",
+            {movie: [("Directing", "Director")] for movie in movies},
+        )
+        # Directs everything, acts twice: the cast view counts only the
+        # acting appearances
+        hyphenate = make_crew_person(
+            843,
+            "Sometimes Actor",
+            {movie: [("Directing", "Director")] for movie in movies},
+        )
+        for order, movie in enumerate(movies[:2]):
+            db.session.add(
+                MovieCast(
+                    movie_id=movie.id,
+                    credit_id=hyphenate.id,
+                    character="Cameo",
+                    billing_order=order,
+                )
+            )
+        db.session.commit()
+
+    default_page = admin_client.get("/people").get_data(as_text=True)
+    assert "Pure Actor" in default_page
+    assert "Pure Director" not in default_page
+    assert "Sometimes Actor" in default_page
+    assert "Every actor credited" in default_page
+    assert 'id="people-role-cast" value="cast" checked' in default_page
+
+    # The hyphenate's count under Cast is their two acting credits,
+    # not their three directing ones
+
+    assert default_page.count("2 films") >= 2
+    assert "3 films" not in default_page
+
+    crew_page = admin_client.get("/people?role=crew").get_data(as_text=True)
+    assert "Pure Director" in crew_page
+    assert "Sometimes Actor" in crew_page
+    assert "3 films" in crew_page
+    assert "Pure Actor" not in crew_page
+    assert "Every key crew member credited" in crew_page
+
+    all_page = admin_client.get("/people?role=all").get_data(as_text=True)
+    assert "Pure Actor" in all_page
+    assert "Pure Director" in all_page
+    assert "Every person credited" in all_page
 
 
 def test_search_finds_crew_people_with_roles(app, admin_client):

@@ -1114,7 +1114,7 @@ def movie_library():
 
         return render_template(
             "filmography.html",
-            title=f"Movies starring {person_name}",
+            title=person_name,
             person_name=person_name,
             profile_path=person_profile_path,
             bio=bio,
@@ -2338,7 +2338,16 @@ def people():
     query_text = (request.args.get("q") or "").strip()
     minimum_films = 1 if query_text else 2
 
-    pairs = _credited_film_pairs()
+    # Cast by default (Glenn's call, Aug 2026): the acting long tail is
+    # what browsing usually wants, with crew or everyone a click away.
+    # Film counts follow the filter — a director's count under "cast"
+    # is their acting appearances
+
+    role = request.args.get("role", "cast")
+    if role not in ("cast", "crew", "all"):
+        role = "cast"
+
+    pairs = _credited_film_pairs(role)
     film_count = db.func.count(db.distinct(pairs.c.movie_id)).label("film_count")
     people_query = (
         db.session.query(
@@ -2366,6 +2375,7 @@ def people():
         .paginate(page=page, per_page=120, error_out=False)
     )
 
+    role_param = role if role != "cast" else None
     return render_template(
         "people.html",
         title="People",
@@ -2373,13 +2383,25 @@ def people():
         roles=_dominant_roles([person.id for person in people_page.items]),
         pages=people_page,
         query_text=query_text,
+        role=role,
+        role_param=role_param,
         next_url=(
-            url_for("main.people", page=people_page.next_num, q=query_text or None)
+            url_for(
+                "main.people",
+                page=people_page.next_num,
+                q=query_text or None,
+                role=role_param,
+            )
             if people_page.has_next
             else None
         ),
         prev_url=(
-            url_for("main.people", page=people_page.prev_num, q=query_text or None)
+            url_for(
+                "main.people",
+                page=people_page.prev_num,
+                q=query_text or None,
+                role=role_param,
+            )
             if people_page.has_prev
             else None
         ),
@@ -4622,9 +4644,14 @@ ROLE_PRECEDENCE = (
 )
 
 
-def _credited_film_pairs():
-    """(credit_id, movie_id) pairs every people surface counts: credited
-    cast rows unioned with key crew roles, deduplicated."""
+def _credited_film_pairs(role="all"):
+    """(credit_id, movie_id) pairs the people surfaces count: credited
+    cast rows, key crew roles, or their deduplicated union.
+
+    The search paths always count everything ("all"); the /people page
+    passes its cast/crew filter through so film counts reflect the
+    selected credit type.
+    """
 
     cast_pairs = db.session.query(
         MovieCast.credit_id.label("credit_id"),
@@ -4639,6 +4666,10 @@ def _credited_film_pairs():
         MovieCrew.credit_id.label("credit_id"),
         MovieCrew.movie_id.label("movie_id"),
     ).filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+    if role == "cast":
+        return cast_pairs.subquery()
+    if role == "crew":
+        return crew_pairs.subquery()
     return cast_pairs.union(crew_pairs).subquery()
 
 

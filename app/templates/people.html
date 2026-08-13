@@ -10,9 +10,9 @@
 		{% for page in pages.iter_pages() %}
 			{% if page %}
 				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None) }}">{{ page }}</a></li>
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None, role=role_param) }}">{{ page }}</a></li>
 				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None) }}">{{ page }}</a></li>
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None, role=role_param) }}">{{ page }}</a></li>
 				{% endif %}
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
@@ -31,15 +31,22 @@
 	<h2 class="col-12 col-sm-auto mr-auto mb-n1">People</h2>
 	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="{{ url_for('main.people') }}" method="get">
+			{% for value, label in [("cast", "Cast"), ("crew", "Crew"), ("all", "Cast &amp; crew")] %}
+			<div class="form-check form-check-inline">
+				<input class="form-check-input" type="radio" name="role" id="people-role-{{ value }}" value="{{ value }}"{% if role == value %} checked{% endif %}>
+				<label class="form-check-label" for="people-role-{{ value }}">{{ label|safe }}</label>
+			</div>
+			{% endfor %}
 			<input type="search" name="q" value="{{ query_text }}" class="form-control form-control-sm mr-2" placeholder="Search people&hellip;" aria-label="Search people by name">
 			<button type="submit" class="btn btn-sm btn-primary">Search</button>
 		</form>
 	</div>
 </div>
+{% set noun = {"cast": "actor", "crew": "key crew member", "all": "person"}[role] %}
 {% if query_text %}
-<p class="small text-muted">People matching &ldquo;{{ query_text }}&rdquo;{% if pages %} ({{ pages.total }}){% endif %} &mdash; <a href="{{ url_for('main.people') }}">clear search</a></p>
+<p class="small text-muted">{{ noun|capitalize }}s matching &ldquo;{{ query_text }}&rdquo;{% if pages %} ({{ pages.total }}){% endif %} &mdash; <a href="{{ url_for('main.people', role=role_param) }}">clear search</a></p>
 {% else %}
-<p class="small text-muted">Everyone credited in more than one of the library's films{% if pages %} ({{ pages.total }} people){% endif %}, most films first. Search to find anyone, including single-film appearances.</p>
+<p class="small text-muted">Every {{ noun }} credited in more than one of the library's films{% if pages %} ({{ pages.total }} people){% endif %}, most films first. Search to find anyone, including single-film appearances.</p>
 {% endif %}
 {% if people %}
 {{ pagination_nav() }}
