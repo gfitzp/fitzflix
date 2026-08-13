@@ -522,14 +522,21 @@ def test_rate_page_shows_featured_details_only(app, admin_client):
 
     page = admin_client.get("/rate").get_data(as_text=True)
     assert "Drive Featured (1956)" in page
-    assert "Directed by Featured Director" in page
     assert "119 min" in page
     assert "Western" in page
     assert "A searcher searches." in page
 
-    # Top-billed cast reads under the synopsis, in billing order
+    # Director and cast names link to their filmography pages, cast in
+    # billing order under the synopsis
 
-    assert "Starring Leading Lady, Second Banana" in page
+    assert (
+        'Directed by <a href="/library/movie?credit=777004">Featured Director</a>'
+        in page
+    )
+    assert (
+        'Starring <a href="/library/movie?credit=777104">Leading Lady</a>, '
+        '<a href="/library/movie?credit=777105">Second Banana</a>' in page
+    )
     assert "Up next" not in page
     assert "Drive Filler" not in page
 

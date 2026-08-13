@@ -256,12 +256,14 @@ def test_manifest_declares_installable_app():
 
     with open("app/static/site.webmanifest") as f:
         manifest = json.load(f)
-    assert manifest["start_url"] == "/recently-added"
+    # The installed app opens at the landing page's recommendation
+    # shelves (Glenn's call, Aug 2026)
+    assert manifest["start_url"] == "/"
     assert manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
     assert {icon["sizes"] for icon in manifest["icons"]} == {"192x192", "512x512"}
     assert {shortcut["url"] for shortcut in manifest["shortcuts"]} == {
-        "/recently-added",
+        "/",
         "/shopping-list/movie",
         "/shopping-list/tv",
         "/search",

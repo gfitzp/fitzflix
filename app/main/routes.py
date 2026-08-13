@@ -5248,23 +5248,22 @@ def rate():
     directors = []
     top_cast = []
     if featured:
-        directors = [
-            name
-            for (name,) in db.session.query(TMDBCredit.name)
+        # (credit id, name) pairs so the names link to filmography pages
+        directors = list(
+            db.session.query(TMDBCredit.id, TMDBCredit.name)
             .join(MovieCrew, MovieCrew.credit_id == TMDBCredit.id)
             .filter(MovieCrew.movie_id == featured.id)
             .filter(MovieCrew.job == "Director")
             .distinct()
-        ]
+        )
         # The same billing cutoff the taste engine counts as "starring"
-        top_cast = [
-            name
-            for (name,) in db.session.query(TMDBCredit.name)
+        top_cast = list(
+            db.session.query(TMDBCredit.id, TMDBCredit.name)
             .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
             .filter(MovieCast.movie_id == featured.id)
             .order_by(MovieCast.billing_order.asc())
             .limit(TOP_BILLING_CUTOFF)
-        ]
+        )
 
     return render_template(
         "rate.html",

@@ -23,7 +23,7 @@
 	<div class="col-md" style="min-width: 0;">
 		<h3><a href="{{ url_for('main.movie', movie_id=featured.id) }}" class="text-body">{{ featured.tmdb_title if featured.tmdb_title else featured.title }} ({{ featured.tmdb_release_date.strftime('%Y') if featured.tmdb_title and featured.tmdb_release_date else featured.year }})</a></h3>
 		<p class="text-muted mb-2">
-			{% if directors %}Directed by {{ directors|join(", ") }}{% endif %}
+			{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
 			{% if featured.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ featured.tmdb_runtime }} min{% endif %}
 			{% if featured.genres %}{% if directors or featured.tmdb_runtime %} &middot; {% endif %}{{ featured.genres|map(attribute="name")|join(", ") }}{% endif %}
 		</p>
@@ -31,7 +31,7 @@
 		<p>{{ featured.tmdb_overview }}</p>
 		{% endif %}
 		{% if top_cast %}
-		<p class="small text-muted">Starring {{ top_cast|join(", ") }}</p>
+		<p class="small text-muted">Starring {% for credit_id, name in top_cast %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 		{% endif %}
 		{# One form, four answers — the movie_id rides in the form's own
 		   hidden field (never a duplicate via hidden_tag) #}
