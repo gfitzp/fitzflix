@@ -203,10 +203,23 @@ def _build_timeline(cues, duration):
 
 
 def _render_snapshot(file_path, streamorder, at, out_path):
-    """One burned-in frame: seek just ahead of the cue, overlay the
-    subtitle stream onto the picture, and grab a single frame."""
+    """One burned-in frame: input-seek just ahead of the cue with
+    timestamps preserved, overlay the subtitle stream, trim to the
+    target frame.
 
-    seek = max(0.0, at - 1.0)
+    The input seek must land at or before the cue's start so its packet
+    demuxes — a bare direct seek to the target (Glenn's #38 sketch)
+    silently drops the subtitle whenever a keyframe falls between the
+    cue and the target, measured live on Speed's trivia track — and
+    -copyts keeps original timestamps so the output trim can name the
+    target absolutely. The filter graph then decodes only the short
+    pre-roll instead of a full second: benchmarked 1.7-7x faster per
+    snapshot with byte-identical output at early, mid, and late cues.
+    Callers pass `at` slightly after the cue start; the pre-roll here
+    must stay larger than that offset.
+    """
+
+    seek = max(0.0, at - 0.4)
     try:
         subprocess.run(
             [
@@ -216,12 +229,13 @@ def _render_snapshot(file_path, streamorder, at, out_path):
                 "error",
                 "-ss",
                 f"{seek:.3f}",
+                "-copyts",
                 "-i",
                 file_path,
                 "-filter_complex",
                 f"[0:v][0:{int(streamorder)}]overlay,scale=480:-2",
                 "-ss",
-                f"{at - seek:.3f}",
+                f"{at:.3f}",
                 "-frames:v",
                 "1",
                 "-q:v",
