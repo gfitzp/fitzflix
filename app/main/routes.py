@@ -107,6 +107,7 @@ from app.recommendations import (
     recommended_movie_ids,
     rotate_daily,
     rotate_partition,
+    shuffle_daily,
     stored_profile,
     stored_recommendations,
     watch_again_shelf,
@@ -428,11 +429,14 @@ def index():
 
         # A no-repeat daily partition through the deep stored ranking:
         # twelve films a day, one per quality tier, cycling the whole
-        # set (~400 films, roughly monthly) before anything repeats —
-        # with the watchlisted films pinned ahead of it
+        # set (400+ films, roughly monthly) before anything repeats.
+        # The day's cards then shuffle so neither the amber pins nor
+        # the quality tiers hold fixed positions (Glenn: slot one must
+        # not always be a pin or a top-tier film)
 
-        recs = pinned + rotate_partition(
-            recs, 12 - len(pinned), date.today().toordinal()
+        recs = shuffle_daily(
+            pinned + rotate_partition(recs, 12 - len(pinned), date.today().toordinal()),
+            f"mix:recs:{int(current_user.id)}:{date.today().isoformat()}",
         )
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
@@ -491,10 +495,14 @@ def index():
             date.today().toordinal(),
         )
         again_rest = [row for row in again_rows if not row["watchlisted"]]
-        again_items = again_pinned + rotate_daily(
-            again_rest,
-            12 - len(again_pinned),
-            f"again:{int(current_user.id)}:{date.today().isoformat()}",
+        again_items = shuffle_daily(
+            again_pinned
+            + rotate_daily(
+                again_rest,
+                12 - len(again_pinned),
+                f"again:{int(current_user.id)}:{date.today().isoformat()}",
+            ),
+            f"mix:again:{int(current_user.id)}:{date.today().isoformat()}",
         )
 
     # The second rail: films streaming on this user's services, from the
@@ -548,10 +556,14 @@ def index():
             date.today().toordinal(),
         )
         rest = [item for item in rail if not item["watchlisted"]]
-        rail = pinned + rotate_daily(
-            rest,
-            12 - len(pinned),
-            f"rail:{int(current_user.id)}:{date.today().isoformat()}",
+        rail = shuffle_daily(
+            pinned
+            + rotate_daily(
+                rest,
+                12 - len(pinned),
+                f"rail:{int(current_user.id)}:{date.today().isoformat()}",
+            ),
+            f"mix:rail:{int(current_user.id)}:{date.today().isoformat()}",
         )
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id

@@ -459,11 +459,13 @@ def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
     )
 
     body = admin_client.get("/").get_data(as_text=True)
+
+    # The watchlisted film holds a badged slot alongside the
+    # higher-scoring one (positions vary daily since the shuffle)
+
     assert "On your watchlist" in body
-
-    # The watchlisted film pins ahead of the higher-scoring one
-
-    assert body.index("Rail Wanted (1994)") < body.index("Rail Unwanted High (1994)")
+    assert "Rail Wanted (1994)" in body
+    assert "Rail Unwanted High (1994)" in body
 
 
 def test_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
@@ -600,10 +602,78 @@ def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
     )
 
     body = admin_client.get("/").get_data(as_text=True)
+
+    # The watchlisted film holds a badged slot regardless of its stored
+    # ranking (positions vary daily since the shuffle)
+
     assert "On your watchlist" in body
-    assert body.index("Library Wanted (1995)") < body.index(
-        "Library Unwanted High (1994)"
+    assert "Library Wanted (1995)" in body
+    assert "Library Unwanted High (1994)" in body
+
+
+def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
+    """The amber cards land on day-varying positions instead of always
+    leading the rail (Glenn: no fixed watchlist block up front)."""
+
+    from datetime import date as real_date
+
+    from app import db
+    from app.models import UserWatchlist
+    from app.recommendations import RECS_KEY
+
+    user_id = admin_id(app)
+    rec_items = []
+    with app.app_context():
+        for n in range(4):
+            movie = make_movie(f"Mix Wanted {n}", 1990)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        for n in range(8):
+            movie = make_movie(f"Mix Discovery {n}", 1991)
+            make_movie_file(movie, "Bluray-1080p")
+            rec_items.append(
+                {"movie_id": movie.id, "score": 1.0, "because": ["Comedy"]}
+            )
+        db.session.commit()
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps({"computed_at": "2026-08-12 01:45", "items": rec_items}),
     )
+
+    def pin_positions(frozen):
+        """The rail-order ranks the four amber cards land on."""
+
+        class FrozenDate(real_date):
+            """A date whose today() is pinned for deterministic seeds."""
+
+            @classmethod
+            def today(cls):
+                return cls(*frozen)
+
+        monkeypatch.setattr("app.main.routes.date", FrozenDate)
+        body = admin_client.get("/").get_data(as_text=True)
+        shown = sorted(
+            (body.index(title), title)
+            for title in [f"Mix Wanted {n} (1990)" for n in range(4)]
+            + [f"Mix Discovery {n} (1991)" for n in range(8)]
+            if title in body
+        )
+        assert len(shown) == 12
+        return {
+            rank
+            for rank, (_, title) in enumerate(shown)
+            if title.startswith("Mix Wanted")
+        }
+
+    first = pin_positions((2026, 8, 12))
+    second = pin_positions((2026, 8, 13))
+
+    # Pins sit at day-varying positions, not a fixed leading block on
+    # both days; the arrangement changes between days
+
+    assert not (first == {0, 1, 2, 3} and second == {0, 1, 2, 3})
+    assert first != second
 
 
 def test_movie_page_renders_before_enrichment_arrives(app, admin_client):

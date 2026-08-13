@@ -785,12 +785,57 @@ def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
     assert "Seen ages ago" in body
     assert "haven't watched in at least two years" in body
 
-    # The re-watchlisted film pins ahead with the amber badge
+    # The re-watchlisted film holds a badged slot (positions vary
+    # daily since the shuffle)
 
-    assert body.index("Shelf Wanted Again (1976)") < body.index(
-        "Shelf Old Favorite (1975)"
-    )
     assert "On your watchlist" in body
+
+
+def test_shuffle_daily_is_deterministic_per_seed(app):
+    """The day's cards shuffle to a stable arrangement per seed — a
+    permutation, identical on reload, different on another day."""
+
+    from app.recommendations import shuffle_daily
+
+    items = list(range(12))
+    today = shuffle_daily(items, "mix:recs:1:2026-08-12")
+    assert sorted(today) == items
+    assert today != items
+    assert shuffle_daily(items, "mix:recs:1:2026-08-12") == today
+    assert shuffle_daily(items, "mix:recs:1:2026-08-13") != today
+
+
+def test_stored_cut_deepens_by_watchlisted_candidates(app):
+    """The stored ranking keeps `limit` films beyond the watchlisted
+    candidates: the pin lane's render-time exclusion must never thin
+    the discovery pool below its monthly no-repeat cycle, however big
+    the (deliberately uncapped) watchlist grows."""
+
+    from app import db
+    from app.models import UserWatchlist
+    from app.recommendations import compute_user_recommendations
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+
+        liked = make_movie("Depth Liked", 1990)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, liked=True)
+
+        for n in range(5):
+            movie = make_movie(f"Depth Candidate {n}", 1991 + n)
+            movie.genres.append(comedy)
+            make_movie_file(movie, "Bluray-1080p")
+            if n == 0:
+                db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        _, ranked = compute_user_recommendations(user_id, limit=2)
+
+    # Five positive candidates; the cut is limit 2 + 1 watchlisted
+
+    assert len(ranked) == 3
 
 
 def test_rotate_partition_cycles_the_whole_set_without_repeats(app):

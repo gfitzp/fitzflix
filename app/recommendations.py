@@ -398,6 +398,21 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     features = collect_features(list(set(candidates) | set(weights)))
     profile = build_profile(weights, features)
 
+    # The stored cut must survive the render-time exclusions: the
+    # landing page pulls watchlisted films out of the discovery pool
+    # into the pin lane, and the watchlist is deliberately uncapped
+    # (Glenn once queued 500 films on Netflix) — so the cut deepens by
+    # the watchlisted candidates, keeping at least `limit` films for
+    # discovery and the rail's no-repeat cycle at a month or longer
+
+    watchlisted = {
+        movie_id
+        for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
+            UserWatchlist.user_id == int(user_id)
+        )
+    }
+    depth = limit + len(watchlisted & set(candidates))
+
     # The marker bar rides along with the profile: the baseline
     # percentile of coarse scores across this user's own candidates. A
     # saturated profile rates almost everything highly, so "might
@@ -440,7 +455,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         )
 
     ranked.sort(key=lambda rec: rec["score"], reverse=True)
-    return profile, ranked[:limit]
+    return profile, ranked[:depth]
 
 
 # The "Watch it again" shelf: owned films the user liked whose last
@@ -554,6 +569,25 @@ def rotate_daily(items, count, seed, decay=0.93):
         selected.append(pool.pop(pick))
     selected.sort(key=lambda pair: pair[0])
     return [item for _, item in selected]
+
+
+def shuffle_daily(items, seed):
+    """A deterministic day-seeded shuffle of a shelf's picked cards.
+
+    The pickers hand back quality-ordered rows — watchlist pins first,
+    then the ranking's tiers best-first — which made slot position a
+    quality signal: the first cards were always the amber block and the
+    top tier (Glenn: mix them). Shuffling with a user+day seed varies
+    the arrangement daily while reloads stay stable; the amber badge
+    marks the watchlist cards wherever they land. The leaving shelf
+    deliberately opts out — its watchlist-first order is urgency, not
+    discovery.
+    """
+
+    rng = random.Random(seed)
+    shuffled = list(items)
+    rng.shuffle(shuffled)
+    return shuffled
 
 
 def stored_recommendations(redis, user_id):
