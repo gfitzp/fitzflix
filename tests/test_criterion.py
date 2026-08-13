@@ -438,11 +438,15 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         < page.index("#500 &ndash;")
     )
 
-    # The catalog row opens the log page, wears the record's funnel
+    # The record-backed catalog row opens its movie page directly (the
+    # log page would just redirect there), wears the record's funnel
     # badge and overview, and shows the Criterion Channel badge with
     # the mandatory JustWatch credit
 
-    assert 'href="/review/tmdb/555002"' in page
+    with app.app_context():
+        record_id = Movie.query.filter_by(tmdb_id=555002).first().id
+    assert f'href="/movie/{record_id}"' in page
+    assert 'href="/review/tmdb/555002"' not in page
     assert "On your watchlist" in page
     assert "A spine the library lacks." in page
     assert 'title="Streaming on The Criterion Channel"' in page
@@ -472,6 +476,62 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert "Criterion Settled (1954)" in settled_page
     assert "Unmarked Owned (1980)" not in settled_page
     assert "Title Match (1990)" not in settled_page
+
+
+def test_full_refresh_creates_catalog_records(app, monkeypatch):
+    """A full refresh creates file-less records for spine releases the
+    library has never seen — under the Wikidata label, with criterion
+    fields stamped and the standard TMDb refresh queued (which renames
+    them to TMDb's canonical title, so later imports match) — adopts
+    title+year records that lack a TMDb id, skips TMDb-less releases,
+    and never creates on the single-movie path."""
+
+    fake_sparql(monkeypatch)
+
+    with app.app_context():
+        # An existing record with the release's title and year but no
+        # TMDb id gets adopted rather than duplicated
+
+        adoptee = make_movie("All Monsters Attack", 1969)
+        db.session.commit()
+        adoptee_id = adoptee.id
+
+        assert refresh_criterion_collection_info() is True
+
+        db.session.expire_all()
+        adoptee = db.session.get(Movie, adoptee_id)
+        assert adoptee.tmdb_id == 39462
+        assert adoptee.criterion_spine_number == 1000
+        assert adoptee.criterion_set_title == "Godzilla: The Showa-Era Films, 1954-1975"
+
+        # The unknown release became a record, label-cased, stamped
+
+        created = Movie.query.filter_by(tmdb_id=1863).first()
+        assert created is not None
+        assert created.title == "La Grande Illusion"
+        assert created.year == 1937
+        assert created.criterion_spine_number == 1
+        assert created.files.count() == 0
+
+        # The TMDb-less Seven Samurai release created nothing
+
+        assert Movie.query.filter_by(title="Seven Samurai").first() is None
+
+        # Both the new record and the adopted one queued a TMDb refresh
+
+        jobs = app.maintenance_queue.jobs
+        refreshed_ids = {
+            job.args[1]
+            for job in jobs
+            if job.func_name == "app.videos.refresh_tmdb_info"
+        }
+        assert refreshed_ids == {created.id, adoptee_id}
+
+        # The single-movie path never creates records
+
+        before = Movie.query.count()
+        assert refresh_criterion_collection_info(movie_id=adoptee_id) is True
+        assert Movie.query.count() == before
 
 
 def test_criterion_catalog_pagination():

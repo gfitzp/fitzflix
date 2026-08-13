@@ -87,11 +87,14 @@
 		</div>
 	</a>
 	{% elif row.kind == "tmdb" %}
-	{# A release the library lacks, in the TMDb search rows' grammar:
-	   the row opens the log page, so it's watchlistable from there; a
-	   file-less local record dresses the row with its stored poster
-	   and overview #}
-	{% if row.year %}
+	{# A release the library lacks, in the TMDb search rows' grammar: a
+	   file-less local record dresses the row with its stored poster and
+	   overview, and the row opens its movie page directly (the log page
+	   would just redirect there); recordless rows open the log page, so
+	   they're watchlistable from there #}
+	{% if movie %}
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
+	{% elif row.year %}
 	<a href="{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}" class="list-group-item list-group-item-action">
 	{% else %}
 	<div class="list-group-item">
@@ -117,7 +120,7 @@
 				{% endif %}
 			</div>
 		</div>
-	{% if row.year %}</a>{% else %}</div>{% endif %}
+	{% if movie or row.year %}</a>{% else %}</div>{% endif %}
 	{% else %}
 	{# Wikidata knows this release but not its TMDb id, so there's
 	   nothing to link or look up — a plain spine row, like the

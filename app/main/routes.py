@@ -138,6 +138,7 @@ from app.videos import (
     evaluate_filename,
     clear_watchlist,
     criterion_release_lookups,
+    find_or_create_tmdb_movie,
     get_criterion_collection_from_wikidata,
     parse_letterboxd_export,
     star_rating_fields,
@@ -5220,48 +5221,6 @@ def rate():
     )
 
 
-def _find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
-    """(movie, created): the record for a TMDb film — reusing an existing
-    row by tmdb id, or a colliding canonical title+year record, before
-    creating a review-only one. The movie may have appeared since the
-    caller's redirect check (an import or a concurrent log). Callers
-    commit and, when created, enqueue the standard TMDb refresh.
-
-    The caller's live TMDb payload (details) primes the display fields
-    — title, date, overview, poster, runtime — so the movie page the
-    redirect lands on isn't bare while the queued refresh completes;
-    tmdb_data_as_of stays unset until the full refresh stamps it.
-    """
-
-    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
-    if movie is None:
-        movie = Movie.query.filter_by(title=film_title, year=year).first()
-        if movie is not None and movie.tmdb_id is None:
-            movie.tmdb_id = tmdb_id
-    created = movie is None
-    if created:
-        movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
-        db.session.add(movie)
-    if details and movie.tmdb_title is None:
-        # Title and date prime together — display code treats a set
-        # tmdb_title as a promise that the release date exists
-        try:
-            release_date = datetime.strptime(
-                details.get("release_date") or "", "%Y-%m-%d"
-            )
-        except ValueError:
-            release_date = None
-        if release_date is not None:
-            movie.tmdb_title = details.get("title")
-            movie.tmdb_release_date = release_date
-        movie.tmdb_overview = movie.tmdb_overview or details.get("overview")
-        movie.tmdb_poster_path = movie.tmdb_poster_path or details.get("poster_path")
-        movie.tmdb_runtime = movie.tmdb_runtime or details.get("runtime")
-    if created:
-        db.session.flush()
-    return movie, created
-
-
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
@@ -5346,7 +5305,7 @@ def review_tmdb(tmdb_id):
 
     watchlist_form = WatchlistForm()
     if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
-        movie, created = _find_or_create_tmdb_movie(
+        movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
         listed = UserWatchlist.query.filter_by(
@@ -5378,7 +5337,7 @@ def review_tmdb(tmdb_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
-        movie, created = _find_or_create_tmdb_movie(
+        movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
 

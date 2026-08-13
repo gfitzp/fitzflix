@@ -5576,13 +5576,109 @@ def move_to_rejects(file_path, reason=""):
     return True
 
 
+def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
+    """(movie, created): the record for a TMDb film — reusing an existing
+    row by tmdb id, or a colliding canonical title+year record, before
+    creating a review-only one. The movie may have appeared since the
+    caller's redirect check (an import or a concurrent log). Callers
+    commit and, when created, enqueue the standard TMDb refresh.
+
+    The caller's live TMDb payload (details) primes the display fields
+    — title, date, overview, poster, runtime — so the movie page the
+    redirect lands on isn't bare while the queued refresh completes;
+    tmdb_data_as_of stays unset until the full refresh stamps it.
+    """
+
+    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    if movie is None:
+        movie = Movie.query.filter_by(title=film_title, year=year).first()
+        if movie is not None and movie.tmdb_id is None:
+            movie.tmdb_id = tmdb_id
+    created = movie is None
+    if created:
+        movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
+        db.session.add(movie)
+    if details and movie.tmdb_title is None:
+        # Title and date prime together — display code treats a set
+        # tmdb_title as a promise that the release date exists
+        try:
+            release_date = datetime.strptime(
+                details.get("release_date") or "", "%Y-%m-%d"
+            )
+        except ValueError:
+            release_date = None
+        if release_date is not None:
+            movie.tmdb_title = details.get("title")
+            movie.tmdb_release_date = release_date
+        movie.tmdb_overview = movie.tmdb_overview or details.get("overview")
+        movie.tmdb_poster_path = movie.tmdb_poster_path or details.get("poster_path")
+        movie.tmdb_runtime = movie.tmdb_runtime or details.get("runtime")
+    if created:
+        db.session.flush()
+    return movie, created
+
+
+def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_year):
+    """Create file-less Movie records for spine releases the library
+    has no record of, so the whole Criterion catalog is first-class.
+
+    Criterion's general prestige makes every spine film worth knowing
+    about permanently: a durable record keeps its poster, overview,
+    genres, and awards in the database instead of a week-long cache
+    (Glenn's call, Aug 2026). Records are created under the Wikidata
+    label; the enqueued TMDb refresh renames each to TMDb's canonical
+    title and year (tmdb_movie_apply's standard behavior), so a later
+    import of the film matches the record by title+year and attaches
+    its files instead of spawning a duplicate. Year-less releases are
+    skipped — title+year is a record's identity. Returns the number of
+    records created; the caller commits before this returns via the
+    internal commit, so the enqueued refreshes can see their rows.
+    """
+
+    tmdb_ids = [
+        release["tmdb_id"] for release in criterion_collection if release.get("tmdb_id")
+    ]
+    existing = {
+        tmdb_id
+        for (tmdb_id,) in db.session.query(Movie.tmdb_id).filter(
+            Movie.tmdb_id.in_(tmdb_ids or [0])
+        )
+    }
+    to_refresh = []
+    created_count = 0
+    for release in criterion_collection:
+        tmdb_id = release.get("tmdb_id")
+        if not tmdb_id or tmdb_id in existing or not release.get("year"):
+            continue
+        existing.add(tmdb_id)
+        title = release.get("label") or release.get("title")
+        movie, created = find_or_create_tmdb_movie(tmdb_id, title, release["year"])
+        assign_criterion_release(movie, by_tmdb_id, by_title_year)
+        created_count += created
+        # An adopted title+year record (tmdb id just attached) needs the
+        # refresh as much as a new one — anything never stamped does
+        if movie.tmdb_data_as_of is None:
+            to_refresh.append(movie)
+    db.session.commit()
+    for movie in to_refresh:
+        current_app.maintenance_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=("Movies", movie.id, movie.tmdb_id),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=(f"Refreshing TMDB data for '{movie.title} ({movie.year})'"),
+        )
+    return created_count
+
+
 def refresh_criterion_collection_info(movie_id=None):
     """Refresh Criterion Collection information from Wikidata.
 
     Runs monthly on the 18th — Criterion announces each month's new titles
     around the 15th, and a few days leaves time for Wikidata to catch up.
     A full refresh forces a fresh fetch; single-movie refreshes use the
-    week-long cache.
+    week-long cache. Full refreshes also create records for spine
+    releases the library has never seen, so new announcements join the
+    catalog as first-class films automatically.
     """
 
     with app.app_context():
@@ -5607,10 +5703,17 @@ def refresh_criterion_collection_info(movie_id=None):
                 if assign_criterion_release(movie, by_tmdb_id, by_title_year):
                     matched += 1
 
+            created = 0
+            if movie_id is None:
+                created = create_criterion_catalog_records(
+                    criterion_collection, by_tmdb_id, by_title_year
+                )
+
             db.session.commit()
             current_app.logger.info(
                 f"Matched {matched} of {len(movies)} movie(s) against "
-                f"{len(criterion_collection)} Criterion Collection releases"
+                f"{len(criterion_collection)} Criterion Collection releases, "
+                f"created {created} catalog record(s)"
             )
 
         except Exception:
