@@ -2,7 +2,7 @@
     "name": "Fitzflix",
     "short_name": "Fitzflix",
     "description": "The Fitzflix media library and shopping list",
-    "start_url": "/recently-added",
+    "start_url": "/",
     "scope": "/",
     "icons": [
         {
@@ -22,7 +22,7 @@
     "shortcuts": [
     	{
             "name": "Home",
-            "url": "/recently-added",
+            "url": "/",
             "icons": [
                 {
                     "src": "/static/android-chrome-192x192.png",

@@ -91,7 +91,7 @@ Fitzflix tracks every file's quality, so the library pages show the best copy yo
 
 ### Using Fitzflix on a phone
 
-Fitzflix installs as a web app for shopping trips: open it in the phone's browser and use **Add to Home Screen** (iOS Safari) or **Install app** (Android Chrome). The installed app opens to the Recently Added page in a full-screen window (`start_url` in `app/static/site.webmanifest`), and the search box in the navigation bar is always visible for the "do I own this?" check — search results flag upgrade-candidate seasons and movies in amber. When Fitzflix is served over HTTPS, a service worker also keeps recently-viewed pages available offline, so the shopping list still opens in stores with no reception; over plain HTTP the app still installs and works, but offline caching is disabled (browsers only allow service workers in secure contexts).
+Fitzflix installs as a web app for shopping trips: open it in the phone's browser and use **Add to Home Screen** (iOS Safari) or **Install app** (Android Chrome). The installed app opens to the landing page — the recommendation shelves — in a full-screen window (`start_url` in `app/static/site.webmanifest`), and the search box in the navigation bar is always visible for the "do I own this?" check — search results flag upgrade-candidate seasons and movies in amber. When Fitzflix is served over HTTPS, a service worker also keeps recently-viewed pages available offline, so the shopping list still opens in stores with no reception; over plain HTTP the app still installs and works, but offline caching is disabled (browsers only allow service workers in secure contexts).
 
 
 ## Reviews, the watchlist, and the rating drive
