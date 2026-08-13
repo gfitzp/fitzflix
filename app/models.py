@@ -1187,6 +1187,12 @@ class Movie(db.Model, TMDBMixin, Utilities):
         lazy="dynamic",
         cascade="all,delete,delete-orphan",
     )
+    statuses = db.relationship(
+        "UserMovieStatus",
+        backref="movie",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
     cast = db.relationship(
         "MovieCast", backref="movie", lazy="dynamic", cascade="all,delete,delete-orphan"
     )
@@ -1994,6 +2000,34 @@ class CatalogExclusion(db.Model):
 
     def __repr__(self):
         return f"<CatalogExclusion '{self.tmdb_id}:{self.title}'>"
+
+
+class UserMovieStatus(db.Model):
+    """Per-user standing flags on films, one row per (user, film, kind).
+
+    Kinds: "unseen" — the rating drive's "haven't seen it", permanently
+    out of the drive (previously a Redis-only set, the one user-authored
+    data a cache flush could lose); "not_interested" — per-user
+    suppression from every recommendation surface, chiefly for unowned
+    films, since the rating ladder's zero stars already covers owned
+    ones with a real diary row. Not-interested feeds the taste profile
+    as a mild negative; either flag clears by deleting its row.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("user.id"), index=True, nullable=False
+    )
+    movie_id = db.Column(
+        db.Integer, db.ForeignKey("movie.id"), index=True, nullable=False
+    )
+    kind = db.Column(db.String(32), nullable=False)
+    date_added = db.Column(db.DateTime, default=datetime.now)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "movie_id", "kind"),)
+
+    def __repr__(self):
+        return f"<UserMovieStatus '{self.user_id}:{self.movie_id}:{self.kind}'>"
 
 
 class TVCast(db.Model):

@@ -902,6 +902,51 @@ def test_evaluate_user_measures_copref(app):
     assert with_copref["hit_at_10"] == 1.0
 
 
+def test_not_interested_excludes_and_weighs(app):
+    """A waved-off film leaves the candidate pool and weighs mildly
+    negative in the profile — but never on top of a real diary verdict,
+    which already carries the sentiment (#45b)."""
+
+    from app import db
+    from app.models import UserMovieStatus
+    from app.recommendations import (
+        NOT_INTERESTED_WEIGHT,
+        local_candidates,
+        user_movie_weights,
+    )
+
+    with app.app_context():
+        user_id = admin_id()
+        refused = make_movie("Refused Film", 1990)
+        make_movie_file(refused, "Bluray-1080p")
+        kept = make_movie("Kept Film", 1991)
+        make_movie_file(kept, "Bluray-1080p")
+        rated_then_refused = make_movie("Rated Then Refused", 1992)
+        log_watch(user_id, rated_then_refused, rating=2)
+        db.session.add_all(
+            [
+                UserMovieStatus(
+                    user_id=user_id, movie_id=refused.id, kind="not_interested"
+                ),
+                UserMovieStatus(
+                    user_id=user_id,
+                    movie_id=rated_then_refused.id,
+                    kind="not_interested",
+                ),
+            ]
+        )
+        db.session.commit()
+
+        assert local_candidates(user_id) == [kept.id]
+
+        weights = user_movie_weights(user_id)
+        assert weights[refused.id] == NOT_INTERESTED_WEIGHT
+
+        # The rated film keeps its diary-derived weight, no stacking
+
+        assert weights[rated_then_refused.id] != NOT_INTERESTED_WEIGHT
+
+
 def test_estimated_rating_quantile_math(app):
     """The calibration curve reads a score's position among the user's
     own films out at the same position in their sorted ratings —

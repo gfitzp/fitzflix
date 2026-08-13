@@ -834,6 +834,52 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         assert state["positive"] is True
 
 
+def test_review_tmdb_not_interested_creates_flagged_record(
+    app, admin_client, monkeypatch
+):
+    """The TMDb log page's Not Interested button (#45b) creates the
+    record and flags it in one step — no diary row, any watchlist entry
+    cleared — so the film leaves every recommendation surface."""
+
+    import app.main.routes as main_routes
+
+    from app.models import (
+        Movie,
+        User,
+        UserMovieReview,
+        UserMovieStatus,
+        UserWatchlist,
+    )
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+    )
+
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    assert 'name="not_interested_submit"' in page
+    response = admin_client.post(
+        "/review/tmdb/579",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "not_interested_submit": "Not Interested",
+        },
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        movie = Movie.query.filter_by(tmdb_id=579).one()
+        user_id = User.query.first().id
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=movie.id, kind="not_interested"
+            ).first()
+            is not None
+        )
+        assert UserMovieReview.query.filter_by(movie_id=movie.id).count() == 0
+        assert UserWatchlist.query.filter_by(movie_id=movie.id).count() == 0
+
+
 def test_review_tmdb_redirects_when_film_in_library(app, admin_client):
     from app import db
 

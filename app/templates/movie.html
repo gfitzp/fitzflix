@@ -229,6 +229,21 @@
 		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
 		{% endif %}
 	</form>
+	{# Not interested (#45b): unowned, unlogged films only — waves the
+	   film off every recommendation surface without a diary row; owned
+	   films say it with the ladder's zero stars instead #}
+	{% if refused %}
+	<form action="" method="post" class="d-inline">
+		{{ not_interested_form.csrf_token }}
+		<button type="submit" name="interested_submit" value="Undo Not Interested" class="btn btn-sm btn-outline-secondary">Undo Not Interested</button>
+	</form>
+	<span class="small text-muted ml-1">This film won't be recommended.</span>
+	{% elif not films and not review %}
+	<form action="" method="post" class="d-inline">
+		{{ not_interested_form.csrf_token }}
+		<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
+	</form>
+	{% endif %}
 </div>
 <hr>
 <h5>Movie Data</h5>

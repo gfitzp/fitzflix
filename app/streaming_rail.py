@@ -27,7 +27,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, Movie, User, UserMovieReview
+from app.models import File, Movie, User, UserMovieReview, UserMovieStatus
 from app.recommendations import (
     CREW_ROLE_JOBS,
     TOP_BILLING_CUTOFF,
@@ -234,8 +234,8 @@ def _taste_queries(profile, provider_ids):
 
 def _excluded_tmdb_ids(user_id):
     """TMDb ids the rail must never recommend: films with a local
-    main-feature file, and films already in this user's diary (owned or
-    review-only records alike)."""
+    main-feature file, films already in this user's diary (owned or
+    review-only records alike), and films they've waved off."""
 
     owned = db.session.query(Movie.tmdb_id).filter(
         Movie.tmdb_id.isnot(None),
@@ -247,7 +247,18 @@ def _excluded_tmdb_ids(user_id):
         .filter(Movie.tmdb_id.isnot(None))
         .filter(UserMovieReview.user_id == int(user_id))
     )
-    return {tmdb_id for (tmdb_id,) in owned} | {tmdb_id for (tmdb_id,) in logged}
+    refused = (
+        db.session.query(Movie.tmdb_id)
+        .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
+        .filter(Movie.tmdb_id.isnot(None))
+        .filter(UserMovieStatus.user_id == int(user_id))
+        .filter(UserMovieStatus.kind == "not_interested")
+    )
+    return (
+        {tmdb_id for (tmdb_id,) in owned}
+        | {tmdb_id for (tmdb_id,) in logged}
+        | {tmdb_id for (tmdb_id,) in refused}
+    )
 
 
 def _discover_features(item):

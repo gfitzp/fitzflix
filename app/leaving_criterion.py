@@ -32,7 +32,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, Movie, UserMovieReview, UserWatchlist
+from app.models import File, Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
 from app.videos import tmdb_get
@@ -271,6 +271,14 @@ def leaving_shelf(user):
         .filter(Movie.tmdb_id.in_(tmdb_ids))
         .filter(UserWatchlist.user_id == int(user.id))
     }
+    refused = {
+        tmdb_id
+        for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+        .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
+        .filter(Movie.tmdb_id.in_(tmdb_ids))
+        .filter(UserMovieStatus.user_id == int(user.id))
+        .filter(UserMovieStatus.kind == "not_interested")
+    }
 
     items = []
     for item in stored.get("items", []):
@@ -278,6 +286,8 @@ def leaving_shelf(user):
         if tmdb_id is None:
             continue
         if tmdb_id in owned:
+            continue
+        if tmdb_id in refused:
             continue
         if tmdb_id in logged and tmdb_id not in watchlisted:
             continue

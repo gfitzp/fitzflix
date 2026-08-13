@@ -35,6 +35,7 @@ from app.models import (
     TMDBGenre,
     TMDBKeyword,
     UserMovieReview,
+    UserMovieStatus,
     UserWatchlist,
     movie_genres,
     movie_keywords,
@@ -113,6 +114,12 @@ RATING_SPREAD = 2.5
 # watch, but a real signal about taste
 
 WATCHLIST_WEIGHT = 0.2
+
+# "Not interested" is the watchlist's mirror: a mild negative for a
+# film the user waved off without watching — never stacked on a real
+# diary verdict, which already carries the sentiment (#45b)
+
+NOT_INTERESTED_WEIGHT = -0.3
 
 # Redis keys written by the nightly recompute
 
@@ -265,6 +272,13 @@ def user_movie_weights(user_id):
     ):
         if movie_id not in weights:
             weights[movie_id] = WATCHLIST_WEIGHT
+
+    for (movie_id,) in db.session.query(UserMovieStatus.movie_id).filter(
+        UserMovieStatus.user_id == int(user_id),
+        UserMovieStatus.kind == "not_interested",
+    ):
+        if movie_id not in weights:
+            weights[movie_id] = NOT_INTERESTED_WEIGHT
 
     return weights
 
@@ -538,19 +552,37 @@ def estimated_rating(profile, score):
     return max(0.5, min(5.0, round(value * 2) / 2))
 
 
+def not_interested_movie_ids(user_id):
+    """Movie ids the user has waved off — excluded from every
+    recommendation surface."""
+
+    return {
+        movie_id
+        for (movie_id,) in db.session.query(UserMovieStatus.movie_id).filter(
+            UserMovieStatus.user_id == int(user_id),
+            UserMovieStatus.kind == "not_interested",
+        )
+    }
+
+
 def local_candidates(user_id):
-    """Movie ids with a local full-feature file, minus films the user has
-    already logged: the landing page only recommends what's on the shelf
-    and unseen."""
+    """Movie ids with a local full-feature file, minus films the user
+    has already logged or waved off: the landing page only recommends
+    what's on the shelf, unseen, and unrefused."""
 
     seen = db.session.query(UserMovieReview.movie_id).filter(
         UserMovieReview.user_id == int(user_id),
         UserMovieReview.movie_id.isnot(None),
     )
+    refused = db.session.query(UserMovieStatus.movie_id).filter(
+        UserMovieStatus.user_id == int(user_id),
+        UserMovieStatus.kind == "not_interested",
+    )
     rows = (
         db.session.query(File.movie_id)
         .filter(File.movie_id.isnot(None), File.feature_type_id.is_(None))
         .filter(~File.movie_id.in_(seen))
+        .filter(~File.movie_id.in_(refused))
         .distinct()
         .all()
     )

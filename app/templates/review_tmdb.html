@@ -60,9 +60,15 @@
 			</div>
 			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
 		</form>
-		<form action="" method="post" class="mt-2">
+		<form action="" method="post" class="mt-2 d-inline-block">
 			{{ watchlist_form.hidden_tag() }}
 			<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
+		</form>
+		{# Not interested (#45b): waves the film off every recommendation
+		   surface without fabricating a diary row #}
+		<form action="" method="post" class="mt-2 d-inline-block">
+			{{ not_interested_form.csrf_token }}
+			<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
 		</form>
 	</div>
 </div>

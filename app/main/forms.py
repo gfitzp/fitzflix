@@ -198,6 +198,15 @@ class WatchlistForm(FlaskForm):
     remove_watchlist_submit = SubmitField("Remove from Watchlist")
 
 
+class NotInterestedForm(FlaskForm):
+    """Wave an unowned film off every recommendation surface — or wave
+    it back on. Owned films use the rating ladder's zero stars instead,
+    which writes a real diary verdict."""
+
+    not_interested_submit = SubmitField("Not Interested")
+    interested_submit = SubmitField("Undo Not Interested")
+
+
 class RateFilmForm(FlaskForm):
     """The rating drive's response card: the quick-answer ladder plus
     want it, haven't seen it, or skip it for now."""

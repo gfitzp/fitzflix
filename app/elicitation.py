@@ -20,7 +20,7 @@ import math
 from flask import current_app
 
 from app import db
-from app.models import UserWatchlist
+from app.models import UserMovieStatus, UserWatchlist
 from app.recommendations import (
     FEATURE_CLASS_WEIGHTS,
     collect_features,
@@ -29,14 +29,15 @@ from app.recommendations import (
     stored_profile,
 )
 
-UNSEEN_KEY = "fitzflix:elicit:unseen:{user_id}"
 SKIP_KEY = "fitzflix:elicit:skip:{user_id}"
 LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
 # Skips rest a film for a week (the whole set's TTL refreshes on each
-# skip); "haven't seen" is permanent. The last response steers the
-# next picks for an hour — long enough for a session, short enough
-# that tomorrow starts fresh
+# skip) and stay in Redis — ephemeral by design. "Haven't seen" is
+# permanent and lives in user_movie_status, so a cache flush can't
+# forget it (#45b). The last response steers the next picks for an
+# hour — long enough for a session, short enough that tomorrow starts
+# fresh
 
 SKIP_TTL_SECONDS = 7 * 86400
 LAST_TTL_SECONDS = 3600
@@ -63,11 +64,18 @@ def _int_set(redis, key):
     return {int(member) for member in redis.smembers(key)}
 
 
-def mark_unseen(redis, user_id, movie_id):
+def mark_unseen(user_id, movie_id):
     """Record that the user has never seen this film — permanently out
     of the drive (they can always rate it from its movie page)."""
 
-    redis.sadd(UNSEEN_KEY.format(user_id=int(user_id)), int(movie_id))
+    exists = UserMovieStatus.query.filter_by(
+        user_id=int(user_id), movie_id=int(movie_id), kind="unseen"
+    ).first()
+    if exists is None:
+        db.session.add(
+            UserMovieStatus(user_id=int(user_id), movie_id=int(movie_id), kind="unseen")
+        )
+        db.session.commit()
 
 
 def mark_skipped(redis, user_id, movie_id):
@@ -102,7 +110,8 @@ def last_response(redis, user_id):
 def elicitation_candidates(user_id):
     """Movie ids eligible for the drive: local full-feature films the
     user hasn't logged, minus watchlisted films (declared unseen-but-
-    wanted), films marked "haven't seen", and recent skips."""
+    wanted), films marked "haven't seen", and recent skips —
+    not-interested films are already out of local_candidates."""
 
     redis = current_app.redis
     watchlisted = {
@@ -111,10 +120,15 @@ def elicitation_candidates(user_id):
             UserWatchlist.user_id == int(user_id)
         )
     }
+    unseen = {
+        movie_id
+        for (movie_id,) in db.session.query(UserMovieStatus.movie_id).filter(
+            UserMovieStatus.user_id == int(user_id),
+            UserMovieStatus.kind == "unseen",
+        )
+    }
     excluded = (
-        watchlisted
-        | _int_set(redis, UNSEEN_KEY.format(user_id=int(user_id)))
-        | _int_set(redis, SKIP_KEY.format(user_id=int(user_id)))
+        watchlisted | unseen | _int_set(redis, SKIP_KEY.format(user_id=int(user_id)))
     )
     return [
         movie_id for movie_id in local_candidates(user_id) if movie_id not in excluded

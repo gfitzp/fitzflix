@@ -46,6 +46,7 @@ from app.main.forms import (
     FilenameTestForm,
     SubtitleTriageForm,
     ImportForm,
+    NotInterestedForm,
     LibrarySearchForm,
     MKVMergeForm,
     MKVPropEditForm,
@@ -90,6 +91,7 @@ from app.models import (
     TVSeries,
     User,
     UserMovieReview,
+    UserMovieStatus,
     UserStreamingProvider,
     UserWatchlist,
     movie_file_rank,
@@ -106,6 +108,7 @@ from app.recommendations import (
     credit_interest_markers,
     estimated_rating,
     marker_bar,
+    not_interested_movie_ids,
     recommended_movie_ids,
     rotate_daily,
     rotate_partition,
@@ -375,6 +378,8 @@ def index():
             .filter(UserMovieReview.user_id == int(current_user.id))
             .filter(UserMovieReview.movie_id.isnot(None))
         }
+        # Films waved off since the nightly run drop immediately too
+        seen |= not_interested_movie_ids(current_user.id)
         movie_ids = [item["movie_id"] for item in stored.get("items", [])]
         movies = {
             movie.id: movie
@@ -530,7 +535,18 @@ def index():
                 .filter(Movie.tmdb_id.in_(rail_ids))
                 .filter(UserMovieReview.user_id == int(current_user.id))
             )
-            dropped = {t for (t,) in owned_now} | {t for (t,) in logged_now}
+            refused_now = (
+                db.session.query(Movie.tmdb_id)
+                .join(UserMovieStatus, UserMovieStatus.movie_id == Movie.id)
+                .filter(Movie.tmdb_id.in_(rail_ids))
+                .filter(UserMovieStatus.user_id == int(current_user.id))
+                .filter(UserMovieStatus.kind == "not_interested")
+            )
+            dropped = (
+                {t for (t,) in owned_now}
+                | {t for (t,) in logged_now}
+                | {t for (t,) in refused_now}
+            )
         # A watchlisted film on the rail is the best kind of match —
         # wanted, and streaming on a service already paid for — so it
         # pins ahead of the daily rotation, capped like the library
@@ -1073,8 +1089,12 @@ def movie_library():
 
         profile = stored_profile(current_app.redis, current_user.id)
         rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+        refused = not_interested_movie_ids(current_user.id)
         interesting = credit_interest_markers(profile, int(credit), filmography)
         for row in filmography:
+            if row["movie"] is not None and row["movie"].id in refused:
+                row["might_interest"] = False
+                continue
             unowned_marker = (
                 row["quality"] is None
                 and not row["seen"]
@@ -1520,6 +1540,7 @@ def criterion_collection():
         .filter(UserWatchlist.movie_id.in_(funnel_ids or [0]))
     }
     rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
+    refused_ids = not_interested_movie_ids(current_user.id)
     profile = stored_profile(current_app.redis, current_user.id)
     bar = marker_bar(profile) if profile else None
 
@@ -1527,12 +1548,18 @@ def criterion_collection():
         movie_id = row["movie"].id
         row["seen"] = movie_id in seen_ids
         row["watchlisted"] = movie_id in watchlisted_ids
-        row["might_interest"] = movie_id in rec_ids and movie_id not in seen_ids
+        row["might_interest"] = (
+            movie_id in rec_ids
+            and movie_id not in seen_ids
+            and movie_id not in refused_ids
+        )
     for row in catalog_rows:
         record = row["movie"]
         row["seen"] = record is not None and record.id in seen_ids
         row["watchlisted"] = record is not None and record.id in watchlisted_ids
         row["might_interest"] = False
+        if record is not None and record.id in refused_ids:
+            continue
         if record is not None and profile is not None and not row["seen"]:
             genre_ids = [genre.id for genre in record.genres]
             if genre_ids:
@@ -1838,6 +1865,48 @@ def movie(movie_id):
         flash(f"Removed '{title}' from your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
+    # Not-interested toggle (#45b): waves an unowned film off every
+    # recommendation surface without fabricating a diary row — owned
+    # films use the ladder's zero stars instead. Marking clears any
+    # watchlist entry (the two contradict), and both directions nudge
+    # the profile recompute since the weights changed
+
+    not_interested_form = NotInterestedForm()
+    refused = (
+        UserMovieStatus.query.filter_by(
+            user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
+        ).first()
+        is not None
+    )
+    if (
+        not_interested_form.not_interested_submit.data
+        and not_interested_form.validate_on_submit()
+    ):
+        if not refused:
+            db.session.add(
+                UserMovieStatus(
+                    user_id=int(current_user.id),
+                    movie_id=movie.id,
+                    kind="not_interested",
+                )
+            )
+            clear_watchlist(current_user.id, movie.id)
+            db.session.commit()
+            _enqueue_profile_recompute()
+        flash(f"Got it — '{title}' won't be recommended", "info")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+    if (
+        not_interested_form.interested_submit.data
+        and not_interested_form.validate_on_submit()
+    ):
+        UserMovieStatus.query.filter_by(
+            user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
+        ).delete()
+        db.session.commit()
+        _enqueue_profile_recompute()
+        flash(f"'{title}' can be recommended again", "success")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     transcode_form = TranscodeForm()
 
     # Form to update a movie's information with the latest TMDb data
@@ -1975,7 +2044,7 @@ def movie(movie_id):
     # user has a verdict of their own
 
     estimated = None
-    if review is None:
+    if review is None and not refused:
         stored = stored_recommendations(current_app.redis, current_user.id)
         if stored:
             item = next(
@@ -1993,7 +2062,7 @@ def movie(movie_id):
                 )
 
     might_interest = False
-    if review is None:
+    if review is None and not refused:
         if films:
             might_interest = movie.id in recommended_movie_ids(
                 current_app.redis, current_user.id
@@ -2032,6 +2101,8 @@ def movie(movie_id):
         on_watchlist=on_watchlist,
         might_interest=might_interest,
         estimated_rating=estimated,
+        not_interested_form=not_interested_form,
+        refused=refused,
         suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
@@ -5041,6 +5112,7 @@ def search_tmdb():
             )
         seen_ids = set()
         watchlisted_ids = set()
+        refused_ids = set()
         if record_ids:
             seen_ids = {
                 movie_id
@@ -5054,6 +5126,13 @@ def search_tmdb():
                 .filter(UserWatchlist.user_id == int(current_user.id))
                 .filter(UserWatchlist.movie_id.in_(list(record_ids.values())))
             }
+            refused_ids = {
+                movie_id
+                for (movie_id,) in db.session.query(UserMovieStatus.movie_id)
+                .filter(UserMovieStatus.user_id == int(current_user.id))
+                .filter(UserMovieStatus.kind == "not_interested")
+                .filter(UserMovieStatus.movie_id.in_(list(record_ids.values())))
+            }
 
         profile = stored_profile(current_app.redis, current_user.id)
         rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
@@ -5062,7 +5141,7 @@ def search_tmdb():
             record_id = record_ids.get(match["tmdb_id"])
             match["seen"] = record_id in seen_ids
             match["watchlisted"] = record_id in watchlisted_ids
-            if match["seen"]:
+            if match["seen"] or record_id in refused_ids:
                 continue
             if match["library_id"] is not None:
                 if match["library_id"] in rec_ids:
@@ -5262,7 +5341,7 @@ def rate():
                 )
             flash(f"Added '{title}' to your watchlist", "success")
         elif form.unseen_submit.data:
-            mark_unseen(current_app.redis, current_user.id, movie.id)
+            mark_unseen(current_user.id, movie.id)
             set_last_response(current_app.redis, current_user.id, movie.id, "unseen")
             flash(f"Got it — you haven't seen '{title}'", "info")
         elif form.skip_submit.data:
@@ -5425,6 +5504,43 @@ def review_tmdb(tmdb_id):
         flash(f"Added '{film_title} ({year})' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
+    # Not interested (#45b): the same record-creating flow as a
+    # watchlist add, but the record gets the suppression flag instead —
+    # waved off every recommendation surface without a diary row
+
+    not_interested_form = NotInterestedForm()
+    if (
+        not_interested_form.not_interested_submit.data
+        and not_interested_form.validate_on_submit()
+    ):
+        movie, created = find_or_create_tmdb_movie(
+            tmdb_id, film_title, year, details=details
+        )
+        if not UserMovieStatus.query.filter_by(
+            user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
+        ).first():
+            db.session.add(
+                UserMovieStatus(
+                    user_id=int(current_user.id),
+                    movie_id=movie.id,
+                    kind="not_interested",
+                )
+            )
+        clear_watchlist(current_user.id, movie.id)
+        db.session.commit()
+        if created:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("Movies", movie.id, tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=(
+                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                ),
+            )
+        _enqueue_profile_recompute()
+        flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     # Like the movie page, the date starts blank — a date-less verdict
     # by default, with the field there when the date is actually known
 
@@ -5529,6 +5645,7 @@ def review_tmdb(tmdb_id):
         movie=store_lookup,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
         watchlist_form=watchlist_form,
+        not_interested_form=not_interested_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
 

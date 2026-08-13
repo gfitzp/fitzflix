@@ -61,7 +61,7 @@ def test_candidates_exclude_declared_states(app):
         skipped = make_candidate("Elicit Skipped", 1994)
         db.session.commit()
 
-        mark_unseen(app.redis, user_id, unseen.id)
+        mark_unseen(user_id, unseen.id)
         mark_skipped(app.redis, user_id, skipped.id)
 
         assert elicitation_candidates(user_id) == [eligible.id]

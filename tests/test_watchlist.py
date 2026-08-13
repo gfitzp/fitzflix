@@ -676,6 +676,70 @@ def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
     assert first != second
 
 
+def test_movie_page_not_interested_toggle(app, admin_client):
+    """An unowned, unlogged record offers Not Interested (#45b):
+    marking flags the film, clears any watchlist entry, and suppresses
+    the funnel; undoing restores it. Owned films never see the button —
+    the rating ladder's zero stars is their channel."""
+
+    import re
+
+    from app import db
+    from app.models import UserMovieStatus, UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        record = make_movie("Refusable Record", 1994, tmdb_id=9320)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=record.id))
+        owned = make_movie("Owned Unrefusable", 1995)
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.commit()
+        record_id, owned_id = record.id, owned.id
+
+    page = admin_client.get(f"/movie/{record_id}").get_data(as_text=True)
+    assert 'name="not_interested_submit"' in page
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    admin_client.post(
+        f"/movie/{record_id}",
+        data={"csrf_token": token, "not_interested_submit": "Not Interested"},
+    )
+    with app.app_context():
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=record_id, kind="not_interested"
+            ).first()
+            is not None
+        )
+        # Marking clears the contradicting watchlist entry
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=record_id).first()
+            is None
+        )
+
+    page = admin_client.get(f"/movie/{record_id}").get_data(as_text=True)
+    assert "won&#39;t be recommended" in page or "won't be recommended" in page
+    assert 'name="interested_submit"' in page
+    assert "Might interest you" not in page
+
+    admin_client.post(
+        f"/movie/{record_id}",
+        data={"csrf_token": token, "interested_submit": "Undo Not Interested"},
+    )
+    with app.app_context():
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=record_id, kind="not_interested"
+            ).first()
+            is None
+        )
+
+    # Owned films use the ladder's zero stars, not this button
+
+    page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
+    assert 'name="not_interested_submit"' not in page
+
+
 def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
     """A just-created record has its tmdb id but no tmdb_data_as_of yet —
     the page a watchlist add or log redirects to must render while the
