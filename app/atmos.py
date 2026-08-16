@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import time
 import traceback
+from datetime import datetime, timezone
 
 import boto3
 from flask import current_app
@@ -188,7 +189,7 @@ def mediaconvert_client():
     )
 
 
-def _run_step(command, job, basename, description):
+def _run_step(command, job, basename, description, ok_returncodes=(0,)):
     """Run one pipeline subprocess, streaming its output to the log."""
 
     from app.videos import wait_for_subprocess
@@ -208,7 +209,7 @@ def _run_step(command, job, basename, description):
         line = line.rstrip()
         if line:
             current_app.logger.info(f"'{basename}' {line}")
-    wait_for_subprocess(process)
+    wait_for_subprocess(process, ok_returncodes=ok_returncodes)
 
 
 def _wait_for_mediaconvert(client, mc_job_id, job, basename):
@@ -316,15 +317,23 @@ def atmos_supplement_task(file_id):
 
 
 def _atmos_supplement_unlocked(file_id):
-    """The supplement pipeline; the caller must hold the title's lock."""
+    """The supplement pipeline; the caller must hold the title's lock.
+
+    The library share carries exactly two sequential transfers: one
+    copy of the source into local staging at the start, one copy of the
+    verified result back at the end. Everything between — extraction,
+    decode, remux, flag edits, verification parses, and the untouched-
+    archive upload — runs against the staging SSD.
+    """
 
     from app.videos import (
         aws_s3_client,
+        aws_upload,
         copy_with_progress,
         flag_possibly_forced_subtitles,
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
-        mkvpropedit_unlocked,
+        remove_empty_subtitle_tracks,
         wait_for_subprocess,
         watch_mkvmerge_progress,
     )
@@ -338,9 +347,18 @@ def _atmos_supplement_unlocked(file_id):
             current_app.logger.warning(f"'{basename}' No local copy, cannot supplement")
             return False
 
-        audio_tracks = get_audio_tracks_from_file(file_path)
-        wanting = atmos_supplement_candidates(audio_tracks)
-        if not wanting:
+        # A cheap stored-row precheck before committing to a full-size
+        # staging copy; the copy is re-inspected as the real authority
+
+        stored_rows = (
+            FileAudioTrack.query.filter_by(file_id=file.id)
+            .order_by(FileAudioTrack.track)
+            .all()
+        )
+        stored_tracks = [
+            {"codec": row.codec, "language": row.language} for row in stored_rows
+        ]
+        if stored_rows and not atmos_supplement_candidates(stored_tracks):
             current_app.logger.info(
                 f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
             )
@@ -352,11 +370,11 @@ def _atmos_supplement_unlocked(file_id):
         except OSError:
             staging_free = 0
 
-        # The workspace holds the remuxed output (≈ the source's size)
-        # alongside the .ec3, and earlier the extracted bitstream + DAMF
-        # master — the headroom covers those phases
+        # The workspace briefly holds the staged source AND the remuxed
+        # output (each ≈ the source's size); the headroom covers the
+        # extracted bitstream, DAMF master, and .ec3 phases
 
-        needed = os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
+        needed = 2 * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
         if staging_free < needed:
             current_app.logger.warning(
                 f"'{basename}' Staging space is insufficient for the Atmos "
@@ -373,6 +391,21 @@ def _atmos_supplement_unlocked(file_id):
         try:
             os.makedirs(workspace, exist_ok=True)
 
+            # The one read of the source the library share carries
+
+            staging_source = os.path.join(workspace, basename)
+            copy_with_progress(
+                file_path, staging_source, job, basename, "Copying to local staging"
+            )
+
+            audio_tracks = get_audio_tracks_from_file(staging_source)
+            wanting = atmos_supplement_candidates(audio_tracks)
+            if not wanting:
+                current_app.logger.info(
+                    f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
+                )
+                return True
+
             for source_index in wanting:
                 source = audio_tracks[source_index]
                 streamorder = source.get("streamorder")
@@ -385,7 +418,7 @@ def _atmos_supplement_unlocked(file_id):
                     [
                         current_app.config["MKVEXTRACT_BIN"],
                         "tracks",
-                        file_path,
+                        staging_source,
                         f"{streamorder}:{thd_path}",
                     ],
                     job,
@@ -482,10 +515,11 @@ def _atmos_supplement_unlocked(file_id):
                     )
                 )
 
-            # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD]
+            # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD] —
+            # reading the staged source and writing beside it, all local
 
             inserts.sort(key=lambda insert: insert[0])
-            media_info = MediaInfo.parse(file_path)
+            media_info = MediaInfo.parse(staging_source)
             video_orders, audio_orders, text_orders = [], [], []
             for track in media_info.tracks:
                 track_order = track.to_data().get("streamorder")
@@ -498,18 +532,11 @@ def _atmos_supplement_unlocked(file_id):
                 elif track.track_type == "Text":
                     text_orders.append(int(track_order))
 
-            # Remux onto local staging, not the library share: total SMB
-            # traffic is identical (one read of the source, one write of
-            # the finished file), but the share never sees a concurrent
-            # read+write, the verification parse runs against local
-            # disk, and a failed mux can't strand a partial file on the
-            # library volume
-
-            staging_output = os.path.join(workspace, basename)
+            staging_output = os.path.join(workspace, f".{basename}")
             command = build_remux_command(
                 current_app.config["MKVMERGE_BIN"],
                 staging_output,
-                file_path,
+                staging_source,
                 video_orders,
                 audio_orders,
                 text_orders,
@@ -528,11 +555,37 @@ def _atmos_supplement_unlocked(file_id):
             )
             wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
+            remove_empty_subtitle_tracks(staging_output)
+
+            # The first audio track takes the default flag and every
+            # other one is cleared — the library convention, applied
+            # while the file is still on local disk
+
+            total_audio = len(audio_orders) + len(inserts)
+            flag_args = []
+            for track_number in range(1, total_audio + 1):
+                flag_args.extend(
+                    [
+                        "--edit",
+                        f"track:a{track_number}",
+                        "--set",
+                        f"flag-default={'1' if track_number == 1 else '0'}",
+                    ]
+                )
+            _run_step(
+                [current_app.config["MKVPROPEDIT_BIN"], staging_output] + flag_args,
+                job,
+                basename,
+                "Setting default audio flag",
+                ok_returncodes=(0, 1),
+            )
+
             # Never replace the library copy with a mux that didn't
             # deliver: the output must carry every expected twin and
             # all of the original lossless tracks
 
             new_audio_tracks = get_audio_tracks_from_file(staging_output)
+            new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
             originals_before = sum(
                 1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
             )
@@ -550,14 +603,23 @@ def _atmos_supplement_unlocked(file_id):
                     f"E-AC-3 Atmos twins; library copy left untouched"
                 )
 
-            # The verified result crosses to the library as a hidden
-            # dotfile, then renames into place; a failed copy is removed
-            # so nothing partial ever sits beside the real file
+            # The staged source has served its purpose; the verified
+            # output takes over its name so the untouched-archive upload
+            # derives the same S3 key the library file would
+
+            os.remove(staging_source)
+            final_staging = staging_source
+            os.rename(staging_output, final_staging)
+
+            # The one write the library share carries: the verified
+            # result crosses as a hidden dotfile, then renames into
+            # place; a failed copy is removed so nothing partial ever
+            # sits beside the real file
 
             hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
             try:
                 copy_with_progress(
-                    staging_output,
+                    final_staging,
                     hidden_output,
                     job,
                     basename,
@@ -570,7 +632,6 @@ def _atmos_supplement_unlocked(file_id):
                 except OSError:
                     pass
                 raise
-            os.remove(staging_output)
 
             # Rebuild the track records now that the file changed
 
@@ -584,12 +645,13 @@ def _atmos_supplement_unlocked(file_id):
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
-            new_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
             flag_possibly_forced_subtitles(file, new_subtitle_tracks)
             for i, track in enumerate(new_subtitle_tracks):
                 track["file_id"] = file.id
                 track["track"] = i + 1
                 db.session.add(FileSubtitleTrack(**track))
+
+            file.date_updated = datetime.now(timezone.utc)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
@@ -599,18 +661,31 @@ def _atmos_supplement_unlocked(file_id):
         else:
             db.session.commit()
 
-            # The twin now leads its trio, so the first audio track takes
-            # the default flag, and the modified file replaces the
-            # untouched S3 archive (Glenn's call: the supplemented MKV is
-            # a superset of the rip, and re-downloads must not pay for a
-            # second MediaConvert run) — both ride the existing
-            # mkvpropedit path, which this task's lock already covers
+            # The supplemented file replaces the untouched S3 archive
+            # (Glenn's call: it's a strict superset of the rip, and
+            # re-downloads must never pay for a second MediaConvert run)
+            # — uploaded from the staging copy so the library share
+            # isn't read again. Mirrors the mkvpropedit path's posture:
+            # the library replacement above is already committed, so an
+            # upload failure fails the job and the S3 sync task heals it
 
-            try:
-                mkvpropedit_unlocked(file.id, 1, None, None)
-            except OSError:
-                current_app.logger.error(traceback.format_exc())
-                raise
+            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+                try:
+                    (
+                        file.aws_untouched_key,
+                        file.aws_untouched_date_uploaded,
+                        file.aws_untouched_filesize_bytes,
+                    ) = aws_upload(
+                        final_staging,
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        force_upload=True,
+                        ignore_etag=True,
+                    )
+                    db.session.commit()
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
+                    raise
             return True
 
         finally:
