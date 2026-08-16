@@ -87,8 +87,11 @@
 		.star-row .star.filled { color: #f0ad4e; }
 		.star-row:has(.star:hover) .star { color: #c9c9c9; }
 		.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
-		.star-row .x-btn { font-size: 1.2rem; margin-right: .35em; }
-		.star-row.star-row-sm .x-btn { font-size: .95rem; }
+		/* The ✕'s visual gap to the stars is PADDING, not margin, so
+		   the whole row is one continuous hit area — clicking between
+		   the ✕ and the first star still triggers the ✕ */
+		.star-row .x-btn { font-size: 1.2rem; padding-right: .45em; }
+		.star-row.star-row-sm .x-btn { font-size: .95rem; padding-right: .35em; }
 		.star-row .x-btn.active { color: #dc3545; }
 		.star-row .x-btn:hover { color: #dc3545; }
     </style>
