@@ -297,9 +297,9 @@
 					bar.setAttribute("aria-valuenow", task.progress);
 				} else {
 					label.textContent = task.description + "...";
-					bar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
-					bar.style.width = "100%";
-					bar.setAttribute("aria-valuenow", "100");
+					bar.className = "progress-bar bg-info progress-bar-indeterminate";
+					bar.style.width = "";
+					bar.removeAttribute("aria-valuenow");
 				}
 			}
 
