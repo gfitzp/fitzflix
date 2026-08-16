@@ -206,6 +206,21 @@ def app():
     assert application.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite")
     assert application.redis.connection_pool.connection_kwargs.get("db") == 9
 
+    # The first app created in the process becomes get_app()'s singleton,
+    # which task modules (app.videos, app.atmos, ...) capture at import
+    # time. A test module importing one of them at TOP LEVEL runs during
+    # pytest collection — before this fixture — creating a real-config
+    # app and silently pointing every task function in the suite at
+    # production. Import task modules inside test functions instead.
+
+    from app import get_app
+
+    assert get_app() is application, (
+        "get_app()'s singleton predates the test app: a test module "
+        "imports a task module at top level; move that import inside "
+        "the test function"
+    )
+
     with application.app_context():
         _register_mysql_compat_functions(db.engine)
         db.create_all()

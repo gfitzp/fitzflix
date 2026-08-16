@@ -1861,6 +1861,14 @@ def finalize_localization(
                     description=f"Refreshing TMDB data for '{tv_series.title}'",
                 )
 
+            # A TrueHD Atmos track without its E-AC-3 Atmos twin earns
+            # the MediaConvert supplement (#55b), queued after the
+            # commit so the transcode worker sees the finished records
+
+            from app.atmos import maybe_enqueue_atmos_supplement
+
+            maybe_enqueue_atmos_supplement(file.id)
+
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email_async(

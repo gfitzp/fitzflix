@@ -319,6 +319,51 @@ def register(app):
             queued += 1
         click.echo(f"Queued snapshot generation for {queued} file(s)")
 
+    @app.cli.group()
+    def audio():
+        """Manage the audio-track supplement pipelines."""
+        pass
+
+    @audio.command()
+    @click.argument("file_id", required=False, type=int)
+    def atmos(file_id):
+        """Queue E-AC-3 Atmos twins for TrueHD Atmos files.
+
+        With FILE_ID, queues that one file; without, sweeps the whole
+        library for TrueHD Atmos tracks lacking their twin — the serial
+        transcode queue converts one film at a time, and each film
+        costs roughly a dollar of MediaConvert time.
+        """
+
+        from app import db
+        from app.atmos import TRUEHD_ATMOS_CODEC, maybe_enqueue_atmos_supplement
+        from app.models import File, FileAudioTrack
+
+        if file_id is not None:
+            candidates = [file_id]
+        else:
+            candidates = sorted(
+                fid
+                for (fid,) in db.session.query(FileAudioTrack.file_id)
+                .filter(FileAudioTrack.codec == TRUEHD_ATMOS_CODEC)
+                .distinct()
+            )
+
+        queued = 0
+        for fid in candidates:
+            file = db.session.get(File, fid)
+            if file is None:
+                click.echo(f"{fid}: no such file record")
+                continue
+            if maybe_enqueue_atmos_supplement(fid):
+                queued += 1
+                click.echo(f"{fid}: queued '{file.basename}'")
+            else:
+                click.echo(
+                    f"{fid}: skipped '{file.basename}' (twin present or already queued)"
+                )
+        click.echo(f"Queued {queued} of {len(candidates)} candidate file(s)")
+
     @recs.command()
     @click.option(
         "--weights",

@@ -73,6 +73,8 @@ class Config(object):
     MKVPROPEDIT_BIN                     = os.environ.get("MKVPROPEDIT_LOCATION") or "/opt/homebrew/bin/mkvpropedit"
     FFMPEG_BIN                          = os.environ.get("FFMPEG_BIN") or "/opt/homebrew/bin/ffmpeg"
     FFPROBE_BIN                         = os.environ.get("FFPROBE_BIN") or "/opt/homebrew/bin/ffprobe"
+    MKVEXTRACT_BIN                      = os.environ.get("MKVEXTRACT_BIN") or "/opt/homebrew/bin/mkvextract"
+    TRUEHDD_BIN                         = os.environ.get("TRUEHDD_BIN") or "/Users/server/bin/truehdd"
 
     # AWS configuration
     ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
@@ -85,6 +87,13 @@ class Config(object):
     IGNORE_ETAGS                        = os.environ.get("IGNORE_ETAGS") is not None
     FORCE_UPLOAD                        = os.environ.get("FORCE_UPLOAD") is not None
     AWS_SQS_URL                         = os.environ.get("AWS_SQS_URL") or None
+
+    # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
+    AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"
+    MEDIACONVERT_ENDPOINT               = os.environ.get("MEDIACONVERT_ENDPOINT") or "https://mediaconvert.us-east-1.amazonaws.com"
+    MEDIACONVERT_REGION                 = os.environ.get("MEDIACONVERT_REGION") or "us-east-1"
+    MEDIACONVERT_ROLE_ARN               = os.environ.get("MEDIACONVERT_ROLE_ARN") or "arn:aws:iam::726348906822:role/fitzflix-mediaconvert-role"
+    EAC3_ATMOS_BITRATE                  = int(os.environ.get("EAC3_ATMOS_BITRATE") or 1024000)
 
     # Mail server configuration
     MAIL_USERNAME                       = os.environ.get("MAIL_USERNAME")
