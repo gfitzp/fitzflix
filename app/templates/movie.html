@@ -86,7 +86,7 @@
 	<div class="col-md-8">
 		<form action="" method="post">
 			{{ movie_review_form.hidden_tag() }}
-			{{ rating_ladder() }}
+			{{ rating_ladder(allow_not_interested=not review) }}
 			{# Blank date = a date-less verdict ("seen sometime"); fill it
 			   only when the watch date is actually known — Plex records
 			   its own watches with real timestamps #}

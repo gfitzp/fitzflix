@@ -48,6 +48,7 @@ from app.models import (
     TVSeries,
     User,
     UserMovieReview,
+    UserMovieStatus,
     UserWatchlist,
     movie_file_rank,
     tmdb_get,
@@ -61,6 +62,16 @@ def clear_watchlist(user_id, movie_id):
     Callers commit."""
 
     UserWatchlist.query.filter_by(user_id=int(user_id), movie_id=int(movie_id)).delete()
+
+
+def clear_not_interested(user_id, movie_id):
+    """Drop a film's not-interested flag, if present — a watch, however
+    it arrives, contradicts "never saw it, don't want it" (#51).
+    Callers commit."""
+
+    UserMovieStatus.query.filter_by(
+        user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
+    ).delete()
 
 
 EIGHT_MEGABYTES = 8388608
@@ -3482,6 +3493,7 @@ def apply_letterboxd_import(user_id, films):
 
                 if film["entries"]:
                     clear_watchlist(user_id, movie.id)
+                    clear_not_interested(user_id, movie.id)
                 if film.get("watchlist"):
                     listed = UserWatchlist.query.filter_by(
                         user_id=user_id, movie_id=movie.id
@@ -3573,10 +3585,12 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 user = User.query.filter_by(plex_username=plex_username).first()
 
             if user is not None:
-                # The watch completes any watchlist entry, and one diary
-                # row per calendar day, whatever the exact times
+                # The watch completes any watchlist entry — and clears a
+                # not-interested flag, which a real watch contradicts —
+                # with one diary row per calendar day, whatever the times
 
                 clear_watchlist(user.id, movie.id)
+                clear_not_interested(user.id, movie.id)
                 existing = UserMovieReview.query.filter(
                     UserMovieReview.user_id == user.id,
                     UserMovieReview.movie_id == movie.id,

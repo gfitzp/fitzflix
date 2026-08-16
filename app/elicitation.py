@@ -43,8 +43,8 @@ SKIP_TTL_SECONDS = 7 * 86400
 LAST_TTL_SECONDS = 3600
 
 # How strongly the last response bends the ranking: a rating pulls
-# similar films forward, "haven't seen" nudges the neighborhood away;
-# watchlist adds and skips don't steer
+# similar films forward, while "haven't seen" and "not interested"
+# nudge the neighborhood away; watchlist adds and skips don't steer
 
 ADJACENCY_WEIGHT = 2.0
 UNSEEN_STEER_WEIGHT = -0.5
@@ -88,8 +88,8 @@ def mark_skipped(redis, user_id, movie_id):
 
 def set_last_response(redis, user_id, movie_id, action, positive=False):
     """Remember the session's last response, which steers the next
-    picks: action is one of rated / watchlist / unseen / skip, and a
-    positive rating (or like) also unlocks the suggestion strip."""
+    picks: action is one of rated / watchlist / unseen / not_interested
+    / skip, and a positive rating also unlocks the suggestion strip."""
 
     redis.set(
         LAST_KEY.format(user_id=int(user_id)),
@@ -205,6 +205,7 @@ def next_films(user_id, count=1 + UP_NEXT_COUNT, exclude=()):
         direction = {
             "rated": ADJACENCY_WEIGHT,
             "unseen": UNSEEN_STEER_WEIGHT,
+            "not_interested": UNSEEN_STEER_WEIGHT,
         }.get(last["action"], 0.0)
         if direction:
             adjacency = adjacency_scores(

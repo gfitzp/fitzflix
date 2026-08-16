@@ -200,8 +200,8 @@ def test_rate_page_actions_flow(app, admin_client):
 
 def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     """The one-tap ladder writes ordinary date-less diary rows — Loved
-    it = 5 (positive, steers), Not interested = 0 (retires the film and
-    weighs against its features), Didn't like it = 2 (not positive) —
+    it = 5 (positive, steers), Didn't like it = 2 (not positive) —
+    while ✕ (0) writes the not-interested FLAG, never a review (#51),
     and nonsense values write nothing."""
 
     from app.elicitation import elicitation_candidates, last_response
@@ -251,11 +251,21 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
         data={"csrf_token": token, "movie_id": str(shunned_id), "quick_rating": "0"},
     )
     with app.app_context():
-        review = UserMovieReview.query.filter_by(
-            user_id=user_id, movie_id=shunned_id
+        from app.models import UserMovieStatus
+
+        assert (
+            UserMovieReview.query.filter_by(
+                user_id=user_id, movie_id=shunned_id
+            ).first()
+            is None
+        )
+        flag = UserMovieStatus.query.filter_by(
+            user_id=user_id, movie_id=shunned_id, kind="not_interested"
         ).one()
-        assert float(review.rating) == 0.0
-        assert last_response(app.redis, user_id)["positive"] is False
+        assert flag is not None
+        last = last_response(app.redis, user_id)
+        assert last["action"] == "not_interested"
+        assert last["positive"] is False
         assert shunned_id not in elicitation_candidates(user_id)
 
     admin_client.post(
@@ -641,3 +651,109 @@ def test_positive_rating_earns_suggestions(app, admin_client):
     )
     page = admin_client.get("/rate").get_data(as_text=True)
     assert "Since you liked" not in page
+
+
+def test_movie_page_x_flags_and_never_reviews(app, admin_client):
+    """The movie page ladder's ✕ writes the not-interested flag — no
+    diary row — and clears a contradicting watchlist entry; logging the
+    film later clears the flag again (#51)."""
+
+    from app.models import UserMovieStatus, UserWatchlist
+
+    with app.app_context():
+        user_id = admin_id()
+        movie = make_candidate("X Owned Film", 1975)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'name="quick_rating" value="0"' in page
+    token = csrf_token_from(page)
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
+    )
+    with app.app_context():
+        assert (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).first()
+            is None
+        )
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=movie_id, kind="not_interested"
+            ).first()
+            is not None
+        )
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=movie_id).first()
+            is None
+        )
+
+    # Watching it anyway contradicts the flag, which clears with the log
+
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "4"},
+    )
+    with app.app_context():
+        review = UserMovieReview.query.filter_by(
+            user_id=user_id, movie_id=movie_id
+        ).one()
+        assert float(review.rating) == 4.0
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=movie_id, kind="not_interested"
+            ).first()
+            is None
+        )
+
+
+def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
+    """A film with a diary row refuses the ✕ server-side — its floor is
+    1 star — and the ladder stops offering the button (#51)."""
+
+    from app.models import UserMovieStatus
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        movie = make_candidate("X Seen Film", 1976)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=movie.id,
+                liked=True,
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'name="quick_rating" value="0"' not in page
+
+    token = csrf_token_from(page)
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
+        follow_redirects=True,
+    )
+    page = response.get_data(as_text=True)
+    assert "the lowest rating" in page
+    with app.app_context():
+        assert (
+            UserMovieStatus.query.filter_by(
+                user_id=user_id, movie_id=movie_id, kind="not_interested"
+            ).first()
+            is None
+        )
+
+    # review_edit never offers the ✕ either
+
+    with app.app_context():
+        review_id = (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).one().id
+        )
+    page = admin_client.get(f"/review/{review_id}/edit").get_data(as_text=True)
+    assert 'name="quick_rating" value="0"' not in page

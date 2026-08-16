@@ -19,7 +19,7 @@
 		</p>
 		<form action="" method="post">
 			{{ movie_review_form.hidden_tag() }}
-			{{ rating_ladder() }}
+			{{ rating_ladder(allow_not_interested=false) }}
 			{# A ladder tap re-rates this viewing in place; saving without
 			   one keeps the stars exactly as they are #}
 			<div class="row">

@@ -143,6 +143,7 @@ from app.triage import (
 )
 from app.videos import (
     evaluate_filename,
+    clear_not_interested,
     clear_watchlist,
     criterion_release_lookups,
     find_or_create_tmdb_movie,
@@ -197,9 +198,10 @@ def _quick_rating():
     """(present, rating) from the quick-answer ladder's submission.
 
     (False, None) when no ladder button was pressed, (True, None) when
-    the value is nonsense, (True, 0.0–5.0) otherwise. The ladder rides
-    inside every rating form; a valid value overrides the form's own
-    rating field while everything else the form carries is honored.
+    the value is nonsense, (True, 0.0–5.0) otherwise. A 0 is the ✕ —
+    "not interested, never saw it" — which handlers route to the
+    status-flag path, never to a review (#51): the star scale itself
+    starts at 1 ("Hated it") and belongs to seen films only.
     """
 
     value = (request.form.get("quick_rating") or "").strip()
@@ -208,6 +210,33 @@ def _quick_rating():
     if value not in {"0", "1", "2", "3", "4", "5"}:
         return True, None
     return True, float(value)
+
+
+def _mark_not_interested(user_id, movie_id):
+    """Flag a film not-interested and clear any contradicting watchlist
+    entry; commits. Returns False without writing when the user has a
+    diary row for the film — ✕ means "never saw it", and a seen film's
+    harshest verdict is 1 star (#51)."""
+
+    if (
+        db.session.query(UserMovieReview.id)
+        .filter_by(user_id=int(user_id), movie_id=int(movie_id))
+        .first()
+        is not None
+    ):
+        return False
+    exists = UserMovieStatus.query.filter_by(
+        user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
+    ).first()
+    if exists is None:
+        db.session.add(
+            UserMovieStatus(
+                user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
+            )
+        )
+        clear_watchlist(int(user_id), int(movie_id))
+    db.session.commit()
+    return True
 
 
 def _watched_timestamp(watched_date):
@@ -1771,6 +1800,35 @@ def movie(movie_id):
             form_movie_id = (request.form.get("movie_id") or "").strip()
             if form_movie_id.isdigit() and int(form_movie_id) != movie.id:
                 target = db.session.get(Movie, int(form_movie_id)) or movie
+
+        # ✕ is "not interested, never saw it" — a status flag, never a
+        # review (#51). The film leaves every recommendation surface,
+        # and a seen film can't be flagged: its floor is 1 star
+
+        if rating == 0:
+            target_title = (
+                title
+                if target.id == movie.id
+                else (
+                    f"{target.tmdb_title if target.tmdb_title else target.title} "
+                    f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
+                )
+            )
+            if _mark_not_interested(current_user.id, target.id):
+                if target.id == movie.id:
+                    set_last_response(
+                        current_app.redis, current_user.id, movie.id, "not_interested"
+                    )
+                _enqueue_profile_recompute()
+                flash(f"Got it — '{target_title}' won't be recommended", "info")
+            else:
+                flash(
+                    f"You've logged '{target_title}' — the lowest rating "
+                    f"for a seen film is 1 star",
+                    "warning",
+                )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
         # A bare submission (no rating or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
         # Rewatch is computed the way Plex watches compute it: any earlier
@@ -1797,6 +1855,7 @@ def movie(movie_id):
         )
         db.session.add(review)
         clear_watchlist(current_user.id, target.id)
+        clear_not_interested(current_user.id, target.id)
         db.session.commit()
         target_title = (
             title
@@ -1883,18 +1942,15 @@ def movie(movie_id):
         not_interested_form.not_interested_submit.data
         and not_interested_form.validate_on_submit()
     ):
-        if not refused:
-            db.session.add(
-                UserMovieStatus(
-                    user_id=int(current_user.id),
-                    movie_id=movie.id,
-                    kind="not_interested",
-                )
-            )
-            clear_watchlist(current_user.id, movie.id)
-            db.session.commit()
+        if _mark_not_interested(current_user.id, movie.id):
             _enqueue_profile_recompute()
-        flash(f"Got it — '{title}' won't be recommended", "info")
+            flash(f"Got it — '{title}' won't be recommended", "info")
+        else:
+            flash(
+                f"You've logged '{title}' — the lowest rating for a "
+                f"seen film is 1 star",
+                "warning",
+            )
         return redirect(url_for("main.movie", movie_id=movie.id))
     if (
         not_interested_form.interested_submit.data
@@ -3594,6 +3650,16 @@ def review_edit(review_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.review_edit", review_id=review_id))
+        # A logged viewing can't be "not interested" (#51) — the ladder
+        # hides its ✕ here, and a stray 0 is refused rather than stored
+
+        if quick_rating == 0:
+            flash(
+                f"You've logged '{title}' — the lowest rating for a "
+                f"seen film is 1 star",
+                "warning",
+            )
+            return redirect(url_for("main.review_edit", review_id=review_id))
         # Only a ladder tap changes the stars (and the liked flag that
         # follows them) — saving a text or date edit must never wipe
         # the viewing's existing rating
@@ -5287,17 +5353,30 @@ def rate():
             f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
             f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
         )
-        # The quick-answer ladder maps one tap onto whole stars —
-        # "Not interested" is a genuine 0-star diary row, which retires
-        # the film from the drive and every recommendation surface and
-        # weighs hard against its features in the profile. 3+ stars
+        # The quick-answer ladder maps one tap onto whole stars — the ✕
+        # is the not-interested flag (#51), never a review: the film
+        # leaves the drive and every recommendation surface, and steers
+        # the next picks away like "haven't seen" does. 3+ stars
         # auto-flag liked (Glenn's rule: liked means a positive verdict)
 
         quick_present, quick_rating = _quick_rating()
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.rate"))
-        if quick_present:
+        if quick_present and quick_rating == 0:
+            if _mark_not_interested(current_user.id, movie.id):
+                set_last_response(
+                    current_app.redis, current_user.id, movie.id, "not_interested"
+                )
+                _enqueue_profile_recompute()
+                flash(f"Got it — '{title}' won't be recommended", "info")
+            else:
+                flash(
+                    f"You've logged '{title}' — the lowest rating for a "
+                    f"seen film is 1 star",
+                    "warning",
+                )
+        elif quick_present:
             rating = quick_rating
             # An elicited rating is an ordinary diary row with no watch
             # date — the film was seen sometime before Fitzflix
@@ -5312,6 +5391,7 @@ def rate():
             )
             db.session.add(review)
             clear_watchlist(current_user.id, movie.id)
+            clear_not_interested(current_user.id, movie.id)
             db.session.commit()
             # A positive answer unlocks the "since you liked…" strip
             set_last_response(
@@ -5515,29 +5595,24 @@ def review_tmdb(tmdb_id):
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
-        if not UserMovieStatus.query.filter_by(
-            user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
-        ).first():
-            db.session.add(
-                UserMovieStatus(
-                    user_id=int(current_user.id),
-                    movie_id=movie.id,
-                    kind="not_interested",
+        if _mark_not_interested(current_user.id, movie.id):
+            if created:
+                current_app.request_queue.enqueue(
+                    "app.videos.refresh_tmdb_info",
+                    args=("Movies", movie.id, tmdb_id),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=(
+                        f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                    ),
                 )
+            _enqueue_profile_recompute()
+            flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
+        else:
+            flash(
+                f"You've logged '{film_title} ({year})' — the lowest "
+                f"rating for a seen film is 1 star",
+                "warning",
             )
-        clear_watchlist(current_user.id, movie.id)
-        db.session.commit()
-        if created:
-            current_app.request_queue.enqueue(
-                "app.videos.refresh_tmdb_info",
-                args=("Movies", movie.id, tmdb_id),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=(
-                    f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                ),
-            )
-        _enqueue_profile_recompute()
-        flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     # Like the movie page, the date starts blank — a date-less verdict
@@ -5554,6 +5629,30 @@ def review_tmdb(tmdb_id):
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
+
+        # The ladder's ✕ is the not-interested flag (#51), never a
+        # review — same flow as the dedicated button below
+
+        if quick_present and quick_rating == 0:
+            if _mark_not_interested(current_user.id, movie.id):
+                if created:
+                    current_app.request_queue.enqueue(
+                        "app.videos.refresh_tmdb_info",
+                        args=("Movies", movie.id, tmdb_id),
+                        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                        description=(
+                            f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
+                        ),
+                    )
+                _enqueue_profile_recompute()
+                flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
+            else:
+                flash(
+                    f"You've logged '{film_title} ({year})' — the lowest "
+                    f"rating for a seen film is 1 star",
+                    "warning",
+                )
+            return redirect(url_for("main.movie", movie_id=movie.id))
 
         rating = quick_rating
         # A bare submission (no rating or text) is a plain diary
@@ -5582,6 +5681,7 @@ def review_tmdb(tmdb_id):
         )
         db.session.add(review)
         clear_watchlist(current_user.id, movie.id)
+        clear_not_interested(current_user.id, movie.id)
         db.session.commit()
         if rating is not None:
             # The redirect lands on the movie page, where a positive
