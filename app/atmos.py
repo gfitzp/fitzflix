@@ -320,6 +320,7 @@ def _atmos_supplement_unlocked(file_id):
 
     from app.videos import (
         aws_s3_client,
+        copy_with_progress,
         flag_possibly_forced_subtitles,
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
@@ -350,7 +351,12 @@ def _atmos_supplement_unlocked(file_id):
             staging_free = shutil.disk_usage(staging_dir).free
         except OSError:
             staging_free = 0
-        needed = int(os.path.getsize(file_path) * 0.5) + WORKSPACE_HEADROOM_BYTES
+
+        # The workspace holds the remuxed output (≈ the source's size)
+        # alongside the .ec3, and earlier the extracted bitstream + DAMF
+        # master — the headroom covers those phases
+
+        needed = os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
         if staging_free < needed:
             current_app.logger.warning(
                 f"'{basename}' Staging space is insufficient for the Atmos "
@@ -492,10 +498,17 @@ def _atmos_supplement_unlocked(file_id):
                 elif track.track_type == "Text":
                     text_orders.append(int(track_order))
 
-            hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
+            # Remux onto local staging, not the library share: total SMB
+            # traffic is identical (one read of the source, one write of
+            # the finished file), but the share never sees a concurrent
+            # read+write, the verification parse runs against local
+            # disk, and a failed mux can't strand a partial file on the
+            # library volume
+
+            staging_output = os.path.join(workspace, basename)
             command = build_remux_command(
                 current_app.config["MKVMERGE_BIN"],
-                hidden_output,
+                staging_output,
                 file_path,
                 video_orders,
                 audio_orders,
@@ -519,7 +532,7 @@ def _atmos_supplement_unlocked(file_id):
             # deliver: the output must carry every expected twin and
             # all of the original lossless tracks
 
-            new_audio_tracks = get_audio_tracks_from_file(hidden_output)
+            new_audio_tracks = get_audio_tracks_from_file(staging_output)
             originals_before = sum(
                 1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
             )
@@ -532,13 +545,32 @@ def _atmos_supplement_unlocked(file_id):
                 atmos_supplement_candidates(new_audio_tracks)
                 or originals_after != originals_before
             ):
-                os.remove(hidden_output)
                 raise RuntimeError(
                     f"'{basename}' remux did not produce the expected "
                     f"E-AC-3 Atmos twins; library copy left untouched"
                 )
 
-            os.rename(hidden_output, file_path)
+            # The verified result crosses to the library as a hidden
+            # dotfile, then renames into place; a failed copy is removed
+            # so nothing partial ever sits beside the real file
+
+            hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
+            try:
+                copy_with_progress(
+                    staging_output,
+                    hidden_output,
+                    job,
+                    basename,
+                    "Moving supplemented file into the library",
+                )
+                os.rename(hidden_output, file_path)
+            except BaseException:
+                try:
+                    os.remove(hidden_output)
+                except OSError:
+                    pass
+                raise
+            os.remove(staging_output)
 
             # Rebuild the track records now that the file changed
 
