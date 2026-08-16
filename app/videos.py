@@ -793,10 +793,14 @@ def localization_task(
             if file_details.get("container") == "Matroska":
                 current_app.logger.info(f"'{basename}' Localizing as a Matroska file")
 
-                # If the file isn't from physical media, replace any lossless audio tracks
-                # with ones in FLAC so the AppleTV can play them natively.
+                # Give any lossless track that isn't already FLAC or PCM a
+                # FLAC twin placed just before it — natively playable on
+                # Apple TV clients — while always keeping the original for
+                # direct play and future passthrough. Files whose twins
+                # already exist (MakeMKV "FLAC Plus Original Audio" rips,
+                # re-downloads of supplemented uploads) pass through as-is.
 
-                lossless_to_flac(file_path)
+                supplement_lossless_tracks(file_path)
 
                 # Sometimes the input mkv file is missing track details, such as the number
                 # of subtitle elements in a subtitle track, which we need for us to tell
@@ -6226,13 +6230,84 @@ def sanitize_string(
     return string
 
 
-def lossless_to_flac(file_path, file_id=None):
-    """Convert any lossless tracks to FLAC if the file isn't from physical media."""
+def plan_audio_supplements(audio_tracks):
+    """The output audio-track order for the supplement pass, as
+    (action, source index) pairs — action "flac" converts that source
+    track, "copy" carries it through.
 
-    # If the file was from physical media, it should already have a FLAC
-    # version of any lossless tracks included because we would have ripped it
-    # using the FLAC Plus Original Audio.mmcp.xml MakeMKV profile. (We kept
-    # the original format around, just in case.)
+    Every lossless track that isn't already FLAC or PCM gets a FLAC
+    twin placed immediately before it, mirroring the MakeMKV "FLAC
+    Plus Original Audio" rip profile; the original is always kept.
+    Twins are matched count-wise per (language, channels) group — a
+    file with one FLAC track and two identical-language lossless
+    tracks still owes one twin — so files that already carry their
+    conversions (disc rips, S3 re-downloads of supplemented uploads)
+    plan as pure copies and the pass is idempotent.
+    """
+
+    twins_present = {}
+    for track in audio_tracks:
+        if track.get("format") == "FLAC":
+            key = (track.get("language"), track.get("channels"))
+            twins_present[key] = twins_present.get(key, 0) + 1
+
+    plan = []
+    for index, track in enumerate(audio_tracks):
+        if track.get("compression_mode") == "Lossless" and track.get("format") not in [
+            "FLAC",
+            "PCM",
+        ]:
+            key = (track.get("language"), track.get("channels"))
+            if twins_present.get(key, 0) > 0:
+                twins_present[key] -= 1
+            else:
+                plan.append(("flac", index))
+        plan.append(("copy", index))
+    return plan
+
+
+def build_supplement_args(plan):
+    """The ffmpeg audio arguments realizing a supplement plan.
+
+    Codec and disposition options are numbered by OUTPUT position —
+    a source track mapped twice (converted twin + original) shifts
+    every later output index, so the input index only ever appears in
+    the -map selector. The first output track is the default and all
+    others are cleared, matching the rip profile's convention that
+    the natively playable track leads.
+    """
+
+    args = []
+    for output_index, (action, source_index) in enumerate(plan):
+        args.extend(
+            [
+                "-map",
+                f"0:a:{source_index}",
+                f"-c:a:{output_index}",
+                "flac" if action == "flac" else "copy",
+            ]
+        )
+    for output_index in range(len(plan)):
+        args.extend(
+            [
+                f"-disposition:a:{output_index}",
+                "default" if output_index == 0 else "none",
+            ]
+        )
+    return args
+
+
+def supplement_lossless_tracks(file_path, file_id=None):
+    """Give every lossless non-FLAC/PCM audio track a FLAC twin placed
+    just before it, keeping the original.
+
+    The twin plays natively on Apple TV clients while the lossless
+    original stays for direct play and future passthrough. Files whose
+    twins already exist — MakeMKV rips made with the "FLAC Plus
+    Original Audio" profile, or re-downloads of already-supplemented
+    uploads — plan as pure copies and pass through untouched, so the
+    pass is safe to repeat.
+    """
 
     with app.app_context():
         try:
@@ -6240,136 +6315,107 @@ def lossless_to_flac(file_path, file_id=None):
 
             dirname = os.path.dirname(file_path)
             basename = os.path.basename(file_path)
-            file_details = evaluate_filename(file_path)
 
-            quality = RefQuality.query.filter(
-                RefQuality.quality_title == file_details.get("quality_title")
-            ).first()
             audio_tracks = get_audio_tracks_from_file(file_path)
+            if not audio_tracks:
+                return True
+
+            plan = plan_audio_supplements(audio_tracks)
+            conversions = sum(1 for action, _ in plan if action == "flac")
+            if not conversions:
+                current_app.logger.info(
+                    f"'{basename}' All lossless tracks already have FLAC twins"
+                )
+                return True
 
             current_app.logger.info(f"'{basename}' Parsing with MediaInfo")
             media_info = MediaInfo.parse(file_path)
             current_app.logger.debug(f"'{basename}' -> {media_info.to_json()}")
 
+            container = None
+            file_duration = 0
             for track in media_info.tracks:
                 if track.track_type == "General" and track.format:
-                    current_app.logger.info(
-                        f"'{basename}' File container {track.format}"
-                    )
-                    file_details["container"] = track.format
+                    container = track.format
+                    current_app.logger.info(f"'{basename}' File container {container}")
 
                     # Convert the file duration from milliseconds to seconds
                     file_duration = int(track.duration) / 1000
                     current_app.logger.info(f"'{basename}' Duration: {file_duration}s")
 
-            if len(audio_tracks) > 0 and quality.physical_media == False:
-                audio_map = []
-                for track_num, track in enumerate(audio_tracks):
-                    if track.get("compression_mode") == "Lossless" and track.get(
-                        "format"
-                    ) not in ["FLAC", "PCM"]:
-                        audio_map.extend(
-                            [
-                                "-map",
-                                f"0:a:{track_num}",
-                                f"-c:a:{track_num}",
-                                "flac",
-                            ]
-                        )
-                    else:
-                        audio_map.extend(
-                            [
-                                "-map",
-                                f"0:a:{track_num}",
-                                f"-c:a:{track_num}",
-                                "copy",
-                            ]
-                        )
+            if container != "Matroska":
+                current_app.logger.warning(
+                    f"'{basename}' Unable to supplement lossless tracks as is not a MKV file!"
+                )
+                return False
 
-                current_app.logger.info(f"Audio map: {audio_map}")
+            current_app.logger.info(
+                f"'{basename}' Supplementing {conversions} lossless "
+                f"track{'s' if conversions != 1 else ''} with FLAC"
+            )
+            audio_args = build_supplement_args(plan)
+            current_app.logger.info(f"Audio map: {audio_args}")
+            temp_flac_file = f"{dirname}/.{basename}"
 
-                if "flac" in audio_map and file_details.get("container") == "Matroska":
+            flac_track_process = subprocess.Popen(
+                [
+                    current_app.config["FFMPEG_BIN"],
+                    "-y",
+                    "-i",
+                    file_path,
+                    "-map",
+                    "0:v:0",
+                    "-c:v:0",
+                    "copy",
+                ]
+                + audio_args
+                + [
+                    "-map",
+                    "0:s:?",
+                    "-c:s",
+                    "copy",
+                    temp_flac_file,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                bufsize=1,
+            )
+            progress = 0
+            previous_percent = None
+            for line in flac_track_process.stdout:
+                progress_match = re.search(
+                    r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
+                    line,
+                )
+                if progress_match and file_duration:
+                    hour = int(progress_match.group("hour"))
+                    minutes = int(progress_match.group("minute"))
+                    seconds = int(progress_match.group("seconds"))
+                    progress = int(
+                        (((hour * 3600) + (minutes * 60) + seconds) / file_duration)
+                        * 100
+                    )
+                if previous_percent != progress:
                     current_app.logger.info(
-                        f"'{basename}' Converting lossless tracks to FLAC"
+                        f"'{basename}' Supplementing lossless tracks with FLAC: {progress}%"
                     )
-                    temp_flac_file = f"{dirname}/.{basename}"
-
-                    flac_track_process = subprocess.Popen(
-                        [
-                            current_app.config["FFMPEG_BIN"],
-                            "-y",
-                            "-i",
-                            file_path,
-                            "-map",
-                            "0:v:0",
-                            "-c:v:0",
-                            "copy",
-                        ]
-                        + audio_map
-                        + [
-                            "-map",
-                            "0:s:?",
-                            "-c:s",
-                            "copy",
-                            "-disposition:a:0",
-                            "default",
-                            "-disposition:a:1",
-                            "none",
-                            temp_flac_file,
-                        ],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        universal_newlines=True,
-                        bufsize=1,
+                    previous_percent = progress
+                if job:
+                    job.meta["description"] = (
+                        f"'{basename}' — Supplementing lossless tracks with FLAC"
                     )
-                    progress = 0
-                    previous_percent = None
-                    for line in flac_track_process.stdout:
-                        progress_match = re.search(
-                            r"time\=(?P<hour>\d{2})\:(?P<minute>\d{2}):(?P<seconds>\d{2})",
-                            line,
-                        )
-                        if progress_match:
-                            hour = int(progress_match.group("hour"))
-                            minutes = int(progress_match.group("minute"))
-                            seconds = int(progress_match.group("seconds"))
-                            progress = int(
-                                (
-                                    ((hour * 3600) + (minutes * 60) + seconds)
-                                    / file_duration
-                                )
-                                * 100
-                            )
-                        if previous_percent != progress:
-                            current_app.logger.info(
-                                f"'{basename}' Converting lossless tracks to FLAC: {progress}%"
-                            )
-                            previous_percent = progress
-                        if job:
-                            job.meta["description"] = (
-                                f"'{basename}' — Converting lossless tracks to FLAC"
-                            )
-                            job.meta["progress"] = progress
-                            job.save_meta()
+                    job.meta["progress"] = progress
+                    job.save_meta()
 
-                    wait_for_subprocess(flac_track_process)
+            wait_for_subprocess(flac_track_process)
 
-                    current_app.logger.info(
-                        f"'{basename}' Converted lossless tracks to FLAC"
-                    )
-                    current_app.logger.info(
-                        f"Moving '{temp_flac_file}' to '{file_path}'"
-                    )
-                    shutil.move(temp_flac_file, file_path)
+            current_app.logger.info(f"'{basename}' Supplemented lossless tracks")
+            current_app.logger.info(f"Moving '{temp_flac_file}' to '{file_path}'")
+            shutil.move(temp_flac_file, file_path)
 
-                    if file_id:
-                        track_metadata_scan_task(file_id)
-
-                elif file_details.get("container") != "Matroska":
-                    current_app.logger.warning(
-                        f"'{basename}' Unable to convert lossless tracks as is not a MKV file!"
-                    )
-                    return False
+            if file_id:
+                track_metadata_scan_task(file_id)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
