@@ -239,6 +239,43 @@ def _mark_not_interested(user_id, movie_id):
     return True
 
 
+def _ladder_fetch():
+    """True when the quick-rating post came from the star row's
+    background fetch (#54) — it wants JSON state back instead of a
+    redirect, and flash messages would only queue up unseen for some
+    later page load."""
+
+    return request.headers.get("X-Requested-With") == "ladder"
+
+
+def _ladder_state(user_id, movie_id):
+    """The star row's current verdict for a film as its JSON payload:
+    the latest viewing's rating (the row the movie page displays) and
+    whether the not-interested flag is set."""
+
+    row = (
+        UserMovieReview.query.filter_by(user_id=int(user_id), movie_id=int(movie_id))
+        .order_by(UserMovieReview.date_reviewed.desc())
+        .first()
+    )
+    flagged = (
+        UserMovieStatus.query.filter_by(
+            user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
+        ).first()
+        is not None
+    )
+    return jsonify(
+        {
+            "rating": (
+                float(row.rating)
+                if row is not None and row.rating is not None
+                else None
+            ),
+            "flagged": flagged,
+        }
+    )
+
+
 def _watched_timestamp(watched_date):
     """A full DateTime for a date-only form value.
 
@@ -1802,8 +1839,9 @@ def movie(movie_id):
                 target = db.session.get(Movie, int(form_movie_id)) or movie
 
         # ✕ is "not interested, never saw it" — a status flag, never a
-        # review (#51). The film leaves every recommendation surface,
-        # and a seen film can't be flagged: its floor is 1 star
+        # review (#51). The film leaves every recommendation surface, a
+        # seen film can't be flagged (its floor is 1 star), and tapping
+        # a lit ✕ undoes the flag (#54)
 
         if rating == 0:
             target_title = (
@@ -1814,20 +1852,74 @@ def movie(movie_id):
                     f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
                 )
             )
-            if _mark_not_interested(current_user.id, target.id):
+            existing_flag = UserMovieStatus.query.filter_by(
+                user_id=int(current_user.id), movie_id=target.id, kind="not_interested"
+            ).first()
+            if existing_flag is not None:
+                db.session.delete(existing_flag)
+                db.session.commit()
+                _enqueue_profile_recompute()
+                if not _ladder_fetch():
+                    flash(f"'{target_title}' can be recommended again", "success")
+            elif _mark_not_interested(current_user.id, target.id):
                 if target.id == movie.id:
                     set_last_response(
                         current_app.redis, current_user.id, movie.id, "not_interested"
                     )
                 _enqueue_profile_recompute()
-                flash(f"Got it — '{target_title}' won't be recommended", "info")
-            else:
+                if not _ladder_fetch():
+                    flash(f"Got it — '{target_title}' won't be recommended", "info")
+            elif not _ladder_fetch():
                 flash(
                     f"You've logged '{target_title}' — the lowest rating "
                     f"for a seen film is 1 star",
                     "warning",
                 )
+            if _ladder_fetch():
+                return _ladder_state(current_user.id, target.id)
             return redirect(url_for("main.movie", movie_id=movie.id))
+
+        # Tapping your current rating removes it (#54): a bare drive-
+        # style row (no watch date, no text) disappears entirely, while
+        # a viewing with real history only loses its stars
+
+        if rating is not None:
+            current_row = (
+                UserMovieReview.query.filter_by(
+                    user_id=int(current_user.id), movie_id=target.id
+                )
+                .order_by(UserMovieReview.date_reviewed.desc())
+                .first()
+            )
+            if (
+                current_row is not None
+                and current_row.rating is not None
+                and float(current_row.rating) == rating
+            ):
+                target_title = (
+                    title
+                    if target.id == movie.id
+                    else (
+                        f"{target.tmdb_title if target.tmdb_title else target.title} "
+                        f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
+                    )
+                )
+                bare = (
+                    current_row.date_watched is None
+                    and not (current_row.review or "").strip()
+                )
+                if bare:
+                    db.session.delete(current_row)
+                else:
+                    for field, value in star_rating_fields(None).items():
+                        setattr(current_row, field, value)
+                    current_row.liked = False
+                db.session.commit()
+                _enqueue_profile_recompute()
+                if _ladder_fetch():
+                    return _ladder_state(current_user.id, target.id)
+                flash(f"Removed your rating of '{target_title}'", "success")
+                return redirect(url_for("main.movie", movie_id=movie.id))
 
         # A bare submission (no rating or text) is a plain diary
         # entry — a watch, not a review — so it carries no review date.
@@ -1880,11 +1972,14 @@ def movie(movie_id):
                     positive=rating >= 3,
                 )
             _enqueue_profile_recompute()
-            flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
+            if not _ladder_fetch():
+                flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
         elif is_review:
             flash(f"Logged review for '{title}'", "success")
         else:
             flash(f"Logged '{title}' in your history", "success")
+        if _ladder_fetch():
+            return _ladder_state(current_user.id, target.id)
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     # Watchlist toggle: adds only make sense for films with no local
@@ -3662,12 +3757,21 @@ def review_edit(review_id):
             return redirect(url_for("main.review_edit", review_id=review_id))
         # Only a ladder tap changes the stars (and the liked flag that
         # follows them) — saving a text or date edit must never wipe
-        # the viewing's existing rating
+        # the viewing's existing rating. Tapping the CURRENT rating
+        # clears the stars instead (#54): the viewing itself stays, an
+        # explicit diary entry being edited is never deleted here
 
         if quick_rating is not None:
-            for field, value in star_rating_fields(quick_rating).items():
-                setattr(user_review, field, value)
-            user_review.liked = quick_rating >= 3
+            if user_review.rating is not None and float(user_review.rating) == float(
+                quick_rating
+            ):
+                for field, value in star_rating_fields(None).items():
+                    setattr(user_review, field, value)
+                user_review.liked = False
+            else:
+                for field, value in star_rating_fields(quick_rating).items():
+                    setattr(user_review, field, value)
+                user_review.liked = quick_rating >= 3
 
         # The date-only form field can't improve on a stored timestamp
         # (e.g. a Plex watch's actual clock time), so only replace the
@@ -3695,6 +3799,19 @@ def review_edit(review_id):
                 user_review.date_reviewed = datetime.now()
 
         db.session.commit()
+        if _ladder_fetch():
+            # This page edits ONE viewing, so the row's state comes from
+            # that row — not the latest-viewing lookup the movie page uses
+            return jsonify(
+                {
+                    "rating": (
+                        float(user_review.rating)
+                        if user_review.rating is not None
+                        else None
+                    ),
+                    "flagged": False,
+                }
+            )
         flash(f"Updated your review of '{title}'", "success")
         return redirect(url_for("main.history"))
 

@@ -438,6 +438,47 @@
 			poll();
 		})();
 
+		// The one-tap star row (#54): forms marked data-ladder-live post
+		// in the background and the row repaints in place — no reload.
+		// Any failure falls back to a normal form submission
+
+		document.addEventListener("click", function(event) {
+			var button = event.target.closest("[data-ladder-live] button[name=quick_rating]");
+			if (!button) return;
+			var form = button.closest("form");
+			if (!form) return;
+			event.preventDefault();
+			var data = new FormData(form);
+			data.set("quick_rating", button.value);
+			fetch(form.getAttribute("action") || window.location.href, {
+				method: "POST",
+				body: data,
+				credentials: "same-origin",
+				headers: {"X-Requested-With": "ladder"}
+			}).then(function(response) {
+				if (!response.ok) throw new Error("ladder post failed");
+				return response.json();
+			}).then(function(state) {
+				var row = button.closest(".star-row");
+				var whole = state.rating === null ? 0 : Math.floor(state.rating);
+				row.querySelectorAll(".star").forEach(function(star, index) {
+					star.classList.toggle("filled", index < whole);
+					star.title = (state.rating !== null && index + 1 === state.rating)
+						? "Tap again to remove your rating"
+						: star.getAttribute("aria-label");
+				});
+				var x = row.querySelector(".x-btn");
+				if (x) {
+					x.classList.toggle("active", !!state.flagged);
+					x.title = state.flagged
+						? "Undo not interested"
+						: "Not interested — never saw it";
+				}
+			}).catch(function() {
+				form.submit();
+			});
+		});
+
         {% endif %}
     </script>
 {% endblock %}

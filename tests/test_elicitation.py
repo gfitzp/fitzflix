@@ -221,16 +221,16 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     for label in (
         "Not interested",
         "Hated it",
-        "Didn't like it",
+        "Didn&#39;t like it",
         "Liked it",
         "Really liked it",
         "Loved it",
     ):
         assert label in page
 
-    # The 1–5 buttons are star glyphs (1+2+3+4+5 stars), labels in titles
+    # The 1–5 buttons are single star glyphs in one row, labels in titles
 
-    assert page.count("&#9733;") == 15
+    assert page.count("&#9733;") == 5
 
     response = admin_client.post(
         "/rate",
@@ -306,7 +306,7 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
         movie_id = movie.id
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert page.count("&#9733;") == 15
+    assert page.count("&#9733;") == 5
     token = csrf_token_from(page)
 
     response = admin_client.post(
@@ -757,3 +757,118 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
         )
     page = admin_client.get(f"/review/{review_id}/edit").get_data(as_text=True)
     assert 'name="quick_rating" value="0"' not in page
+
+
+def test_same_star_tap_removes_the_rating(app, admin_client):
+    """Tapping your current rating removes it (#54): a bare date-less
+    row disappears entirely, a dated viewing only loses its stars."""
+
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        bare_movie = make_candidate("Toggle Bare", 1984)
+        dated_movie = make_candidate("Toggle Dated", 1985)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=dated_movie.id,
+                liked=True,
+                date_watched=__import__("datetime").datetime(2020, 5, 1),
+                **star_rating_fields(3.0),
+            )
+        )
+        db.session.commit()
+        bare_id, dated_id = bare_movie.id, dated_movie.id
+
+    page = admin_client.get(f"/movie/{bare_id}").get_data(as_text=True)
+    token = csrf_token_from(page)
+    admin_client.post(
+        f"/movie/{bare_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "4"},
+    )
+    with app.app_context():
+        assert (
+            float(
+                UserMovieReview.query.filter_by(user_id=user_id, movie_id=bare_id)
+                .one()
+                .rating
+            )
+            == 4.0
+        )
+
+    # The row now shows four filled stars and a remove hint
+
+    page = admin_client.get(f"/movie/{bare_id}").get_data(as_text=True)
+    assert page.count("star-btn star filled") == 4
+    assert "Tap again to remove your rating" in page
+
+    admin_client.post(
+        f"/movie/{bare_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "4"},
+    )
+    with app.app_context():
+        assert (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=bare_id).first()
+            is None
+        )
+
+    # A dated viewing keeps its history and loses only the stars
+
+    admin_client.post(
+        f"/movie/{dated_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "3"},
+    )
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=dated_id).one()
+        assert row.rating is None
+        assert row.liked is False
+        assert row.date_watched is not None
+
+
+def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
+    """The star row's background posts get JSON state back (#54): set,
+    remove, flag, and unflag all round-trip without a redirect."""
+
+    with app.app_context():
+        movie = make_candidate("Fetch Film", 1986)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'data-ladder-live="1"' in page
+    token = csrf_token_from(page)
+    headers = {"X-Requested-With": "ladder"}
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "5"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {"rating": 5.0, "flagged": False}
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "5"},
+        headers=headers,
+    )
+    assert response.get_json() == {"rating": None, "flagged": False}
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
+        headers=headers,
+    )
+    assert response.get_json() == {"rating": None, "flagged": True}
+
+    # The page renders the lit ✕ while flagged; a second ✕ undoes it
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "x-btn active" in page
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
+        headers=headers,
+    )
+    assert response.get_json() == {"rating": None, "flagged": False}

@@ -1,33 +1,22 @@
-{% macro rating_ladder(compact=false, allow_not_interested=true) %}
-{# One tap per verdict (Glenn's ladder). The 1–5 buttons are star
-   glyphs; their word labels ride in title/aria-label. Each button
-   submits the surrounding form with its value in quick_rating — the
-   route overrides the rating field and honors everything else the
-   form carries. The ✕ (value 0) is the not-interested FLAG, never a
-   rating (#51): "never saw it, don't want it" — so callers pass
-   allow_not_interested=false on films the user has logged, where the
-   harshest verdict is 1 star. The compact form fits suggestion cards. #}
-{% if compact %}
-<div>
+{% macro rating_ladder(compact=false, allow_not_interested=true, current=none, flagged=false, live=false) %}
+{# One row, one tap per verdict (#54): ✕ + ★1–5 glyphs. The row shows
+   the CURRENT verdict — filled stars, a lit ✕ — and tapping the
+   current value removes it (the server detects the match). Each
+   button submits the surrounding form with its value in quick_rating;
+   0 is the not-interested FLAG, never a rating (#51), so callers pass
+   allow_not_interested=false on films the user has logged. live=true
+   marks the form for the background-fetch script in base.html, which
+   repaints the row in place; without JS the buttons submit normally
+   and the page reloads. Word labels ride in title/aria-label; hover
+   previews the fill (CSS in bootstrap.html). #}
+{% set labels = {1: "Hated it", 2: "Didn't like it", 3: "Liked it", 4: "Really liked it", 5: "Loved it"} %}
+{% set whole = (current | float | int) if current is not none else 0 %}
+<div class="star-row{% if compact %} star-row-sm{% endif %}"{% if live %} data-ladder-live="1"{% endif %}>
 	{% if allow_not_interested %}
-	<button type="submit" name="quick_rating" value="0" class="btn btn-sm btn-outline-secondary py-0 px-1 mb-1" title="Not interested" aria-label="Not interested">&#10005;</button>
+	<button type="submit" name="quick_rating" value="0" class="star-btn x-btn{% if flagged %} active{% endif %}" title="{{ 'Undo not interested' if flagged else 'Not interested — never saw it' }}" aria-label="Not interested">&#10005;</button>
 	{% endif %}
-	<button type="submit" name="quick_rating" value="1" class="btn btn-sm btn-outline-secondary py-0 px-1 mb-1" title="Hated it" aria-label="Hated it">&#9733;</button>
-	<button type="submit" name="quick_rating" value="2" class="btn btn-sm btn-outline-secondary py-0 px-1 mb-1" title="Didn't like it" aria-label="Didn't like it">&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="3" class="btn btn-sm btn-outline-primary py-0 px-1 mb-1" title="Liked it" aria-label="Liked it">&#9733;&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="4" class="btn btn-sm btn-outline-primary py-0 px-1 mb-1" title="Really liked it" aria-label="Really liked it">&#9733;&#9733;&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="5" class="btn btn-sm btn-outline-primary py-0 px-1 mb-1" title="Loved it" aria-label="Loved it">&#9733;&#9733;&#9733;&#9733;&#9733;</button>
+	{% for n in range(1, 6) %}
+	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if n <= whole %} filled{% endif %}" title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9733;</button>
+	{% endfor %}
 </div>
-{% else %}
-<div>
-	{% if allow_not_interested %}
-	<button type="submit" name="quick_rating" value="0" class="btn btn-sm btn-outline-secondary mr-1 mb-2">Not interested</button>
-	{% endif %}
-	<button type="submit" name="quick_rating" value="1" class="btn btn-sm btn-outline-secondary mr-1 mb-2" title="Hated it" aria-label="Hated it">&#9733;</button>
-	<button type="submit" name="quick_rating" value="2" class="btn btn-sm btn-outline-secondary mr-1 mb-2" title="Didn't like it" aria-label="Didn't like it">&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="3" class="btn btn-sm btn-outline-primary mr-1 mb-2" title="Liked it" aria-label="Liked it">&#9733;&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="4" class="btn btn-sm btn-outline-primary mr-1 mb-2" title="Really liked it" aria-label="Really liked it">&#9733;&#9733;&#9733;&#9733;</button>
-	<button type="submit" name="quick_rating" value="5" class="btn btn-sm btn-outline-primary mb-2" title="Loved it" aria-label="Loved it">&#9733;&#9733;&#9733;&#9733;&#9733;</button>
-</div>
-{% endif %}
 {% endmacro %}
