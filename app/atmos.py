@@ -19,8 +19,10 @@ staging and S3 whether the job succeeds or fails.
 
 import glob
 import os
+import re
 import shutil
 import subprocess
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -189,15 +191,49 @@ def mediaconvert_client():
     )
 
 
+def _set_stage(job, basename, description, progress=-1):
+    """Announce a pipeline stage on the job card: description and
+    progress always move together, so a new stage can never sit under
+    the previous stage's stale percentage (-1 renders the indeterminate
+    bar until the stage reports real numbers)."""
+
+    if job:
+        job.meta["description"] = f"'{basename}' — {description}"
+        job.meta["progress"] = progress
+        job.save_meta()
+
+
+class _UploadProgress:
+    """Aggregate byte progress for a multi-file S3 upload, surfaced on
+    the job card as whole percents. boto3 fires the callback from its
+    transfer threads, so the tally takes a lock."""
+
+    def __init__(self, job, total_bytes):
+        self.job = job
+        self.total = max(int(total_bytes), 1)
+        self.seen = 0
+        self.last_percent = -1
+        self.lock = threading.Lock()
+
+    def __call__(self, transferred):
+        with self.lock:
+            self.seen += transferred
+            percent = min(int(self.seen * 100 / self.total), 100)
+            if percent != self.last_percent and self.job:
+                self.last_percent = percent
+                self.job.meta["progress"] = percent
+                self.job.save_meta()
+
+
 def _run_step(command, job, basename, description, ok_returncodes=(0,)):
-    """Run one pipeline subprocess, streaming its output to the log."""
+    """Run one pipeline subprocess, streaming its output to the log and
+    relaying any percentage it prints to the job card (mkvextract's
+    "Progress: N%" lines, for one)."""
 
     from app.videos import wait_for_subprocess
 
     current_app.logger.info(f"'{basename}' {description}: {command}")
-    if job:
-        job.meta["description"] = f"'{basename}' — {description}"
-        job.save_meta()
+    _set_stage(job, basename, description)
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -205,10 +241,19 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
         universal_newlines=True,
         bufsize=1,
     )
+    previous_percent = None
     for line in process.stdout:
         line = line.rstrip()
-        if line:
-            current_app.logger.info(f"'{basename}' {line}")
+        if not line:
+            continue
+        current_app.logger.info(f"'{basename}' {line}")
+        percent_match = re.search(r"(\d{1,3})%", line)
+        if percent_match and job:
+            percent = min(int(percent_match.group(1)), 100)
+            if percent != previous_percent:
+                previous_percent = percent
+                job.meta["progress"] = percent
+                job.save_meta()
     wait_for_subprocess(process, ok_returncodes=ok_returncodes)
 
 
@@ -222,8 +267,8 @@ def _wait_for_mediaconvert(client, mc_job_id, job, basename):
         if job:
             job.meta["description"] = (
                 f"'{basename}' — MediaConvert encoding E-AC-3 Atmos"
-                + (f" ({percent}%)" if percent is not None else "")
             )
+            job.meta["progress"] = int(percent) if percent is not None else -1
             job.save_meta()
         if status == "COMPLETE":
             return mc_job
@@ -448,6 +493,10 @@ def _atmos_supplement_unlocked(file_id):
 
                 # Ship the master to S3 scratch and encode it
 
+                _set_stage(job, basename, "Uploading Atmos master to S3", progress=0)
+                upload_progress = _UploadProgress(
+                    job, sum(os.path.getsize(path) for path in damf_files)
+                )
                 for damf_path in damf_files:
                     key = f"{prefix}/{os.path.basename(damf_path)}"
                     size = os.path.getsize(damf_path)
@@ -455,12 +504,9 @@ def _atmos_supplement_unlocked(file_id):
                         f"'{basename}' Uploading {os.path.basename(damf_path)} "
                         f"({size / 1e9:.2f} GB) to s3://{bucket}/{key}"
                     )
-                    if job:
-                        job.meta["description"] = (
-                            f"'{basename}' — Uploading Atmos master to S3"
-                        )
-                        job.save_meta()
-                    s3_client.upload_file(damf_path, bucket, key)
+                    s3_client.upload_file(
+                        damf_path, bucket, key, Callback=upload_progress
+                    )
 
                 input_uri = (
                     f"s3://{bucket}/{prefix}/{os.path.basename(damf_base)}.atmos"
@@ -499,6 +545,7 @@ def _atmos_supplement_unlocked(file_id):
                         f".ec3 under '{prefix}/out{streamorder}/'"
                     )
                 ec3_path = os.path.join(workspace, f"track{streamorder}.ec3")
+                _set_stage(job, basename, "Downloading E-AC-3 Atmos twin")
                 s3_client.download_file(bucket, ec3_key, ec3_path)
                 current_app.logger.info(
                     f"'{basename}' Downloaded E-AC-3 Atmos twin "
