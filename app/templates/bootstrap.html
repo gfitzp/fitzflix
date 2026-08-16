@@ -71,24 +71,26 @@
 		}
 
 		/* The one-tap star row (#54): glyph buttons without button
-		   chrome. Filled stars show the current verdict; hovering
-		   previews a fill up to the cursor (fill everything on row
-		   hover, then unfill the stars after the hovered one — CSS
-		   can't reach backwards). The ✕ lights up when the film is
-		   flagged not-interested. */
+		   chrome. The DOM holds the stars REVERSED under row-reverse
+		   flex, so a star's DOM-following siblings are the stars
+		   visually before it — the hover preview fills the hovered
+		   star plus those siblings, and hovering the gaps between
+		   buttons lights nothing. While previewing, :has() dims the
+		   stored fill so the preview reads unambiguously (without
+		   :has() support the stored stars simply stay lit). The ✕
+		   lights up when the film is flagged not-interested. */
 
-		.star-row { display: inline-flex; align-items: center; margin-bottom: .5rem; }
+		.star-row { display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; align-items: center; margin-bottom: .5rem; }
 		.star-btn { background: none; border: 0; padding: 0 .12em; font-size: 1.7rem; line-height: 1; color: #c9c9c9; cursor: pointer; }
 		.star-btn:focus { outline: 0; }
 		.star-row.star-row-sm .star-btn { font-size: 1.15rem; }
 		.star-row .star.filled { color: #f0ad4e; }
-		.star-row:hover .star { color: #f0ad4e; }
-		.star-row .star:hover ~ .star { color: #c9c9c9; }
+		.star-row:has(.star:hover) .star { color: #c9c9c9; }
+		.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
 		.star-row .x-btn { font-size: 1.2rem; margin-right: .35em; }
 		.star-row.star-row-sm .x-btn { font-size: .95rem; }
 		.star-row .x-btn.active { color: #dc3545; }
 		.star-row .x-btn:hover { color: #dc3545; }
-		.star-row .x-btn:hover ~ .star { color: #c9c9c9; }
     </style>
 	{%- endblock styles %}
 

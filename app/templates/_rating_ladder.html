@@ -11,12 +11,17 @@
    previews the fill (CSS in bootstrap.html). #}
 {% set labels = {1: "Hated it", 2: "Didn't like it", 3: "Liked it", 4: "Really liked it", 5: "Loved it"} %}
 {% set whole = (current | float | int) if current is not none else 0 %}
+{# The stars sit REVERSED in the DOM under flex-direction: row-reverse,
+   so "the hovered star and everything visually before it" is "the
+   hovered star and its DOM-following siblings" — reachable with plain
+   sibling selectors. Nothing lights up unless a star is actually under
+   the cursor. The ✕ is DOM-last, rendering visually first. #}
 <div class="star-row{% if compact %} star-row-sm{% endif %}"{% if live %} data-ladder-live="1"{% endif %}>
+	{% for n in range(5, 0, -1) %}
+	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if n <= whole %} filled{% endif %}" title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9733;</button>
+	{% endfor %}
 	{% if allow_not_interested %}
 	<button type="submit" name="quick_rating" value="0" class="star-btn x-btn{% if flagged %} active{% endif %}" title="{{ 'Undo not interested' if flagged else 'Not interested — never saw it' }}" aria-label="Not interested">&#10005;</button>
 	{% endif %}
-	{% for n in range(1, 6) %}
-	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if n <= whole %} filled{% endif %}" title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9733;</button>
-	{% endfor %}
 </div>
 {% endmacro %}
