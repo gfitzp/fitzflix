@@ -49,6 +49,14 @@ app = LocalProxy(get_app)
 AWARDS_BATCH_SIZE = 200
 AWARDS_BATCH_PAUSE_SECONDS = 1.0
 
+# WDQS allows a client 30 error queries per minute before throttling
+# escalates toward a ban: failed batches wait longer than good ones,
+# and a run of consecutive failures means the service itself is having
+# a bad day — stop and let the weekly cadence self-heal
+
+AWARDS_ERROR_PAUSE_SECONDS = 10.0
+AWARDS_MAX_CONSECUTIVE_FAILURES = 5
+
 # One query shape serves both id systems: {id_prop} is the Wikidata
 # property the external ids match against (P345 = IMDb, P4947 = TMDb)
 
@@ -84,21 +92,37 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
 
 
 def _wikidata_sparql(query):
-    """Run one SPARQL query against Wikidata, per its access guidelines."""
+    """Run one SPARQL query against Wikidata, per its access guidelines.
+
+    A 429 means WDQS throttled this client; its Retry-After header is
+    honored (one retry, capped) before the error propagates to the
+    batch loop's own failure handling.
+    """
+
+    from app.videos import wikidata_retry_after_seconds
 
     contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
-    r = requests.get(
-        current_app.config["WIKIDATA_SPARQL_URL"],
-        params={"query": query},
-        headers={
-            "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
-            "Accept": "application/sparql-results+json",
-            "Accept-Encoding": "gzip,deflate",
-        },
-        timeout=120,
-    )
-    r.raise_for_status()
-    return r.json().get("results", {}).get("bindings", [])
+    headers = {
+        "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
+        "Accept": "application/sparql-results+json",
+        "Accept-Encoding": "gzip,deflate",
+    }
+    for attempt in range(2):
+        r = requests.get(
+            current_app.config["WIKIDATA_SPARQL_URL"],
+            params={"query": query},
+            headers=headers,
+            timeout=120,
+        )
+        if getattr(r, "status_code", None) == 429 and attempt == 0:
+            delay = wikidata_retry_after_seconds(r)
+            current_app.logger.warning(
+                f"Wikidata throttled the awards query (429); retrying in {delay}s"
+            )
+            time.sleep(delay)
+            continue
+        r.raise_for_status()
+        return r.json().get("results", {}).get("bindings", [])
 
 
 def _parse_award(binding):
@@ -242,6 +266,7 @@ def refresh_person_awards():
     films = 0
     touched = set()
     inserted = 0
+    consecutive_failures = 0
     for id_prop, mapping in (("P345", by_imdb), ("P4947", by_tmdb)):
         ext_ids = sorted(mapping)
         for start in range(0, len(ext_ids), AWARDS_BATCH_SIZE):
@@ -257,7 +282,22 @@ def refresh_person_awards():
                     f"Craft-awards batch failed ({id_prop}, {len(batch)} ids), "
                     f"moving on"
                 )
+                consecutive_failures += 1
+                if consecutive_failures >= AWARDS_MAX_CONSECUTIVE_FAILURES:
+                    current_app.logger.warning(
+                        f"Craft-awards refresh aborted after "
+                        f"{consecutive_failures} consecutive failed batches — "
+                        f"Wikidata is having a bad day; the weekly run will "
+                        f"pick it back up"
+                    )
+                    return (
+                        f"Craft-awards refresh aborted after "
+                        f"{consecutive_failures} consecutive failures; "
+                        f"scanned {films} films, added {inserted} records"
+                    )
+                time.sleep(AWARDS_ERROR_PAUSE_SECONDS)
                 continue
+            consecutive_failures = 0
             rows = _award_rows(bindings, mapping)
             batch_films, batch_inserted = _merge_person_awards(rows)
             films += len(batch)
@@ -297,6 +337,7 @@ def refresh_movie_awards():
 
     films = 0
     awarded = 0
+    consecutive_failures = 0
     for id_prop, mapping in (("P345", by_imdb), ("P4947", by_tmdb)):
         ext_ids = sorted(mapping)
         for start in range(0, len(ext_ids), AWARDS_BATCH_SIZE):
@@ -311,7 +352,20 @@ def refresh_movie_awards():
                 current_app.logger.warning(
                     f"Awards batch failed ({id_prop}, {len(batch)} ids), moving on"
                 )
+                consecutive_failures += 1
+                if consecutive_failures >= AWARDS_MAX_CONSECUTIVE_FAILURES:
+                    current_app.logger.warning(
+                        f"Awards refresh aborted after {consecutive_failures} "
+                        f"consecutive failed batches — Wikidata is having a "
+                        f"bad day; the weekly run will pick it back up"
+                    )
+                    return (
+                        f"Awards refresh aborted after {consecutive_failures} "
+                        f"consecutive failures; refreshed {films} films"
+                    )
+                time.sleep(AWARDS_ERROR_PAUSE_SECONDS)
                 continue
+            consecutive_failures = 0
             rows = _award_rows(bindings, mapping)
             _replace_awards([mapping[ext] for ext in batch], rows)
             films += len(batch)

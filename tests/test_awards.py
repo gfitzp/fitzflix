@@ -350,3 +350,96 @@ def test_movie_page_shows_award_strip(app, admin_client):
     assert page.index("Academy Award for Best Picture (1955)") < page.index(
         "BAFTA Award for Best Film (1955)"
     )
+
+
+def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
+    """A throttled query waits out the 429's Retry-After (capped) and
+    retries once — the WDQS manual's condition for staying unbanned."""
+
+    import app.awards as awards
+    import app.videos as videos
+    from app.videos import wikidata_retry_after_seconds
+
+    class FakeResponse:
+        def __init__(self, status_code, headers=None, bindings=None):
+            self.status_code = status_code
+            self.headers = headers or {}
+            self._bindings = bindings or []
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+        def json(self):
+            return {"results": {"bindings": self._bindings}}
+
+    # Header parsing: seconds, absent, date-shaped, and the cap
+
+    assert wikidata_retry_after_seconds(FakeResponse(429, {"Retry-After": "3"})) == 3
+    assert wikidata_retry_after_seconds(FakeResponse(429, {})) == 60
+    assert (
+        wikidata_retry_after_seconds(
+            FakeResponse(429, {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"})
+        )
+        == 60
+    )
+    assert (
+        wikidata_retry_after_seconds(FakeResponse(429, {"Retry-After": "9000"})) == 300
+    )
+
+    # Both clients: 429 then success — one capped sleep, then the rows
+
+    with app.app_context():
+        for module, call in (
+            (awards, lambda: awards._wikidata_sparql("SELECT 1")),
+            (
+                videos,
+                lambda: videos._wikidata_sparql("http://example.test", "SELECT 1"),
+            ),
+        ):
+            responses = [
+                FakeResponse(429, {"Retry-After": "3"}),
+                FakeResponse(200, bindings=[{"ok": {"value": "1"}}]),
+            ]
+            sleeps = []
+            monkeypatch.setattr(
+                module.requests, "get", lambda *a, **k: responses.pop(0)
+            )
+            monkeypatch.setattr(module.time, "sleep", sleeps.append)
+            assert call() == [{"ok": {"value": "1"}}]
+            assert sleeps == [3]
+
+
+def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
+    """When Wikidata fails batch after batch, the refresh waits the
+    longer error pause between tries and then stops entirely instead of
+    hammering out error queries — the weekly cadence self-heals."""
+
+    from tests.factories import make_movie
+
+    import app.awards as awards
+    from app import db
+
+    with app.app_context():
+        for n in range(10):
+            make_movie(f"Breaker Film {n}", 1990 + n, imdb_id=f"tt00000{n:02d}")
+        db.session.commit()
+
+        calls = []
+
+        def explode(query):
+            calls.append(query)
+            raise RuntimeError("504 whoops")
+
+        sleeps = []
+        monkeypatch.setattr(awards, "_wikidata_sparql", explode)
+        monkeypatch.setattr(awards, "AWARDS_BATCH_SIZE", 1)
+        monkeypatch.setattr(awards.time, "sleep", sleeps.append)
+
+        message = awards.refresh_movie_awards()
+
+    assert len(calls) == awards.AWARDS_MAX_CONSECUTIVE_FAILURES
+    assert "aborted" in message
+    assert sleeps == [awards.AWARDS_ERROR_PAUSE_SECONDS] * (
+        awards.AWARDS_MAX_CONSECUTIVE_FAILURES - 1
+    )

@@ -5121,22 +5121,45 @@ CRITERION_CACHE_KEY = "fitzflix:criterion:releases"
 CRITERION_CACHE_SECONDS = 7 * 86400
 
 
+def wikidata_retry_after_seconds(response, default=60, cap=300):
+    """Seconds to wait out a WDQS 429, from its Retry-After header.
+
+    The header may be absent or HTTP-date-shaped; both fall back to the
+    default, and the cap keeps a strange header from stalling a worker.
+    """
+
+    try:
+        seconds = int(response.headers.get("Retry-After", ""))
+    except (TypeError, ValueError):
+        seconds = default
+    return max(1, min(seconds, cap))
+
+
 def _wikidata_sparql(url, query):
-    """Run one SPARQL query against Wikidata, per its access guidelines."""
+    """Run one SPARQL query against Wikidata, per its access guidelines.
+
+    WDQS throttles with 429 + Retry-After when a client outruns its
+    processing budget; honoring the header (one retry, capped) is what
+    keeps polite clients off the temporary-ban list.
+    """
 
     contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
-    r = requests.get(
-        url,
-        params={"query": query},
-        headers={
-            "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
-            "Accept": "application/sparql-results+json",
-            "Accept-Encoding": "gzip,deflate",
-        },
-        timeout=60,
-    )
-    r.raise_for_status()
-    return r.json().get("results", {}).get("bindings", [])
+    headers = {
+        "User-Agent": f"FitzflixBot/1.0 (mailto:{contact})",
+        "Accept": "application/sparql-results+json",
+        "Accept-Encoding": "gzip,deflate",
+    }
+    for attempt in range(2):
+        r = requests.get(url, params={"query": query}, headers=headers, timeout=60)
+        if getattr(r, "status_code", None) == 429 and attempt == 0:
+            delay = wikidata_retry_after_seconds(r)
+            current_app.logger.warning(
+                f"Wikidata throttled the query (429); retrying in {delay}s"
+            )
+            time.sleep(delay)
+            continue
+        r.raise_for_status()
+        return r.json().get("results", {}).get("bindings", [])
 
 
 def _parse_criterion_binding(binding):
