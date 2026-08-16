@@ -121,10 +121,24 @@
 <div class="container mt-2 mb-2">
 	{% if current_user.is_authenticated %}
  	<div id="running-tasks">
+ 		{# Mirrors the structure the poller's JS builds, so the page
+ 		   loads showing the same card the first poll will update in
+ 		   place — a task without a measurable percentage defaults to
+ 		   the striped animated indeterminate bar instead of a bare
+ 		   alert box that reads as a solid stuck-at-100% bar #}
  		{% with tasks = current_user.get_queue_details() %}
  		{% if tasks %}
  			{% for task in tasks.running %}
- 			<div class="alert alert-info mt-3" role="alert" id="{{ task.id }}">{{ task.description }}...</div>
+ 			<div class="alert alert-info mt-3" role="alert" id="{{ task.id }}">
+ 				<span class="task-label">{{ task.description }}...{% if task.progress >= 0 %} {{ task.progress }}%{% endif %}</span>
+ 				<div class="progress mt-1">
+ 					{% if task.progress >= 0 %}
+ 					<div class="progress-bar bg-info" role="progressbar" style="width: {{ task.progress }}%" aria-valuenow="{{ task.progress }}" aria-valuemin="0" aria-valuemax="100"></div>
+ 					{% else %}
+ 					<div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+ 					{% endif %}
+ 				</div>
+ 			</div>
  			{% endfor %}
  		{% endif %}
  		{% endwith %}
@@ -297,9 +311,9 @@
 					bar.setAttribute("aria-valuenow", task.progress);
 				} else {
 					label.textContent = task.description + "...";
-					bar.className = "progress-bar bg-info progress-bar-indeterminate";
-					bar.style.width = "";
-					bar.removeAttribute("aria-valuenow");
+					bar.className = "progress-bar progress-bar-striped progress-bar-animated bg-info";
+					bar.style.width = "100%";
+					bar.setAttribute("aria-valuenow", "100");
 				}
 			}
 

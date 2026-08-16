@@ -69,21 +69,6 @@
 			0% { background-color:#00c900;}
 			100% {background-color:none;}
 		}
-
-		/* Indeterminate task progress: a sliding segment, so a stage
-		   without a measurable percentage can never be mistaken for a
-		   full (or stuck) bar */
-
-		.progress-bar-indeterminate {
-			width: 35% !important;
-			animation: progress-indeterminate 1.6s ease-in-out infinite;
-		}
-
-		@keyframes progress-indeterminate {
-			0% { margin-left: 0%; }
-			50% { margin-left: 65%; }
-			100% { margin-left: 0%; }
-		}
     </style>
 	{%- endblock styles %}
 
