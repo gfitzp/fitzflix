@@ -88,6 +88,7 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TMDBCredit,
+    TMDBGenre,
     TVSeries,
     User,
     UserMovieReview,
@@ -95,6 +96,7 @@ from app.models import (
     UserStreamingProvider,
     UserWatchlist,
     movie_file_rank,
+    movie_genres,
     tmdb_get,
     tv_file_rank,
 )
@@ -971,6 +973,7 @@ def movie_library():
     page = request.args.get("page", 1, type=int)
     credit = request.args.get("credit", None, type=int)
     q = request.args.get("q", None, type=str)
+    genre = request.args.get("genre", None, type=int)
     quality = request.args.get("quality", "0", type=str)
 
     # Subquery to get the best movie files
@@ -1296,6 +1299,43 @@ def movie_library():
             .paginate(page=page, per_page=120, error_out=False)
         )
 
+    elif genre:
+        # Genre links on the movie pages land here (#56): the library
+        # filtered to films carrying the TMDb genre, composable with
+        # the quality dropdown
+
+        genre_row = db.session.get(TMDBGenre, int(genre))
+        if genre_row is None:
+            abort(404)
+        title = f"{genre_row.name} Movies"
+        movies = (
+            db.session.query(File, Movie, RefQuality)
+            .join(Movie, (Movie.id == File.movie_id))
+            .join(RefQuality, (RefQuality.id == File.quality_id))
+            .join(ranked_files, (ranked_files.c.id == File.id))
+            .join(movie_genres, (movie_genres.c.movie_id == Movie.id))
+            .filter(movie_genres.c.genre_id == int(genre))
+            .filter(File.feature_type_id == None)
+            .filter(ranked_files.c.rank == 1)
+        )
+        if int(quality) > 0:
+            movies = movies.filter(RefQuality.id == int(quality))
+        movies = movies.order_by(
+            db.func.regexp_replace(
+                db.case(
+                    (Movie.tmdb_title != None, Movie.tmdb_title),
+                    else_=Movie.title,
+                ),
+                "^(The|A|An) ",
+                "",
+            ).asc(),
+            db.case(
+                (Movie.tmdb_title != None, Movie.tmdb_release_date),
+                else_=Movie.year,
+            ).asc(),
+            File.edition.asc(),
+        ).paginate(page=page, per_page=120, error_out=False)
+
     elif int(quality) > 0:
         title = "Movie Library"
         movies = (
@@ -1352,12 +1392,16 @@ def movie_library():
         )
 
     next_url = (
-        url_for("main.movie_library", page=movies.next_num, quality=quality)
+        url_for(
+            "main.movie_library", page=movies.next_num, quality=quality, genre=genre
+        )
         if movies.has_next
         else None
     )
     prev_url = (
-        url_for("main.movie_library", page=movies.prev_num, quality=quality)
+        url_for(
+            "main.movie_library", page=movies.prev_num, quality=quality, genre=genre
+        )
         if movies.has_prev
         else None
     )
@@ -1382,7 +1426,9 @@ def movie_library():
     filter_form.quality.default = quality
 
     if filter_form.validate_on_submit():
-        return redirect(url_for("main.movie_library", quality=filter_form.quality.data))
+        return redirect(
+            url_for("main.movie_library", quality=filter_form.quality.data, genre=genre)
+        )
 
     filter_form.process()
 
@@ -1801,7 +1847,7 @@ def movie(movie_id):
         .filter(MovieCrew.job == "Director")
         .distinct()
     )
-    genres = [genre.name for genre in movie.genres]
+    genres = [(genre.id, genre.name) for genre in movie.genres]
     awards = (
         MovieAward.query.filter_by(movie_id=movie.id)
         .order_by(
@@ -5719,7 +5765,11 @@ def review_tmdb(tmdb_id):
     # Runtime, genres, US certification, and top billing, mirroring what
     # the movie page shows for library films
 
-    genres = [g.get("name") for g in details.get("genres") or [] if g.get("name")]
+    genres = [
+        (g.get("id"), g.get("name"))
+        for g in details.get("genres") or []
+        if g.get("name")
+    ]
     certification = None
     for country_release in (details.get("release_dates") or {}).get("results") or []:
         if country_release.get("iso_3166_1") == "US":

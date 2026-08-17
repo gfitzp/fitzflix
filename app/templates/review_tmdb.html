@@ -27,7 +27,7 @@
 		<div>
 			<h3>{{ film_title }} ({{ year }})</h3>
 			<p>
-				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(", ") }}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
+				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{% for genre_id, name in genres %}{% if genre_id %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
 			</p>
 			{# The star row is the page's rating control, mirroring the
 			   movie page (#58): a tap logs a date-less verdict and

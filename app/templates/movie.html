@@ -23,7 +23,7 @@
 			   still in the queue #}
 			{% if movie.tmdb_overview %}
 				<p>
-					{{ movie.tmdb_overview }}{% if movie.tmdb_runtime %} —&nbsp;{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(",\u00A0") }}{% endif %}{% for c in movie.certifications %}{% if c.country == "US" %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ c.certification }}</span>{% endif %}{% endfor %}
+					{{ movie.tmdb_overview }}{% if movie.tmdb_runtime %} —&nbsp;{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %},&nbsp;{% endif %}{% endfor %}{% endif %}{% for c in movie.certifications %}{% if c.country == "US" %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ c.certification }}</span>{% endif %}{% endfor %}
 				</p>
 			{% endif %}
 			{% if directors %}

@@ -301,3 +301,53 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
     # TV rules: a physical-media DVD season is final; SDTV is not
     assert 'badge-success">DVD' in page
     assert 'badge-warning">SDTV' in page
+
+
+def test_genre_links_filter_the_library(app, admin_client):
+    """Genre names on the movie page link to the library filtered to
+    that TMDb genre (#56); the filter composes with the quality
+    dropdown and an unknown genre 404s."""
+
+    from app import db
+    from app.models import RefQuality
+    from tests.factories import make_movie, make_movie_file
+    from tests.test_recommendations import genre
+
+    with app.app_context():
+        western = genre(37, "Western")
+        drama = genre(18, "Drama")
+        cowboy = make_movie("Genre Cowboy", 1950)
+        cowboy.genres.append(western)
+        # The overview gates the paragraph the genre links live in
+        cowboy.tmdb_overview = "A cowboy rides."
+        make_movie_file(cowboy, "Bluray-1080p")
+        oater = make_movie("Genre Oater on DVD", 1951)
+        oater.genres.append(western)
+        make_movie_file(oater, "DVD")
+        weeper = make_movie("Genre Weeper", 1952)
+        weeper.genres.append(drama)
+        make_movie_file(weeper, "Bluray-1080p")
+        db.session.commit()
+        cowboy_id = cowboy.id
+        bluray_id = RefQuality.query.filter_by(quality_title="Bluray-1080p").one().id
+
+    # The movie page's genre line links to the filtered library
+
+    page = admin_client.get(f"/movie/{cowboy_id}").get_data(as_text=True)
+    assert "/library/movie?genre=37" in page
+
+    listing = admin_client.get("/library/movie?genre=37").get_data(as_text=True)
+    assert "Western Movies" in listing
+    assert "Genre Cowboy" in listing
+    assert "Genre Oater on DVD" in listing
+    assert "Genre Weeper" not in listing
+
+    # Quality composes with the genre filter
+
+    listing = admin_client.get(f"/library/movie?genre=37&quality={bluray_id}").get_data(
+        as_text=True
+    )
+    assert "Genre Cowboy" in listing
+    assert "Genre Oater on DVD" not in listing
+
+    assert admin_client.get("/library/movie?genre=99999").status_code == 404
