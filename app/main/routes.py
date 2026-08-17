@@ -131,7 +131,6 @@ from app.streaming import (
     user_streaming,
 )
 from app.elicitation import (
-    mark_skipped,
     mark_unseen,
     next_films,
     set_last_response,
@@ -5579,8 +5578,8 @@ def watchlist():
 @login_required
 def rate():
     """The rating drive: library films offered one at a time to deepen
-    the taste profile — rate it, want it, haven't seen it, or skip it,
-    and every answer steers what's offered next."""
+    the taste profile — rate it, want it, or no opinion (#62), and
+    every answer steers what's offered next."""
 
     form = RateFilmForm()
     if form.validate_on_submit() and form.movie_id.data:
@@ -5592,7 +5591,7 @@ def rate():
         # The quick-answer ladder maps one tap onto whole stars — the ✕
         # is the not-interested flag (#51), never a review: the film
         # leaves the drive and every recommendation surface, and steers
-        # the next picks away like "haven't seen" does. 3+ stars
+        # the next picks away like "no opinion" does. 3+ stars
         # auto-flag liked (Glenn's rule: liked means a positive verdict)
 
         quick_present, quick_rating = _quick_rating()
@@ -5662,10 +5661,7 @@ def rate():
         elif form.unseen_submit.data:
             mark_unseen(current_user.id, movie.id)
             set_last_response(current_app.redis, current_user.id, movie.id, "unseen")
-            flash(f"Got it — you haven't seen '{title}'", "info")
-        elif form.skip_submit.data:
-            mark_skipped(current_app.redis, current_user.id, movie.id)
-            set_last_response(current_app.redis, current_user.id, movie.id, "skip")
+            flash(f"Noted — no opinion on '{title}'", "info")
         return redirect(url_for("main.rate"))
 
     # Only the featured card shows — what comes next stays a mystery,

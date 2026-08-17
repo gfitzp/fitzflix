@@ -209,12 +209,13 @@ class NotInterestedForm(FlaskForm):
 
 class RateFilmForm(FlaskForm):
     """The rating drive's response card: the quick-answer ladder plus
-    want it, haven't seen it, or skip it for now."""
+    want it, or no opinion (never saw it, or no memory of a verdict —
+    the field keeps its unseen_submit name from the "Haven't Seen It"
+    era, #62)."""
 
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
     watchlist_submit = SubmitField("Add to Watchlist")
-    unseen_submit = SubmitField("Haven't Seen It")
-    skip_submit = SubmitField("Skip")
+    unseen_submit = SubmitField("No Opinion")
     # Adds a SUGGESTED film to the watchlist without touching the
     # drive's steering, unlike watchlist_submit on the featured card
     want_suggestion_submit = SubmitField("Add to Watchlist")

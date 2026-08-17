@@ -3,7 +3,7 @@
 
 {% block app_content %}
 <h2 class="mt-n2">Rate Films</h2>
-<p class="small text-muted">Rating films you've already seen sharpens your recommendations &mdash; each answer steers what's offered next. Haven't seen one? Say so and it won't come back; add it to your watchlist if it looks worth a night.</p>
+<p class="small text-muted">Rating films you've already seen sharpens your recommendations &mdash; each answer steers what's offered next. No opinion &mdash; never saw it, or can't remember what you thought? Say so and it rests; add it to your watchlist if it looks worth a night.</p>
 <hr>
 {% if featured %}
 <div class="row">
@@ -40,8 +40,7 @@
 			{{ form.movie_id(value=featured.id) }}
 			{{ rating_ladder(estimated=featured_estimated) }}
 			{{ form.watchlist_submit(class_="btn btn-sm btn-outline-primary mr-1") }}
-			{{ form.unseen_submit(class_="btn btn-sm btn-outline-secondary mr-1") }}
-			{{ form.skip_submit(class_="btn btn-sm btn-outline-secondary") }}
+			{{ form.unseen_submit(class_="btn btn-sm btn-outline-secondary") }}
 		</form>
 	</div>
 </div>
@@ -86,6 +85,6 @@
 {% endif %}
 {% if not featured %}
 <p class="lead">Nothing left to offer right now.</p>
-<p class="text-muted">You've answered for every eligible film in the library &mdash; skipped films rest for a week, and anything on your watchlist or already in your diary stays out. New arrivals will show up here.</p>
+<p class="text-muted">You've answered for every eligible film in the library &mdash; films you had no opinion on rest for a couple of years, and anything on your watchlist or already in your diary stays out. New arrivals will show up here.</p>
 {% endif %}
 {% endblock %}

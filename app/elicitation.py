@@ -3,9 +3,10 @@
 Netflix-onboarding-style: present library films the user hasn't
 logged, gather ratings as ordinary diary rows, and let every response
 steer what's offered next — a rating pulls taste-adjacent films
-forward (shared directors, genres, decades), "haven't seen" steers
-away from the same neighborhood, a watchlist add files the film as
-unseen-but-wanted, and a skip rests the film for a week.
+forward (shared directors, genres, decades), "No Opinion" (never saw
+it, or no memory of a verdict) steers away from the same neighborhood
+and rests the film for a couple of years, and a watchlist add files
+the film as unseen-but-wanted.
 
 Candidates rank by INFORMATION VALUE: how much a rating would teach
 the taste profile. A feature's value is its reach across the unrated
@@ -31,30 +32,29 @@ from app.recommendations import (
     stored_profile,
 )
 
-SKIP_KEY = "fitzflix:elicit:skip:{user_id}"
 LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
-# Skips rest a film for a week (the whole set's TTL refreshes on each
-# skip) and stay in Redis — ephemeral by design. "Haven't seen" lives
-# in user_movie_status, so a cache flush can't forget it (#45b). The
-# last response steers the next picks for an hour — long enough for a
-# session, short enough that tomorrow starts fresh
+# "No Opinion" lives in user_movie_status, so a cache flush can't
+# forget it (#45b). The last response steers the next picks for an
+# hour — long enough for a session, short enough that tomorrow starts
+# fresh
 
-SKIP_TTL_SECONDS = 7 * 86400
 LAST_TTL_SECONDS = 3600
 
-# "Haven't seen it" wears off (#52), mirroring the Watch Again shelf's
+# "No Opinion" wears off (#52), mirroring the Watch Again shelf's
 # staleness bar: after this many years the mark stops excluding the
-# film from the drive, in case the user has seen it since and can now
-# rate it. Re-marking resets the clock; the drive's information-value
-# ranking decides when a resurfaced film actually reappears. Only
-# "unseen" expires — "not interested" is permanent
+# film from the drive, in case the user has seen it (or remembered a
+# verdict) since and can now rate it. Re-marking resets the clock;
+# the drive's information-value ranking decides when a resurfaced
+# film actually reappears. Only "unseen" expires — "not interested"
+# is permanent. (The stored kind stays "unseen" from the button's
+# "Haven't Seen It" era, #62 — 241 rows predate the rename.)
 
 UNSEEN_RESURFACE_YEARS = 2
 
 # How strongly the last response bends the ranking: a rating pulls
-# similar films forward, while "haven't seen" and "not interested"
-# nudge the neighborhood away; watchlist adds and skips don't steer
+# similar films forward, while "no opinion" and "not interested"
+# nudge the neighborhood away; watchlist adds don't steer
 
 ADJACENCY_WEIGHT = 2.0
 UNSEEN_STEER_WEIGHT = -0.5
@@ -68,17 +68,12 @@ UP_NEXT_COUNT = 3
 SUGGESTION_COUNT = 3
 
 
-def _int_set(redis, key):
-    """A Redis set's members as ints."""
-
-    return {int(member) for member in redis.smembers(key)}
-
-
 def mark_unseen(user_id, movie_id):
-    """Record that the user has never seen this film — out of the
-    drive for UNSEEN_RESURFACE_YEARS (they can always rate it from its
-    movie page). Re-marking always resets the clock, so answering a
-    resurfaced film with "haven't seen it" rests it for another term
+    """Record that the user has no opinion on this film — never saw
+    it, or no memory of a verdict (#62) — putting it out of the drive
+    for UNSEEN_RESURFACE_YEARS (they can always rate it from its movie
+    page). Re-marking always resets the clock, so answering a
+    resurfaced film with "still no opinion" rests it for another term
     instead of letting it boomerang back every session."""
 
     exists = UserMovieStatus.query.filter_by(
@@ -93,18 +88,11 @@ def mark_unseen(user_id, movie_id):
     db.session.commit()
 
 
-def mark_skipped(redis, user_id, movie_id):
-    """Rest a film for a week; the set's TTL refreshes on every skip."""
-
-    key = SKIP_KEY.format(user_id=int(user_id))
-    redis.sadd(key, int(movie_id))
-    redis.expire(key, SKIP_TTL_SECONDS)
-
-
 def set_last_response(redis, user_id, movie_id, action, positive=False):
     """Remember the session's last response, which steers the next
-    picks: action is one of rated / watchlist / unseen / not_interested
-    / skip, and a positive rating also unlocks the suggestion strip."""
+    picks: action is one of rated / watchlist / unseen /
+    not_interested, and a positive rating also unlocks the suggestion
+    strip."""
 
     redis.set(
         LAST_KEY.format(user_id=int(user_id)),
@@ -125,11 +113,10 @@ def last_response(redis, user_id):
 def elicitation_candidates(user_id):
     """Movie ids eligible for the drive: local full-feature films the
     user hasn't logged, minus watchlisted films (declared unseen-but-
-    wanted), films marked "haven't seen" within the resurface bar
-    (older marks expire, #52), and recent skips — not-interested films
-    are already out of local_candidates."""
+    wanted) and films marked "No Opinion" within the resurface bar
+    (older marks expire, #52) — not-interested films are already out
+    of local_candidates."""
 
-    redis = current_app.redis
     watchlisted = {
         movie_id
         for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
@@ -145,9 +132,7 @@ def elicitation_candidates(user_id):
             UserMovieStatus.date_added > unseen_bar,
         )
     }
-    excluded = (
-        watchlisted | unseen | _int_set(redis, SKIP_KEY.format(user_id=int(user_id)))
-    )
+    excluded = watchlisted | unseen
     return [
         movie_id for movie_id in local_candidates(user_id) if movie_id not in excluded
     ]

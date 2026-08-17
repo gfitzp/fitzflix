@@ -46,7 +46,6 @@ def make_candidate(title, year, genre_row=None, director=None):
 def test_candidates_exclude_declared_states(app):
     from app.elicitation import (
         elicitation_candidates,
-        mark_skipped,
         mark_unseen,
     )
 
@@ -58,11 +57,9 @@ def test_candidates_exclude_declared_states(app):
         wanted = make_candidate("Elicit Wanted", 1992)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
         unseen = make_candidate("Elicit Unseen", 1993)
-        skipped = make_candidate("Elicit Skipped", 1994)
         db.session.commit()
 
         mark_unseen(user_id, unseen.id)
-        mark_skipped(app.redis, user_id, skipped.id)
 
         assert elicitation_candidates(user_id) == [eligible.id]
 
@@ -173,9 +170,9 @@ def test_adjacency_steers_toward_the_rated_films_neighborhood(app):
 
 
 def test_rate_page_actions_flow(app, admin_client):
-    """The four answers: a rating writes a date-less diary row and the
-    film leaves the pool; watchlist, haven't-seen, and skip all retire
-    the film from the drive."""
+    """The three answers (#62 removed Skip): a rating writes a
+    date-less diary row and the film leaves the pool; watchlist and
+    No Opinion both retire the film from the drive."""
 
     from app.elicitation import elicitation_candidates
 
@@ -184,9 +181,8 @@ def test_rate_page_actions_flow(app, admin_client):
         first = make_candidate("Drive First", 1980)
         second = make_candidate("Drive Second", 1981)
         third = make_candidate("Drive Third", 1982)
-        fourth = make_candidate("Drive Fourth", 1983)
         db.session.commit()
-        ids = (first.id, second.id, third.id, fourth.id)
+        ids = (first.id, second.id, third.id)
 
     page = admin_client.get("/rate").get_data(as_text=True)
     assert "Rate Films" in page
@@ -224,19 +220,15 @@ def test_rate_page_actions_flow(app, admin_client):
         )
         assert ids[1] not in elicitation_candidates(user_id)
 
-    # Haven't seen and skip both retire the film
+    # No Opinion retires the film too
 
     admin_client.post(
         "/rate",
         data={
             "csrf_token": token,
             "movie_id": str(ids[2]),
-            "unseen_submit": "Haven't Seen It",
+            "unseen_submit": "No Opinion",
         },
-    )
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(ids[3]), "skip_submit": "Skip"},
     )
     with app.app_context():
         assert elicitation_candidates(user_id) == []
