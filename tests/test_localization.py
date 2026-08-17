@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from app import safe_job_id
+from app import retry_job_id, safe_job_id
 
 import app.videos as videos
 import app.maintenance as maintenance
@@ -262,7 +262,7 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
             for job, _ in app.import_scheduler.get_jobs(with_times=True)
             if job.id.startswith("retry_")
         ]
-        assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
+        assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
 
         # The file was left untouched — not rejected, not staged
         assert os.path.exists(source)
@@ -300,7 +300,7 @@ def test_staging_copy_transient_error_defers_and_retries(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:localization_task:'{basename}'")
+            retry_job_id("localization_task", f"'{basename}'", 1, 0)
         ]
 
         # The retry carries the incremented attempt count and the original
@@ -336,6 +336,58 @@ def test_staging_copy_transient_error_defers_and_retries(
         app.lock_manager.unlock(lock)
     finally:
         os.remove(source)
+
+
+def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monkeypatch):
+    """Each deferral schedules the next attempt under its own job id.
+
+    rq rewrites a job's stored payload when the job returns, so a retry
+    scheduled under the id of the job scheduling it used to have its
+    attempt count reset the moment that job finished — the same attempt
+    repeating forever instead of the budget running out.
+    """
+
+    basename = "Stuck (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"video bytes")
+    settle(source)
+
+    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
+    try:
+        with app.app_context():
+            for attempt in range(videos.MAX_TRANSIENT_RETRIES):
+                assert localization_task(source, transient_retries=attempt) is True
+                scheduled = {
+                    job.id: job.kwargs["transient_retries"]
+                    for job, _ in app.import_scheduler.get_jobs(with_times=True)
+                    if job.id.startswith("retry_")
+                }
+                assert scheduled == {
+                    retry_job_id(
+                        "localization_task", f"'{basename}'", attempt + 1, 0
+                    ): attempt
+                    + 1
+                }, f"attempt {attempt} did not schedule attempt {attempt + 1}"
+
+                for job, _ in app.import_scheduler.get_jobs(with_times=True):
+                    app.import_scheduler.cancel(job)
+
+            # And the attempt after the last one gives up instead of deferring
+
+            localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
+            assert not any(
+                job.id.startswith("retry_")
+                for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            )
+            assert basename in rejected_files(app)
+            os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
+    finally:
+        if os.path.exists(source):
+            os.remove(source)
 
 
 def test_staging_copy_transient_error_rejects_after_max_retries(
@@ -435,7 +487,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:move_localized_file:'{basename}'")
+            retry_job_id("move_localized_file", f"'{basename}'", 1)
         ]
 
         # The retry carries the original chain — including the lock — plus
@@ -734,6 +786,85 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     )
 
 
+def test_copy_with_progress_keeps_copy_when_source_close_fails(
+    app, tmp_path, monkeypatch
+):
+    """An SMB server that has lost its handle for a file serves every read
+    and then fails close() with EBADF forever. The bytes are all there, so
+    the copy stands rather than being retried until the share recovers."""
+
+    src = tmp_path / "unclosable.mkv"
+    dst = tmp_path / "copy.mkv"
+    payload = os.urandom(1024)
+    src.write_bytes(payload)
+
+    real_open = open
+
+    class UnclosableSource:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def read(self, size):
+            return self._wrapped.read(size)
+
+        def close(self):
+            self._wrapped.close()
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+    def flaky_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if path == str(src):
+            return UnclosableSource(handle)
+        return handle
+
+    monkeypatch.setattr(videos, "open", flaky_open, raising=False)
+    with app.app_context():
+        videos.copy_with_progress(str(src), str(dst), None, "unclosable.mkv")
+
+    assert dst.read_bytes() == payload
+
+
+def test_copy_with_progress_raises_when_short_copy_fails_to_close(
+    app, tmp_path, monkeypatch
+):
+    """A close error over a copy that came up short is a real failure, and
+    still reaches the caller's transient-error handling."""
+
+    src = tmp_path / "truncated.mkv"
+    dst = tmp_path / "copy.mkv"
+    src.write_bytes(os.urandom(4096))
+
+    real_open = open
+
+    class ShortSource:
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+            self._served = False
+
+        def read(self, size):
+            if self._served:
+                return b""
+            self._served = True
+            return self._wrapped.read(16)
+
+        def close(self):
+            self._wrapped.close()
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+    def flaky_open(path, mode="r", *args, **kwargs):
+        handle = real_open(path, mode, *args, **kwargs)
+        if path == str(src):
+            return ShortSource(handle)
+        return handle
+
+    monkeypatch.setattr(videos, "open", flaky_open, raising=False)
+    with app.app_context():
+        with pytest.raises(OSError) as caught:
+            videos.copy_with_progress(str(src), str(dst), None, "truncated.mkv")
+
+    assert caught.value.errno == errno.EBADF
+
+
 def test_save_track_metadata_writes_rows_and_releases_lock(app):
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -827,7 +958,7 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
         if job.id.startswith("retry_move_localized_file")
     ]
     assert retries == [
-        safe_job_id("retry:move_localized_file:'Move Defer (2021) - [DVD].mkv'")
+        retry_job_id("move_localized_file", "'Move Defer (2021) - [DVD].mkv'", 0)
     ]
 
 
@@ -888,7 +1019,7 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:localization_task:'{basename}'")
+            retry_job_id("localization_task", f"'{basename}'", 0, 1)
         ]
         job = retries[0]
         assert job.kwargs["completeness_retries"] == 1
@@ -924,7 +1055,7 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:localization_task:'{basename}'")
+            retry_job_id("localization_task", f"'{basename}'", 0, 1)
         ]
         assert retries[0].kwargs["completeness_retries"] == 1
         assert os.path.exists(source)

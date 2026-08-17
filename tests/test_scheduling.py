@@ -17,7 +17,7 @@ import pytest
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from app import register_cron, safe_job_id
+from app import register_cron, retry_job_id, safe_job_id
 from app.videos import (
     acquire_lock_or_defer,
     localization_task,
@@ -195,7 +195,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
                 for job_id in scheduled_ids(app.import_scheduler)
                 if job_id.startswith("retry_")
             ]
-            assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
+            assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
             assert_binds(Job.fetch(retries[0], connection=app.redis))
     finally:
         stop.set()
@@ -346,7 +346,7 @@ def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkey
             if job.id.startswith("retry_finalize_transcoding")
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:finalize_transcoding:{file_id}")
+            retry_job_id("finalize_transcoding", file_id, 1)
         ]
         job = retries[0]
         assert list(job.args) == [file_id, lock]
@@ -436,7 +436,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
             if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
         assert [job.id for job in retries] == [
-            safe_job_id(f"retry:mkvpropedit_task:{file_id}")
+            retry_job_id("mkvpropedit_task", file_id, 1)
         ]
         job = retries[0]
         assert list(job.args) == [file_id, "2", None, []]
@@ -510,7 +510,7 @@ def test_download_transient_error_defers(app, monkeypatch):
         if job.id.startswith(safe_job_id("retry:download_task"))
     ]
     assert [job.id for job in retries] == [
-        safe_job_id("retry:download_task:'Thing (2021) - [DVD].mkv'")
+        retry_job_id("download_task", "'Thing (2021) - [DVD].mkv'", 1)
     ]
     job = retries[0]
     assert list(job.args) == [

@@ -50,6 +50,21 @@ def safe_job_id(value):
     return re.sub(r"[^A-Za-z0-9_-]", "_", value)
 
 
+def retry_job_id(task, target, *attempt):
+    """Name a retry job after the attempt it schedules, not just its target.
+
+    rq re-saves a job's payload when the job returns, so a retry scheduled
+    under the id of the job scheduling it is overwritten with that job's own
+    stale kwargs the moment it finishes: the attempt counters never advance
+    and the chain retries forever instead of giving up. Folding the counters
+    into the id keeps replacement semantics for a re-deferred attempt while
+    giving each new attempt an id of its own.
+    """
+
+    counters = ":".join(str(count) for count in attempt)
+    return safe_job_id(f"retry:{task}:{target}:{counters}")
+
+
 def enqueue_import_scan(
     queue, description="Scanning import directory for files", at_front=False
 ):

@@ -33,7 +33,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app, safe_job_id
+from app import db, get_app, retry_job_id, safe_job_id
 from app.email import send_email as send_email_async
 from app.email import task_send_email as send_email
 from app.maintenance import volume_alive
@@ -235,18 +235,43 @@ def copy_with_progress(src, dst, job, name, activity="Copying to library"):
     copied = 0
     previous_percent = None
 
-    with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
-        while chunk := fsrc.read(32 * 1024 * 1024):
-            fdst.write(chunk)
-            copied += len(chunk)
-            percent = int(copied / total * 100) if total else 100
-            if previous_percent != percent:
-                current_app.logger.info(f"'{name}' {activity}: {percent}%")
-                previous_percent = percent
-                if job:
-                    job.meta["description"] = f"'{name}' — {activity}"
-                    job.meta["progress"] = percent
-                    job.save_meta()
+    fsrc = open(src, "rb")
+    try:
+        with open(dst, "wb") as fdst:
+            while chunk := fsrc.read(32 * 1024 * 1024):
+                fdst.write(chunk)
+                copied += len(chunk)
+                percent = int(copied / total * 100) if total else 100
+                if previous_percent != percent:
+                    current_app.logger.info(f"'{name}' {activity}: {percent}%")
+                    previous_percent = percent
+                    if job:
+                        job.meta["description"] = f"'{name}' — {activity}"
+                        job.meta["progress"] = percent
+                        job.save_meta()
+    except BaseException:
+        try:
+            fsrc.close()
+        except OSError:
+            pass
+        raise
+
+    # Every byte has been read and written by now, so a source that fails
+    # its own close has nothing left to tell us about the copy. An SMB
+    # server that has lost its handle for a file answers close() with EBADF
+    # every time while still serving reads perfectly, and throwing away a
+    # byte-complete copy over it just repeats the whole transfer for as
+    # long as the share stays in that state
+
+    try:
+        fsrc.close()
+    except OSError as e:
+        if copied != total:
+            raise
+        current_app.logger.warning(
+            f"'{name}' Source failed to close ({e}) after a complete "
+            f"{total:,}-byte copy; keeping the copy"
+        )
 
 
 def _rename_with_retries(src, dst, attempts=5, delay=5):
@@ -473,7 +498,12 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
+                    job_id=retry_job_id(
+                        "localization_task",
+                        f"'{basename}'",
+                        transient_retries,
+                        completeness_retries,
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -507,7 +537,12 @@ def localization_task(
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
                     timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
+                    job_id=retry_job_id(
+                        "localization_task",
+                        f"'{basename}'",
+                        transient_retries,
+                        completeness_retries,
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -553,7 +588,12 @@ def localization_task(
                         transient_retries=transient_retries,
                         completeness_retries=completeness_retries + 1,
                         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
+                        job_id=retry_job_id(
+                            "localization_task",
+                            f"'{basename}'",
+                            transient_retries,
+                            completeness_retries + 1,
+                        ),
                         job_result_ttl=86400,
                         job_description=f"'{basename}'",
                     )
@@ -703,7 +743,12 @@ def localization_task(
                         transient_retries=transient_retries + 1,
                         completeness_retries=completeness_retries,
                         timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        job_id=safe_job_id(f"retry:localization_task:'{basename}'"),
+                        job_id=retry_job_id(
+                            "localization_task",
+                            f"'{basename}'",
+                            transient_retries + 1,
+                            completeness_retries,
+                        ),
                         job_result_ttl=86400,
                         job_description=f"'{basename}'",
                     )
@@ -1386,7 +1431,9 @@ def move_localized_file(
                 hidden_output_file,
                 transient_retries=transient_retries,
                 timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                job_id=safe_job_id(f"retry:move_localized_file:'{basename}'"),
+                job_id=retry_job_id(
+                    "move_localized_file", f"'{basename}'", transient_retries
+                ),
                 job_result_ttl=86400,
                 job_description=f"'{basename}'",
             )
@@ -1455,7 +1502,9 @@ def move_localized_file(
                     hidden_output_file,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["MOVE_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:move_localized_file:'{basename}'"),
+                    job_id=retry_job_id(
+                        "move_localized_file", f"'{basename}'", transient_retries + 1
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{basename}'",
                 )
@@ -2021,7 +2070,9 @@ def finalize_transcoding(file_id, lock, transient_retries=0):
                     lock,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:finalize_transcoding:{file_id}"),
+                    job_id=retry_job_id(
+                        "finalize_transcoding", file_id, transient_retries + 1
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{file.plex_title}'",
                 )
@@ -2356,7 +2407,9 @@ def mkvpropedit_task(
                     forced_subtitle_tracks,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:mkvpropedit_task:{file_id}"),
+                    job_id=retry_job_id(
+                        "mkvpropedit_task", file_id, transient_retries + 1
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{file.basename}'",
                 )
@@ -4082,7 +4135,9 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     sqs_receipt_handle,
                     transient_retries=transient_retries + 1,
                     timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                    job_id=safe_job_id(f"retry:download_task:'{basename}'"),
+                    job_id=retry_job_id(
+                        "download_task", f"'{basename}'", transient_retries + 1
+                    ),
                     job_result_ttl=86400,
                     job_description=f"'{basename}' — Downloading from AWS",
                 )
