@@ -1337,3 +1337,50 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
         assert row.review == "Rewritten text"
         assert float(row.rating) == 2.0
         assert row.date_watched == datetime(2021, 3, 14, 20, 0)
+
+
+def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_client):
+    """The history page's per-row forms carry their page number, so a
+    save lands back on that page instead of page 1; without one the
+    redirect stays the plain history URL."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Paged Film", 1997)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            date_watched=datetime(2024, 3, 1),
+            **star_rating_fields(3.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    page = admin_client.get(f"/review/{row_id}/edit?page=3").get_data(as_text=True)
+    assert 'href="/history?page=3"' in page  # breadcrumb and Cancel
+
+    response = admin_client.post(
+        f"/review/{row_id}/edit?page=3",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review": "Saved from page three.",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/history?page=3")
+
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "review": "Saved without a page.",
+            "review_submit": "Save Review",
+        },
+    )
+    assert response.headers["Location"].endswith("/history")

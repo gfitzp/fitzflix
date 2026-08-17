@@ -3841,6 +3841,12 @@ def review_edit(review_id):
     movie = user_review.movie
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
 
+    # The history page is paginated; its per-row forms and Edit-date
+    # links carry the page so every redirect lands back where the row
+    # lives instead of on page 1
+
+    page = request.args.get("page", None, type=int)
+
     movie_review_form = MovieReviewForm()
     quick_present, quick_rating = _quick_rating()
     if (
@@ -3848,7 +3854,7 @@ def review_edit(review_id):
     ) and movie_review_form.validate_on_submit():
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
-            return redirect(url_for("main.review_edit", review_id=review_id))
+            return redirect(url_for("main.review_edit", review_id=review_id, page=page))
         # A logged viewing can't be "not interested" (#51) — the ladder
         # hides its ✕ here, and a stray 0 is refused rather than stored
 
@@ -3858,7 +3864,7 @@ def review_edit(review_id):
                 f"seen film is 1 star",
                 "warning",
             )
-            return redirect(url_for("main.review_edit", review_id=review_id))
+            return redirect(url_for("main.review_edit", review_id=review_id, page=page))
         # Only a ladder tap changes the stars (and the liked flag that
         # follows them) — saving a text or date edit must never wipe
         # the viewing's existing rating. Tapping the CURRENT rating
@@ -3925,7 +3931,7 @@ def review_edit(review_id):
                 }
             )
         flash(f"Updated your review of '{title}'", "success")
-        return redirect(url_for("main.history"))
+        return redirect(url_for("main.history", page=page))
 
     if request.method == "GET":
         movie_review_form = MovieReviewForm(
@@ -3941,6 +3947,7 @@ def review_edit(review_id):
         movie=movie,
         user_review=user_review,
         movie_review_form=movie_review_form,
+        page=page,
     )
 
 

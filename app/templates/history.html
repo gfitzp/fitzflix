@@ -95,7 +95,7 @@
 		   to review_edit — stars only, never the ✕: a logged film's
 		   floor is 1 star. The typed text rides along with a star tap
 		   (both fields belong to the same form) #}
-		<form action="{{ url_for('main.review_edit', review_id=review.id) }}" method="post" class="d-inline-flex align-items-center">
+		<form action="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}" method="post" class="d-inline-flex align-items-center">
 			{{ review_upload_form.csrf_token }}
 			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), live=true) }}
 		</form>
@@ -119,13 +119,13 @@
 		   half-edited text. Dates still edit on the full review page #}
 		<details class="mt-1">
 			<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Edit review text" if review.review else "Add review text" }}</summary>
-			<form action="{{ url_for('main.review_edit', review_id=review.id) }}" method="post" class="mt-1" style="max-width: 40rem;">
+			<form action="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}" method="post" class="mt-1" style="max-width: 40rem;">
 				{{ review_upload_form.csrf_token }}
 				<textarea name="review" class="form-control form-control-sm mb-1" rows="3" aria-label="Review text">{{ review.review or "" }}</textarea>
 				<button type="submit" name="review_submit" value="y" class="btn btn-sm btn-success">Save review</button>
 			</form>
 		</details>
-		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id) }}">Edit date</a></div>
+		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}">Edit date</a></div>
 	</div>
 </div>
 {% endfor %}

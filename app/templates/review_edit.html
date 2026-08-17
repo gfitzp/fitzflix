@@ -4,7 +4,7 @@
 {% block app_content %}
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.history') }}">My History</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.history', page=page) }}">My History</a></li>
 		<li class="breadcrumb-item active" aria-current="page">{{ movie.tmdb_title if movie.tmdb_title else movie.title }}</li>
 	</ol>
 </nav>
@@ -39,7 +39,7 @@
 				{% endfor %}
 			</div>
 			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success", value="Save Review") }}
-			<a class="btn btn-sm btn-outline-secondary ml-2" href="{{ url_for('main.history') }}" role="button">Cancel</a>
+			<a class="btn btn-sm btn-outline-secondary ml-2" href="{{ url_for('main.history', page=page) }}" role="button">Cancel</a>
 		</form>
 	</div>
 </div>
