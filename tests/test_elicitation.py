@@ -67,6 +67,53 @@ def test_candidates_exclude_declared_states(app):
         assert elicitation_candidates(user_id) == [eligible.id]
 
 
+def test_unseen_mark_expires_after_two_years(app):
+    """ "Haven't seen it" wears off (#52): a mark older than the
+    resurface bar stops excluding the film from the drive, and
+    re-marking a resurfaced film resets the clock on the same row for
+    another term."""
+
+    from datetime import datetime, timedelta
+
+    from app.elicitation import (
+        UNSEEN_RESURFACE_YEARS,
+        elicitation_candidates,
+        mark_unseen,
+    )
+    from app.models import UserMovieStatus
+
+    with app.app_context():
+        user_id = admin_id()
+        film = make_candidate("Unseen Expiry", 1972)
+        db.session.commit()
+        film_id = film.id
+
+        mark_unseen(user_id, film_id)
+        assert film_id not in elicitation_candidates(user_id)
+
+        # Age the mark past the bar: the film resurfaces
+
+        row = UserMovieStatus.query.filter_by(
+            user_id=user_id, movie_id=film_id, kind="unseen"
+        ).one()
+        row.date_added = datetime.now() - timedelta(
+            days=UNSEEN_RESURFACE_YEARS * 365.25 + 30
+        )
+        db.session.commit()
+        assert film_id in elicitation_candidates(user_id)
+
+        # "Still haven't seen it" rests it for another term — one row,
+        # fresh clock, excluded again
+
+        mark_unseen(user_id, film_id)
+        rows = UserMovieStatus.query.filter_by(
+            user_id=user_id, movie_id=film_id, kind="unseen"
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].date_added > datetime.now() - timedelta(days=1)
+        assert film_id not in elicitation_candidates(user_id)
+
+
 def test_information_scores_prefer_unrated_reach(app):
     """Films whose features are well represented in the library but
     thin in the diary outrank films the profile already knows."""

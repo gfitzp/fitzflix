@@ -17,6 +17,8 @@ before yet another film from a genre the profile knows cold.
 import json
 import math
 
+from datetime import datetime, timedelta
+
 from flask import current_app
 
 from app import db
@@ -33,14 +35,22 @@ SKIP_KEY = "fitzflix:elicit:skip:{user_id}"
 LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
 # Skips rest a film for a week (the whole set's TTL refreshes on each
-# skip) and stay in Redis — ephemeral by design. "Haven't seen" is
-# permanent and lives in user_movie_status, so a cache flush can't
-# forget it (#45b). The last response steers the next picks for an
-# hour — long enough for a session, short enough that tomorrow starts
-# fresh
+# skip) and stay in Redis — ephemeral by design. "Haven't seen" lives
+# in user_movie_status, so a cache flush can't forget it (#45b). The
+# last response steers the next picks for an hour — long enough for a
+# session, short enough that tomorrow starts fresh
 
 SKIP_TTL_SECONDS = 7 * 86400
 LAST_TTL_SECONDS = 3600
+
+# "Haven't seen it" wears off (#52), mirroring the Watch Again shelf's
+# staleness bar: after this many years the mark stops excluding the
+# film from the drive, in case the user has seen it since and can now
+# rate it. Re-marking resets the clock; the drive's information-value
+# ranking decides when a resurfaced film actually reappears. Only
+# "unseen" expires — "not interested" is permanent
+
+UNSEEN_RESURFACE_YEARS = 2
 
 # How strongly the last response bends the ranking: a rating pulls
 # similar films forward, while "haven't seen" and "not interested"
@@ -65,8 +75,11 @@ def _int_set(redis, key):
 
 
 def mark_unseen(user_id, movie_id):
-    """Record that the user has never seen this film — permanently out
-    of the drive (they can always rate it from its movie page)."""
+    """Record that the user has never seen this film — out of the
+    drive for UNSEEN_RESURFACE_YEARS (they can always rate it from its
+    movie page). Re-marking always resets the clock, so answering a
+    resurfaced film with "haven't seen it" rests it for another term
+    instead of letting it boomerang back every session."""
 
     exists = UserMovieStatus.query.filter_by(
         user_id=int(user_id), movie_id=int(movie_id), kind="unseen"
@@ -75,7 +88,9 @@ def mark_unseen(user_id, movie_id):
         db.session.add(
             UserMovieStatus(user_id=int(user_id), movie_id=int(movie_id), kind="unseen")
         )
-        db.session.commit()
+    else:
+        exists.date_added = datetime.now()
+    db.session.commit()
 
 
 def mark_skipped(redis, user_id, movie_id):
@@ -110,8 +125,9 @@ def last_response(redis, user_id):
 def elicitation_candidates(user_id):
     """Movie ids eligible for the drive: local full-feature films the
     user hasn't logged, minus watchlisted films (declared unseen-but-
-    wanted), films marked "haven't seen", and recent skips —
-    not-interested films are already out of local_candidates."""
+    wanted), films marked "haven't seen" within the resurface bar
+    (older marks expire, #52), and recent skips — not-interested films
+    are already out of local_candidates."""
 
     redis = current_app.redis
     watchlisted = {
@@ -120,11 +136,13 @@ def elicitation_candidates(user_id):
             UserWatchlist.user_id == int(user_id)
         )
     }
+    unseen_bar = datetime.now() - timedelta(days=UNSEEN_RESURFACE_YEARS * 365.25)
     unseen = {
         movie_id
         for (movie_id,) in db.session.query(UserMovieStatus.movie_id).filter(
             UserMovieStatus.user_id == int(user_id),
             UserMovieStatus.kind == "unseen",
+            UserMovieStatus.date_added > unseen_bar,
         )
     }
     excluded = (
