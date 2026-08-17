@@ -29,6 +29,16 @@
 			<p>
 				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{{ genres|join(", ") }}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
 			</p>
+			{# The star row is the page's rating control, mirroring the
+			   movie page (#58): a tap logs a date-less verdict and
+			   creates the review-only record (the route then redirects
+			   to its movie page); the ✕ waves the film off without one.
+			   Dates and review text live on the history page. Not live:
+			   the redirect IS the flow, as on /rate #}
+			<form action="" method="post" class="mb-2 d-flex align-items-center">
+				{{ movie_review_form.csrf_token }}
+				{{ rating_ladder() }}
+			</form>
 			<p class="small text-muted">This film isn't in the library; logging it adds a seen-but-unowned title to your history.</p>
 			{% include "_cast_scroller.html" %}
 		</div>
@@ -37,29 +47,6 @@
 <hr>
 <div class="row">
 	<div class="col-md-8">
-		<form action="" method="post">
-			{{ movie_review_form.hidden_tag() }}
-			{{ rating_ladder() }}
-			{# Blank date = a date-less verdict ("seen sometime"); fill it
-			   only when the watch date is actually known #}
-			<div class="row">
-				<div class="form-group col-sm-5">
-					{{ movie_review_form.date_watched.label }}
-					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
-					{% for error in movie_review_form.date_watched.errors %}
-					<div class="text-danger small">{{ error }}</div>
-					{% endfor %}
-				</div>
-			</div>
-			<div class="form-group">
-				{{ movie_review_form.review.label }}
-				{{ movie_review_form.review(class_="form-control form-control-sm") }}
-				{% for error in movie_review_form.review.errors %}
-				<div class="text-danger small">{{ error }}</div>
-				{% endfor %}
-			</div>
-			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
-		</form>
 		<form action="" method="post" class="mt-2 d-inline-block">
 			{{ watchlist_form.hidden_tag() }}
 			<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
