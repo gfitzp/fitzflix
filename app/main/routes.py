@@ -153,6 +153,7 @@ from app.videos import (
     parse_letterboxd_export,
     star_rating_fields,
     track_metadata_scan,
+    untouched_key_still_claimed,
 )
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
@@ -3106,6 +3107,8 @@ def tv(series_id):
         # a failed commit can't leave database records whose backups are gone
 
         for aws_untouched_key in aws_untouched_keys:
+            if untouched_key_still_claimed(aws_untouched_key):
+                continue
             current_app.request_queue.enqueue(
                 "app.videos.aws_delete",
                 args=(aws_untouched_key,),
@@ -3690,7 +3693,7 @@ def file(file_id):
         # Delete the AWS copy only after the database delete has committed, so a
         # failed commit can't leave a database record whose backup is gone
 
-        if aws_untouched_key:
+        if aws_untouched_key and not untouched_key_still_claimed(aws_untouched_key):
             current_app.request_queue.enqueue(
                 "app.videos.aws_delete",
                 args=(aws_untouched_key,),

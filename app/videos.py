@@ -1832,6 +1832,15 @@ def finalize_localization(
             # doesn't wait on the network
 
             for worse_key in worse_aws_keys:
+                # The new file can claim the very key its predecessor
+                # held (a repointed key, or a re-import on the same
+                # basename) — never delete a key a surviving row claims
+                if untouched_key_still_claimed(worse_key):
+                    current_app.logger.info(
+                        f"Keeping '{worse_key}' in AWS — another file "
+                        f"record still claims it"
+                    )
+                    continue
                 current_app.file_queue.enqueue(
                     "app.videos.aws_delete",
                     args=(worse_key,),
@@ -4223,6 +4232,26 @@ def upload_task(
 
 
 # Supporting functions
+
+
+def untouched_key_still_claimed(key):
+    """Whether any surviving file record still claims this untouched
+    S3 key. Distinct records can share a key — a replaced file whose
+    key was repointed after a rename (#64), or a re-import landing on
+    the same basename — and deleting a claimed key would strand the
+    survivor's archive behind a delete marker (the Bambi II incident,
+    Aug 2026). Callers check AFTER their own deletes commit, so the
+    rows being purged no longer count."""
+
+    return (
+        db.session.query(File.id)
+        .filter(
+            File.aws_untouched_key == key,
+            File.aws_untouched_date_deleted.is_(None),
+        )
+        .first()
+        is not None
+    )
 
 
 def aws_delete(key):
