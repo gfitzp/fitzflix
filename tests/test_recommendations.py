@@ -107,6 +107,61 @@ def test_user_movie_weights_math(app):
     assert weights[hearted.id] == pytest.approx(0.6)
 
 
+def test_latest_rating_supersedes_earlier_ones(app):
+    """The engine reads the newest review's stars — not the highest
+    ever given — so a re-rate downward counts, and a later bare watch
+    (a Plex viewing) never masks the stars."""
+
+    from datetime import datetime, timedelta
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.recommendations import latest_ratings, user_movie_weights
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        rerated = make_movie("Latest Rerated", 1990)
+        anchor = make_movie("Latest Anchor", 1991)
+
+        def review_row(movie, rating, reviewed):
+            db.session.add(
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=movie.id,
+                    liked=rating >= 3,
+                    date_reviewed=reviewed,
+                    rewatch=False,
+                    **star_rating_fields(rating),
+                )
+            )
+
+        review_row(rerated, 4, datetime.now() - timedelta(days=30))
+        review_row(rerated, 2, datetime.now() - timedelta(days=1))
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=rerated.id, **star_rating_fields(None)
+            )
+        )
+        review_row(anchor, 4, datetime.now() - timedelta(days=10))
+        db.session.commit()
+        rerated_id, anchor_id = rerated.id, anchor.id
+
+        current = latest_ratings(user_id)
+        weights = user_movie_weights(user_id)
+
+    assert current[rerated_id] == 2.0
+    assert current[anchor_id] == 4.0
+
+    # Mean over latest ratings is 3: the re-rated film centers on its
+    # newest 2 stars (-0.4) and keeps its old like (+1.0) plus two
+    # rewatch increments (+0.5); the anchor centers on 4 (+0.4) with
+    # its like (+1.0)
+
+    assert weights[rerated_id] == pytest.approx(1.1)
+    assert weights[anchor_id] == pytest.approx(1.4)
+
+
 def test_recommendations_prefer_matching_features_and_say_why(app):
     from app.recommendations import compute_user_recommendations
 

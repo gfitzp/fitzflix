@@ -238,6 +238,35 @@ def collect_features(movie_ids):
     return features
 
 
+def latest_ratings(user_id):
+    """Each film's current star rating: the one carried by its most
+    recent diary row — reviews before bare watches, newest first, id
+    breaking ties, the same row the movie page's star widget shows —
+    so a re-rate supersedes the old verdict instead of competing with
+    it (Glenn's rule, Aug 2026). Films whose latest row is unrated
+    map to None."""
+
+    rows = (
+        db.session.query(
+            UserMovieReview.movie_id,
+            UserMovieReview.rating,
+            UserMovieReview.date_reviewed,
+            UserMovieReview.id,
+        )
+        .filter(UserMovieReview.user_id == int(user_id))
+        .filter(UserMovieReview.movie_id.isnot(None))
+        .all()
+    )
+    latest = {}
+    order = {}
+    for movie_id, rating, date_reviewed, row_id in rows:
+        key = (date_reviewed is not None, date_reviewed or datetime.min, row_id)
+        if movie_id not in order or key > order[movie_id]:
+            order[movie_id] = key
+            latest[movie_id] = float(rating) if rating is not None else None
+    return latest
+
+
 def user_movie_weights(user_id):
     """Per-movie sentiment weights from the user's own diary rows —
     never the household shopping-cart priority — plus a mild interest
@@ -247,7 +276,6 @@ def user_movie_weights(user_id):
         db.session.query(
             UserMovieReview.movie_id,
             db.func.count(UserMovieReview.id),
-            db.func.max(UserMovieReview.rating),
             db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
         )
         .filter(UserMovieReview.user_id == int(user_id))
@@ -256,12 +284,14 @@ def user_movie_weights(user_id):
         .all()
     )
 
-    ratings = [rating for _, _, rating, _ in rows if rating is not None]
+    current = latest_ratings(user_id)
+    ratings = [rating for rating in current.values() if rating is not None]
     mean_rating = sum(ratings) / len(ratings) if ratings else 0.0
 
     weights = {}
-    for movie_id, viewings, rating, liked in rows:
+    for movie_id, viewings, liked in rows:
         weight = 0.0
+        rating = current.get(movie_id)
         if rating is None and liked:
             # A liked-only viewing — Letterboxd allows a heart with no
             # stars — counts as a 3-star verdict for the profile
@@ -509,17 +539,10 @@ def build_calibration(
     prior when taste is positive) so stored scores translate directly.
     """
 
-    ratings = dict(
-        db.session.query(UserMovieReview.movie_id, db.func.max(UserMovieReview.rating))
-        .filter(UserMovieReview.user_id == int(user_id))
-        .filter(UserMovieReview.movie_id.isnot(None))
-        .filter(UserMovieReview.rating.isnot(None))
-        .group_by(UserMovieReview.movie_id)
-    )
     ratings = {
         movie_id: rating
-        for movie_id, rating in ratings.items()
-        if features.get(movie_id)
+        for movie_id, rating in latest_ratings(user_id).items()
+        if rating is not None and features.get(movie_id)
     }
     if len(ratings) < CALIBRATION_MIN_RATED:
         return None
@@ -835,7 +858,6 @@ def watch_again_shelf(user_id, today=None):
         db.session.query(
             UserMovieReview.movie_id,
             db.func.max(UserMovieReview.date_watched),
-            db.func.max(UserMovieReview.rating),
             db.func.max(db.case((UserMovieReview.liked == True, 1), else_=0)),
         )
         .join(Movie, Movie.id == UserMovieReview.movie_id)
@@ -844,12 +866,18 @@ def watch_again_shelf(user_id, today=None):
         .group_by(UserMovieReview.movie_id)
         .all()
     )
-    ratings = [float(rating) for _, _, rating, _ in rows if rating is not None]
+    current = latest_ratings(user_id)
+    ratings = [
+        current[movie_id]
+        for movie_id, _, _ in rows
+        if current.get(movie_id) is not None
+    ]
     mean_rating = sum(ratings) / len(ratings) if ratings else 0.0
     weights = user_movie_weights(user_id)
 
     items = []
-    for movie_id, last_watched, rating, liked in rows:
+    for movie_id, last_watched, liked in rows:
+        rating = current.get(movie_id)
         positive = bool(liked) or (rating is not None and float(rating) > mean_rating)
         if not positive:
             continue

@@ -759,6 +759,67 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
     assert 'name="quick_rating" value="0"' not in page
 
 
+def test_same_day_retap_edits_todays_review(app, admin_client):
+    """A different star on a day you already rated corrects that
+    review in place — no second diary row, no rewatch, liked follows
+    the stars — while the day rolling over makes the next tap a fresh
+    entry (Glenn's rule)."""
+
+    from datetime import datetime, timedelta
+
+    with app.app_context():
+        user_id = admin_id()
+        movie = make_candidate("Same Day Rerate", 1986)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    token = csrf_token_from(page)
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "3"},
+    )
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "4"},
+    )
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).one()
+        assert float(row.rating) == 4.0
+        assert row.liked is True
+        assert row.rewatch is False
+
+    # Taste soured by evening: the correction can go down too
+
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "2"},
+    )
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).one()
+        assert float(row.rating) == 2.0
+        assert row.liked is False
+
+        # Age the review a day: the next tap is a fresh diary entry,
+        # marked as a rewatch
+
+        row.date_reviewed = datetime.now() - timedelta(days=1)
+        db.session.commit()
+
+    admin_client.post(
+        f"/movie/{movie_id}",
+        data={"csrf_token": token, "review_submit": "y", "quick_rating": "5"},
+    )
+    with app.app_context():
+        rows = (
+            UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id)
+            .order_by(UserMovieReview.id.asc())
+            .all()
+        )
+        assert [float(row.rating) for row in rows] == [2.0, 5.0]
+        assert rows[1].rewatch is True
+
+
 def test_same_star_tap_removes_the_rating(app, admin_client):
     """Tapping your current rating removes it (#54): a bare date-less
     row disappears entirely, a dated viewing only loses its stars."""

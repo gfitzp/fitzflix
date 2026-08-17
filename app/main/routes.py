@@ -249,6 +249,40 @@ def _ladder_fetch():
     return request.headers.get("X-Requested-With") == "ladder"
 
 
+def _latest_review_row(user_id, movie_id):
+    """The diary row whose verdict the star widget shows: newest review
+    first, bare watches last, newest id breaking ties — the same
+    ordering the engine's latest_ratings() mirrors, so what the page
+    displays is exactly what the profile scores."""
+
+    return (
+        UserMovieReview.query.filter_by(user_id=int(user_id), movie_id=int(movie_id))
+        .order_by(UserMovieReview.date_reviewed.desc(), UserMovieReview.id.desc())
+        .first()
+    )
+
+
+def _same_day_rerate(user_id, movie_id, rating):
+    """A second star tap on the same calendar day corrects today's
+    review in place — new stars, liked re-derived — instead of logging
+    a rewatch; only the day rolling over makes the next tap a fresh
+    diary entry (Glenn's rule, Aug 2026). Returns the edited row, or
+    None when today has no review to edit."""
+
+    row = _latest_review_row(user_id, movie_id)
+    if (
+        row is None
+        or row.date_reviewed is None
+        or row.date_reviewed.date() != date.today()
+    ):
+        return None
+    for field, value in star_rating_fields(rating).items():
+        setattr(row, field, value)
+    row.liked = rating >= 3
+    row.date_reviewed = datetime.now()
+    return row
+
+
 def _ladder_state(user_id, movie_id):
     """The star row's current verdict for a film as its JSON payload:
     the latest viewing's rating (the row the movie page displays),
@@ -256,11 +290,7 @@ def _ladder_state(user_id, movie_id):
     unflagged films — the engine's estimated rating, so removing a
     verdict repaints the row back to its estimate (#58)."""
 
-    row = (
-        UserMovieReview.query.filter_by(user_id=int(user_id), movie_id=int(movie_id))
-        .order_by(UserMovieReview.date_reviewed.desc())
-        .first()
-    )
+    row = _latest_review_row(user_id, movie_id)
     flagged = (
         UserMovieStatus.query.filter_by(
             user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
@@ -1779,11 +1809,7 @@ def movie(movie_id):
         )
         .all()
     )
-    review = (
-        UserMovieReview.query.filter_by(user_id=int(current_user.id), movie_id=movie.id)
-        .order_by(UserMovieReview.date_reviewed.desc())
-        .first()
-    )
+    review = _latest_review_row(current_user.id, movie.id)
     films = (
         File.query.join(RefQuality, (RefQuality.id == File.quality_id))
         .filter(File.movie_id == movie_id)
@@ -1895,13 +1921,7 @@ def movie(movie_id):
         # a viewing with real history only loses its stars
 
         if rating is not None:
-            current_row = (
-                UserMovieReview.query.filter_by(
-                    user_id=int(current_user.id), movie_id=target.id
-                )
-                .order_by(UserMovieReview.date_reviewed.desc())
-                .first()
-            )
+            current_row = _latest_review_row(current_user.id, target.id)
             if (
                 current_row is not None
                 and current_row.rating is not None
@@ -1930,6 +1950,43 @@ def movie(movie_id):
                 if _ladder_fetch():
                     return _ladder_state(current_user.id, target.id)
                 flash(f"Removed your rating of '{target_title}'", "success")
+                return redirect(url_for("main.movie", movie_id=movie.id))
+
+        # A different star on a day you already reviewed corrects that
+        # review in place — tastes change, but not twice a day; a form
+        # carrying text or a watch date is a real new log and skips this
+
+        if (
+            quick_present
+            and rating is not None
+            and not (movie_review_form.review.data or "").strip()
+            and movie_review_form.date_watched.data is None
+        ):
+            edited = _same_day_rerate(current_user.id, target.id, rating)
+            if edited is not None:
+                clear_watchlist(current_user.id, target.id)
+                clear_not_interested(current_user.id, target.id)
+                db.session.commit()
+                if target.id == movie.id:
+                    set_last_response(
+                        current_app.redis,
+                        current_user.id,
+                        movie.id,
+                        "rated",
+                        positive=rating >= 3,
+                    )
+                _enqueue_profile_recompute()
+                if _ladder_fetch():
+                    return _ladder_state(current_user.id, target.id)
+                target_title = (
+                    title
+                    if target.id == movie.id
+                    else (
+                        f"{target.tmdb_title if target.tmdb_title else target.title} "
+                        f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
+                    )
+                )
+                flash(f"Rated '{target_title}' {rating:g} out of 5 stars", "success")
                 return redirect(url_for("main.movie", movie_id=movie.id))
 
         # A bare submission (no rating or text) is a plain diary
@@ -5505,17 +5562,21 @@ def rate():
         elif quick_present:
             rating = quick_rating
             # An elicited rating is an ordinary diary row with no watch
-            # date — the film was seen sometime before Fitzflix
-            review = UserMovieReview(
-                user_id=current_user.id,
-                movie_id=movie.id,
-                liked=rating >= 3,
-                date_watched=None,
-                date_reviewed=datetime.now(),
-                rewatch=False,
-                **star_rating_fields(rating),
-            )
-            db.session.add(review)
+            # date — the film was seen sometime before Fitzflix. A
+            # same-day repeat (a replayed submit) corrects today's row
+            # instead of logging a second one
+            if _same_day_rerate(current_user.id, movie.id, rating) is None:
+                db.session.add(
+                    UserMovieReview(
+                        user_id=current_user.id,
+                        movie_id=movie.id,
+                        liked=rating >= 3,
+                        date_watched=None,
+                        date_reviewed=datetime.now(),
+                        rewatch=False,
+                        **star_rating_fields(rating),
+                    )
+                )
             clear_watchlist(current_user.id, movie.id)
             clear_not_interested(current_user.id, movie.id)
             db.session.commit()
@@ -5803,23 +5864,39 @@ def review_tmdb(tmdb_id):
         is_review = bool(
             rating is not None or (movie_review_form.review.data or "").strip()
         )
-        rewatch = (
-            db.session.query(UserMovieReview.id)
-            .filter_by(user_id=current_user.id, movie_id=movie.id)
-            .first()
-            is not None
-        )
-        review = UserMovieReview(
-            user_id=current_user.id,
-            movie_id=movie.id,
-            review=movie_review_form.review.data,
-            liked=rating is not None and rating >= 3,
-            date_watched=_watched_timestamp(movie_review_form.date_watched.data),
-            date_reviewed=datetime.now() if is_review else None,
-            rewatch=rewatch,
-            **star_rating_fields(rating),
-        )
-        db.session.add(review)
+
+        # A repeat star tap on a film already reviewed today corrects
+        # that review in place — same rule as the movie page
+
+        edited = None
+        if (
+            quick_present
+            and rating is not None
+            and not (movie_review_form.review.data or "").strip()
+            and movie_review_form.date_watched.data is None
+        ):
+            edited = _same_day_rerate(current_user.id, movie.id, rating)
+        if edited is None:
+            rewatch = (
+                db.session.query(UserMovieReview.id)
+                .filter_by(user_id=current_user.id, movie_id=movie.id)
+                .first()
+                is not None
+            )
+            db.session.add(
+                UserMovieReview(
+                    user_id=current_user.id,
+                    movie_id=movie.id,
+                    review=movie_review_form.review.data,
+                    liked=rating is not None and rating >= 3,
+                    date_watched=_watched_timestamp(
+                        movie_review_form.date_watched.data
+                    ),
+                    date_reviewed=datetime.now() if is_review else None,
+                    rewatch=rewatch,
+                    **star_rating_fields(rating),
+                )
+            )
         clear_watchlist(current_user.id, movie.id)
         clear_not_interested(current_user.id, movie.id)
         db.session.commit()
