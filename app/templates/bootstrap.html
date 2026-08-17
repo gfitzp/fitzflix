@@ -89,8 +89,11 @@
 		   has no rating of their own — a hint, never a verdict */
 		.star-row .star.estimated { color: #f3d9ab; }
 		/* A fractional estimate part-fills its last star: a hard-stop
-		   gradient clipped to the glyph, --est-fill = the percentage */
+		   gradient clipped to the glyph, --est-fill = the percentage.
+		   Real half-star ratings (Letterboxd logs halves) use the same
+		   trick in the full gold via .fill-partial */
 		.star-row .star.est-partial { background: linear-gradient(90deg, #f3d9ab var(--est-fill, 100%), #c9c9c9 var(--est-fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+		.star-row .star.fill-partial { background: linear-gradient(90deg, #f0ad4e var(--fill, 100%), #c9c9c9 var(--fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 		.star-row:has(.star:hover) .star { color: #c9c9c9; background: none; }
 		.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
 		/* The ✕'s visual gap to the stars is PADDING, not margin, so

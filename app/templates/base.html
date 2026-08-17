@@ -460,25 +460,33 @@
 				return response.json();
 			}).then(function(state) {
 				var row = button.closest(".star-row");
-				var whole = state.rating === null ? 0 : Math.floor(state.rating);
+				var rating = state.rating === null ? 0 : state.rating;
 				var estimated = (state.rating === null && state.estimated)
 					? state.estimated : 0;
 				row.title = estimated
 					? "Estimated " + parseFloat(estimated.toFixed(2))
 						+ " for you — tap a star to rate it yourself" : "";
 				// The stars sit reversed in the DOM (see the ladder
-				// macro), so paint by each button's own value; a
-				// fractional estimate part-fills its last star via
-				// the --est-fill gradient stop
+				// macro), so paint by each button's own value; both a
+				// half-star rating and a fractional estimate part-fill
+				// their last star via a gradient stop
 				row.querySelectorAll(".star").forEach(function(star) {
 					var value = parseInt(star.value, 10);
-					var pct = Math.round(
+					var fillPct = Math.round(
+						Math.max(0, Math.min(1, rating - value + 1)) * 100);
+					var estPct = Math.round(
 						Math.max(0, Math.min(1, estimated - value + 1)) * 100);
-					star.classList.toggle("filled", value <= whole);
-					star.classList.toggle("estimated", pct > 0);
-					star.classList.toggle("est-partial", pct > 0 && pct < 100);
-					if (pct > 0 && pct < 100) {
-						star.style.setProperty("--est-fill", pct + "%");
+					star.classList.toggle("filled", fillPct > 0);
+					star.classList.toggle("fill-partial", fillPct > 0 && fillPct < 100);
+					star.classList.toggle("estimated", estPct > 0);
+					star.classList.toggle("est-partial", estPct > 0 && estPct < 100);
+					if (fillPct > 0 && fillPct < 100) {
+						star.style.setProperty("--fill", fillPct + "%");
+					} else {
+						star.style.removeProperty("--fill");
+					}
+					if (estPct > 0 && estPct < 100) {
+						star.style.setProperty("--est-fill", estPct + "%");
 					} else {
 						star.style.removeProperty("--est-fill");
 					}

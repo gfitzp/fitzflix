@@ -1022,3 +1022,31 @@ def test_rate_featured_card_shows_the_estimate(app, admin_client):
     assert page.count("estimated est-partial") == 1
     assert "--est-fill: 50%" in page
     assert "Estimated 4.5 for you" in page
+
+
+def test_half_star_ratings_render_a_partial_fill(app, admin_client):
+    """Letterboxd logs in half-star increments; the widget part-fills
+    the last star in the full gold instead of flooring to whole. Taps
+    still submit whole values only."""
+
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        movie = make_candidate("Half Star Film", 1975)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=movie.id,
+                liked=True,
+                **star_rating_fields(3.5),
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert page.count("star filled") == 4
+    assert page.count("filled fill-partial") == 1
+    assert "--fill: 50%" in page
+    assert "star estimated" not in page
