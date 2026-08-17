@@ -25,7 +25,7 @@
 		<p class="text-muted mb-2">
 			{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
 			{% if featured.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ featured.tmdb_runtime }} min{% endif %}
-			{% if featured.genres %}{% if directors or featured.tmdb_runtime %} &middot; {% endif %}{{ featured.genres|map(attribute="name")|join(", ") }}{% endif %}
+			{% if featured.genres %}{% if directors or featured.tmdb_runtime %} &middot; {% endif %}{% for g in featured.genres %}<a href="{{ url_for('main.movie_library', genre=g.id) }}" class="link-secondary text-secondary">{{ g.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}
 		</p>
 		{% if featured.tmdb_overview %}
 		<p>{{ featured.tmdb_overview }}</p>
