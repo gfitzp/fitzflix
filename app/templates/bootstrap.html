@@ -94,15 +94,25 @@
 		   trick in the full gold via .fill-partial */
 		.star-row .star.est-partial { background: linear-gradient(90deg, #f3d9ab var(--est-fill, 100%), #c9c9c9 var(--est-fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 		.star-row .star.fill-partial { background: linear-gradient(90deg, #f0ad4e var(--fill, 100%), #c9c9c9 var(--fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-		.star-row:has(.star:hover) .star { color: #c9c9c9; background: none; }
-		.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
+		/* Hover previews exist only where hover does (#62 follow-up):
+		   iOS keeps a tapped element in :hover until the next tap
+		   elsewhere, so on touch these rules repainted the row as a
+		   preview and masked the toggle-off's real repaint — a removed
+		   rating looked unchanged. Touch gets no preview; the tap's
+		   state change IS the feedback */
+		@media (hover: hover) {
+			.star-row:has(.star:hover) .star { color: #c9c9c9; background: none; }
+			.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
+		}
 		/* The ✕'s visual gap to the stars is PADDING, not margin, so
 		   the whole row is one continuous hit area — clicking between
 		   the ✕ and the first star still triggers the ✕ */
 		.star-row .x-btn { font-size: 1.2rem; padding-right: .45em; }
 		.star-row.star-row-sm .x-btn { font-size: .95rem; padding-right: .35em; }
 		.star-row .x-btn.active { color: #dc3545; }
-		.star-row .x-btn:hover { color: #dc3545; }
+		@media (hover: hover) {
+			.star-row .x-btn:hover { color: #dc3545; }
+		}
     </style>
 	{%- endblock styles %}
 
