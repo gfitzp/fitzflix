@@ -123,7 +123,7 @@ def test_recommendations_prefer_matching_features_and_say_why(app):
         candidate_drama.genres.append(drama)
         make_movie_file(candidate_drama, "Bluray-1080p")
 
-        profile, ranked = compute_user_recommendations(user_id)
+        profile, ranked, _ = compute_user_recommendations(user_id)
 
     assert profile["affinities"]["genre:35"]["score"] > 0
     ranked_ids = [rec["movie_id"] for rec in ranked]
@@ -159,7 +159,7 @@ def test_crew_roles_are_separate_feature_classes(app):
             )
         db.session.flush()
 
-        profile, ranked = compute_user_recommendations(user_id)
+        profile, ranked, _ = compute_user_recommendations(user_id)
 
     assert profile["affinities"]["cinematographer:888001"]["score"] > 0
     assert ranked[0]["movie_id"] == candidate_id
@@ -841,7 +841,7 @@ def test_copref_reranks_and_explains(app):
         )
         db.session.commit()
 
-        _, ranked = compute_user_recommendations(user_id)
+        _, ranked, _ = compute_user_recommendations(user_id)
         ranked_ids = [rec["movie_id"] for rec in ranked]
 
         assert ranked_ids == [similar.id, plain.id]
@@ -1001,7 +1001,7 @@ def test_compute_stores_calibration_curve(app, monkeypatch):
         make_movie_file(candidate, "Bluray-1080p")
         db.session.commit()
 
-        profile, ranked = recommendations.compute_user_recommendations(user_id)
+        profile, ranked, _ = recommendations.compute_user_recommendations(user_id)
 
     curve = profile["calibration"]
     assert curve is not None
@@ -1011,13 +1011,14 @@ def test_compute_stores_calibration_curve(app, monkeypatch):
 
 
 def test_movie_page_shows_estimated_rating(app, admin_client):
-    """An unlogged film in the stored ranking shows the engine's star
-    guess; logging it replaces the guess with the real verdict."""
+    """An unlogged film with a stored score shows the engine's guess as
+    paler "estimated" stars in the widget (#58); logging it replaces
+    the estimate with the real filled verdict."""
 
     import json as jsonlib
 
     from app import db
-    from app.recommendations import PROFILE_KEY, RECS_KEY
+    from app.recommendations import PROFILE_KEY, SCORES_KEY
     from app.videos import star_rating_fields
     from app.models import UserMovieReview
 
@@ -1029,13 +1030,7 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
         pick_id = pick.id
 
     app.redis.set(
-        RECS_KEY.format(user_id=user_id),
-        jsonlib.dumps(
-            {
-                "computed_at": "2026-08-12 01:45",
-                "items": [{"movie_id": pick_id, "score": 9.0, "because": []}],
-            }
-        ),
+        SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(pick_id): 9.0})
     )
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),
@@ -1051,9 +1046,13 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
         ),
     )
 
+    # Score 9.0 estimates 4.5 stars: four paler "estimated" glyphs and
+    # the hint title, no filled ones
+
     page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
-    assert "You might rate this around" in page
-    assert "★★★★½" in page or "&#9733;&#9733;&#9733;&#9733;&#189;" in page
+    assert page.count("star estimated") == 4
+    assert "star filled" not in page
+    assert "Estimated for you" in page
 
     with app.app_context():
         db.session.add(
@@ -1067,7 +1066,8 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
         db.session.commit()
 
     page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
-    assert "You might rate this around" not in page
+    assert "star estimated" not in page
+    assert page.count("star filled") == 4
 
 
 def test_single_movie_score_matches_the_stored_recipe(app):
@@ -1110,7 +1110,7 @@ def test_single_movie_score_matches_the_stored_recipe(app):
         )
         db.session.commit()
 
-        profile, ranked = compute_user_recommendations(user_id)
+        profile, ranked, _ = compute_user_recommendations(user_id)
         item = next(rec for rec in ranked if rec["movie_id"] == pick.id)
         live = single_movie_score(user_id, pick, profile)
         assert live == pytest.approx(item["score"], abs=1e-4)
@@ -1163,14 +1163,15 @@ def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client
     )
 
     # No affinities, no copref neighbors: the live score is 0.0, which
-    # sits below the whole curve and reads out at its lowest star
+    # sits below the whole curve and reads out at its lowest star —
+    # one paler "estimated" glyph in the widget
 
     page = admin_client.get(f"/movie/{outsider_id}").get_data(as_text=True)
-    assert "You might rate this around" in page
-    assert 'You might rate this around <span class="text-nowrap">&#9733;</span>' in page
+    assert page.count("star estimated") == 1
+    assert "Estimated for you" in page
 
     page = admin_client.get(f"/movie/{raw_id}").get_data(as_text=True)
-    assert "You might rate this around" not in page
+    assert "star estimated" not in page
 
 
 def test_shuffle_daily_is_deterministic_per_seed(app):
@@ -1213,7 +1214,7 @@ def test_stored_cut_deepens_by_watchlisted_candidates(app):
                 db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
         db.session.commit()
 
-        _, ranked = compute_user_recommendations(user_id, limit=2)
+        _, ranked, _ = compute_user_recommendations(user_id, limit=2)
 
     # Five positive candidates; the cut is limit 2 + 1 watchlisted
 

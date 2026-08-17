@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -90,21 +91,19 @@
 	</a>
 	<div class="media-body">
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">{{ review.movie.tmdb_title if review.movie.tmdb_title else review.movie.title }} ({{ review.movie.tmdb_release_date.strftime("%Y") if (review.movie.tmdb_title and review.movie.tmdb_release_date) else review.movie.year }})</a></h5>
-		{% if review.liked %}
-			<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-				<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
-			</svg>
-		{% endif %}
-		{% for n in range(review.whole_stars or 0) %}
-			<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-star-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-				<path d="M3.612 15.443c-.386.198-.824-.149-.746-.592l.83-4.73L.173 6.765c-.329-.314-.158-.888.283-.95l4.898-.696L7.538.792c.197-.39.73-.39.927 0l2.184 4.327 4.898.696c.441.062.612.636.283.95l-3.523 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256z"/>
-			</svg>
-		{% endfor %}
-		{% if review.half_stars == 1 %}
-			<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-star-half" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-				<path fill-rule="evenodd" d="M5.354 5.119L7.538.792A.516.516 0 0 1 8 .5c.183 0 .366.097.465.292l2.184 4.327 4.898.696A.537.537 0 0 1 16 6.32a.55.55 0 0 1-.17.445l-3.523 3.356.83 4.73c.078.443-.36.79-.746.592L8 13.187l-4.389 2.256a.519.519 0 0 1-.146.05c-.341.06-.668-.254-.6-.642l.83-4.73L.173 6.765a.55.55 0 0 1-.171-.403.59.59 0 0 1 .084-.302.513.513 0 0 1 .37-.245l4.898-.696zM8 12.027c.08 0 .16.018.232.056l3.686 1.894-.694-3.957a.564.564 0 0 1 .163-.505l2.906-2.77-4.052-.576a.525.525 0 0 1-.393-.288L8.002 2.223 8 2.226v9.8z"/>
-			</svg>
-		{% endif %}
+		{# Each viewing carries its own live star row (#58/#57), posting
+		   to review_edit — stars only, never the ✕: a logged film's
+		   floor is 1 star. The typed text rides along with a star tap
+		   (both fields belong to the same form) #}
+		<form action="{{ url_for('main.review_edit', review_id=review.id) }}" method="post" class="d-inline-flex align-items-center">
+			{{ review_upload_form.csrf_token }}
+			{% if review.liked %}
+				<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mr-1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+					<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
+				</svg>
+			{% endif %}
+			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), live=true) }}
+		</form>
 		{% if review.rewatch %}
 			<span class="badge badge-secondary align-text-bottom" title="Rewatch">
 				<svg width="0.9em" height="0.9em" viewBox="0 0 16 16" class="bi bi-arrow-repeat" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -120,7 +119,18 @@
 		   shift them a day early for viewers west of UTC #}
 		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
 		{{ review.review }}
-		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id) }}">{{ "Edit review" if (review.review or review.rating is not none) else "Add review" }}</a></div>
+		{# Freeform text lives in its own per-row form (#58c) — separate
+		   from the star form, so a star tap can never silently save
+		   half-edited text. Dates still edit on the full review page #}
+		<details class="mt-1">
+			<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Edit review text" if review.review else "Add review text" }}</summary>
+			<form action="{{ url_for('main.review_edit', review_id=review.id) }}" method="post" class="mt-1" style="max-width: 40rem;">
+				{{ review_upload_form.csrf_token }}
+				<textarea name="review" class="form-control form-control-sm mb-1" rows="3" aria-label="Review text">{{ review.review or "" }}</textarea>
+				<button type="submit" name="review_submit" value="y" class="btn btn-sm btn-success">Save review</button>
+			</form>
+		</details>
+		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id) }}">Edit date</a></div>
 	</div>
 </div>
 {% endfor %}

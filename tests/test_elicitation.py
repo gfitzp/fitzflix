@@ -846,21 +846,21 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         headers=headers,
     )
     assert response.status_code == 200
-    assert response.get_json() == {"rating": 5.0, "flagged": False}
+    assert response.get_json() == {"rating": 5.0, "flagged": False, "estimated": None}
 
     response = admin_client.post(
         f"/movie/{movie_id}",
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "5"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": False}
+    assert response.get_json() == {"rating": None, "flagged": False, "estimated": None}
 
     response = admin_client.post(
         f"/movie/{movie_id}",
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": True}
+    assert response.get_json() == {"rating": None, "flagged": True, "estimated": None}
 
     # The page renders the lit ✕ while flagged; a second ✕ undoes it
 
@@ -871,4 +871,41 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": False}
+    assert response.get_json() == {"rating": None, "flagged": False, "estimated": None}
+
+
+def test_rate_featured_card_shows_the_estimate(app, admin_client):
+    """The featured card's star row previews the engine's estimate from
+    the nightly score map (#53 — Glenn chose consistency over keeping
+    the elicitation unanchored)."""
+
+    import json as jsonlib
+
+    from app.recommendations import PROFILE_KEY, SCORES_KEY
+
+    with app.app_context():
+        user_id = admin_id()
+        featured = make_candidate("Estimate Featured", 1990)
+        db.session.commit()
+        featured_id = featured.id
+
+    app.redis.set(
+        SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(featured_id): 9.0})
+    )
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        jsonlib.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    page = admin_client.get("/rate").get_data(as_text=True)
+    assert page.count("star estimated") == 4
+    assert "Estimated for you" in page

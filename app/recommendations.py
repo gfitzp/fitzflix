@@ -126,6 +126,12 @@ NOT_INTERESTED_WEIGHT = -0.3
 RECS_KEY = "fitzflix:recs:{user_id}"
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
+# The complete score map (#58): every scoreable unlogged film's full-
+# recipe engine score, so any surface can show an estimated rating
+# with one Redis read — the ranking above keeps only the positive cut
+
+SCORES_KEY = "fitzflix:recs:scores:{user_id}"
+
 # Deep enough that the landing page's no-repeat partition (12 films a
 # day, one per quality tier) cycles the whole set roughly monthly —
 # the library pool measured 2,800+ positive-scoring films, so depth
@@ -648,16 +654,47 @@ def local_candidates(user_id):
     return [movie_id for (movie_id,) in rows]
 
 
+def scoreable_records(user_id):
+    """File-less movie records with refreshed TMDb data the user hasn't
+    logged or waved off — catalog and watchlist records whose pages can
+    show an estimated rating from the nightly score map (#58)."""
+
+    seen = db.session.query(UserMovieReview.movie_id).filter(
+        UserMovieReview.user_id == int(user_id),
+        UserMovieReview.movie_id.isnot(None),
+    )
+    refused = db.session.query(UserMovieStatus.movie_id).filter(
+        UserMovieStatus.user_id == int(user_id),
+        UserMovieStatus.kind == "not_interested",
+    )
+    rows = (
+        db.session.query(Movie.id)
+        .filter(Movie.tmdb_data_as_of.isnot(None))
+        .filter(~Movie.files.any(File.feature_type_id.is_(None)))
+        .filter(~Movie.id.in_(seen))
+        .filter(~Movie.id.in_(refused))
+        .all()
+    )
+    return [movie_id for (movie_id,) in rows]
+
+
 def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
-    """(profile, ranked recommendations) for one user, or (None, []) for
-    a user with no diary rows."""
+    """(profile, ranked recommendations, score map) for one user, or
+    (None, [], {}) for a user with no diary rows.
+
+    The score map covers every scoreable unlogged film — owned
+    candidates AND file-less records with TMDb data — with the full
+    recipe, before the ranking's positives-only cut, so estimated
+    ratings can render anywhere (#58)."""
 
     weights = user_movie_weights(user_id)
     if not weights:
-        return None, []
+        return None, [], {}
 
     candidates = local_candidates(user_id)
-    features = collect_features(list(set(candidates) | set(weights)))
+    extras = scoreable_records(user_id)
+    scoreable = list(dict.fromkeys(candidates + extras))
+    features = collect_features(list(set(scoreable) | set(weights)))
     profile = build_profile(weights, features)
 
     # The stored cut must survive the render-time exclusions: the
@@ -701,7 +738,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
 
     tmdb_of = dict(
         db.session.query(Movie.id, Movie.tmdb_id)
-        .filter(Movie.id.in_(list(set(candidates) | set(weights)) or [0]))
+        .filter(Movie.id.in_(list(set(scoreable) | set(weights)) or [0]))
         .filter(Movie.tmdb_id.isnot(None))
     )
     weights_by_tmdb = {
@@ -731,8 +768,10 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         user_id, weights, features, entries_by_tmdb, tmdb_of, award_counts
     )
 
+    candidate_set = set(candidates)
+    scores_map = {}
     ranked = []
-    for movie_id in candidates:
+    for movie_id in scoreable:
         movie_features = features.get(movie_id, [])
         if not movie_features:
             continue
@@ -740,7 +779,14 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         entries = entries_by_tmdb.get(tmdb_of.get(movie_id), [])
         copref = _copref_value(entries)
         total = score + copref
-        if total <= 0:
+        # The award prior keeps its original taste gate: awards only
+        # decorate films the profile itself already scores positive
+        wins, nominations = award_counts.get(movie_id, (0, 0))
+        prior = award_prior(wins, nominations)
+        if score > 0:
+            total += prior
+        scores_map[movie_id] = round(total, 4)
+        if movie_id not in candidate_set or total <= 0:
             continue
         because = [
             label for contribution, label in contributions[:4] if contribution > 0
@@ -749,19 +795,14 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
             title = anchor_titles.get(_copref_top_anchor(entries))
             if title:
                 because.insert(0, f"liked by people who liked {title}")
-        # The award prior keeps its original taste gate: awards only
-        # decorate films the profile itself already scores positive
-        wins, nominations = award_counts.get(movie_id, (0, 0))
-        prior = award_prior(wins, nominations)
         if score > 0 and prior > 0:
-            total += prior
             because.append(award_label(wins, nominations))
         ranked.append(
             {"movie_id": movie_id, "score": round(total, 4), "because": because}
         )
 
     ranked.sort(key=lambda rec: rec["score"], reverse=True)
-    return profile, ranked[:depth]
+    return profile, ranked[:depth], scores_map
 
 
 # The "Watch it again" shelf: owned films the user liked whose last
@@ -903,6 +944,17 @@ def stored_recommendations(redis, user_id):
     return json.loads(payload) if payload else None
 
 
+def stored_scores(redis, user_id):
+    """The nightly score map — {movie_id: full-recipe score} over every
+    scoreable unlogged film — or {} before the first compute. JSON keys
+    come back as strings, so they're re-inted here."""
+
+    payload = redis.get(SCORES_KEY.format(user_id=int(user_id)))
+    if not payload:
+        return {}
+    return {int(movie_id): score for movie_id, score in json.loads(payload).items()}
+
+
 def stored_profile(redis, user_id):
     """The nightly recompute's stored taste profile for a user, or None."""
 
@@ -999,7 +1051,7 @@ def recompute_recommendations():
             .distinct()
         ]
         for user_id in user_ids:
-            profile, ranked = compute_user_recommendations(user_id)
+            profile, ranked, scores = compute_user_recommendations(user_id)
             if profile is None:
                 continue
             current_app.redis.set(
@@ -1009,8 +1061,12 @@ def recompute_recommendations():
                 RECS_KEY.format(user_id=user_id),
                 json.dumps({"computed_at": computed_at, "items": ranked}),
             )
+            current_app.redis.set(
+                SCORES_KEY.format(user_id=user_id), json.dumps(scores)
+            )
             current_app.logger.info(
-                f"Recommendations: stored {len(ranked)} films for user {user_id}"
+                f"Recommendations: stored {len(ranked)} films "
+                f"({len(scores)} scored) for user {user_id}"
             )
         return True
 

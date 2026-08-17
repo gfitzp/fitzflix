@@ -116,6 +116,7 @@ from app.recommendations import (
     single_movie_score,
     stored_profile,
     stored_recommendations,
+    stored_scores,
     watch_again_shelf,
 )
 from app.streaming import (
@@ -250,8 +251,10 @@ def _ladder_fetch():
 
 def _ladder_state(user_id, movie_id):
     """The star row's current verdict for a film as its JSON payload:
-    the latest viewing's rating (the row the movie page displays) and
-    whether the not-interested flag is set."""
+    the latest viewing's rating (the row the movie page displays),
+    whether the not-interested flag is set, and — for UNLOGGED,
+    unflagged films — the engine's estimated rating, so removing a
+    verdict repaints the row back to its estimate (#58)."""
 
     row = (
         UserMovieReview.query.filter_by(user_id=int(user_id), movie_id=int(movie_id))
@@ -264,6 +267,13 @@ def _ladder_state(user_id, movie_id):
         ).first()
         is not None
     )
+    estimated = None
+    if row is None and not flagged:
+        score = stored_scores(current_app.redis, int(user_id)).get(int(movie_id))
+        if score is not None:
+            estimated = estimated_rating(
+                stored_profile(current_app.redis, int(user_id)), score
+            )
     return jsonify(
         {
             "rating": (
@@ -272,6 +282,7 @@ def _ladder_state(user_id, movie_id):
                 else None
             ),
             "flagged": flagged,
+            "estimated": estimated,
         }
     )
 
@@ -2201,21 +2212,11 @@ def movie(movie_id):
     might_interest = False
     if review is None and not refused:
         profile = stored_profile(current_app.redis, current_user.id)
-        stored = stored_recommendations(current_app.redis, current_user.id)
-        item = next(
-            (
-                entry
-                for entry in (stored.get("items", []) if stored else [])
-                if entry["movie_id"] == movie.id
-            ),
-            None,
-        )
-        if item is not None:
-            estimated = estimated_rating(profile, item["score"])
-        else:
+        score = stored_scores(current_app.redis, current_user.id).get(movie.id)
+        if score is None:
             score = single_movie_score(current_user.id, movie, profile)
-            if score is not None:
-                estimated = estimated_rating(profile, score)
+        if score is not None:
+            estimated = estimated_rating(profile, score)
 
         if films:
             might_interest = movie.id in recommended_movie_ids(
@@ -3773,35 +3774,42 @@ def review_edit(review_id):
                     setattr(user_review, field, value)
                 user_review.liked = quick_rating >= 3
 
-        # The date-only form field can't improve on a stored timestamp
-        # (e.g. a Plex watch's actual clock time), so only replace the
-        # value when the calendar date itself changed
+        # The date and text only change when their fields actually
+        # RODE IN THE POST — the history page's per-row forms (#58) and
+        # star-only ladder taps carry no date field, and an absent
+        # field must never read as "clear the watch date"
 
-        new_date = movie_review_form.date_watched.data
-        if new_date is None:
-            user_review.date_watched = None
-        elif (
-            user_review.date_watched is None
-            or user_review.date_watched.date() != new_date
-        ):
-            user_review.date_watched = _watched_timestamp(new_date)
+        if "date_watched" in request.form:
+            # The date-only form field can't improve on a stored
+            # timestamp (e.g. a Plex watch's actual clock time), so only
+            # replace the value when the calendar date itself changed
+            new_date = movie_review_form.date_watched.data
+            if new_date is None:
+                user_review.date_watched = None
+            elif (
+                user_review.date_watched is None
+                or user_review.date_watched.date() != new_date
+            ):
+                user_review.date_watched = _watched_timestamp(new_date)
 
         # Text changes on a row that was already reviewed keep the original
         # review date and stamp date_updated instead; a first review (no
         # date_reviewed yet) sets the review date
 
-        new_text = movie_review_form.review.data or ""
-        if new_text != (user_review.review or ""):
-            user_review.review = new_text
-            if user_review.date_reviewed:
-                user_review.date_updated = datetime.now()
-            else:
-                user_review.date_reviewed = datetime.now()
+        if "review" in request.form:
+            new_text = movie_review_form.review.data or ""
+            if new_text != (user_review.review or ""):
+                user_review.review = new_text
+                if user_review.date_reviewed:
+                    user_review.date_updated = datetime.now()
+                else:
+                    user_review.date_reviewed = datetime.now()
 
         db.session.commit()
         if _ladder_fetch():
             # This page edits ONE viewing, so the row's state comes from
-            # that row — not the latest-viewing lookup the movie page uses
+            # that row — not the latest-viewing lookup the movie page
+            # uses; a logged viewing never shows an estimate
             return jsonify(
                 {
                     "rating": (
@@ -3810,6 +3818,7 @@ def review_edit(review_id):
                         else None
                     ),
                     "flagged": False,
+                    "estimated": None,
                 }
             )
         flash(f"Updated your review of '{title}'", "success")
@@ -5563,6 +5572,19 @@ def rate():
     featured = movies.get(featured_id)
     suggestions = [movies[movie_id] for movie_id in suggested_ids if movie_id in movies]
     anchor = movies.get(anchor_id)
+
+    # The featured card shows the engine's estimate in the star row
+    # (#53/#58 — Glenn chose consistency over the original keep-the-
+    # elicitation-unanchored rule); featured films are candidates, so
+    # the nightly score map covers them
+
+    featured_estimated = None
+    if featured is not None:
+        score = stored_scores(current_app.redis, current_user.id).get(featured.id)
+        if score is not None:
+            featured_estimated = estimated_rating(
+                stored_profile(current_app.redis, current_user.id), score
+            )
     directors = []
     top_cast = []
     if featured:
@@ -5588,6 +5610,7 @@ def rate():
         title="Rate Films",
         form=form,
         featured=featured,
+        featured_estimated=featured_estimated,
         suggestions=suggestions,
         anchor=anchor,
         directors=directors,

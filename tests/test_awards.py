@@ -303,7 +303,7 @@ def test_award_prior_reranks_and_explains(app):
         )
         db.session.flush()
 
-        profile, ranked = compute_user_recommendations(user_id)
+        profile, ranked, _ = compute_user_recommendations(user_id)
         ranked_ids = [rec["movie_id"] for rec in ranked]
 
         assert ranked_ids == [awarded.id, plain.id]

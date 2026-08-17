@@ -461,11 +461,16 @@
 			}).then(function(state) {
 				var row = button.closest(".star-row");
 				var whole = state.rating === null ? 0 : Math.floor(state.rating);
+				var estimated = (state.rating === null && state.estimated)
+					? Math.floor(state.estimated) : 0;
+				row.title = estimated
+					? "Estimated for you — tap a star to rate it yourself" : "";
 				// The stars sit reversed in the DOM (see the ladder
 				// macro), so paint by each button's own value
 				row.querySelectorAll(".star").forEach(function(star) {
 					var value = parseInt(star.value, 10);
 					star.classList.toggle("filled", value <= whole);
+					star.classList.toggle("estimated", value <= estimated);
 					star.title = (state.rating !== null && value === state.rating)
 						? "Tap again to remove your rating"
 						: star.getAttribute("aria-label");

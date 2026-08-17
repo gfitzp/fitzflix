@@ -1267,3 +1267,67 @@ def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
     old = page.index("Old Reviewed Film")
     dateless_pos = page.index("Dateless Rating Film")
     assert fresh < old < dateless_pos
+
+
+def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
+    """History rows carry live star forms posting to review_edit (#58c):
+    a star-only post never touches the viewing's date or text, and the
+    per-row text form never touches the stars or date."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.filter_by(admin=True).first()
+        movie = make_movie("History Row Film", 1988)
+        row = UserMovieReview(
+            user_id=user.id,
+            movie_id=movie.id,
+            liked=True,
+            date_watched=datetime(2021, 3, 14, 20, 0),
+            review="Original text",
+            date_reviewed=datetime(2021, 3, 15),
+            **star_rating_fields(4.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        review_id = row.id
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert 'data-ladder-live="1"' in page
+    assert f"/review/{review_id}/edit" in page
+    assert "Add review text" not in page and "Edit review text" in page
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    # A star-only tap (the row form's exact payload) changes the stars
+    # and nothing else
+
+    response = admin_client.post(
+        f"/review/{review_id}/edit",
+        data={"csrf_token": token, "quick_rating": "2"},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.get_json()["rating"] == 2.0
+    with app.app_context():
+        row = db.session.get(UserMovieReview, review_id)
+        assert float(row.rating) == 2.0
+        assert row.date_watched == datetime(2021, 3, 14, 20, 0)
+        assert row.review == "Original text"
+
+    # The text form's exact payload changes the text and nothing else
+
+    response = admin_client.post(
+        f"/review/{review_id}/edit",
+        data={
+            "csrf_token": token,
+            "review": "Rewritten text",
+            "review_submit": "y",
+        },
+    )
+    assert response.status_code == 302
+    with app.app_context():
+        row = db.session.get(UserMovieReview, review_id)
+        assert row.review == "Rewritten text"
+        assert float(row.rating) == 2.0
+        assert row.date_watched == datetime(2021, 3, 14, 20, 0)
