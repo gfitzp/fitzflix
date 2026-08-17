@@ -88,7 +88,10 @@
 		/* The engine's estimate previews in a paler gold when the user
 		   has no rating of their own — a hint, never a verdict */
 		.star-row .star.estimated { color: #f3d9ab; }
-		.star-row:has(.star:hover) .star { color: #c9c9c9; }
+		/* A fractional estimate part-fills its last star: a hard-stop
+		   gradient clipped to the glyph, --est-fill = the percentage */
+		.star-row .star.est-partial { background: linear-gradient(90deg, #f3d9ab var(--est-fill, 100%), #c9c9c9 var(--est-fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+		.star-row:has(.star:hover) .star { color: #c9c9c9; background: none; }
 		.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
 		/* The ✕'s visual gap to the stars is PADDING, not margin, so
 		   the whole row is one continuous hit area — clicking between

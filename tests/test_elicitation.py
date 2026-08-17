@@ -968,5 +968,10 @@ def test_rate_featured_card_shows_the_estimate(app, admin_client):
     )
 
     page = admin_client.get("/rate").get_data(as_text=True)
-    assert page.count("star estimated") == 4
-    assert "Estimated for you" in page
+
+    # The 4.5 estimate fills four stars and half of the fifth
+
+    assert page.count("star estimated") == 5
+    assert page.count("estimated est-partial") == 1
+    assert "--est-fill: 50%" in page
+    assert "Estimated 4.5 for you" in page

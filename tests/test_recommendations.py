@@ -1010,8 +1010,9 @@ def test_not_interested_excludes_and_weighs(app):
 
 def test_estimated_rating_quantile_math(app):
     """The calibration curve reads a score's position among the user's
-    own films out at the same position in their sorted ratings —
-    half-star rounded, clamped, and absent without a curve."""
+    own films out at the same position in their sorted ratings — full
+    precision (the widget fills partial stars), clamped, and absent
+    without a curve."""
 
     from app.recommendations import estimated_rating
 
@@ -1029,10 +1030,11 @@ def test_estimated_rating_quantile_math(app):
     assert estimated_rating(profile, -1.0) == 1.0
 
     # Midway up the scores reads midway up the stars: 2.0 sits at the
-    # 0.625 position, interpolating to 3.75 stars, rounded to 4.0
+    # 0.625 position, interpolating to 3.75 stars — kept as-is, no
+    # half-star rounding
 
-    assert estimated_rating(profile, 2.0) == 4.0
-    assert estimated_rating(profile, 0.5) == 2.0
+    assert estimated_rating(profile, 2.0) == 3.75
+    assert estimated_rating(profile, 0.5) == 1.75
 
     # No curve, no estimate
 
@@ -1107,13 +1109,16 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
         ),
     )
 
-    # Score 9.0 estimates 4.5 stars: four paler "estimated" glyphs and
-    # the hint title, no filled ones
+    # Score 9.0 estimates 4.5 stars: four paler "estimated" glyphs, a
+    # half-filled fifth, and the hint title carrying the value — no
+    # filled ones
 
     page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
-    assert page.count("star estimated") == 4
+    assert page.count("star estimated") == 5
+    assert page.count("estimated est-partial") == 1
+    assert "--est-fill: 50%" in page
     assert "star filled" not in page
-    assert "Estimated for you" in page
+    assert "Estimated 4.5 for you" in page
 
     with app.app_context():
         db.session.add(
@@ -1229,7 +1234,8 @@ def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client
 
     page = admin_client.get(f"/movie/{outsider_id}").get_data(as_text=True)
     assert page.count("star estimated") == 1
-    assert "Estimated for you" in page
+    assert "estimated est-partial" not in page
+    assert "Estimated 1 for you" in page
 
     page = admin_client.get(f"/movie/{raw_id}").get_data(as_text=True)
     assert "star estimated" not in page

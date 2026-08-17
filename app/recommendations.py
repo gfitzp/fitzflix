@@ -569,8 +569,9 @@ def build_calibration(
 
 def estimated_rating(profile, score):
     """The user's likely star rating for a film scoring `score`, from
-    the profile's stored calibration curve — half-star rounded, or
-    None when no curve is stored."""
+    the profile's stored calibration curve — full precision so the
+    widget can fill partial stars (submitted ratings stay whole; only
+    estimates are fractional), or None when no curve is stored."""
 
     calibration = (profile or {}).get("calibration") or {}
     scores = calibration.get("scores") or []
@@ -584,7 +585,7 @@ def estimated_rating(profile, score):
     lower = stars[int(index)]
     upper = stars[min(int(index) + 1, len(stars) - 1)]
     value = lower + (upper - lower) * (index - int(index))
-    return max(0.5, min(5.0, round(value * 2) / 2))
+    return max(0.5, min(5.0, round(value, 2)))
 
 
 def single_movie_score(user_id, movie, profile):

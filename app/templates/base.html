@@ -462,15 +462,26 @@
 				var row = button.closest(".star-row");
 				var whole = state.rating === null ? 0 : Math.floor(state.rating);
 				var estimated = (state.rating === null && state.estimated)
-					? Math.floor(state.estimated) : 0;
+					? state.estimated : 0;
 				row.title = estimated
-					? "Estimated for you — tap a star to rate it yourself" : "";
+					? "Estimated " + parseFloat(estimated.toFixed(2))
+						+ " for you — tap a star to rate it yourself" : "";
 				// The stars sit reversed in the DOM (see the ladder
-				// macro), so paint by each button's own value
+				// macro), so paint by each button's own value; a
+				// fractional estimate part-fills its last star via
+				// the --est-fill gradient stop
 				row.querySelectorAll(".star").forEach(function(star) {
 					var value = parseInt(star.value, 10);
+					var pct = Math.round(
+						Math.max(0, Math.min(1, estimated - value + 1)) * 100);
 					star.classList.toggle("filled", value <= whole);
-					star.classList.toggle("estimated", value <= estimated);
+					star.classList.toggle("estimated", pct > 0);
+					star.classList.toggle("est-partial", pct > 0 && pct < 100);
+					if (pct > 0 && pct < 100) {
+						star.style.setProperty("--est-fill", pct + "%");
+					} else {
+						star.style.removeProperty("--est-fill");
+					}
 					star.title = (state.rating !== null && value === state.rating)
 						? "Tap again to remove your rating"
 						: star.getAttribute("aria-label");
