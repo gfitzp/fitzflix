@@ -578,10 +578,16 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
         db.session.commit()
         movie_id = movie.id
 
+    # A liked-only viewing shows as UNRATED in the interface (Glenn's
+    # rule): an empty interactive row, no heart, no filled stars — the
+    # like still feeds the profile as an imputed 3
+
     response = admin_client.get(f"/movie/{movie_id}")
     assert response.status_code == 200
-    assert b"bi-heart-fill" in response.data
-    assert b"bi-star-fill" not in response.data
+    page = response.get_data(as_text=True)
+    assert "star-row" in page
+    assert "bi-heart-fill" not in page
+    assert "star filled" not in page and "star estimated" not in page
 
 
 class FakeTMDbDetails:

@@ -262,6 +262,12 @@ def user_movie_weights(user_id):
     weights = {}
     for movie_id, viewings, rating, liked in rows:
         weight = 0.0
+        if rating is None and liked:
+            # A liked-only viewing — Letterboxd allows a heart with no
+            # stars — counts as a 3-star verdict for the profile
+            # (Glenn's rule, Aug 2026); the interface shows it unrated
+            # so the user can still supply real stars later
+            rating = 3.0
         if rating is not None:
             centered = (rating - mean_rating) / RATING_SPREAD
             weight += max(-1.0, min(1.0, centered))

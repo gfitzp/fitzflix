@@ -87,20 +87,24 @@ def test_user_movie_weights_math(app):
         loved = make_movie("Weights Loved", 1990)
         meh = make_movie("Weights Meh", 1991)
         watched_twice = make_movie("Weights Watched Twice", 1992)
+        hearted = make_movie("Weights Hearted Only", 1993)
         log_watch(user_id, loved, rating=5, liked=True)
         log_watch(user_id, meh, rating=3)
         log_watch(user_id, watched_twice)
         log_watch(user_id, watched_twice)
+        log_watch(user_id, hearted, liked=True)
 
         weights = user_movie_weights(user_id)
 
-    # Mean rating is 4: the 5 centers to +0.4 plus the 1.0 like bonus;
-    # the 3 centers to -0.4; two unrated watches are a bare watch plus
-    # one rewatch increment
+    # Mean rating is 4 (imputed ratings never move the mean): the 5
+    # centers to +0.4 plus the 1.0 like bonus; the 3 centers to -0.4;
+    # two unrated watches are a bare watch plus one rewatch increment;
+    # a liked-only row imputes 3 stars (-0.4) plus the like bonus
 
     assert weights[loved.id] == pytest.approx(1.4)
     assert weights[meh.id] == pytest.approx(-0.4)
     assert weights[watched_twice.id] == pytest.approx(0.55)
+    assert weights[hearted.id] == pytest.approx(0.6)
 
 
 def test_recommendations_prefer_matching_features_and_say_why(app):
@@ -729,11 +733,13 @@ def test_watch_again_shelf_picks_stale_favorites(app):
         items = watch_again_shelf(user_id)
         ids = [item["movie_id"] for item in items]
 
-        # The stale like outranks the dateless favorite (like weight
-        # beats the extra staleness), and nothing else qualifies
+        # Under the liked-only-imputes-3-stars rule the dateless
+        # 5-star favorite now outranks the stale bare like (its centered
+        # rating beats the imputed 3's), and nothing else qualifies
 
-        assert ids == [stale_liked.id, dateless.id]
-        assert items[1]["last_watched"] is None
+        assert ids == [dateless.id, stale_liked.id]
+        assert items[0]["last_watched"] is None
+        assert items[1]["last_watched"] is not None
 
 
 def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
