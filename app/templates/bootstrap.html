@@ -217,9 +217,15 @@
 			var startY = null;
 			var pulled = 0;
 			var indicator = document.createElement("div");
-			indicator.style.cssText = "position:fixed;top:0;left:0;right:0;height:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;z-index:2000;background:var(--bs-body-bg);color:var(--bs-secondary-color);font-size:.85rem;";
+			indicator.style.cssText = "position:fixed;top:0;left:0;right:0;height:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;z-index:2000;background:var(--bs-tertiary-bg);color:var(--bs-secondary-color);font-size:.85rem;padding-bottom:.5rem;";
+			// The indicator grows to exactly the navbar's height and
+			// shares its background, so the pull reads as the navbar
+			// making room rather than a foreign banner
+			var maxHeight = 56;
 			document.addEventListener("DOMContentLoaded", function () {
 				document.body.appendChild(indicator);
+				var navbar = document.querySelector(".navbar.fixed-top");
+				if (navbar && navbar.offsetHeight) maxHeight = navbar.offsetHeight;
 			});
 			document.addEventListener("touchstart", function (event) {
 				startY = window.scrollY === 0 ? event.touches[0].clientY : null;
@@ -229,7 +235,7 @@
 				if (startY === null) return;
 				pulled = event.touches[0].clientY - startY;
 				if (pulled > 0) {
-					indicator.style.height = Math.min(pulled / 2, 48) + "px";
+					indicator.style.height = Math.min(pulled / 2, maxHeight) + "px";
 					indicator.textContent = pulled >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
 				}
 			}, { passive: true });
