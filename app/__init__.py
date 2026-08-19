@@ -212,6 +212,19 @@ def cron_table(config):
             )
         )
 
+    # Reconcile the Plex and Fitzflix watchlists both ways (#67); the
+    # account-level discover API needs only the token, not the server
+
+    if config.get("PLEX_TOKEN"):
+        table.append(
+            (
+                "10,40 * * * *",
+                "app.plex_watchlist.sync_plex_watchlist",
+                900,
+                "Syncing the Plex watchlist",
+            )
+        )
+
     return [
         {
             "cron": cron_string,
