@@ -8,6 +8,8 @@ from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
     import_event_webhook,
+    import_source_incomplete,
+    reject_incomplete_download,
     send_arr_command,
 )
 
@@ -22,6 +24,19 @@ def radarr_add(payload):
         payload["movie"].get("folderPath"),
         payload["movieFile"].get("relativePath"),
     )
+
+    # A provably truncated download never reaches the pipeline (#73):
+    # mark the grab failed so Radarr blocklists it and searches again
+
+    if import_source_incomplete(downloaded_file_path):
+        movie_id = payload["movie"].get("id")
+        reject_incomplete_download(
+            "Radarr",
+            payload,
+            downloaded_file_path,
+            {"name": "RefreshMovie", "movieIds": [int(movie_id)]} if movie_id else None,
+        )
+        return response
 
     # Rename the downloaded file with a downgraded quality title
 

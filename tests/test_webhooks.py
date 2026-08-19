@@ -140,3 +140,121 @@ def test_download_with_already_web_quality_skips_rename(app, client, tmp_path):
     assert response.status_code == 200
     assert (movie_dir / original).exists()
     assert app.import_queue.fetch_job(safe_job_id(original)) is not None
+
+
+def test_incomplete_download_is_refused_and_marked_failed(
+    app, client, tmp_path, monkeypatch
+):
+    """A provably truncated download never reaches the pipeline (#73):
+    the grab is marked failed — blocklist + replacement search — the
+    junk file is deleted, and nothing is enqueued."""
+
+    from app.api import arr as arr_module
+    from app.api import radarr as radarr_module
+
+    movie_dir = tmp_path / "Heat (1995)"
+    movie_dir.mkdir(parents=True)
+    original = "Heat (1995) - [WEBDL-1080p].mkv"
+    (movie_dir / original).write_bytes(b"partial")
+
+    monkeypatch.setattr(radarr_module, "import_source_incomplete", lambda path: True)
+    calls = []
+    monkeypatch.setattr(
+        arr_module,
+        "mark_grab_failed",
+        lambda service, url, key, dl: calls.append((service, dl)) or True,
+    )
+
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 3, "folderPath": str(movie_dir)},
+            "movieFile": {"relativePath": original, "quality": "WEBDL-1080p"},
+            "downloadId": "abc123",
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert calls == [("Radarr", "abc123")]
+    assert not (movie_dir / original).exists()
+    assert app.import_queue.jobs == []
+
+
+def test_incomplete_download_kept_when_failed_mark_fails(
+    app, client, tmp_path, monkeypatch
+):
+    """If the sending app can't be told, the junk file stays put for
+    manual handling — but still never reaches the pipeline."""
+
+    from app.api import arr as arr_module
+    from app.api import sonarr as sonarr_module
+
+    series_dir = tmp_path / "Doctor Who (2005)" / "Season 01"
+    series_dir.mkdir(parents=True)
+    original = "Doctor Who (2005) - S01E01 - Rose [WEBDL-1080p].mkv"
+    (series_dir / original).write_bytes(b"partial")
+
+    monkeypatch.setattr(sonarr_module, "import_source_incomplete", lambda path: True)
+    monkeypatch.setattr(arr_module, "mark_grab_failed", lambda *args: False)
+
+    response = client.post(
+        "/api/sonarr/add",
+        json={
+            "eventType": "Download",
+            "series": {
+                "id": 7,
+                "title": "Doctor Who (2005)",
+                "path": str(tmp_path / "Doctor Who (2005)"),
+            },
+            "episodeFile": {
+                "relativePath": f"Season 01/{original}",
+                "quality": "WEBDL-1080p",
+            },
+            "episodes": [{"airDate": "2005-03-26"}],
+            "downloadId": "xyz789",
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert (series_dir / original).exists()
+    assert app.import_queue.jobs == []
+
+
+def test_mark_grab_failed_finds_grab_and_posts(app, monkeypatch):
+    """The history lookup finds the grab for the downloadId and posts
+    to /history/failed/{id} — the call that blocklists and re-searches."""
+
+    import json as jsonlib
+
+    from app.api import arr as arr_module
+
+    requests_made = []
+
+    class FakeResponse:
+        def __init__(self, status, data=b"{}"):
+            self.status = status
+            self.data = data
+
+    class FakePool:
+        def request(self, method, url, **kwargs):
+            requests_made.append((method, url))
+            if method == "GET":
+                return FakeResponse(
+                    200,
+                    jsonlib.dumps(
+                        {
+                            "records": [
+                                {"id": 55, "eventType": "downloadFolderImported"},
+                                {"id": 42, "eventType": "grabbed"},
+                            ]
+                        }
+                    ).encode(),
+                )
+            return FakeResponse(200)
+
+    monkeypatch.setattr(arr_module.urllib3, "PoolManager", lambda: FakePool())
+    with app.app_context():
+        assert arr_module.mark_grab_failed("Radarr", "http://r", "key", "dl1") is True
+    assert requests_made[0][0] == "GET"
+    assert requests_made[1] == ("POST", "http://r/api/v3/history/failed/42")

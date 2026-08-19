@@ -10,6 +10,8 @@ from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
     import_event_webhook,
+    import_source_incomplete,
+    reject_incomplete_download,
     send_arr_command,
 )
 
@@ -24,6 +26,19 @@ def sonarr_add(payload):
         payload["series"].get("path"),
         payload["episodeFile"].get("relativePath"),
     )
+
+    # A provably truncated download never reaches the pipeline (#73):
+    # mark the grab failed so Sonarr blocklists it and searches again
+
+    if import_source_incomplete(downloaded_file_path):
+        series_id = payload["series"].get("id")
+        reject_incomplete_download(
+            "Sonarr",
+            payload,
+            downloaded_file_path,
+            {"name": "RescanSeries", "seriesId": int(series_id)} if series_id else None,
+        )
+        return response
 
     # Rename the downloaded file with a downgraded quality title
 
