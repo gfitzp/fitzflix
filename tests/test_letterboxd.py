@@ -110,6 +110,28 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
     assert review["review"] == "My cat hated the soundtrack."
 
 
+def test_parser_unescapes_html_entities_in_review_text(app):
+    from app.letterboxd import parse_letterboxd_feed
+
+    xml = build_feed(
+        feed_item(
+            "letterboxd-review-846738055",
+            88421,
+            rating="4",
+            body=(
+                "<p>&quot;HERE&#039;S YOUR FETTUCCINE!&quot; I haven&#039;t "
+                "laughed that hard at a line in ages &amp; won&#039;t soon "
+                "&lt;3</p>"
+            ),
+        )
+    )
+    (entry,) = parse_letterboxd_feed(xml)
+    assert entry["review"] == (
+        "\"HERE'S YOUR FETTUCCINE!\" I haven't laughed that hard at a line "
+        "in ages & won't soon <3"
+    )
+
+
 def test_sync_adds_rows_and_is_idempotent(app, monkeypatch):
     with app.app_context():
         user = User.query.first()

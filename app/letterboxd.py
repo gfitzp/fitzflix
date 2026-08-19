@@ -10,6 +10,7 @@ bare row a Plex scrobble already wrote for the same film on the same
 (±1) day, so one viewing stays one row as each system reports in.
 """
 
+import html
 import re
 import xml.etree.ElementTree as ET
 
@@ -96,7 +97,11 @@ def parse_letterboxd_feed(xml_text):
         ):
             if "<img" in paragraph.lower():
                 continue
-            cleaned = re.sub(r"<[^>]+>", "", paragraph).strip()
+            # The description ships inside CDATA, so its entities
+            # (&quot;, &#039;, …) reach us literally — unescape after
+            # tag-stripping so an unescaped &lt; can't read as markup
+
+            cleaned = html.unescape(re.sub(r"<[^>]+>", "", paragraph)).strip()
             if not cleaned or BOILERPLATE_RE.match(cleaned):
                 continue
             text_paragraphs.append(cleaned)
