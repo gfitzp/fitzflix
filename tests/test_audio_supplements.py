@@ -80,8 +80,8 @@ def test_existing_twin_makes_the_pass_a_no_op(app):
 
 
 def test_twins_match_count_wise_within_a_group(app):
-    """One FLAC twin can't cover two identical-language lossless
-    tracks — the uncovered one still earns its twin, in place."""
+    """A twin covers only its adjacent neighbor — the second lossless
+    track has no preceding FLAC and still earns its twin, in place."""
 
     from app.videos import plan_audio_supplements
 
@@ -261,3 +261,56 @@ def test_mediaconvert_settings_match_the_validated_job(app):
         "CodingMode": "CODING_MODE_9_1_6",
         "SampleRate": 48000,
     }
+
+
+def test_trailing_flac_is_never_counted_as_a_twin(app):
+    """A FLAC AFTER a lossless track could be anything — a commentary,
+    say — so it never satisfies the twin rule (#69, the Father Goose
+    case): the lossless track gets a fresh twin ahead of it and the
+    unknown FLAC keeps its place, its identity unjudged."""
+
+    from app.videos import plan_audio_supplements
+
+    tracks = [
+        track("DTS-HD Master Audio", "Lossless"),
+        track("FLAC", "Lossless"),
+    ]
+    assert plan_audio_supplements(tracks) == [
+        ("flac", 0),
+        ("copy", 0),
+        ("copy", 1),
+    ]
+
+    # And once supplemented, the file is in the twinned shape: the
+    # re-run plans pure copies
+
+    supplemented = [
+        track("FLAC", "Lossless"),
+        track("DTS-HD Master Audio", "Lossless"),
+        track("FLAC", "Lossless"),
+    ]
+    assert plan_audio_supplements(supplemented) == [
+        ("copy", 0),
+        ("copy", 1),
+        ("copy", 2),
+    ]
+
+
+def test_non_adjacent_flac_is_not_a_twin(app):
+    """Adjacency is the rule: a FLAC separated from the lossless track
+    by another track doesn't count, even with matching language and
+    channels."""
+
+    from app.videos import plan_audio_supplements
+
+    tracks = [
+        track("FLAC", "Lossless"),
+        track("AC-3", "Lossy"),
+        track("MLP FBA", "Lossless"),
+    ]
+    assert plan_audio_supplements(tracks) == [
+        ("copy", 0),
+        ("copy", 1),
+        ("flac", 2),
+        ("copy", 2),
+    ]

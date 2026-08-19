@@ -1737,11 +1737,11 @@ def finalize_localization(
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
-            # Set file subtitle track info
+            # Set file subtitle track info. The flag pass marks
+            # suspicious tracks' forced state unknown; whether the file
+            # needs triage is decided later by the candidates query
 
-            possibly_forced_subtitle = flag_possibly_forced_subtitles(
-                file, output_subtitle_tracks
-            )
+            flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
             for i, track in enumerate(output_subtitle_tracks):
                 track["file_id"] = file.id
@@ -1958,14 +1958,16 @@ def finalize_localization(
 
             current_app.logger.info(f"{file} File ID {file.id}")
 
-            if possibly_forced_subtitle == True:
-                # Generate the triage page's inspection aids proactively,
-                # while the file is fresh and certainly local
+            # Generate the triage page's inspection aids proactively,
+            # while the file is fresh and certainly local — gated on the
+            # SAME candidates query the triage page uses, not the
+            # first-track-baseline heuristic, which misses files whose
+            # suspicious track comes FIRST (#74: Baby Driver's tracks
+            # read [49, 3110, 4334] elements and nothing was flagged)
 
-                from app.triage import maybe_enqueue_triage_snapshots
+            from app.triage import maybe_enqueue_triage_snapshots
 
-                maybe_enqueue_triage_snapshots(file.id)
-
+            if maybe_enqueue_triage_snapshots(file.id):
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email_async(
                     "Fitzflix - Possibly forced subtitle track",
@@ -5699,6 +5701,15 @@ def move_to_rejects(file_path, reason=""):
                         pass
                 raise
 
+        # Stamp the rejection moment: the rejects page reads mtime as
+        # "rejected at", and both rename and copy2 preserve the file's
+        # own (possibly years-old) modification time (#71)
+
+        try:
+            os.utime(destination, None)
+        except OSError:
+            pass
+
     except OSError as e:
         current_app.logger.error(
             f"'{basename}' Could not be moved to the rejects "
@@ -6367,18 +6378,15 @@ def plan_audio_supplements(audio_tracks):
     Every lossless track that isn't already FLAC or PCM gets a FLAC
     twin placed immediately before it, mirroring the MakeMKV "FLAC
     Plus Original Audio" rip profile; the original is always kept.
-    Twins are matched count-wise per (language, channels) group — a
-    file with one FLAC track and two identical-language lossless
-    tracks still owes one twin — so files that already carry their
-    conversions (disc rips, S3 re-downloads of supplemented uploads)
-    plan as pure copies and the pass is idempotent.
+    A FLAC counts as an existing twin ONLY when it sits immediately
+    before a lossless track with the same language and channel count —
+    the exact shape the rip profile produces. A FLAC anywhere else
+    could be anything (a commentary, say), so it is never counted as
+    a twin, never moved, and never given the default slot (#69,
+    Glenn's rule); its neighbor earns a freshly converted twin
+    instead. Files already in the twinned shape plan as pure copies,
+    keeping the pass idempotent across disc rips and S3 re-downloads.
     """
-
-    twins_present = {}
-    for track in audio_tracks:
-        if track.get("format") == "FLAC":
-            key = (track.get("language"), track.get("channels"))
-            twins_present[key] = twins_present.get(key, 0) + 1
 
     plan = []
     for index, track in enumerate(audio_tracks):
@@ -6386,10 +6394,14 @@ def plan_audio_supplements(audio_tracks):
             "FLAC",
             "PCM",
         ]:
-            key = (track.get("language"), track.get("channels"))
-            if twins_present.get(key, 0) > 0:
-                twins_present[key] -= 1
-            else:
+            previous = audio_tracks[index - 1] if index > 0 else None
+            twinned = (
+                previous is not None
+                and previous.get("format") == "FLAC"
+                and previous.get("language") == track.get("language")
+                and previous.get("channels") == track.get("channels")
+            )
+            if not twinned:
                 plan.append(("flac", index))
         plan.append(("copy", index))
     return plan

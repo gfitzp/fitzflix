@@ -379,3 +379,24 @@ def test_deleting_the_local_file_removes_triage_aids(app):
 
         file.delete_local_file()
         assert not os.path.isdir(triage_snapshot_dir(file.id))
+
+
+def test_suspicious_first_track_is_a_candidate(app):
+    """A forced-looking track FIRST in the file (#74, Baby Driver's
+    [49, 3110, 4334]) is still a candidate: the query baselines on the
+    largest same-language sibling, not the first track — so the
+    import hook, now gated on this query, generates its aids."""
+
+    from app.triage import forced_subtitle_candidates, maybe_enqueue_triage_snapshots
+
+    with app.app_context():
+        file = make_movie_file(make_movie("First Track Suspect", 2017), "DVD")
+        add_subtitle(file, 1, 49)
+        add_subtitle(file, 2, 3110)
+        add_subtitle(file, 3, 4334)
+        db.session.commit()
+
+        entries = forced_subtitle_candidates(file_id=file.id)
+        assert len(entries) == 1
+        assert [e["track"].track for e in entries[0]["tracks"]] == [1]
+        assert maybe_enqueue_triage_snapshots(file.id) is True
