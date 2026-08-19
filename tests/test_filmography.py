@@ -149,9 +149,13 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "/review/tmdb/200" in page
     assert "The Cameo" in page
 
-    # The credits payload's overview renders as the muted synopsis line
+    # The synopsis lives in the poster popover now (#45d): tiles are
+    # armed with data-card-url — by movie_id for records, tmdb_id
+    # for the record-less TMDb credits
 
-    assert "A cameo-laden curiosity from 1999." in page
+    assert "A cameo-laden curiosity from 1999." not in page
+    assert 'data-card-url="/movie_card?tmdb_id=200"' in page
+    assert page.count('data-card-url="/movie_card') >= 3
 
 
 def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypatch):

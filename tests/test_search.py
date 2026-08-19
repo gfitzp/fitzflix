@@ -81,9 +81,11 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     assert "Jaws (1975)" in page
     assert 'text-bg-warning">DVD' in page
 
-    # The overview excerpt reads under the badges, like the TMDb page
+    # The synopsis lives in the poster popover now (#45d); the tile
+    # is armed with data-card-url
 
-    assert "A giant shark terrorizes a beach town." in page
+    assert "A giant shark terrorizes a beach town." not in page
+    assert "data-card-url" in page
 
     page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
     assert "Jurassic Park (1993)" in page

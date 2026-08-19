@@ -311,7 +311,10 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         "Might interest you"
     )
     assert "Part of the Essential Arthouse collector's set" in page
-    assert "A settled classic." in page
+    # Tiles keep the shopping answer; the synopsis lives in the
+    # poster popover now (#45d), fetched via data-card-url
+    assert "A settled classic." not in page
+    assert f'data-card-url="/movie_card?movie_id={settled_id}"' in page
     assert f'href="/movie/{settled_id}"' in page
 
 
@@ -454,7 +457,9 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert f'href="/movie/{record_id}"' in page
     assert 'href="/review/tmdb/555002"' not in page
     assert "On your watchlist" in page
-    assert "A spine the library lacks." in page
+    # The synopsis moved into the poster popover (#45d)
+    assert "A spine the library lacks." not in page
+    assert f'data-card-url="/movie_card?movie_id={record_id}"' in page
     assert 'title="Streaming on The Criterion Channel"' in page
     assert "Streaming data by JustWatch" in page
 

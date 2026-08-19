@@ -378,7 +378,9 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
     assert body.count('title="In your Fitzflix library"') == 1
     assert 'text-bg-info me-1">Seen' in body
     assert "On your watchlist" in body
-    assert "A stranger rides into town." in body
+    # The synopsis lives in the poster popover now (#45d)
+    assert "A stranger rides into town." not in body
+    assert "data-card-url" in body
 
     # Watchlisted films lead, owned films trail; owned rows open their
     # movie page while the rest open the log page

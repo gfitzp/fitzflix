@@ -1,72 +1,59 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src %}
 
 {% block app_content %}
 <h2 class="mt-n2">My Watchlist</h2>
 <hr>
 {% if rows %}
-<div class="list-group mb-3">
+{# The watchlist as a poster gallery (#45d): the popover carries each
+   film's synopsis, credits, and availability detail; the tile keeps
+   the action buttons and the at-a-glance badges #}
+<div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
-	{# The whole row opens the movie page (the title's stretched-link
-	   overlay covers the list-group-item, which BS4 positions), while
-	   the Remove form sits above the overlay so it still gets the
-	   click #}
-	<div class="list-group-item list-group-item-action">
-		<div class="d-flex">
-			{% if movie.custom_poster %}
-				<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w185/' + movie.custom_poster) }}" loading="lazy" class="me-3 border" alt="{{ movie.title }} ({{ movie.year }})" style="width: 92px;">
-			{% elif movie.tmdb_poster_path %}
-				<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ movie.tmdb_poster_path }}" loading="lazy" class="me-3 border" alt="{{ movie.title }} ({{ movie.year }})" style="width: 92px;">
-			{% else %}
-				<div class="rounded me-3 border d-flex justify-content-center align-items-center text-secondary" style="height: 130px; width: 92px; flex-shrink: 0;">
-					<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-						<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
-					</svg>
-				</div>
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
+			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</p>
+		</a>
+		{% if row.owned or (row.in_radarr and not row.owned) or row.streaming or row.rentals %}
+		<p class="mb-0 mt-1">
+			{% if row.owned %}
+			{{ library_badge() }}
 			{% endif %}
-			<div class="flex-grow-1">
-				<div class="d-flex w-100 justify-content-between">
-					<h5 class="mb-1"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="stretched-link text-body text-decoration-none">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</a></h5>
-					{# The form's own movie_id field carries the value —
-					   hidden_tag() would render a second, empty movie_id
-					   input, and WTForms reads the first one submitted #}
-					<div class="ms-2 d-flex position-relative" style="z-index: 2; gap: .25rem;">
-						{# The ad-hoc Radarr hand-off (#66) on unowned rows:
-						   request the film for download, or withdraw #}
-						{% if radarr_available and not row.owned and movie.tmdb_id %}
-						<form action="{{ url_for('main.radarr_request', origin=url_for('main.watchlist')) }}" method="post">
-							{{ radarr_form.csrf_token }}
-							{{ radarr_form.movie_id(value=movie.id) }}
-							{% if row.in_radarr %}
-							<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary py-0" title="Radarr is monitoring this film — withdraw the request">Un-request</button>
-							{% else %}
-							<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary py-0">Request</button>
-							{% endif %}
-						</form>
-						{% endif %}
-						<form action="" method="post">
-							{{ watchlist_form.csrf_token }}
-							{{ watchlist_form.movie_id(value=movie.id) }}
-							<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
-						</form>
-					</div>
-				</div>
-				{% if row.owned %}
-				{{ library_badge() }}
+			{% if row.in_radarr and not row.owned %}
+			<span class="badge text-bg-info fw-normal" title="Radarr is monitoring this film for download">Requested via Radarr</span>
+			{% endif %}
+			{% for provider in row.streaming + row.rentals %}
+			{{ availability_badge(provider) }}
+			{% endfor %}
+		</p>
+		{% endif %}
+		{# The form's own movie_id field carries the value —
+		   hidden_tag() would render a second, empty movie_id input,
+		   and WTForms reads the first one submitted #}
+		<div class="d-flex mt-1" style="gap: .25rem;">
+			{# The ad-hoc Radarr hand-off (#66) on unowned films:
+			   request the film for download, or withdraw #}
+			{% if radarr_available and not row.owned and movie.tmdb_id %}
+			<form action="{{ url_for('main.radarr_request', origin=url_for('main.watchlist')) }}" method="post">
+				{{ radarr_form.csrf_token }}
+				{{ radarr_form.movie_id(value=movie.id) }}
+				{% if row.in_radarr %}
+				<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary py-0" title="Radarr is monitoring this film — withdraw the request">Un-request</button>
+				{% else %}
+				<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary py-0">Request</button>
 				{% endif %}
-				{% if row.in_radarr and not row.owned %}
-				<span class="badge text-bg-info fw-normal" title="Radarr is monitoring this film for download">Requested via Radarr</span>
-				{% endif %}
-				{% for provider in row.streaming + row.rentals %}
-				{{ availability_badge(provider) }}
-				{% endfor %}
-				{% if movie.tmdb_overview %}
-				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
-				{% endif %}
-				<p class="mb-0 small text-muted">Added {{ row.date_added.strftime("%b %-d, %Y") }}</p>
-			</div>
+			</form>
+			{% endif %}
+			<form action="" method="post">
+				{{ watchlist_form.csrf_token }}
+				{{ watchlist_form.movie_id(value=movie.id) }}
+				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
+			</form>
 		</div>
+		<p class="mb-0 mt-1 small text-muted">Added {{ row.date_added.strftime("%b %-d, %Y") }}</p>
 	</div>
 	{% endfor %}
 </div>

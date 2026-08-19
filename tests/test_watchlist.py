@@ -309,15 +309,19 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Watchlist Page Film (1994)" in page
     assert 'title="Streaming on Netflix"' in page
-    assert "A film worth waiting for." in page
+    # The synopsis lives in the poster popover now (#45d)
+    assert "A film worth waiting for." not in page
+    assert "data-card-url" in page
     assert "Streaming data by JustWatch" in page
     assert "Watchlist Owned Tracker (1995)" in page
     assert page.count('title="In your Fitzflix library"') == 1
 
-    # Whole rows open the movie page (the title's stretched-link covers
-    # the row) while each Remove form stays clickable above the overlay
+    # Each tile's poster anchor opens the movie page (#45d — the
+    # stretched-link row overlay is gone with the rows), and every
+    # poster is armed with its popover
 
-    assert page.count("stretched-link") == 2
+    assert "stretched-link" not in page
+    assert page.count('data-card-url="/movie_card') == 2
     assert f'href="/movie/{owned_id}"' in page
 
     # Removal posts the form EXACTLY as rendered — a handcrafted POST

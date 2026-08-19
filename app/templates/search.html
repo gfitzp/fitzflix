@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_search_form.html" import global_search_form %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src %}
 
 {% block app_content %}
 {# The navbar's search box again, pre-filled and right-aligned on the
@@ -18,35 +19,37 @@
 
 {% if movie_results %}
 <h4>Movies</h4>
-<div class="list-group mb-4">
+{# Movie matches as a poster gallery (#45d) — the popover carries the
+   synopsis and actions, the tile keeps the shopping answer: quality
+   tier (amber = worth upgrading) and the personal funnel. TV and
+   people below stay rows: season-level quality badges need the
+   width, and people aren't films #}
+<div class="row mb-2">
 	{% for result in movie_results %}
 	{% set movie = result.movie %}
-	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
-		<div class="d-flex">
-			{% include "_movie_poster_small.html" %}
-			<div class="flex-grow-1">
-				<h5 class="mb-1">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</h5>
-				<span class="badge text-bg-{{ "warning" if result.upgradable else "success" }}">{{ result.quality }}{% if result.excluded %} &mdash; excluded{% endif %}</span>
-				{# The personal funnel: Seen (their diary), On your
-				   watchlist, Might interest you — seen and might-interest
-				   never show together #}
-				{% if result.rating is not none %}
-				<span class="badge text-bg-info">Seen &mdash; rated {{ result.rating }}</span>
-				{% elif result.seen %}
-				<span class="badge text-bg-info">Seen</span>
-				{% endif %}
-				{% if result.watchlisted %}
-				<span class="badge text-bg-warning">On your watchlist</span>
-				{% endif %}
-				{% if result.might_interest %}
-				<span class="badge text-bg-info">Might interest you</span>
-				{% endif %}
-				{% if movie.tmdb_overview %}
-				<p class="mb-1 mt-1 small text-muted">{{ movie.tmdb_overview|truncate(240) }}</p>
-				{% endif %}
-			</div>
-		</div>
-	</a>
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
+			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</p>
+		</a>
+		<p class="mb-0 mt-1">
+			<span class="badge text-bg-{{ "warning" if result.upgradable else "success" }}">{{ result.quality }}{% if result.excluded %} &mdash; excluded{% endif %}</span>
+			{# The personal funnel: Seen (their diary), On your
+			   watchlist, Might interest you — seen and might-interest
+			   never show together #}
+			{% if result.rating is not none %}
+			<span class="badge text-bg-info">Seen &mdash; rated {{ result.rating }}</span>
+			{% elif result.seen %}
+			<span class="badge text-bg-info">Seen</span>
+			{% endif %}
+			{% if result.watchlisted %}
+			<span class="badge text-bg-warning">On your watchlist</span>
+			{% endif %}
+			{% if result.might_interest %}
+			<span class="badge text-bg-info">Might interest you</span>
+			{% endif %}
+		</p>
+	</div>
 	{% endfor %}
 </div>
 {% endif %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src %}
 
 {% block app_content %}
 <div class="mt-n2">
@@ -28,20 +29,18 @@
 	</div>
 </div>
 <hr>
-{% if movies %}
-<nav class="d-none d-sm-block" aria-label="...">
+{# Each nav position renders a wide and a narrow variant — the narrow
+   one trims iter_pages so the strip fits a phone #}
+{% macro pagination_nav(compact=false) %}
+<nav class="{{ 'd-block d-sm-none' if compact else 'd-none d-sm-block' }}" aria-label="...">
 	<ul class="pagination">
 		<li class="page-item{% if not prev_url %} disabled{% endif %}">
 			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
 		</li>
 		{% if pages %}
-		{% for page in pages.iter_pages() %}
+		{% for page in (pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) if compact else pages.iter_pages()) %}
 			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% endif %}
+				<li class="page-item{% if page == pages.page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
 			{% else %}
 				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
 			{% endif %}
@@ -52,106 +51,28 @@
 		</li>
 	</ul>
 </nav>
+{% endmacro %}
+{% if movies %}
+{{ pagination_nav() }}
+{{ pagination_nav(compact=true) }}
+{# One gallery for every breakpoint (#45d — the separate mobile list
+   is gone): posters carry the popover, tiles keep the edition and the
+   green/amber shopping answer #}
 <div class="row">
 	{% for file, movie, quality in movies %}
-	<div class="col-12 col-sm-6 col-md-6 col-lg-4 col-xl-3 d-none d-sm-block">
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
-			{% include "_movie_poster_large.html" %}
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
+			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</p>
+			{% if file.edition %}<p class="mb-0 small text-muted">{{ file.edition }}</p>{% endif %}
 		</a>
-		<p class="text-center">
-			<strong><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></strong><br>
-			{% if file.edition %}<span class="text-muted">{{ file.edition }}</span><br>{% endif %}
+		<p class="mb-0 mt-1">
 			<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
 		</p>
 	</div>
 	{% endfor %}
 </div>
-<nav class="d-none d-sm-block" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-
-<!-- Display differently on mobile device -->
-
-<nav class="d-block d-sm-none" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-<div class="d-block d-sm-none mt-n2">
-	<div class="list-group d-flex">
-	{% for file, movie, quality in movies %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="list-group-item list-group-item-action">
-			<div>
-				{% include "_movie_poster_small.html" %}
-				<h6><span class="text-body">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
-				<p class="mt-n2">
-					{% if file.edition %}<span class="text-body">{{ file.edition }}</span>&nbsp;–&nbsp;{% endif %}<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
-				</p>
-			</div>
-		</a>
-	{% endfor %}
-	</div>
-</div>
-<nav class="d-block d-sm-none mt-2" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
+{{ pagination_nav() }}
+{{ pagination_nav(compact=true) }}
 {% endif %}
 {% endblock %}

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
+{% from "_poster_tile.html" import poster_image %}
 
 {% block app_content %}
 {# Portrait on the left, lifespan and biography in a column to its
@@ -45,63 +46,57 @@
 {% if tmdb_unavailable %}
 <div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
 {% endif %}
-<div class="list-group">
+{# The filmography as a poster gallery (#45d): the poster popover
+   carries each film's synopsis, credits, availability, and actions,
+   so the tile keeps only what identifies the film in THIS career —
+   title, this person's roles, and the at-a-glance badges #}
+<div class="row">
 	{% for row in filmography %}
-	<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="list-group-item list-group-item-action">
-		<div class="d-flex">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+		<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="text-decoration-none text-body"{% if row.movie %} data-card-url="{{ url_for('main.movie_card', movie_id=row.movie.id) }}"{% elif row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}>
 			{% if row.movie and row.movie.custom_poster %}
-				<img src="{{ url_for('static', filename='custom/movie/' + row.movie.id|string + '/w185/' + row.movie.custom_poster) }}" loading="lazy" class="me-3 border" alt="{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}" style="width: 92px;">
+				{{ poster_image(url_for('static', filename='custom/movie/' + row.movie.id|string + '/w342/' + row.movie.custom_poster), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			{% elif row.poster_path %}
-				<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ row.poster_path }}" loading="lazy" class="me-3 border" alt="{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}" style="width: 92px;">
+				{{ poster_image(config['TMDB_IMAGE_URL'] + '/w342' + row.poster_path, row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			{% else %}
-				<div class="rounded me-3 border d-flex justify-content-center align-items-center text-secondary" style="height: 130px; width: 92px; flex-shrink: 0;">
-					<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-						<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
-					</svg>
-				</div>
+				{{ poster_image(none, row.title) }}
 			{% endif %}
-			<div class="flex-grow-1">
-				{# The TMDb-search row grammar: title heading, then a
-				   left-aligned badge line (status first, then availability),
-				   then the muted detail lines #}
-				<h5 class="mb-1"><span class="text-body">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</span></h5>
-				{# Ownership shows as the Fitzflix library badge, like the
-				   TMDb search page; file-quality tiers stay on the local
-				   film search #}
-				{% if row.quality %}
-					{{ library_badge() }}
-				{% endif %}
-				{# The personal funnel: Seen, On your watchlist, Might
-				   interest you — seen and might-interest never show
-				   together #}
-				{% if row.seen %}
-					<span class="badge text-bg-info me-1">Seen</span>
-				{% endif %}
-				{% if row.watchlisted %}
-					<span class="badge text-bg-warning me-1">On your watchlist</span>
-				{% endif %}
-				{% if row.might_interest %}
-					<span class="badge text-bg-info me-1">Might interest you</span>
-				{% endif %}
-				{% if row.liked %}
-					<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1 me-1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-						<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
-					</svg>
-				{% endif %}
-				{% for provider in (row.streaming or []) + (row.rentals or []) %}
-				{{ availability_badge(provider) }}
-				{% endfor %}
-				{# Crew roles and characters share the credit line:
-				   "Director · Writer · as The Cameo" #}
-				{% if row.jobs or row.characters %}
-				<p class="mb-0 mt-1 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
-				{% endif %}
-				{% if row.overview %}
-				<p class="mb-1 mt-1 small text-muted">{{ row.overview|truncate(240) }}</p>
-				{% endif %}
-			</div>
-		</div>
-	</a>
+			<p class="small mb-0">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
+			{# Crew roles and characters share the credit line:
+			   "Director · Writer · as The Cameo" #}
+			{% if row.jobs or row.characters %}
+			<p class="mb-0 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
+			{% endif %}
+		</a>
+		{% if row.quality or row.seen or row.watchlisted or row.might_interest or row.liked or row.streaming or row.rentals %}
+		<p class="mb-0 mt-1">
+			{# Ownership shows as the Fitzflix library badge, like the
+			   TMDb search page; then the personal funnel — Seen, On your
+			   watchlist, Might interest you (seen and might-interest
+			   never show together) — and the streaming badges #}
+			{% if row.quality %}
+				{{ library_badge() }}
+			{% endif %}
+			{% if row.seen %}
+				<span class="badge text-bg-info me-1">Seen</span>
+			{% endif %}
+			{% if row.watchlisted %}
+				<span class="badge text-bg-warning me-1">On your watchlist</span>
+			{% endif %}
+			{% if row.might_interest %}
+				<span class="badge text-bg-info me-1">Might interest you</span>
+			{% endif %}
+			{% if row.liked %}
+				<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1 me-1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+					<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
+				</svg>
+			{% endif %}
+			{% for provider in (row.streaming or []) + (row.rentals or []) %}
+			{{ availability_badge(provider) }}
+			{% endfor %}
+		</p>
+		{% endif %}
+	</div>
 	{% endfor %}
 </div>
 {% if not filmography %}
