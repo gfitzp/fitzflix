@@ -6557,6 +6557,201 @@ def supplement_lossless_tracks(file_path, file_id=None):
             return True
 
 
+def remux_audio_plan_task(file_id, plan):
+    """Task: rebuild one LIBRARY file's audio to an explicit supplement
+    plan — (action, source index) pairs in plan_audio_supplements'
+    format, except hand-built, so a track can be replaced or dropped
+    (what the automatic planner never does). Born for #69's imperfect
+    DTS-ES twins: [["flac", 1], ["copy", 1], ["copy", 2]] decodes the
+    MA into a fresh 6.0 twin and drops the old 5.1 one.
+
+    Copy-first, the atmos task's posture throughout: one staging copy
+    in, remux + verification on local disk, the verified result
+    replaces the library copy, the track rows rebuild, and the
+    untouched archive is force-replaced.
+    """
+
+    with app.app_context():
+        file = db.session.get(File, int(file_id))
+        if file is None:
+            return True
+
+        lock = acquire_lock_or_defer(
+            file.file_identifier(),
+            current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
+            current_app.transcode_scheduler,
+            "app.videos.remux_audio_plan_task",
+            minutes=(5, 15),
+            timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+            args=(int(file_id), plan),
+        )
+        if not lock:
+            return True
+
+        try:
+            return _remux_audio_plan_unlocked(int(file_id), plan)
+        finally:
+            current_app.lock_manager.unlock(lock)
+
+
+def _remux_audio_plan_unlocked(file_id, plan):
+    """The remux pipeline; the caller must hold the title's lock."""
+
+    with app.app_context():
+        job = get_current_job()
+        file = db.session.get(File, int(file_id))
+        basename = file.basename
+        file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        if not os.path.exists(file_path):
+            current_app.logger.warning(f"'{basename}' No local copy, cannot remux")
+            return False
+
+        plan = [(action, int(index)) for action, index in plan]
+        staging_dir = current_app.config["STAGING_DIR"]
+        staging_source = os.path.join(staging_dir, f".src-{basename}")
+        staging_output = os.path.join(staging_dir, basename)
+        try:
+            free = shutil.disk_usage(staging_dir).free
+            if free < os.path.getsize(file_path) * 2.2 + 16 * 2**30:
+                raise RuntimeError(f"'{basename}' not enough staging space")
+
+            copy_with_progress(
+                file_path, staging_source, job, basename, "Copying to local staging"
+            )
+
+            media_info = MediaInfo.parse(staging_source)
+            container = None
+            file_duration = None
+            for track in media_info.tracks:
+                if track.track_type == "General" and track.format:
+                    container = track.format
+                    file_duration = int(track.duration) / 1000
+            if container != "Matroska":
+                raise RuntimeError(f"'{basename}' is not a Matroska file")
+
+            audio_tracks = get_audio_tracks_from_file(staging_source)
+            if any(index >= len(audio_tracks) for _, index in plan):
+                raise RuntimeError(
+                    f"'{basename}' plan references a missing audio track"
+                )
+
+            audio_args = build_supplement_args(plan)
+            current_app.logger.info(f"'{basename}' Remux plan: {plan}")
+            result = subprocess.run(
+                [
+                    current_app.config["FFMPEG_BIN"],
+                    "-y",
+                    "-i",
+                    staging_source,
+                    "-map",
+                    "0:v:0",
+                    "-c:v:0",
+                    "copy",
+                ]
+                + audio_args
+                + ["-map", "0:s:?", "-c:s", "copy", staging_output],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"'{basename}' ffmpeg failed: {result.stderr[-500:]}"
+                )
+
+            # Never replace the library copy with a remux that didn't
+            # deliver: track count and per-position codecs must match
+            # the plan, and the duration must survive
+
+            new_audio_tracks = get_audio_tracks_from_file(staging_output)
+            new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
+            if len(new_audio_tracks) != len(plan):
+                raise RuntimeError(
+                    f"'{basename}' produced {len(new_audio_tracks)} audio "
+                    f"tracks, expected {len(plan)}"
+                )
+            for position, (action, index) in enumerate(plan):
+                produced = new_audio_tracks[position].get("format")
+                expected = (
+                    "FLAC" if action == "flac" else audio_tracks[index].get("format")
+                )
+                if produced != expected:
+                    raise RuntimeError(
+                        f"'{basename}' output track {position + 1} is "
+                        f"{produced}, expected {expected}"
+                    )
+            out_info = MediaInfo.parse(staging_output)
+            out_duration = None
+            for track in out_info.tracks:
+                if track.track_type == "General" and track.duration:
+                    out_duration = int(track.duration) / 1000
+            if file_duration and (
+                out_duration is None or abs(out_duration - file_duration) > 5
+            ):
+                raise RuntimeError(
+                    f"'{basename}' duration changed: {out_duration} "
+                    f"vs {file_duration}"
+                )
+
+            # The verified output takes the source's name so the
+            # untouched-archive upload derives the same S3 key
+
+            os.remove(staging_source)
+            final_staging = staging_source
+            os.rename(staging_output, final_staging)
+
+            hidden_library = os.path.join(os.path.dirname(file_path), f".{basename}")
+            copy_with_progress(
+                final_staging, hidden_library, job, basename, "Copying to library"
+            )
+            os.replace(hidden_library, file_path)
+
+            # Rebuild the track records now that the file changed
+
+            FileAudioTrack.query.filter_by(file_id=file.id).delete()
+            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+            for i, track in enumerate(new_audio_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                db.session.add(FileAudioTrack(**track))
+            flag_possibly_forced_subtitles(file, new_subtitle_tracks)
+            for i, track in enumerate(new_subtitle_tracks):
+                track["file_id"] = file.id
+                track["track"] = i + 1
+                db.session.add(FileSubtitleTrack(**track))
+            file.filesize_bytes = os.path.getsize(final_staging)
+            file.filesize_megabytes = round(file.filesize_bytes / 1024**2, 1)
+            file.filesize_gigabytes = round(file.filesize_bytes / 1024**3, 1)
+            file.date_updated = datetime.now(timezone.utc)
+            db.session.commit()
+
+            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+                try:
+                    (
+                        file.aws_untouched_key,
+                        file.aws_untouched_date_uploaded,
+                        file.aws_untouched_filesize_bytes,
+                    ) = aws_upload(
+                        final_staging,
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        force_upload=True,
+                        ignore_etag=True,
+                    )
+                    db.session.commit()
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
+                    raise
+            return True
+
+        finally:
+            for stray in (staging_source, staging_output):
+                try:
+                    os.remove(stray)
+                except OSError:
+                    pass
+
+
 def reconstruct_filename(file_id):
     """Reconstruct and save untouched filenames using the current details."""
 
