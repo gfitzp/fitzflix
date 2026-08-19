@@ -603,3 +603,29 @@ def test_search_json_includes_people(app, admin_client):
     assert people[0]["title"] == "Typeahead Thespian"
     assert people[0]["detail"] == "Actor · 1 film"
     assert "credit=903" in people[0]["url"]
+
+
+def test_exact_title_match_outranks_substring_matches(app, admin_client):
+    """Match quality beats the alphabet: searching "Up" surfaces the
+    film NAMED Up first, then the "Up…" prefix, then mere substring
+    matches — so the result cap can no longer bury an exact title
+    behind alphabetically-earlier films that just contain it."""
+
+    with app.app_context():
+        for title, year in [
+            ("Blow-Up", 1966),
+            ("Grown Ups", 2010),
+            ("Up", 2009),
+            ("Upgrade", 2018),
+        ]:
+            make_movie_file(make_movie(title, year), "Bluray-1080p")
+        db.session.commit()
+
+    page = admin_client.get("/search?q=Up").get_data(as_text=True)
+    positions = {
+        title: page.find(f">{title} (")
+        for title in ["Up", "Upgrade", "Blow-Up", "Grown Ups"]
+    }
+    assert all(pos >= 0 for pos in positions.values()), positions
+    assert positions["Up"] < positions["Upgrade"] < positions["Blow-Up"]
+    assert positions["Blow-Up"] < positions["Grown Ups"]

@@ -4946,6 +4946,29 @@ def _movie_search_results(wildcard, limit=50):
 
     upgrade_threshold = _upgrade_threshold()
 
+    # Match quality outranks the alphabet: exact titles first, then
+    # prefixes, then substrings — otherwise a short query like "Up"
+    # fills the result cap with alphabetically-earlier titles that
+    # merely CONTAIN it, and the film actually named Up never shows
+
+    match_rank = db.case(
+        (
+            db.or_(
+                Movie.title.ilike(wildcard),
+                Movie.tmdb_title.ilike(wildcard),
+            ),
+            0,
+        ),
+        (
+            db.or_(
+                Movie.title.ilike(f"{wildcard}%"),
+                Movie.tmdb_title.ilike(f"{wildcard}%"),
+            ),
+            1,
+        ),
+        else_=2,
+    )
+
     results = []
     movies = (
         Movie.query.filter(
@@ -4955,7 +4978,7 @@ def _movie_search_results(wildcard, limit=50):
             )
         )
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
-        .order_by(Movie.title.asc(), Movie.year.asc())
+        .order_by(match_rank, Movie.title.asc(), Movie.year.asc())
         .limit(limit)
         .all()
     )
@@ -4991,6 +5014,26 @@ def _tv_search_results(wildcard, limit=50):
     store is each season's weakest link.
     """
 
+    # Exact, then prefix, then substring — same ranking as the movie
+    # search, for the same buried-exact-match reason
+
+    match_rank = db.case(
+        (
+            db.or_(
+                TVSeries.title.ilike(wildcard),
+                TVSeries.tmdb_name.ilike(wildcard),
+            ),
+            0,
+        ),
+        (
+            db.or_(
+                TVSeries.title.ilike(f"{wildcard}%"),
+                TVSeries.tmdb_name.ilike(f"{wildcard}%"),
+            ),
+            1,
+        ),
+        else_=2,
+    )
     series_list = (
         TVSeries.query.filter(
             db.or_(
@@ -4998,7 +5041,7 @@ def _tv_search_results(wildcard, limit=50):
                 TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
             )
         )
-        .order_by(TVSeries.title.asc())
+        .order_by(match_rank, TVSeries.title.asc())
         .limit(limit)
         .all()
     )
@@ -5187,6 +5230,11 @@ def _people_search_results(wildcard, limit=12):
         .filter(TMDBCredit.name.ilike(f"%{wildcard}%"))
         .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
         .order_by(
+            # An exact full-name match surfaces first; among partial
+            # matches, film count stays the better signal (no prefix
+            # tier here — "Ford Beebe" shouldn't outrank Harrison Ford
+            # on a "Ford" search)
+            db.case((TMDBCredit.name.ilike(wildcard), 0), else_=1),
             film_count.desc(),
             db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
             TMDBCredit.name.asc(),
