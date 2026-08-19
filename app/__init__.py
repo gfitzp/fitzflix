@@ -156,12 +156,14 @@ def cron_table(config):
         ),
         # Criterion24/7 now-playing heartbeat (#63): the poller is
         # self-scheduling (it re-enqueues at each film's end under a
-        # deterministic job id), so this only revives a broken chain
+        # deterministic job id), so the cron checks the chain's pulse
+        # and scrapes only when the chain has died — never rescanning
+        # the currently-showing film on the half-hour
         (
             "7,37 * * * *",
-            "app.criterion_now.poll_criterion_now",
+            "app.criterion_now.heartbeat_criterion_now",
             300,
-            "Checking what's on Criterion24/7",
+            "Checking the Criterion24/7 poller's pulse",
         ),
         # Refresh the leaving-Criterion set monthly
         (

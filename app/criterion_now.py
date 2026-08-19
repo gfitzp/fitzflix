@@ -10,9 +10,13 @@ and year for a directly-linked poster, and stores the lot in Redis.
 
 The poller is self-scheduling: each run re-enqueues itself for just
 after the countdown expires, under a deterministic job id so chains
-never pile up; a half-hourly cron heartbeat revives the chain if a
-failure ever breaks it. The card renders for Criterion subscribers and
-hides itself once the stored film goes stale.
+never pile up (an unreadable countdown falls back to trying again in
+thirty minutes). A half-hourly cron heartbeat checks the chain's
+pulse and polls ONLY when the chain has died — while a poll is booked
+for the current film's end, the heartbeat does nothing, so the
+showing film is never rescanned on the cron cadence (Glenn's report,
+Aug 2026). The card renders for Criterion subscribers and hides
+itself once the stored film goes stale.
 """
 
 import html
@@ -234,6 +238,37 @@ def poll_criterion_now():
             description="Checking what's on Criterion24/7",
         )
         return True
+
+
+def heartbeat_criterion_now():
+    """Task: revive the self-scheduling poller if its chain has died.
+
+    The half-hourly cron lands here, never on the poller itself: while
+    a poll is booked for the current film's end (or queued, or
+    running), the heartbeat does nothing. Only a missing chain gets a
+    fresh poll — so the currently-showing film is rescanned when it
+    ends, not every thirty minutes.
+
+    Aliveness reads the QUEUE REGISTRIES, never the job hash's status:
+    the poll re-enqueues itself under its own executing job id, and
+    when that run completes RQ writes "finished" over the hash —
+    clobbering the "scheduled" the re-enqueue just wrote. The
+    scheduled-registry entry is the truth (the live drill caught the
+    hash lying "finished" on a healthy chain, Aug 2026)."""
+
+    with app.app_context():
+        queue = current_app.maintenance_queue
+        alive = (
+            POLL_JOB_ID in queue.scheduled_job_registry.get_job_ids()
+            or POLL_JOB_ID in queue.get_job_ids()
+            or POLL_JOB_ID in queue.started_job_registry.get_job_ids()
+        )
+        if alive:
+            return True
+        current_app.logger.warning(
+            "Criterion24/7 heartbeat: no poll booked, queued, or running — reviving"
+        )
+        return poll_criterion_now()
 
 
 def criterion_now_card(user):

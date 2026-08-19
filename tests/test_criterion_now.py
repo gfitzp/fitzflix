@@ -146,6 +146,79 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
         assert registry.get_job_ids().count(criterion_now.POLL_JOB_ID) == 1
 
 
+def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
+    """The half-hourly cron never rescans the showing film: while a
+    poll is booked under the deterministic job id, the heartbeat does
+    nothing (Glenn's report, Aug 2026 — the cron used to point at the
+    poller itself and scraped unconditionally)."""
+
+    from datetime import timedelta
+
+    import app.criterion_now as criterion_now
+
+    scrapes = []
+    monkeypatch.setattr(
+        criterion_now, "poll_criterion_now", lambda: scrapes.append(1) or True
+    )
+
+    with app.app_context():
+        job = app.maintenance_queue.enqueue_in(
+            timedelta(minutes=45),
+            "app.criterion_now.poll_criterion_now",
+            job_id=criterion_now.POLL_JOB_ID,
+        )
+
+        assert criterion_now.heartbeat_criterion_now() is True
+        assert scrapes == []
+
+        # The booked poll is untouched
+
+        registry = app.maintenance_queue.scheduled_job_registry
+        assert criterion_now.POLL_JOB_ID in registry.get_job_ids()
+
+        # The normal healthy state LIES in the job hash: the poll
+        # re-enqueues itself under its own executing id, and RQ writes
+        # "finished" over the hash when that run completes — the
+        # registry entry is the truth, and the heartbeat must trust
+        # it, not the status (the live drill caught this, Aug 2026)
+
+        job.set_status("finished")
+        assert criterion_now.heartbeat_criterion_now() is True
+        assert scrapes == []
+
+
+def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
+    """No booked poll — the chain died, or the app just started — and
+    the heartbeat runs the poller; likewise when the chain's last run
+    finished without rescheduling."""
+
+    import app.criterion_now as criterion_now
+
+    scrapes = []
+    monkeypatch.setattr(
+        criterion_now, "poll_criterion_now", lambda: scrapes.append(1) or True
+    )
+
+    with app.app_context():
+        assert criterion_now.heartbeat_criterion_now() is True
+        assert scrapes == [1]
+
+        # A finished job hash WITHOUT a registry entry (a run that
+        # crashed before its re-enqueue) counts as dead too
+
+        from rq.job import Job
+
+        job = Job.create(
+            print,
+            connection=app.redis,
+            id=criterion_now.POLL_JOB_ID,
+        )
+        job.set_status("finished")
+        job.save()
+        assert criterion_now.heartbeat_criterion_now() is True
+        assert scrapes == [1, 1]
+
+
 def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
     """A wrong search hit must never dress the wrong film's poster over
     the right title: when TMDb's credited director disagrees with the
