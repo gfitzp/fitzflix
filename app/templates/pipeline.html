@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">Pipeline Activity</h2>
+<p class="small text-muted">Each file's journey through import — localization, the library copy, cataloging, the S3 archive, and any remuxes, transcodes, or restores — as per-stage status chips. Amber means a deferred retry is booked; red failures stay visible even after a retry succeeds. Trails linger for three days.</p>
+<hr>
+{# Filled by base.html's renderFiles from the 5-second queue poll;
+   the empty-state line swaps in when nothing has moved lately #}
+<div id="pipeline-files-section">
+	<div id="pipeline-files" class="list-group"></div>
+</div>
+<p id="pipeline-empty" class="text-muted" style="display: none;">Nothing has moved through the pipeline recently.</p>
+{% endblock %}

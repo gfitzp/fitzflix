@@ -145,10 +145,19 @@ def test_queue_details_payload_carries_the_trails(app, admin_client):
     assert payload["files"][0]["entries"][0]["stage"] == "Localizing"
 
 
-def test_queue_page_renders_the_files_section(admin_client):
-    """The queue page carries the section the poll fills."""
+def test_pipeline_page_renders_the_files_section(admin_client):
+    """The trails live on their own page (Glenn's call, Aug 2026),
+    linked from Library Maintenance; the queue page no longer carries
+    the section."""
 
-    page = admin_client.get("/queue").get_data(as_text=True)
+    page = admin_client.get("/maintenance/pipeline").get_data(as_text=True)
     assert 'id="pipeline-files-section"' in page
     assert 'id="pipeline-files"' in page
-    assert "Files in the pipeline" in page
+    assert 'id="pipeline-empty"' in page
+
+    queue_page = admin_client.get("/queue").get_data(as_text=True)
+    assert 'id="pipeline-files-section"' not in queue_page
+
+    maintenance = admin_client.get("/maintenance").get_data(as_text=True)
+    assert "/maintenance/pipeline" in maintenance
+    assert "View file trails" in maintenance

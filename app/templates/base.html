@@ -433,6 +433,8 @@
 				}).join("\n");
 				if (signature === filesSignature) return;
 
+				var empty = document.getElementById("pipeline-empty");
+				if (empty) empty.style.display = files.length ? "none" : "";
 				section.style.display = files.length ? "" : "none";
 				holder.textContent = "";
 				var chipClass = {

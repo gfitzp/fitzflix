@@ -7,6 +7,10 @@
 <p class="small text-muted">Files that couldn't be imported, sorted by the reason they were rejected.</p>
 <a class="btn btn-sm btn-{{ "warning" if rejected_count else "outline-secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
 <hr>
+<h3>Pipeline activity</h3>
+<p class="small text-muted">Each recent file's journey through import as per-stage status chips &mdash; where a file is right now, which retries are booked, and where anything failed.</p>
+<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.pipeline_activity') }}" role="button">View file trails</a>
+<hr>
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}
 <p class="small text-muted">These movies share a TMDb id. Merging moves each duplicate's files and reviews to the oldest record (marked kept) and deletes the duplicate.</p>

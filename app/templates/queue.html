@@ -5,15 +5,6 @@
 	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
 </div>
 <hr>
-{# Per-file pipeline trails (#18): one row per recent file, its
-   journey shown as stage chips — filled by the same 5-second poll
-   that drives the tables below #}
-<div id="pipeline-files-section" class="mb-4" style="display: none;">
-	<h4>Files in the pipeline</h4>
-	<div id="pipeline-files" class="list-group"></div>
-	<p class="small text-muted mt-1 mb-0">Each file's journey through import — trails linger for three days.</p>
-</div>
-<h4>Queued and running tasks</h4>
 <table class="table table-striped">
 	<thead class="table-light">
 		<tr class="d-flex">
