@@ -4,10 +4,15 @@
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
 		<li class="breadcrumb-item"><a href="{{ url_for('main.maintenance') }}">Library Maintenance</a></li>
+		{% if focus_file %}
+		<li class="breadcrumb-item"><a href="{{ url_for('main.subtitle_triage') }}">Possibly-forced subtitles</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ focus_file.basename }}</li>
+		{% else %}
 		<li class="breadcrumb-item active" aria-current="page">Possibly-forced subtitles</li>
+		{% endif %}
 	</ol>
 </nav>
-<h2 class="mt-2 mb-n2">Possibly-forced subtitles</h2>
+<h2 class="mt-2 mb-n2">Possibly-forced subtitles{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
 <hr>
 <p class="small text-muted">Each of these unforced tracks holds a quarter or less of the elements of the largest same-language track in its file &mdash; the shape of a foreign-parts-only track. The cue timeline shows when in the film a track speaks (sparse clusters look forced, an even spread looks like commentary), and the snapshots burn the track onto the film's own frames. Check the tracks that are really forced and flag them in one pass; "Nothing forced here" stops the file from being flagged again.</p>
 {% if candidates %}
@@ -17,6 +22,11 @@
 	<div class="card-header py-2">
 		<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
 		{% if file.container != "Matroska" %}<span class="badge badge-secondary ml-2" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
+		{% if not focus_file %}
+		{# The per-file view (#72) loads just this file's snapshots —
+		   the fast path when this page has many pending files #}
+		<a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.subtitle_triage')) }}" class="small ml-2">Triage on its own page&hellip;</a>
+		{% endif %}
 		<form action="" method="post" class="float-right">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}

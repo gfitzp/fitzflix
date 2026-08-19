@@ -107,7 +107,7 @@
 		{% if subtitle_tracks %}
 		<thead class="thead-light">
 			<tr>
-				<th scope="col">Subtitle Track</th>
+				<th scope="col">Subtitle Track{% if pending_subtitle_triage %} <a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small font-weight-normal ml-2">Review possibly-forced tracks&hellip;</a>{% endif %}</th>
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
 				<th scope="col">Elements</th>

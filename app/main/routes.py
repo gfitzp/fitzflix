@@ -3720,6 +3720,13 @@ def file(file_id):
         else:
             return redirect(url_for("main.index"))
 
+    # The per-file triage link (#72) only exists while this file has
+    # pending possibly-forced tracks (and only admins can act on them)
+
+    pending_subtitle_triage = bool(
+        current_user.admin and forced_subtitle_candidates(file_id=file.id)
+    )
+
     return render_template(
         "file.html",
         file=file,
@@ -3728,6 +3735,7 @@ def file(file_id):
         tv=tv,
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
+        pending_subtitle_triage=pending_subtitle_triage,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
         mkvmerge_form=mkvmerge_form,
@@ -4788,10 +4796,11 @@ def maintenance():
     )
 
 
-@bp.route("/maintenance/subtitles", methods=["GET", "POST"])
+@bp.route("/maintenance/subtitles", methods=["GET", "POST"], defaults={"file_id": None})
+@bp.route("/maintenance/subtitles/<int:file_id>", methods=["GET", "POST"])
 @login_required
 @admin_required
-def subtitle_triage():
+def subtitle_triage(file_id):
     """Triage subtitle tracks that look forced but aren't flagged.
 
     A file can hide more than one forced track, so candidates carry
@@ -4799,7 +4808,32 @@ def subtitle_triage():
     invocation, preserving the file's current defaults; dismissing
     marks the whole file's subtitles as reviewed. Either action retires
     the file's inspection aids.
+
+    With a file_id the page shows ONE file's candidates (#72) — the
+    all-files page loads every pending file's snapshots at once, so
+    the per-file view is the fast path from a file's own page. An
+    `origin` query param carries where the visitor came from; actions
+    redirect back there.
     """
+
+    # Only ever bounce to a local path — an absolute or scheme-relative
+    # origin would be an open redirect
+
+    origin = request.args.get("origin", "", type=str)
+    if not origin.startswith("/") or origin.startswith("//"):
+        origin = None
+
+    def done():
+        """After a successful action: back to the origin page, or the
+        triage list the form lived on."""
+
+        return redirect(origin or url_for("main.subtitle_triage", file_id=file_id))
+
+    def stay():
+        """After a refused action: back to the same triage view,
+        keeping the origin for the next attempt."""
+
+        return redirect(url_for("main.subtitle_triage", file_id=file_id, origin=origin))
 
     triage_form = SubtitleTriageForm()
 
@@ -4812,7 +4846,7 @@ def subtitle_triage():
         ).all()
         if not tracks:
             flash("Select at least one track to flag as forced.", "warning")
-            return redirect(url_for("main.subtitle_triage"))
+            return stay()
 
         if file.container != "Matroska":
             flash(
@@ -4820,12 +4854,12 @@ def subtitle_triage():
                 f"can't be edited in place.",
                 "danger",
             )
-            return redirect(url_for("main.subtitle_triage"))
+            return stay()
         if not os.path.isfile(
             os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         ):
             flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.subtitle_triage"))
+            return stay()
 
         # Preserve the file's current selections, adding the selected
         # tracks to the forced set — one mkvpropedit invocation per file
@@ -4871,7 +4905,7 @@ def subtitle_triage():
             f"'{file.basename}' as forced",
             "info",
         )
-        return redirect(url_for("main.subtitle_triage"))
+        return done()
 
     if triage_form.dismiss_submit.data and triage_form.validate_on_submit():
         file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
@@ -4879,17 +4913,26 @@ def subtitle_triage():
         db.session.commit()
         remove_triage_snapshots(file.id)
         flash(f"Marked '{file.basename}' subtitles as reviewed", "success")
-        return redirect(url_for("main.subtitle_triage"))
+        return done()
 
-    candidates = forced_subtitle_candidates()
+    focus_file = (
+        File.query.filter_by(id=file_id).first_or_404() if file_id is not None else None
+    )
+    candidates = forced_subtitle_candidates(file_id=file_id)
     for entry in candidates:
         for item in entry["tracks"]:
             item["aids"] = triage_presentation(entry["file"].id, item["track"].track)
 
     return render_template(
         "subtitle_triage.html",
-        title="Possibly-forced subtitles",
+        title=(
+            f'Possibly-forced subtitles in "{focus_file.basename}"'
+            if focus_file
+            else "Possibly-forced subtitles"
+        ),
         candidates=candidates,
+        focus_file=focus_file,
+        origin=origin,
         triage_form=triage_form,
     )
 

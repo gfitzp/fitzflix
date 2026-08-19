@@ -132,6 +132,72 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
         assert db.session.get(File, file_id).subtitle_triage_reviewed is not None
 
 
+def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
+    """The per-file triage view (#72): only the requested file's
+    candidates render, the file page links to it while candidates are
+    pending, and actions bounce back to the origin page."""
+
+    with app.app_context():
+        file, _ = build_candidate()
+        other, _ = build_candidate(title="Other Suspect", year=2001)
+        file_id, other_id = file.id, other.id
+
+    # The all-files page lists both and links each file's own page
+
+    body = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+    assert f"/maintenance/subtitles/{file_id}" in body
+    assert f"/maintenance/subtitles/{other_id}" in body
+
+    # The per-file page holds only its own file
+
+    body = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
+    assert "Forced Suspect" in body
+    assert "Other Suspect" not in body
+
+    # The file page links to per-file triage while candidates pend
+
+    file_page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert f"/maintenance/subtitles/{file_id}?origin=/file/{file_id}" in (
+        file_page.replace("&amp;", "&")
+    )
+
+    # Dismissing from the per-file page returns to the origin (the
+    # file page), not the triage list
+
+    response = admin_client.post(
+        f"/maintenance/subtitles/{file_id}?origin=/file/{file_id}",
+        data={
+            "csrf_token": csrf_token_from(body),
+            "file_id": file_id,
+            "dismiss_submit": "Nothing forced here",
+        },
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/file/{file_id}")
+
+    # Reviewed: the file page link disappears; the other file pends on
+
+    file_page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
+    assert "Review possibly-forced tracks" not in file_page
+    with app.app_context():
+        assert db.session.get(File, file_id).subtitle_triage_reviewed is not None
+        assert db.session.get(File, other_id).subtitle_triage_reviewed is None
+
+    # An off-site origin is never followed
+
+    body = admin_client.get(f"/maintenance/subtitles/{other_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/maintenance/subtitles/{other_id}?origin=https://evil.example",
+        data={
+            "csrf_token": csrf_token_from(body),
+            "file_id": other_id,
+            "dismiss_submit": "Nothing forced here",
+        },
+    )
+    assert response.status_code == 302
+    assert "evil.example" not in response.headers["Location"]
+
+
 def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client):
     from app.videos import mkvpropedit_task
 
