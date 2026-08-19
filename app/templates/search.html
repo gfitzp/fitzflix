@@ -92,7 +92,7 @@
 	<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="list-group-item list-group-item-action">
 		<div class="d-flex">
 			{% if person.tmdb_profile_path %}
-			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded me-3" style="width: 46px;">
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded me-3 align-self-start" style="width: 46px;">
 			{% else %}
 			<div class="rounded me-3 border d-flex justify-content-center align-items-center text-secondary" style="width: 46px; height: 69px;">
 				<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
