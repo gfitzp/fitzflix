@@ -1378,6 +1378,12 @@ class File(db.Model):
     format = db.Column(db.String(64))
     codec = db.Column(db.String(64))
     hdr_format = db.Column(db.String(255))
+
+    # The Dolby Vision flavor parsed from hdr_format (#65): "5", "7",
+    # "8.1", "8.4", … — profile 8's suffix is the cross-compatibility
+    # target. Feeds the eventual P7→8.1 conversion targeting (#19)
+
+    dolby_vision_profile = db.Column(db.String(8))
     video_bitrate_kbps = db.Column(db.Integer)
     filesize_bytes = db.Column(db.BigInteger)
     filesize_megabytes = db.Column(db.Numeric(precision=8, scale=1))

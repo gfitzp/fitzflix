@@ -1213,6 +1213,35 @@ def localization_task(
         return True
 
 
+def parse_dolby_vision_profile(hdr_format):
+    """The Dolby Vision flavor ("5", "7", "8.1", …) from MediaInfo's
+    combined HDR-format string, or None when the video isn't DV.
+
+    The profile number rides in the codec-profile token (dvhe.08.06 →
+    profile 8; dvhe and dvh1 are HEVC, dvav/dva1 AVC, dav1 AV1). For
+    profile 8 the meaningful flavor is the cross-compatibility target,
+    which MediaInfo reports as compatibility text in the same string:
+    HDR10-compatible is 8.1, HLG 8.4, plain-SDR 8.2.
+    """
+
+    if not hdr_format or "dolby vision" not in hdr_format.lower():
+        return None
+    text = hdr_format.lower()
+    profile_match = re.search(r"(?:dv(?:he|h1|av|a1)|dav1)\.0?(\d{1,2})", text)
+    if not profile_match:
+        return None
+    profile = int(profile_match.group(1))
+    if profile == 8:
+        if "hdr10" in text:
+            return "8.1"
+        if "hlg" in text:
+            return "8.4"
+        if "sdr" in text:
+            return "8.2"
+        return "8"
+    return str(profile)
+
+
 def _extract_media_details(file_path):
     """Parse a file and return the media details its database records need.
 
@@ -1242,11 +1271,16 @@ def _extract_media_details(file_path):
             video["video_bitrate_kbps"] = track.bit_rate / 1000
             break
 
+    # HDR fields are always present — None when absent — so a rescan
+    # of a replaced file CLEARS stale values instead of keeping them
+
+    video["hdr_format"] = None
     for track in media_info.tracks:
         if track.track_type == "Video" and track.other_hdr_format:
             if track.other_hdr_format[0]:
                 video["hdr_format"] = track.other_hdr_format[0]
                 break
+    video["dolby_vision_profile"] = parse_dolby_vision_profile(video["hdr_format"])
 
     return {
         "video": video,

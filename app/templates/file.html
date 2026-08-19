@@ -36,7 +36,7 @@
 	Container: {{ file.container }}<br>
 	Codec: {{ file.codec }}
 	{% if file.hdr_format %}
-		<br>HDR Format: {{ file.hdr_format }}
+		<br>HDR Format: {{ file.hdr_format }}{% if file.dolby_vision_profile %} <span class="badge badge-dark align-text-bottom" title="Dolby Vision profile">DV Profile {{ file.dolby_vision_profile }}</span>{% endif %}
 	{% endif %}
 	{% if file.video_bitrate_kbps %}
 		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
