@@ -4840,7 +4840,13 @@ def _rejected_files():
                     "basename": name,
                     "reason": os.path.dirname(relative_path) or "unknown",
                     "size": stats.st_size,
-                    "rejected_at": datetime.fromtimestamp(stats.st_mtime, timezone.utc),
+                    # ctime, not mtime: the move into the rejects tree
+                    # updates the inode change time, while both rename
+                    # and copy2 PRESERVE the file's own (possibly
+                    # years-old) mtime — and the SMB share refuses
+                    # utime, so stamping at reject time isn't an
+                    # option (#71, the Army of Darkness report)
+                    "rejected_at": datetime.fromtimestamp(stats.st_ctime, timezone.utc),
                 }
             )
     entries.sort(key=lambda entry: entry["rejected_at"], reverse=True)

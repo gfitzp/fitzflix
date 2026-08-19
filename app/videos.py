@@ -5701,15 +5701,6 @@ def move_to_rejects(file_path, reason=""):
                         pass
                 raise
 
-        # Stamp the rejection moment: the rejects page reads mtime as
-        # "rejected at", and both rename and copy2 preserve the file's
-        # own (possibly years-old) modification time (#71)
-
-        try:
-            os.utime(destination, None)
-        except OSError:
-            pass
-
     except OSError as e:
         current_app.logger.error(
             f"'{basename}' Could not be moved to the rejects "
