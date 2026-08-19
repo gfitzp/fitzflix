@@ -74,11 +74,12 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
                 os.remove(path)
 
 
-def test_cleanup_removes_week_old_empty_directories(app, monkeypatch):
-    """The empty-directory pass (#66 follow-up, for Radarr/Sonarr import
-    leftovers): strictly empty, week-undisturbed directories fall — an
-    aged empty TREE in one pass — while fresh, occupied, or
-    .DS_Store-holding folders survive."""
+def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
+    """The leftover-directory pass (#66 follow-up): week-undisturbed
+    directories fall when empty OR holding only junk — @eaDir trees,
+    macOS metadata, a few aged stray images (an orphaned custom
+    poster) — while anything fresh, real, or picture-collection-sized
+    survives."""
 
     sent = []
     monkeypatch.setattr(
@@ -97,41 +98,72 @@ def test_cleanup_removes_week_old_empty_directories(app, monkeypatch):
             os.utime(path, (old, old))
         return path
 
+    def age(path):
+        os.utime(path, (old, old))
+
     # An aged empty tree: child and parent both go in ONE pass (mtimes
     # are captured before removals begin)
 
     nested_child = make_dir(os.path.join(movies, "Gone (1999)", "Extras"), aged=True)
     nested_parent = os.path.join(movies, "Gone (1999)")
-    os.utime(nested_parent, (old, old))
+    age(nested_parent)
 
-    # Survivors: freshly emptied, still occupied, or metadata-anchored
+    # Junk-anchored leftovers all fall: metadata-only, an orphaned
+    # poster, and a Synology @eaDir whose contents stay fresh (the NAS
+    # rewrites them on its own schedule — that must not immortalize a
+    # dead folder)
+
+    finder_touched = make_dir(os.path.join(movies, "Browsed (2002)"))
+    plant(os.path.join(finder_touched, ".DS_Store"), age_days=30)
+    age(finder_touched)
+
+    postered = make_dir(os.path.join(movies, "Moved Away (2003)"))
+    plant(os.path.join(postered, "poster.jpg"), age_days=30)
+    plant(os.path.join(postered, ".DS_Store"), age_days=30)
+    age(postered)
+
+    synology = make_dir(os.path.join(movies, "NAS Leftover (2004)"))
+    plant(os.path.join(synology, "@eaDir", "SYNOPHOTO_THUMB_XL.jpg"))  # fresh
+    plant(os.path.join(synology, "folder.jpg"), age_days=30)
+    age(os.path.join(synology, "@eaDir"))
+    age(synology)
+
+    # Survivors: freshly emptied, a real file, a FRESH poster (recent
+    # human action), and an image trove past the cap
 
     fresh = make_dir(os.path.join(movies, "Fresh (2000)"))
     occupied = make_dir(os.path.join(movies, "Occupied (2001)"))
     resident = plant(os.path.join(occupied, "Occupied (2001) - [DVD].mkv"), age_days=30)
-    os.utime(occupied, (old, old))
-    finder_touched = make_dir(os.path.join(movies, "Browsed (2002)"))
-    ds_store = plant(os.path.join(finder_touched, ".DS_Store"), age_days=30)
-    os.utime(finder_touched, (old, old))
+    age(occupied)
+    fresh_poster_dir = make_dir(os.path.join(movies, "Repostered (2005)"))
+    fresh_poster = plant(os.path.join(fresh_poster_dir, "poster.jpg"))
+    age(fresh_poster_dir)
+    trove = make_dir(os.path.join(movies, "Photo Trove (2006)"))
+    trove_images = [
+        plant(os.path.join(trove, f"scan-{n:03d}.jpg"), age_days=30) for n in range(30)
+    ]
+    age(trove)
 
     try:
         maintenance.cleanup_orphaned_files()
 
-        assert not os.path.exists(nested_child)
-        assert not os.path.exists(nested_parent)
+        for gone in (nested_child, nested_parent, finder_touched, postered, synology):
+            assert not os.path.exists(gone), gone
         assert os.path.exists(fresh)
         assert os.path.exists(occupied) and os.path.exists(resident)
-        assert os.path.exists(finder_touched) and os.path.exists(ds_store)
+        assert os.path.exists(fresh_poster_dir) and os.path.exists(fresh_poster)
+        assert os.path.exists(trove) and all(os.path.exists(i) for i in trove_images)
         assert os.path.isdir(movies)  # the root itself is never a candidate
 
         assert len(sent) == 1
-        assert "2 empty directories" in sent[0]["body"]
+        assert "5 leftover directories" in sent[0]["body"]
+        assert "(cleared 2 leftover file(s))" in sent[0]["body"]
         assert "orphaned partial file" not in sent[0]["body"]
     finally:
-        for leftover in (resident, ds_store):
+        for leftover in (resident, fresh_poster, *trove_images):
             if os.path.exists(leftover):
                 os.remove(leftover)
-        for leftover_dir in (fresh, occupied, finder_touched):
+        for leftover_dir in (fresh, occupied, fresh_poster_dir, trove):
             if os.path.isdir(leftover_dir):
                 os.rmdir(leftover_dir)
 

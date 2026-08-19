@@ -955,6 +955,64 @@ ORPHAN_MAX_AGE_DAYS = 7
 ORPHAN_IGNORED_NAMES = {".DS_Store", ".localized"}
 ORPHAN_IGNORED_PREFIXES = ("._",)
 
+# What may sit inside a directory that still counts as removable
+# leftovers (Glenn's spec): Synology's @eaDir metadata trees, macOS
+# metadata, and stray image files — a custom poster left behind after
+# its film moved away. The image cap keeps the sweep from ever eating
+# something that looks like a deliberate picture collection
+
+SYNOLOGY_METADATA_DIRNAME = "@eaDir"
+ORPHAN_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tbn"}
+ORPHAN_JUNK_FILE_CAP = 25
+
+
+def _leftover_junk_scan(path, cutoff):
+    """(junk_only, file_count): whether everything under `path` is
+    leftover junk — @eaDir trees, macOS metadata, and at most
+    ORPHAN_JUNK_FILE_CAP aged image files — plus how many non-Synology
+    files that clearing would remove.
+
+    Anything else, any fresh image (a poster someone just placed), any
+    fresh subdirectory, or an image count past the cap (that's a
+    picture collection, not a leftover) keeps the folder alive.
+    @eaDir subtrees are junk wholesale and their contents are neither
+    aged-checked nor counted — Synology rewrites them on its own
+    schedule, which shouldn't immortalize a dead folder.
+    """
+
+    junk_files = 0
+    images = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        kept = []
+        for name in dirnames:
+            if name == SYNOLOGY_METADATA_DIRNAME:
+                continue
+            try:
+                if os.stat(os.path.join(dirpath, name)).st_mtime > cutoff:
+                    return False, 0
+            except OSError:
+                return False, 0
+            kept.append(name)
+        dirnames[:] = kept
+        for name in filenames:
+            if name in ORPHAN_IGNORED_NAMES or name.startswith(ORPHAN_IGNORED_PREFIXES):
+                junk_files += 1
+                continue
+            extension = os.path.splitext(name)[1].lower()
+            if extension in ORPHAN_IMAGE_EXTENSIONS and not name.startswith("."):
+                try:
+                    if os.stat(os.path.join(dirpath, name)).st_mtime > cutoff:
+                        return False, 0
+                except OSError:
+                    return False, 0
+                images += 1
+                junk_files += 1
+                if images > ORPHAN_JUNK_FILE_CAP:
+                    return False, 0
+                continue
+            return False, 0
+    return True, junk_files
+
 
 def cleanup_orphaned_files():
     """Delete the hidden partial files that failed tasks strand, plus a
@@ -1014,13 +1072,15 @@ def cleanup_orphaned_files():
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
         # Empty-directory pass (#66 follow-up): Radarr/Sonarr import
-        # leftovers and hand-emptied folders. Only a directory that is
-        # COMPLETELY empty falls — os.rmdir refuses anything else, so a
-        # .DS_Store keeps its folder alive — and only after sitting
-        # undisturbed for the same week the file pass uses. The roots
-        # themselves are never candidates, hidden directories are never
-        # entered, and mtimes are captured before any removal so an
-        # aged empty tree collapses in a single pass.
+        # leftovers and hand-emptied folders. A directory falls when
+        # its entire remaining contents are LEFTOVER JUNK — Synology
+        # @eaDir trees, macOS metadata, and a handful of stray image
+        # files (a custom poster whose film moved away) — and nothing
+        # real in it has been touched for the same week the file pass
+        # uses. Anything else keeps the folder alive. The roots
+        # themselves are never candidates, hidden directories are
+        # never entered, and mtimes are captured before any removal so
+        # an aged leftover tree collapses in a single pass.
 
         removed_dirs = []
         for root in roots:
@@ -1028,7 +1088,11 @@ def cleanup_orphaned_files():
                 continue
             candidates = []
             for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                dirnames[:] = [
+                    d
+                    for d in dirnames
+                    if not d.startswith(".") and d != SYNOLOGY_METADATA_DIRNAME
+                ]
                 for name in dirnames:
                     path = os.path.join(dirpath, name)
                     try:
@@ -1040,12 +1104,22 @@ def cleanup_orphaned_files():
             ):
                 if mtime > cutoff:
                     continue
-                try:
-                    os.rmdir(path)
-                except OSError:
+                junk_only, junk_files = _leftover_junk_scan(path, cutoff)
+                if not junk_only:
                     continue
-                current_app.logger.info(f"'{path}' Deleted empty directory")
-                removed_dirs.append(path)
+                try:
+                    if junk_files:
+                        shutil.rmtree(path)
+                    else:
+                        os.rmdir(path)
+                except OSError as e:
+                    current_app.logger.warning(
+                        f"'{path}' Couldn't delete leftover directory: {e}"
+                    )
+                    continue
+                note = f" (cleared {junk_files} leftover file(s))" if junk_files else ""
+                current_app.logger.info(f"'{path}' Deleted leftover directory{note}")
+                removed_dirs.append(f"{path}{note}")
 
         dropped_scratch_db = _drop_leftover_restore_database()
 
@@ -1062,9 +1136,10 @@ def cleanup_orphaned_files():
             lines.extend(f"  {entry}" for entry in removed)
         if removed_dirs:
             lines.append(
-                f"Removed {len(removed_dirs)} empty director"
-                f"{'y' if len(removed_dirs) == 1 else 'ies'} untouched for "
-                f"{ORPHAN_MAX_AGE_DAYS} days:"
+                f"Removed {len(removed_dirs)} leftover director"
+                f"{'y' if len(removed_dirs) == 1 else 'ies'} (empty, or "
+                f"holding only @eaDir/macOS metadata/stray images) untouched "
+                f"for {ORPHAN_MAX_AGE_DAYS} days:"
             )
             lines.extend(f"  {entry}" for entry in removed_dirs)
         if dropped_scratch_db:
