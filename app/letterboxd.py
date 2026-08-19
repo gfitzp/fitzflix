@@ -24,6 +24,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.models import Movie, User, UserMovieReview
+from app.richtext import strip_disallowed_tags
 
 app = LocalProxy(get_app)
 
@@ -97,11 +98,14 @@ def parse_letterboxd_feed(xml_text):
         ):
             if "<img" in paragraph.lower():
                 continue
-            # The description ships inside CDATA, so its entities
-            # (&quot;, &#039;, …) reach us literally — unescape after
-            # tag-stripping so an unescaped &lt; can't read as markup
+            # Letterboxd's inline-markup subset (<i>, <b>, …) survives —
+            # it's part of the authored text, and matches what the CSV
+            # import stores — while every other tag is dropped. The
+            # description ships inside CDATA, so its entities (&quot;,
+            # &#039;, …) reach us literally — unescape after the tag
+            # pass so an unescaped &lt; can't read as markup
 
-            cleaned = html.unescape(re.sub(r"<[^>]+>", "", paragraph)).strip()
+            cleaned = html.unescape(strip_disallowed_tags(paragraph)).strip()
             if not cleaned or BOILERPLATE_RE.match(cleaned):
                 continue
             text_paragraphs.append(cleaned)

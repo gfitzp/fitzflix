@@ -107,7 +107,8 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
     assert watch["watched_date"] == datetime(2026, 7, 9)
     assert review["rating"] == 3.5
     assert review["liked"] is True
-    assert review["review"] == "My cat hated the soundtrack."
+    # Letterboxd's inline markup is part of the authored text and survives
+    assert review["review"] == "<b>My cat</b> hated the soundtrack."
 
 
 def test_parser_unescapes_html_entities_in_review_text(app):

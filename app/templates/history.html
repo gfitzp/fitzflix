@@ -113,7 +113,10 @@
 		   calendar dates), so moment's naive-means-UTC conversion would
 		   shift them a day early for viewers west of UTC #}
 		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
-		{{ review.review }}
+		{# review_html renders Letterboxd's inline subset (<i>, <b>, …) as
+		   real formatting and keeps everything else escaped; the textarea
+		   below stays raw markup, since that's what gets edited #}
+		{{ review.review | review_html }}
 		{# Freeform text lives in its own per-row form (#58c) — separate
 		   from the star form, so a star tap can never silently save
 		   half-edited text. Dates still edit on the full review page #}

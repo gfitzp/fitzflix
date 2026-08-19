@@ -402,6 +402,10 @@ def create_app(config_class=Config, watch_import_dir=False):
     app.config.from_object(config_class)
     app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
 
+    from app.richtext import review_html
+
+    app.jinja_env.filters["review_html"] = review_html
+
     # The built-in SECRET_KEY fallback lets anyone forge session cookies and
     # password-reset tokens, so it's only acceptable in debug mode
 
