@@ -83,10 +83,17 @@ def test_heuristic_flags_small_unforced_same_language_tracks(app, admin_client):
         add_subtitle(cross_language, 1, 1500)
         add_subtitle(cross_language, 2, 60, language="fre", language_name="French")
         db.session.commit()
+        suspect_id = file.id
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert "Forced Suspect" in page
-    assert "60 of 1500" in page
+    # The worklist links each file to its own triage page (#75); the
+    # track detail lives there
+    assert "60 of 1500" not in page
+    detail = admin_client.get(f"/maintenance/subtitles/{suspect_id}").get_data(
+        as_text=True
+    )
+    assert "60 of 1500" in detail
     for absent in (
         "Already Forced",
         "Healthy Ratio",
@@ -112,7 +119,7 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
         file, _ = build_candidate()
         file_id = file.id
 
-    page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+    page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
     response = admin_client.post(
         "/maintenance/subtitles",
         data={
@@ -224,7 +231,9 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             f.write(b"mkv bytes")
 
     try:
-        page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+        page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
+            as_text=True
+        )
         response = admin_client.post(
             "/maintenance/subtitles",
             data={
@@ -259,8 +268,9 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         file_id, small_id = file.id, small.id
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
-    assert "MP4 Suspect" in page  # listed, but without a mark button
+    assert "MP4 Suspect" in page  # listed on the worklist
     assert "MPEG-4" in page
+    page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
 
     response = admin_client.post(
         "/maintenance/subtitles",
@@ -296,7 +306,9 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
             f.write(b"mkv bytes")
 
     try:
-        page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+        page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
+            as_text=True
+        )
         response = admin_client.post(
             "/maintenance/subtitles",
             data={
@@ -333,7 +345,7 @@ def test_triage_actions_retire_the_inspection_aids(app, admin_client):
         with open(os.path.join(aids_dir, "timeline.json"), "w") as f:
             f.write("{}")
 
-    page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+    page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
     admin_client.post(
         "/maintenance/subtitles",
         data={
@@ -388,7 +400,9 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
         assert len(aids["snapshots"]) == 5
         assert max(aids["buckets"]) == 100
 
-        page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
+        page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(
+            as_text=True
+        )
         assert "5 cues from 0:00:10 to 1:38:20" in page
         assert f"triage/{file_id}/2/snap-1.jpg" in page
         assert 'name="track_ids"' in page

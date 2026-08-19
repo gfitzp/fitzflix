@@ -4941,9 +4941,17 @@ def subtitle_triage(file_id):
         File.query.filter_by(id=file_id).first_or_404() if file_id is not None else None
     )
     candidates = forced_subtitle_candidates(file_id=file_id)
-    for entry in candidates:
-        for item in entry["tracks"]:
-            item["aids"] = triage_presentation(entry["file"].id, item["track"].track)
+
+    # The inspection aids (cue timelines, burned-in snapshots) are the
+    # expensive part, and only the per-file view renders them (#75) —
+    # the all-files page is just the worklist of links
+
+    if focus_file:
+        for entry in candidates:
+            for item in entry["tracks"]:
+                item["aids"] = triage_presentation(
+                    entry["file"].id, item["track"].track
+                )
 
     return render_template(
         "subtitle_triage.html",
