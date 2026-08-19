@@ -137,6 +137,7 @@ from app.elicitation import (
     set_last_response,
     suggestions_after_rating,
 )
+from app.criterion_now import criterion_now_card
 from app.leaving_criterion import leaving_inventory, leaving_shelf
 from app.streaming_rail import stored_rail
 from app.triage import (
@@ -747,6 +748,7 @@ def index():
         shelf=shelf_items,
         shelf_departs=shelf_departs,
         shelf_url=shelf_url,
+        now_playing=criterion_now_card(current_user),
         minutes=minutes,
     )
 

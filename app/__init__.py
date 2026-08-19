@@ -154,6 +154,15 @@ def cron_table(config):
             3600,
             "Recomputing film recommendations",
         ),
+        # Criterion24/7 now-playing heartbeat (#63): the poller is
+        # self-scheduling (it re-enqueues at each film's end under a
+        # deterministic job id), so this only revives a broken chain
+        (
+            "7,37 * * * *",
+            "app.criterion_now.poll_criterion_now",
+            300,
+            "Checking what's on Criterion24/7",
+        ),
         # Refresh the leaving-Criterion set monthly
         (
             "30 3 1 * *",
