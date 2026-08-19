@@ -161,3 +161,70 @@ def test_pipeline_page_renders_the_files_section(admin_client):
     maintenance = admin_client.get("/maintenance").get_data(as_text=True)
     assert "/maintenance/pipeline" in maintenance
     assert "View file trails" in maintenance
+
+
+def test_running_banners_hold_first_run_order(app, admin_client):
+    """The running list sorts by when each FILE first began running,
+    not by the current job's own start — a file whose work hops from
+    the import queue to the file-operation queue (iterated last) keeps
+    its place ahead of a file that started after it (Glenn's original
+    #18 ask)."""
+
+    import time
+
+    from rq.job import Job
+
+    from app.pipeline import FILE_KEY, _digest
+
+    with app.app_context():
+        # File A began running at 10:00 and its work has moved on to
+        # the file-operation queue; file B began at 10:05 and is still
+        # localizing on the import queue, which the payload iterates
+        # FIRST
+
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest("Order A (2020) - [DVD].mkv")),
+            "first_run",
+            "2026-01-01 10:00:00",
+        )
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest("Order B (2021) - [DVD].mkv")),
+            "first_run",
+            "2026-01-01 10:05:00",
+        )
+
+        job_a = Job.create(
+            "app.videos.move_localized_file",
+            args=(
+                "/staging/.Order A (2020) - [DVD].mkv",
+                {"basename": "Order A (2020) - [DVD].mkv"},
+                None,
+                None,
+            ),
+            id="order-a-move",
+            origin="fitzflix-file-operation",
+            connection=app.redis,
+        )
+        job_a.save()
+        # rq 2's StartedJobRegistry.add is NotImplemented (workers add
+        # executions), so seed the raw wip zset: {job_id}:{execution_id}
+        app.redis.zadd(
+            "rq:wip:fitzflix-file-operation", {"order-a-move:test": time.time() + 600}
+        )
+
+        job_b = Job.create(
+            "app.videos.localization_task",
+            args=("/import/Order B (2021) - [DVD].mkv",),
+            id="order-b-localize",
+            origin="fitzflix-import",
+            connection=app.redis,
+        )
+        job_b.save()
+        app.redis.zadd(
+            "rq:wip:fitzflix-import", {"order-b-localize:test": time.time() + 600}
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    order = [item["id"] for item in payload["running"]]
+    assert order == ["order-a-move", "order-b-localize"]
+    assert payload["running"][0]["first_run"] == "2026-01-01 10:00:00"

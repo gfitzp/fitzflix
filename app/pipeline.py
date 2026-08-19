@@ -160,6 +160,13 @@ def record_job_event(connection, job, event):
             trail.append({"stage": stage, "status": event, "at": now, "job": job.id})
         del trail[:-40]
 
+        # The file's FIRST start is the running banners' sort anchor
+        # (Glenn's original #18 ask): it never moves once set, so a
+        # file hopping queues keeps its place in the list
+
+        if event == "started":
+            connection.hsetnx(key, "first_run", now)
+
         connection.hset(
             key,
             mapping={"basename": basename, "trail": json.dumps(trail), "updated": now},
@@ -174,6 +181,23 @@ def record_job_event(connection, job, event):
             current_app.logger.warning(traceback.format_exc())
         except Exception:
             pass
+
+
+def first_run(connection, job):
+    """When the job's FILE first began running any stage, or None for
+    jobs outside the pipeline (or files with no start recorded yet).
+    The running banners sort by this so a file whose work hops queues
+    — each hop a new job with a new started_at — holds its position."""
+
+    try:
+        found = _stage_for(job)
+        if found is None:
+            return None
+        basename, _ = found
+        value = connection.hget(FILE_KEY.format(digest=_digest(basename)), "first_run")
+        return value.decode() if isinstance(value, bytes) else value
+    except Exception:
+        return None
 
 
 def pipeline_trails(connection, limit=25):

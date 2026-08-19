@@ -863,6 +863,27 @@ class User(UserMixin, db.Model):
         )
         file_operations_running = file_operations.get_job_ids()
 
+        # The running banners hold their relative order by when each
+        # FILE first began running (Glenn's original #18 ask): a file's
+        # work hops queues as it progresses — localization on import,
+        # the library copy on file-operation — and each hop is a new
+        # job with a new started_at, which used to bounce the banner to
+        # the end of the list. The pipeline trail's first_run anchor
+        # survives the hops; jobs without a trail sort by their own
+        # start, converted to the trail's local wall clock.
+
+        from app.pipeline import first_run
+
+        def first_run_anchor(job):
+            """The job's stable sort key among the running banners."""
+
+            anchor = first_run(current_app.redis, job)
+            if anchor:
+                return anchor
+            if job.started_at:
+                return job.started_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            return "9999"
+
         details = {}
         details["count"] = self.get_queue_count()
         details["running"] = []
@@ -878,6 +899,7 @@ class User(UserMixin, db.Model):
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
+                        "first_run": first_run_anchor(job),
                         "progress": (
                             job.meta.get("progress", -1) if job is not None else 100
                         ),
@@ -895,6 +917,7 @@ class User(UserMixin, db.Model):
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
+                        "first_run": first_run_anchor(job),
                         "progress": (
                             job.meta.get("progress", -1) if job is not None else 100
                         ),
@@ -912,13 +935,14 @@ class User(UserMixin, db.Model):
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
+                        "first_run": first_run_anchor(job),
                         "progress": (
                             job.meta.get("progress", -1) if job is not None else 100
                         ),
                     }
                 )
 
-        details["running"] = sorted(details["running"], key=lambda d: d["started_at"])
+        details["running"] = sorted(details["running"], key=lambda d: d["first_run"])
 
         # Create list of all localizations and transcodes in queue
 
