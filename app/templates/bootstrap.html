@@ -111,8 +111,16 @@
 		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }
 		.star-row .star.filled::before { color: #f0ad4e; }
 		.star-row .star.estimated::before { color: #adb5bd; }
+		{# The percentage maps onto the glyph's INKED span, not the box:
+		   the box is advance width + .12em padding a side, and the ★'s
+		   ink occupies only 15.1%–84.4% of it (measured by pixel-scan
+		   of the Apple system font; other platform fonts differ by a
+		   point or two, which shifts a boundary imperceptibly). Without
+		   this mapping an 80% fill cut at 94% of the visible star and
+		   read as whole — a 2.8 estimate looked like a flat 3 #}
 		{% for pct in range(5, 100, 5) -%}
-		.star-row .star.fill-{{ pct }}::before { -webkit-clip-path: inset(-20% {{ 100 - pct }}% -20% 0); clip-path: inset(-20% {{ 100 - pct }}% -20% 0); }
+		{% set cut = '%.1f' % (100 - (15.1 + pct * 0.693)) -%}
+		.star-row .star.fill-{{ pct }}::before { -webkit-clip-path: inset(-20% {{ cut }}% -20% 0); clip-path: inset(-20% {{ cut }}% -20% 0); }
 		{% endfor -%}
 		/* Hover previews exist only where hover does (#62 follow-up):
 		   iOS keeps a tapped element in :hover until the next tap
