@@ -206,6 +206,16 @@ class WatchlistForm(FlaskForm):
     remove_watchlist_submit = SubmitField("Remove from Watchlist")
 
 
+class RadarrForm(FlaskForm):
+    """The ad-hoc Radarr hand-off (#66): request an unowned film for
+    download, or withdraw a request — one film at a time, by a human,
+    never automatically."""
+
+    movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
+    radarr_request_submit = SubmitField("Request via Radarr")
+    radarr_remove_submit = SubmitField("Remove from Radarr")
+
+
 class NotInterestedForm(FlaskForm):
     """Wave an unowned film off every recommendation surface — or wave
     it back on. Owned films use the rating ladder's zero stars instead,

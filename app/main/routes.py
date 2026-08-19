@@ -54,6 +54,7 @@ from app.main.forms import (
     MovieMergeForm,
     MovieShoppingExcludeForm,
     MovieShoppingFilterForm,
+    RadarrForm,
     RejectActionForm,
     SyncAWSStorageForm,
     QualityFilterForm,
@@ -138,6 +139,13 @@ from app.elicitation import (
     suggestions_after_rating,
 )
 from app.criterion_now import criterion_now_card
+from app.radarr_push import (
+    RadarrError,
+    radarr_configured,
+    radarr_tmdb_ids,
+    request_movie,
+    withdraw_movie,
+)
 from app.leaving_criterion import leaving_inventory, leaving_shelf
 from app.streaming_rail import stored_rail
 from app.triage import (
@@ -2341,6 +2349,17 @@ def movie(movie_id):
             )
             might_interest = coarse > marker_bar(profile)
 
+    # The ad-hoc Radarr hand-off (#66): admins can request an unowned
+    # film for download; the badge reads from the hour-cached id set
+
+    in_radarr = bool(
+        current_user.admin
+        and not films
+        and movie.tmdb_id
+        and radarr_configured()
+        and movie.tmdb_id in radarr_tmdb_ids()
+    )
+
     return render_template(
         "movie.html",
         title=title,
@@ -2351,6 +2370,9 @@ def movie(movie_id):
         awards=awards,
         review=review,
         films=films,
+        radarr_form=RadarrForm(),
+        radarr_available=radarr_configured(),
+        in_radarr=in_radarr,
         features=features,
         movie_shopping_exclude_form=movie_shopping_exclude_form,
         movie_review_form=movie_review_form,
@@ -5747,6 +5769,13 @@ def watchlist():
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
     }
 
+    # The ad-hoc Radarr hand-off (#66): admins see request/withdraw
+    # buttons on unowned rows, badged from the hour-cached id set
+
+    radarr_ids = (
+        radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
+    )
+
     rows = []
     streaming_attribution = False
     for entry in entries:
@@ -5766,6 +5795,7 @@ def watchlist():
                 "owned": movie.id in owned_ids,
                 "streaming": streaming,
                 "rentals": rentals,
+                "in_radarr": movie.tmdb_id in radarr_ids if movie.tmdb_id else False,
             }
         )
 
@@ -5774,8 +5804,70 @@ def watchlist():
         title="My Watchlist",
         rows=rows,
         watchlist_form=watchlist_form,
+        radarr_form=RadarrForm(),
+        radarr_available=bool(current_user.admin and radarr_configured()),
         streaming_attribution=streaming_attribution,
     )
+
+
+@bp.route("/radarr", methods=["POST"])
+@login_required
+@admin_required
+def radarr_request():
+    """The ad-hoc Radarr hand-off (#66): request one unowned film for
+    download, or withdraw a request — deliberate per-film actions from
+    the movie page or a watchlist row, never automatic (an auto-sync
+    of the whole watchlist would fill the volume). An `origin` query
+    param carries where the visitor came from, validated to a local
+    path."""
+
+    radarr_form = RadarrForm()
+    origin = request.args.get("origin", "", type=str)
+    if not origin.startswith("/") or origin.startswith("//"):
+        origin = None
+    if not radarr_form.validate_on_submit() or not radarr_form.movie_id.data:
+        flash("That Radarr request didn't make sense", "warning")
+        return redirect(origin or url_for("main.index"))
+    movie = Movie.query.filter_by(id=radarr_form.movie_id.data).first_or_404()
+    dest = redirect(origin or url_for("main.movie", movie_id=movie.id))
+    title = (
+        f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
+        f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+    )
+
+    if not radarr_configured():
+        flash("Radarr isn't configured, so films can't be requested.", "warning")
+        return dest
+    if not movie.tmdb_id:
+        flash(f"'{title}' has no TMDb id, so Radarr can't look it up.", "warning")
+        return dest
+
+    try:
+        if radarr_form.radarr_request_submit.data:
+            owned = (
+                db.session.query(File.id)
+                .filter(File.movie_id == movie.id, File.feature_type_id.is_(None))
+                .first()
+                is not None
+            )
+            if owned:
+                flash(f"'{title}' is already in the library.", "warning")
+                return dest
+            request_movie(movie.tmdb_id)
+            flash(
+                f"Requested '{title}' via Radarr — when a download lands "
+                f"it imports automatically.",
+                "success",
+            )
+        elif radarr_form.radarr_remove_submit.data:
+            withdraw_movie(movie.tmdb_id)
+            flash(f"Removed '{title}' from Radarr.", "success")
+    except RadarrError as e:
+        flash(str(e), "warning")
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        flash("Radarr couldn't be reached; try again in a moment.", "danger")
+    return dest
 
 
 @bp.route("/rate", methods=["GET", "POST"])

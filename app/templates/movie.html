@@ -198,6 +198,22 @@
 		<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
 	</form>
 	{% endif %}
+	{# The ad-hoc Radarr hand-off (#66): request an unowned film for
+	   download — a deliberate per-film action, never automatic — or
+	   withdraw the request. Admin-only; a granted request imports
+	   through the existing Radarr webhook #}
+	{% if current_user.admin and radarr_available and not films and movie.tmdb_id %}
+	<form action="{{ url_for('main.radarr_request', origin=url_for('main.movie', movie_id=movie.id)) }}" method="post" class="d-inline">
+		{{ radarr_form.csrf_token }}
+		{{ radarr_form.movie_id(value=movie.id) }}
+		{% if in_radarr %}
+		<span class="badge badge-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
+		<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary">Remove from Radarr</button>
+		{% else %}
+		<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary">Request via Radarr</button>
+		{% endif %}
+	</form>
+	{% endif %}
 </div>
 <hr>
 <h5>Movie Data</h5>

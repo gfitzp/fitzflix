@@ -31,14 +31,32 @@
 					{# The form's own movie_id field carries the value —
 					   hidden_tag() would render a second, empty movie_id
 					   input, and WTForms reads the first one submitted #}
-					<form action="" method="post" class="ml-2 position-relative" style="z-index: 2;">
-						{{ watchlist_form.csrf_token }}
-						{{ watchlist_form.movie_id(value=movie.id) }}
-						<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
-					</form>
+					<div class="ml-2 d-flex position-relative" style="z-index: 2; gap: .25rem;">
+						{# The ad-hoc Radarr hand-off (#66) on unowned rows:
+						   request the film for download, or withdraw #}
+						{% if radarr_available and not row.owned and movie.tmdb_id %}
+						<form action="{{ url_for('main.radarr_request', origin=url_for('main.watchlist')) }}" method="post">
+							{{ radarr_form.csrf_token }}
+							{{ radarr_form.movie_id(value=movie.id) }}
+							{% if row.in_radarr %}
+							<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary py-0" title="Radarr is monitoring this film — withdraw the request">Un-request</button>
+							{% else %}
+							<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary py-0">Request</button>
+							{% endif %}
+						</form>
+						{% endif %}
+						<form action="" method="post">
+							{{ watchlist_form.csrf_token }}
+							{{ watchlist_form.movie_id(value=movie.id) }}
+							<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
+						</form>
+					</div>
 				</div>
 				{% if row.owned %}
 				{{ library_badge() }}
+				{% endif %}
+				{% if row.in_radarr and not row.owned %}
+				<span class="badge badge-info font-weight-normal" title="Radarr is monitoring this film for download">Requested via Radarr</span>
 				{% endif %}
 				{% for provider in row.streaming + row.rentals %}
 				{{ availability_badge(provider) }}
