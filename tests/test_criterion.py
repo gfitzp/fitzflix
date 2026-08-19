@@ -59,6 +59,9 @@ SETS_RESPONSE = {
 
 
 def fake_sparql(monkeypatch, calls=None):
+
+    import app.criterion_catalog as criterion_catalog
+
     class FakeResponse:
         def __init__(self, payload):
             self._payload = payload
@@ -76,7 +79,7 @@ def fake_sparql(monkeypatch, calls=None):
             return FakeResponse(SETS_RESPONSE)
         return FakeResponse(SPARQL_RESPONSE)
 
-    monkeypatch.setattr(videos.requests, "get", fake_get)
+    monkeypatch.setattr(criterion_catalog.requests, "get", fake_get)
 
 
 def test_refresh_matches_by_tmdb_id_and_title_year(app, monkeypatch):
@@ -188,10 +191,12 @@ def test_single_movie_refresh_uses_cache(app, monkeypatch):
 def test_refresh_survives_wikidata_outage(app, monkeypatch):
     """A failed fetch rolls back and logs rather than raising."""
 
+    import app.criterion_catalog as criterion_catalog
+
     def explode(*args, **kwargs):
         raise OSError("connection refused")
 
-    monkeypatch.setattr(videos.requests, "get", explode)
+    monkeypatch.setattr(criterion_catalog.requests, "get", explode)
 
     with app.app_context():
         movie = make_movie("Seven Samurai", 1954)

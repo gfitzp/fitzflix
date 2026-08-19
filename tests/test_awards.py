@@ -357,7 +357,7 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
     retries once — the WDQS manual's condition for staying unbanned."""
 
     import app.awards as awards
-    import app.videos as videos
+    import app.criterion_catalog as criterion_catalog
     from app.videos import wikidata_retry_after_seconds
 
     class FakeResponse:
@@ -393,8 +393,10 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
         for module, call in (
             (awards, lambda: awards._wikidata_sparql("SELECT 1")),
             (
-                videos,
-                lambda: videos._wikidata_sparql("http://example.test", "SELECT 1"),
+                criterion_catalog,
+                lambda: criterion_catalog._wikidata_sparql(
+                    "http://example.test", "SELECT 1"
+                ),
             ),
         ):
             responses = [

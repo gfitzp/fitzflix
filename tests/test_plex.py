@@ -235,12 +235,12 @@ class FakePlexServer:
 
 @pytest.fixture
 def plex_server(app, monkeypatch):
-    import app.videos as videos
+    from app import diary
 
     server = FakePlexServer()
     monkeypatch.setitem(app.config, "PLEX_URL", "http://plex.test:32400")
     monkeypatch.setitem(app.config, "PLEX_TOKEN", "plex-test-token")
-    monkeypatch.setattr(videos.requests, "get", server.get)
+    monkeypatch.setattr(diary.requests, "get", server.get)
     return server
 
 

@@ -514,10 +514,12 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     import app.videos as videos
 
+    from app import aws_storage
+
     def flaky_download(key, basename, sqs_receipt_handle=None):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
-    monkeypatch.setattr(videos, "aws_download", flaky_download)
+    monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
 
     with app.app_context():
         result = videos.download_task(
@@ -553,10 +555,12 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
     import app.videos as videos
 
+    from app import aws_storage
+
     def flaky_download(key, basename, sqs_receipt_handle=None):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
-    monkeypatch.setattr(videos, "aws_download", flaky_download)
+    monkeypatch.setattr(aws_storage, "aws_download", flaky_download)
 
     with app.app_context():
         result = videos.download_task(
@@ -581,6 +585,8 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
     import app.videos as videos
 
+    from app import aws_storage
+
     class FakeS3:
         def head_object(self, Bucket, Key):
             return {"ContentLength": 100}
@@ -590,8 +596,8 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
                 f.write(b"partial")
             raise OSError(errno.EBADF, "Bad file descriptor")
 
-    monkeypatch.setattr(videos, "aws_s3_client", lambda **kwargs: FakeS3())
-    monkeypatch.setattr(videos, "aws_sqs_client", lambda: None)
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: None)
 
     with app.app_context():
         with pytest.raises(OSError):

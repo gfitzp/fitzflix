@@ -317,10 +317,13 @@ def fake_tmdb(monkeypatch):
         def raise_for_status(self):
             pass
 
-    import app.videos
+    # tmdb_get's requests lives in app.models; app.videos stopped
+    # importing requests when its network-facing slices moved out (#17)
+
+    import app.models
 
     monkeypatch.setattr(
-        app.videos.requests, "get", lambda *args, **kwargs: FakeResponse()
+        app.models.requests, "get", lambda *args, **kwargs: FakeResponse()
     )
 
 

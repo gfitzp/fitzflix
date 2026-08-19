@@ -231,6 +231,8 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
     force-uploads under the new key instead (Glenn's call — close the
     invariant now rather than hope a future re-upload heals it)."""
 
+    from app import aws_storage
+
     from app import db
     from app import videos
     from tests.factories import make_movie, make_movie_file
@@ -259,7 +261,7 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
         db.session.commit()
 
         fake = FakeS3()
-        monkeypatch.setattr(videos, "aws_s3_client", lambda **kw: fake)
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
         assert videos.rename_untouched_object(file, "untouched/new.mkv") is True
         assert file.aws_untouched_key == "untouched/new.mkv"
         assert fake.copied == ("untouched/old.mkv", "untouched/new.mkv")
@@ -278,8 +280,8 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
 
         file.aws_untouched_key = "untouched/frozen.mkv"
         fake = FakeS3(storage_class="DEEP_ARCHIVE")
-        monkeypatch.setattr(videos, "aws_s3_client", lambda **kw: fake)
-        monkeypatch.setattr(videos, "aws_upload", fake_upload)
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
+        monkeypatch.setattr(aws_storage, "aws_upload", fake_upload)
         assert videos.rename_untouched_object(file, "untouched/thawed.mkv") is True
         assert file.aws_untouched_key == "untouched/thawed.mkv"
         assert file.aws_untouched_filesize_bytes == 999
@@ -291,7 +293,7 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
 
         file.aws_untouched_key = "untouched/gone.mkv"
         fake = FakeS3(exists=False)
-        monkeypatch.setattr(videos, "aws_s3_client", lambda **kw: fake)
+        monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: fake)
         assert videos.rename_untouched_object(file, "untouched/found.mkv") is True
         assert file.aws_untouched_key == "untouched/found.mkv"
         assert fake.deleted is None
