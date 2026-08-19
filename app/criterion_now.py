@@ -110,6 +110,43 @@ def parse_film_info(page_html):
     return info
 
 
+def matched_film(title, info):
+    """(tmdb_id, poster_path) for the airing film, or (None, None).
+
+    Title-and-year search, then the match is verified against TMDb's
+    credited directors when both sides know one — a wrong search hit
+    must degrade to a plain card, never dress the wrong film's poster
+    over the right title."""
+
+    if not info["year"]:
+        return None, None
+    tmdb_id = match_tmdb_id(title, info["year"])
+    if not tmdb_id:
+        return None, None
+    payload = enriched_movie(tmdb_id)
+    if not payload:
+        return None, None
+
+    credited = [
+        person["name"]
+        for person in payload.get("crew") or []
+        if person.get("job") == "Director" and person.get("name")
+    ]
+    if info["director"] and credited:
+        scraped = info["director"].lower()
+        if not any(
+            name.lower() in scraped or name.split()[-1].lower() in scraped
+            for name in credited
+        ):
+            current_app.logger.warning(
+                f"Criterion24/7: TMDb {tmdb_id} credits "
+                f"{', '.join(credited)} but the Channel says "
+                f"'{info['director']}' — treating as unmatched"
+            )
+            return None, None
+    return tmdb_id, payload.get("poster_path")
+
+
 def poll_criterion_now():
     """Task: scrape the now-playing page, enrich and store the current
     film, and re-schedule for just after it ends."""
@@ -136,18 +173,11 @@ def poll_criterion_now():
                     except Exception:
                         current_app.logger.warning(traceback.format_exc())
 
-                # A More slug and a year are enough to try TMDb; the
-                # poster comes as a direct TMDb link on a match, and
-                # the card renders plain otherwise
+                # A year is enough to try TMDb; the poster comes as a
+                # direct TMDb link on a verified match, and the card
+                # renders plain otherwise — never a loud guess
 
-                tmdb_id = None
-                poster_path = None
-                if info["year"]:
-                    tmdb_id = match_tmdb_id(title, info["year"])
-                    if tmdb_id:
-                        payload = enriched_movie(tmdb_id)
-                        if payload:
-                            poster_path = payload.get("poster_path")
+                tmdb_id, poster_path = matched_film(title, info)
 
                 ends_at = (
                     (datetime.now() + timedelta(minutes=minutes)).strftime(

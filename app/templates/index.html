@@ -176,9 +176,7 @@
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-secondary">More</a>
 			{% endif %}
 		</p>
-		{% if now_playing.next_at %}
-		<p class="mb-0 small text-muted">Next film around {{ now_playing.next_at }}</p>
-		{% endif %}
+		<p class="mb-0 small text-muted">{% if now_playing.next_at %}Next film around {{ now_playing.next_at }} &middot; {% endif %}From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>
 	</div>
 </div>
 {% endif %}

@@ -107,7 +107,11 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
     monkeypatch.setattr(
         criterion_now,
         "enriched_movie",
-        lambda tmdb_id: {"poster_path": "/shock.jpg", "runtime": 101},
+        lambda tmdb_id: {
+            "poster_path": "/shock.jpg",
+            "runtime": 101,
+            "crew": [{"id": 8556, "name": "Samuel Fuller", "job": "Director"}],
+        },
     )
 
     assert criterion_now.poll_criterion_now() is True
@@ -131,6 +135,34 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
         # A second run replaces the scheduled poll instead of stacking
         criterion_now.poll_criterion_now()
         assert registry.get_job_ids().count(criterion_now.POLL_JOB_ID) == 1
+
+
+def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
+    """A wrong search hit must never dress the wrong film's poster over
+    the right title: when TMDb's credited director disagrees with the
+    Channel's, the film stores unmatched."""
+
+    import app.criterion_now as criterion_now
+
+    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 99999)
+    monkeypatch.setattr(
+        criterion_now,
+        "enriched_movie",
+        lambda tmdb_id: {
+            "poster_path": "/wrong-film.jpg",
+            "crew": [{"id": 1, "name": "Alan Smithee", "job": "Director"}],
+        },
+    )
+    with app.app_context():
+        assert criterion_now.matched_film(
+            "Shock Corridor",
+            {
+                "director": "Samuel Fuller",
+                "year": 1963,
+                "country": "United States",
+                "starring": None,
+            },
+        ) == (None, None)
 
 
 def test_card_gates_on_subscription_and_staleness(app, admin_client):
