@@ -84,16 +84,21 @@
 		.star-btn { background: none; border: 0; padding: 0 .12em; font-size: 1.7rem; line-height: 1; color: #c9c9c9; cursor: pointer; }
 		.star-btn:focus { outline: 0; }
 		.star-row.star-row-sm .star-btn { font-size: 1.15rem; }
-		.star-row .star.filled { color: #f0ad4e; }
-		/* The engine's estimate previews in a paler gold when the user
-		   has no rating of their own — a hint, never a verdict */
-		.star-row .star.estimated { color: #f3d9ab; }
-		/* A fractional estimate part-fills its last star: a hard-stop
-		   gradient clipped to the glyph, --est-fill = the percentage.
-		   Real half-star ratings (Letterboxd logs halves) use the same
-		   trick in the full gold via .fill-partial */
-		.star-row .star.est-partial { background: linear-gradient(90deg, #f3d9ab var(--est-fill, 100%), #c9c9c9 var(--est-fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-		.star-row .star.fill-partial { background: linear-gradient(90deg, #f0ad4e var(--fill, 100%), #c9c9c9 var(--fill, 100%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+		/* Each star is an outlined ☆ (the button's own text) under a
+		   solid ★ overlay clipped to the filled percentage (#70): a
+		   verdict paints the overlay gold — ★★★☆☆ — and the engine's
+		   estimate paints it gray, never mistakable for a verdict; the
+		   unfilled remainder shows the outline underneath. The overlay
+		   mirrors the button's padding so the two glyphs align, and the
+		   hard-stop gradient + background-clip keeps the fractional
+		   boundary exact to the glyph's own pixels (half-star ratings,
+		   fractional estimates). --fill / --est-fill arrive from the
+		   macro or the live repaint only when partial; full stars use
+		   the 100% fallback */
+		.star-row .star { position: relative; }
+		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; background: linear-gradient(90deg, var(--paint, transparent) var(--pct, 0%), transparent var(--pct, 0%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+		.star-row .star.filled { --paint: #f0ad4e; --pct: var(--fill, 100%); }
+		.star-row .star.estimated { --paint: #adb5bd; --pct: var(--est-fill, 100%); }
 		/* Hover previews exist only where hover does (#62 follow-up):
 		   iOS keeps a tapped element in :hover until the next tap
 		   elsewhere, so on touch these rules repainted the row as a
@@ -101,8 +106,8 @@
 		   rating looked unchanged. Touch gets no preview; the tap's
 		   state change IS the feedback */
 		@media (hover: hover) {
-			.star-row:has(.star:hover) .star { color: #c9c9c9; background: none; }
-			.star-row:hover .star:hover, .star-row .star:hover ~ .star { color: #f0ad4e; }
+			.star-row:has(.star:hover) .star { --paint: transparent; }
+			.star-row:hover .star:hover, .star-row:hover .star:hover ~ .star { --paint: #f0ad4e; --pct: 100%; }
 		}
 		/* The ✕'s visual gap to the stars is PADDING, not margin, so
 		   the whole row is one continuous hit area — clicking between

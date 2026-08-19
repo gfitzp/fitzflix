@@ -267,9 +267,10 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     ):
         assert label in page
 
-    # The 1–5 buttons are single star glyphs in one row, labels in titles
+    # The 1–5 buttons are single outline-star glyphs (#70: the gold
+    # fill is a CSS overlay) in one row, labels in titles
 
-    assert page.count("&#9733;") == 5
+    assert page.count("&#9734;") == 5
 
     response = admin_client.post(
         "/rate",
@@ -345,7 +346,7 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
         movie_id = movie.id
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert page.count("&#9733;") == 5
+    assert page.count("&#9734;") == 5
     token = csrf_token_from(page)
 
     response = admin_client.post(

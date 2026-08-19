@@ -15,10 +15,10 @@
    still submit whole values only. #}
 {% set cur = (current | float) if current is not none else 0 %}
 {# When the user has no rating, the row previews the ENGINE'S estimate
-   (#58) in a paler fill that a real rating replaces — never mistakable
-   for a verdict. Estimates carry fractions: a 3.75 estimate fills the
-   fourth star three-quarters (a text-clipped gradient, --est-fill),
-   while taps only ever submit whole values. #}
+   (#58) in solid GRAY stars that a real gold rating replaces (#70) —
+   never mistakable for a verdict. Estimates carry fractions: a 3.75
+   estimate fills the fourth star three-quarters (a text-clipped
+   gradient, --est-fill), while taps only ever submit whole values. #}
 {% set est = (estimated | float) if current is none and estimated is not none else 0 %}
 {# The stars sit REVERSED in the DOM under flex-direction: row-reverse,
    so "the hovered star and everything visually before it" is "the
@@ -29,7 +29,7 @@
 	{% for n in range(5, 0, -1) %}
 	{% set cur_pct = (100 if cur >= n else ((cur - n + 1) * 100) | round | int) if cur > n - 1 else 0 %}
 	{% set est_pct = (100 if est >= n else ((est - n + 1) * 100) | round | int) if est > n - 1 else 0 %}
-	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if cur_pct == 100 %} filled{% elif cur_pct > 0 %} filled fill-partial{% endif %}{% if est_pct == 100 %} estimated{% elif est_pct > 0 %} estimated est-partial{% endif %}"{% if 0 < cur_pct < 100 %} style="--fill: {{ cur_pct }}%"{% elif 0 < est_pct < 100 %} style="--est-fill: {{ est_pct }}%"{% endif %} title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9733;</button>
+	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if cur_pct == 100 %} filled{% elif cur_pct > 0 %} filled fill-partial{% endif %}{% if est_pct == 100 %} estimated{% elif est_pct > 0 %} estimated est-partial{% endif %}"{% if 0 < cur_pct < 100 %} style="--fill: {{ cur_pct }}%"{% elif 0 < est_pct < 100 %} style="--est-fill: {{ est_pct }}%"{% endif %} title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9734;</button>
 	{% endfor %}
 	{% if allow_not_interested %}
 	<button type="submit" name="quick_rating" value="0" class="star-btn x-btn{% if flagged %} active{% endif %}" title="{{ 'Undo not interested' if flagged else 'Not interested — never saw it' }}" aria-label="Not interested">&#10005;</button>
