@@ -130,10 +130,12 @@ def test_shared_untouched_key_is_never_deleted(app):
         assert untouched_key_still_claimed(shared) is False
 
 
-def test_rename_untouched_object_moves_or_declines(app, monkeypatch):
-    """The archive key only ever changes when the object really moved
-    (#64): STANDARD objects copy-verify-delete and the field updates;
-    Deep Archive and missing objects keep their stored key."""
+def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
+    """The archive key only ever changes when a real object sits at the
+    new key (#64): STANDARD objects copy-verify-delete; Deep Archive
+    and missing objects can't be copied, so the LOCAL library file
+    force-uploads under the new key instead (Glenn's call — close the
+    invariant now rather than hope a future re-upload heals it)."""
 
     from app import db
     from app import videos
@@ -169,18 +171,33 @@ def test_rename_untouched_object_moves_or_declines(app, monkeypatch):
         assert fake.copied == ("untouched/old.mkv", "untouched/new.mkv")
         assert fake.deleted == "untouched/old.mkv"
 
-        # Deep Archive: declined, field untouched
+        # Deep Archive: no server-side copy possible — the library
+        # copy force-uploads under the new key and the old object goes
+
+        from datetime import datetime
+
+        uploads = []
+
+        def fake_upload(path, prefix, key_name=None, **kw):
+            uploads.append((path, prefix, key_name))
+            return (f"{prefix}/{key_name}", datetime(2026, 8, 18), 999)
 
         file.aws_untouched_key = "untouched/frozen.mkv"
         fake = FakeS3(storage_class="DEEP_ARCHIVE")
         monkeypatch.setattr(videos, "aws_s3_client", lambda **kw: fake)
-        assert videos.rename_untouched_object(file, "untouched/thawed.mkv") is False
-        assert file.aws_untouched_key == "untouched/frozen.mkv"
+        monkeypatch.setattr(videos, "aws_upload", fake_upload)
+        assert videos.rename_untouched_object(file, "untouched/thawed.mkv") is True
+        assert file.aws_untouched_key == "untouched/thawed.mkv"
+        assert file.aws_untouched_filesize_bytes == 999
+        assert uploads[-1][2] == "thawed.mkv"
         assert fake.copied is None
+        assert fake.deleted == "untouched/frozen.mkv"
 
-        # Missing object: declined, field untouched
+        # Missing object: nothing to copy or delete — heal by upload
 
+        file.aws_untouched_key = "untouched/gone.mkv"
         fake = FakeS3(exists=False)
         monkeypatch.setattr(videos, "aws_s3_client", lambda **kw: fake)
-        assert videos.rename_untouched_object(file, "untouched/other.mkv") is False
-        assert file.aws_untouched_key == "untouched/frozen.mkv"
+        assert videos.rename_untouched_object(file, "untouched/found.mkv") is True
+        assert file.aws_untouched_key == "untouched/found.mkv"
+        assert fake.deleted is None

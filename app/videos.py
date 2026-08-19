@@ -4350,13 +4350,15 @@ def rename_untouched_object(file, new_key):
     object (#64 — the old flow rewrote the database field without
     moving anything, stranding 1,184 keys found by the Aug 17 audit).
 
-    STANDARD objects are copied server-side (multipart-capable),
-    verified, and the old key deleted; only then does the field change.
-    DEEP_ARCHIVE objects can't be copied without a paid restore, so the
-    field KEEPS the old key — a key that doesn't match the basename is
-    strictly better than one pointing at nothing, and the divergence
-    self-heals on the next force re-upload while the sync prune
-    collects the stray (the deletion guard protects claimed keys).
+    STANDARD (or restored) objects are copied server-side
+    (multipart-capable), verified, and the old key deleted; only then
+    does the field change. When the object CAN'T be copied — Deep
+    Archive without a completed restore, or missing outright — the
+    LOCAL library file force-uploads under the new key instead
+    (Glenn's call, Aug 18: close the invariant now rather than hope a
+    future re-upload heals it; the archive-replace convention already
+    trades the pristine original for the current library file on every
+    remux, and the original survives as a noncurrent version).
     Returns True when the field now matches new_key.
     """
 
@@ -4364,36 +4366,58 @@ def rename_untouched_object(file, new_key):
     if not old_key or old_key == new_key:
         return old_key == new_key
     basename = file.basename
+    local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
     s3_client = aws_s3_client(with_retries=True)
     bucket = current_app.config["AWS_BUCKET"]
+
+    head = None
     try:
         head = s3_client.head_object(Bucket=bucket, Key=old_key)
     except Exception:
         current_app.logger.warning(
-            f"'{basename}' archive object '{old_key}' not found; keeping "
-            f"the stored key unchanged"
+            f"'{basename}' archive object '{old_key}' not found; "
+            f"re-archiving the library copy under '{new_key}'"
         )
-        return False
 
-    storage_class = head.get("StorageClass") or "STANDARD"
-    if storage_class in ("DEEP_ARCHIVE", "GLACIER") and not head.get("Restore"):
+    storage_class = (head or {}).get("StorageClass") or "STANDARD"
+    restored = 'ongoing-request="false"' in ((head or {}).get("Restore") or "")
+    copyable = head is not None and (
+        storage_class not in ("DEEP_ARCHIVE", "GLACIER") or restored
+    )
+
+    if copyable:
         current_app.logger.info(
-            f"'{basename}' archive is in {storage_class}; keeping key "
-            f"'{old_key}' (would be '{new_key}') — it heals on the next "
-            f"forced re-upload"
+            f"'{basename}' moving archive '{old_key}' -> '{new_key}'"
         )
-        return False
+        s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
+        verify = s3_client.head_object(Bucket=bucket, Key=new_key)
+        if verify["ContentLength"] != head["ContentLength"]:
+            raise RuntimeError(
+                f"'{basename}' archive copy size mismatch: "
+                f"{verify['ContentLength']} vs {head['ContentLength']}"
+            )
+        s3_client.delete_object(Bucket=bucket, Key=old_key)
+        file.aws_untouched_key = new_key
+        return True
 
-    current_app.logger.info(f"'{basename}' moving archive '{old_key}' -> '{new_key}'")
-    s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
-    verify = s3_client.head_object(Bucket=bucket, Key=new_key)
-    if verify["ContentLength"] != head["ContentLength"]:
-        raise RuntimeError(
-            f"'{basename}' archive copy size mismatch: "
-            f"{verify['ContentLength']} vs {head['ContentLength']}"
-        )
-    s3_client.delete_object(Bucket=bucket, Key=old_key)
-    file.aws_untouched_key = new_key
+    current_app.logger.info(
+        f"'{basename}' archive can't be copied "
+        f"({storage_class if head else 'missing'}); force-uploading the "
+        f"library copy as '{new_key}'"
+    )
+    (
+        file.aws_untouched_key,
+        file.aws_untouched_date_uploaded,
+        file.aws_untouched_filesize_bytes,
+    ) = aws_upload(
+        local_path,
+        current_app.config["AWS_UNTOUCHED_PREFIX"],
+        key_name=os.path.basename(new_key),
+        force_upload=True,
+        ignore_etag=True,
+    )
+    if head is not None:
+        s3_client.delete_object(Bucket=bucket, Key=old_key)
     return True
 
 
