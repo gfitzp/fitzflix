@@ -1,10 +1,19 @@
 """The Criterion24/7 now-playing card (#63): parsing the whatsonnow
 page (countdown typo included), the film info page, the self-scheduling
-poller, and the landing-page card's gating and staleness."""
+poller, and the landing-page card's gating, staleness, star row, and
+filmography-linked credits."""
 
 import json
+import re
 
 from datetime import datetime, timedelta
+
+
+def csrf_token_from(page_html):
+    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
+    assert match, "no csrf token found in page"
+    return match.group(1)
+
 
 WHATSON_HTML = """
 <div class="whatson__container--desktop">
@@ -163,6 +172,166 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
                 "starring": None,
             },
         ) == (None, None)
+
+
+def plant_enriched(app, tmdb_id=33667):
+    """Cache an enriched payload for the airing film, as the poller's
+    match would have."""
+
+    app.redis.set(
+        f"fitzflix:tmdb:movie:{tmdb_id}:enriched",
+        json.dumps(
+            {
+                "tmdb_id": tmdb_id,
+                "title": "Shock Corridor",
+                "year": "1963",
+                "poster_path": "/shock.jpg",
+                "runtime": 101,
+                "original_language": "en",
+                "genres": [{"id": 18, "name": "Drama"}],
+                "keywords": [],
+                "cast": [
+                    {"id": 101, "name": "Peter Breck"},
+                    {"id": 102, "name": "Constance Towers"},
+                    {"id": 103, "name": "Gene Evans"},
+                    {"id": 104, "name": "James Best"},
+                ],
+                "crew": [{"id": 8556, "name": "Samuel Fuller", "job": "Director"}],
+            }
+        ),
+    )
+
+
+def plant_profile(app, user_id):
+    """A Drama-leaning profile with a calibration curve, so the card
+    can carry an estimated rating."""
+
+    app.redis.set(
+        f"fitzflix:recs:profile:{user_id}",
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:18": {
+                        "class": "genre",
+                        "label": "Drama",
+                        "count": 3,
+                        "score": 0.5,
+                    }
+                },
+                "movies": 3,
+                "calibration": {
+                    "scores": [-0.5, 0.0, 0.5, 1.0],
+                    "stars": [1.0, 2.5, 3.5, 4.5],
+                },
+            }
+        ),
+    )
+
+
+def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeypatch):
+    import app.criterion_now as criterion_now
+    import app.main.routes as main_routes
+
+    # The TMDb log route fetches film details up front; feed it the
+    # airing film so the first tap can create the record
+
+    class FakeDetails:
+        status_code = 200
+
+        def raise_for_status(self):
+            """Never an HTTP error."""
+
+        def json(self):
+            """The airing film's details."""
+
+            return {
+                "id": 33667,
+                "title": "Shock Corridor",
+                "release_date": "1963-09-11",
+                "poster_path": "/shock.jpg",
+                "genres": [{"id": 18, "name": "Drama"}],
+                "credits": {"cast": []},
+                "release_dates": {"results": []},
+            }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(main_routes, "tmdb_get", lambda *a, **k: FakeDetails())
+
+    user_id = subscribe_criterion(app)
+    plant_profile(app, user_id)
+    plant_enriched(app)
+    app.redis.set(
+        criterion_now.NOW_KEY,
+        json.dumps(
+            {
+                "title": "Shock Corridor",
+                "year": 1963,
+                "director": "Samuel Fuller",
+                "starring": "Peter Breck, Constance Towers, Gene Evans",
+                "more_url": "https://www.criterionchannel.com/shock-corridor",
+                "tmdb_id": 33667,
+                "poster_path": "/shock.jpg",
+                "ends_at": (datetime.now() + timedelta(minutes=45)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+            }
+        ),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+
+    # Director and top-3 billed cast link to their filmography pages
+    assert "credit=8556" in body
+    assert ">Samuel Fuller</a>" in body
+    assert "credit=101" in body
+    assert "credit=103" in body
+    assert "credit=104" not in body
+
+    # The unlogged film previews the engine's estimate, posting to the
+    # TMDb log route (no record exists yet)
+
+    assert 'title="Estimated' in body
+    assert 'action="/review/tmdb/33667"' in body
+
+    # The first tap creates the record and answers ladder JSON in place
+
+    response = admin_client.post(
+        "/review/tmdb/33667",
+        data={"quick_rating": "4", "csrf_token": csrf_token_from(body)},
+        headers={"X-Requested-With": "ladder"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["rating"] == 4.0
+
+    from app.models import Movie, UserMovieReview
+
+    with app.app_context():
+        movie = Movie.query.filter_by(tmdb_id=33667).one()
+        row = UserMovieReview.query.filter_by(movie_id=movie.id).one()
+        assert float(row.rating) == 4.0
+        movie_id = movie.id
+
+    # With a record, the card's form aims at the movie route, showing
+    # the real verdict instead of the estimate
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert f'action="/movie/{movie_id}"' in body
+    assert 'title="Estimated' not in body
+
+    # A ladder post still aimed at the TMDb route forwards with method
+    # and body intact (307), landing in the movie route's toggle-off
+
+    response = admin_client.post(
+        "/review/tmdb/33667",
+        data={"quick_rating": "4", "csrf_token": csrf_token_from(body)},
+        headers={"X-Requested-With": "ladder"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert response.get_json()["rating"] is None
+
+    with app.app_context():
+        assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 0
 
 
 def test_card_gates_on_subscription_and_staleness(app, admin_client):

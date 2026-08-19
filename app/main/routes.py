@@ -749,6 +749,7 @@ def index():
         shelf_departs=shelf_departs,
         shelf_url=shelf_url,
         now_playing=criterion_now_card(current_user),
+        review_form=MovieReviewForm(),
         minutes=minutes,
     )
 
@@ -5902,6 +5903,13 @@ def review_tmdb(tmdb_id):
 
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie:
+        # A live ladder tap aimed here after the record appeared (the
+        # landing card's first tap creates it) forwards with the method
+        # and body intact — 307, not 302 — so the movie route's full
+        # ladder handling (re-rate, toggle-off, ✕) takes over
+
+        if _ladder_fetch() and request.method == "POST":
+            return redirect(url_for("main.movie", movie_id=movie.id), code=307)
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     if not current_app.config["TMDB_API_KEY"]:
@@ -6059,13 +6067,19 @@ def review_tmdb(tmdb_id):
                         ),
                     )
                 _enqueue_profile_recompute()
-                flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
-            else:
+                if not _ladder_fetch():
+                    flash(
+                        f"Got it — '{film_title} ({year})' won't be recommended",
+                        "info",
+                    )
+            elif not _ladder_fetch():
                 flash(
                     f"You've logged '{film_title} ({year})' — the lowest "
                     f"rating for a seen film is 1 star",
                     "warning",
                 )
+            if _ladder_fetch():
+                return _ladder_state(current_user.id, movie.id)
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         rating = quick_rating
@@ -6137,6 +6151,8 @@ def review_tmdb(tmdb_id):
                 ),
             )
 
+        if _ladder_fetch():
+            return _ladder_state(current_user.id, movie.id)
         if is_review:
             flash(f"Logged review for '{film_title} ({year})'", "success")
         else:

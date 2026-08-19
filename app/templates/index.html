@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge %}
+{% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -164,11 +165,29 @@
 	</div>
 	<div>
 		<h5 class="mb-1"><a href="{{ card_href }}" class="text-decoration-none text-body">{{ now_playing.title }}{% if now_playing.year %} ({{ now_playing.year }}){% endif %}</a></h5>
-		{% if now_playing.director %}
+		{# Credit ids from the verified TMDb match are person ids, so
+		   director and billed cast link to their filmography pages;
+		   an unmatched film falls back to the Channel's plain text #}
+		{% if now_playing.directors %}
+		<p class="mb-1 small">Directed by {% for person in now_playing.directors %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if now_playing.country %} &middot; {{ now_playing.country }}{% endif %}</p>
+		{% elif now_playing.director %}
 		<p class="mb-1 small">Directed by {{ now_playing.director }}{% if now_playing.country %} &middot; {{ now_playing.country }}{% endif %}</p>
 		{% endif %}
-		{% if now_playing.starring %}
+		{% if now_playing.cast %}
+		<p class="mb-1 small text-muted">Starring {% for person in now_playing.cast %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+		{% elif now_playing.starring %}
 		<p class="mb-1 small text-muted">Starring {{ now_playing.starring }}</p>
+		{% endif %}
+		{% if now_playing.tmdb_id %}
+		{# The star row (#58): the viewer's own verdict, or the engine's
+		   estimate in paler gold until there is one. Taps post live to
+		   the movie route once a record exists; before that, to the
+		   TMDb log route, whose first tap creates the record (and which
+		   307-forwards ladder posts once it exists) #}
+		<form action="{{ url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) }}" method="post" class="mb-1 d-flex align-items-center">
+			{{ review_form.csrf_token }}
+			{{ rating_ladder(compact=true, allow_not_interested=not now_playing.ladder.has_review, current=now_playing.ladder.rating, flagged=now_playing.ladder.flagged, live=true, estimated=now_playing.ladder.estimated) }}
+		</form>
 		{% endif %}
 		<p class="mb-1">
 			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-primary">&#9654;&nbsp;Watch live</a>

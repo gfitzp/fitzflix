@@ -256,15 +256,96 @@ def criterion_now_card(user):
         if ends_at > datetime.now():
             next_at = ends_at.strftime("%-I:%M %p")
 
+    tmdb_id = stored.get("tmdb_id")
+    payload = enriched_movie(tmdb_id) if tmdb_id else None
     return {
         "title": stored.get("title"),
         "year": stored.get("year"),
         "director": stored.get("director"),
         "country": stored.get("country"),
         "starring": stored.get("starring"),
-        "tmdb_id": stored.get("tmdb_id"),
+        "tmdb_id": tmdb_id,
         "poster_path": stored.get("poster_path"),
         "more_url": stored.get("more_url"),
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
+        "ladder": _ladder_state_for(user, tmdb_id, payload),
+        **_credited_people(payload),
     }
+
+
+def _credited_people(payload):
+    """{directors, cast} as [{id, name}] from an enriched payload —
+    credit ids are TMDb person ids, so the card's names can link to
+    filmography pages; empty lists on an unmatched film leave the
+    scraped text lines to render plain."""
+
+    if not payload:
+        return {"directors": [], "cast": []}
+    return {
+        "directors": [
+            {"id": person["id"], "name": person["name"]}
+            for person in payload.get("crew") or []
+            if person.get("job") == "Director" and person.get("id")
+        ],
+        "cast": [
+            {"id": person["id"], "name": person["name"]}
+            for person in (payload.get("cast") or [])[:3]
+            if person.get("id")
+        ],
+    }
+
+
+def _ladder_state_for(user, tmdb_id, payload):
+    """The card's star-row state: the user's own rating for the airing
+    film when they have one, the engine's estimated rating otherwise —
+    scored from the enriched payload when the film has no local record,
+    the same recipe the movie page uses when it does."""
+
+    # Routes imports this module at startup, so its helpers load lazily
+
+    from app.main.routes import _latest_review_row
+    from app.models import Movie, UserMovieStatus
+    from app.recommendations import (
+        estimated_rating,
+        single_movie_score,
+        score_movie,
+        stored_profile,
+        stored_scores,
+    )
+    from app.streaming_rail import _payload_features
+
+    state = {
+        "movie_id": None,
+        "rating": None,
+        "has_review": False,
+        "flagged": False,
+        "estimated": None,
+    }
+    if not tmdb_id:
+        return state
+
+    profile = stored_profile(current_app.redis, user.id)
+    movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    if movie is not None:
+        state["movie_id"] = movie.id
+        row = _latest_review_row(user.id, movie.id)
+        state["has_review"] = row is not None
+        if row is not None and row.rating is not None:
+            state["rating"] = float(row.rating)
+        state["flagged"] = (
+            UserMovieStatus.query.filter_by(
+                user_id=int(user.id), movie_id=movie.id, kind="not_interested"
+            ).first()
+            is not None
+        )
+        if row is None and not state["flagged"]:
+            score = stored_scores(current_app.redis, user.id).get(movie.id)
+            if score is None:
+                score = single_movie_score(user.id, movie, profile)
+            if score is not None:
+                state["estimated"] = estimated_rating(profile, score)
+    elif profile and payload:
+        score, _ = score_movie(_payload_features(payload), profile)
+        state["estimated"] = estimated_rating(profile, score)
+    return state
