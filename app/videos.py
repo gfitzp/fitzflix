@@ -3106,12 +3106,45 @@ def sync_aws_s3_storage_task():
 
             # Delete remote S3 files that aren't in Fitzflix
 
-            aws_untouched_keys = [
+            aws_untouched_keys = {
                 aws_untouched_key
                 for (aws_untouched_key,) in db.session.query(
                     File.aws_untouched_key
                 ).all()
-            ]
+            }
+
+            # The rename-skew tripwire (#64): an ACTIVE claim with no
+            # matching object means a restore would 404 — the class of
+            # silent damage the Aug 17 audit found 1,184 deep. Report
+            # it loudly here every week so it can never accumulate
+
+            s3_key_set = set(s3_keys)
+            dangling_claims = sorted(
+                key
+                for (key,) in db.session.query(File.aws_untouched_key)
+                .filter(File.aws_untouched_key.isnot(None))
+                .filter(File.aws_untouched_date_deleted.is_(None))
+                if key not in s3_key_set
+            )
+            if dangling_claims:
+                admin_user = User.query.filter(User.admin == True).first()
+                send_email(
+                    "Fitzflix - Archive keys missing from AWS S3!",
+                    sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                    recipients=[admin_user.email],
+                    text_body=(
+                        "These file records claim untouched archive keys "
+                        "that don't exist in S3 — a restore would fail:\n\n"
+                        + "\n".join(dangling_claims)
+                    ),
+                    html_body=(
+                        "<p>These file records claim untouched archive "
+                        "keys that don't exist in S3 — a restore would "
+                        "fail:</p><ul>"
+                        + "".join(f"<li>{key}</li>" for key in dangling_claims)
+                        + "</ul>"
+                    ),
+                )
 
             for i, remote_key in enumerate(s3_keys):
                 if job:
@@ -4309,6 +4342,59 @@ def untouched_key_still_claimed(key):
         .first()
         is not None
     )
+
+
+def rename_untouched_object(file, new_key):
+    """Move a file's untouched S3 archive when its derived key changes,
+    keeping the invariant that aws_untouched_key only ever names a REAL
+    object (#64 — the old flow rewrote the database field without
+    moving anything, stranding 1,184 keys found by the Aug 17 audit).
+
+    STANDARD objects are copied server-side (multipart-capable),
+    verified, and the old key deleted; only then does the field change.
+    DEEP_ARCHIVE objects can't be copied without a paid restore, so the
+    field KEEPS the old key — a key that doesn't match the basename is
+    strictly better than one pointing at nothing, and the divergence
+    self-heals on the next force re-upload while the sync prune
+    collects the stray (the deletion guard protects claimed keys).
+    Returns True when the field now matches new_key.
+    """
+
+    old_key = file.aws_untouched_key
+    if not old_key or old_key == new_key:
+        return old_key == new_key
+    basename = file.basename
+    s3_client = aws_s3_client(with_retries=True)
+    bucket = current_app.config["AWS_BUCKET"]
+    try:
+        head = s3_client.head_object(Bucket=bucket, Key=old_key)
+    except Exception:
+        current_app.logger.warning(
+            f"'{basename}' archive object '{old_key}' not found; keeping "
+            f"the stored key unchanged"
+        )
+        return False
+
+    storage_class = head.get("StorageClass") or "STANDARD"
+    if storage_class in ("DEEP_ARCHIVE", "GLACIER") and not head.get("Restore"):
+        current_app.logger.info(
+            f"'{basename}' archive is in {storage_class}; keeping key "
+            f"'{old_key}' (would be '{new_key}') — it heals on the next "
+            f"forced re-upload"
+        )
+        return False
+
+    current_app.logger.info(f"'{basename}' moving archive '{old_key}' -> '{new_key}'")
+    s3_client.copy({"Bucket": bucket, "Key": old_key}, bucket, new_key)
+    verify = s3_client.head_object(Bucket=bucket, Key=new_key)
+    if verify["ContentLength"] != head["ContentLength"]:
+        raise RuntimeError(
+            f"'{basename}' archive copy size mismatch: "
+            f"{verify['ContentLength']} vs {head['ContentLength']}"
+        )
+    s3_client.delete_object(Bucket=bucket, Key=old_key)
+    file.aws_untouched_key = new_key
+    return True
 
 
 def aws_delete(key):
@@ -6118,10 +6204,13 @@ def apply_tmdb_refresh(
                     if f.aws_untouched_key != aws_untouched_key and os.path.exists(
                         os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
                     ):
-                        f.aws_untouched_key = aws_untouched_key
-                        current_app.logger.info(
-                            f"New untouched key:      '{aws_untouched_key}'"
-                        )
+                        # Moves the S3 object (or deliberately declines,
+                        # for Deep Archive) — the field only changes when
+                        # the object really moved (#64)
+                        try:
+                            rename_untouched_object(f, aws_untouched_key)
+                        except Exception:
+                            current_app.logger.error(traceback.format_exc())
 
                 try:
                     db.session.commit()
@@ -6142,6 +6231,67 @@ def apply_tmdb_refresh(
                     else:
                         file_details = evaluate_filename(f.untouched_basename)
 
+                    new_relative = file_details.get("file_path")
+                    old_file = os.path.join(
+                        current_app.config["LIBRARY_DIR"], f.file_path
+                    )
+                    old_directory = os.path.dirname(old_file)
+                    new_file = os.path.join(
+                        current_app.config["LIBRARY_DIR"], new_relative
+                    )
+
+                    # A merge can land this rename on a path the target
+                    # movie already owns (#64, the 25 Cats incident:
+                    # os.rename silently overwrote the sibling's file,
+                    # then the path UPDATE died on the unique index).
+                    # Refuse loudly and leave both records untouched —
+                    # the admin deletes one deliberately instead. The
+                    # one benign shape — old file gone, new file already
+                    # in place, no sibling row — falls through so an
+                    # interrupted rename can heal its record.
+
+                    sibling = (
+                        File.query.filter(File.file_path == new_relative)
+                        .filter(File.id != f.id)
+                        .first()
+                    )
+                    collision = sibling is not None or (
+                        new_file != old_file
+                        and os.path.exists(new_file)
+                        and os.path.exists(old_file)
+                    )
+                    if collision:
+                        detail = (
+                            f"file #{sibling.id} already claims that path"
+                            if sibling
+                            else "a file already exists at that path"
+                        )
+                        current_app.logger.error(
+                            f"'{f.basename}' (file #{f.id}) not renamed to "
+                            f"'{new_relative}': {detail}. Delete one copy, "
+                            f"then re-assign the TMDb id."
+                        )
+                        admin_user = User.query.filter(User.admin == True).first()
+                        send_email_async(
+                            "Fitzflix - Rename collision needs triage",
+                            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+                            recipients=[admin_user.email],
+                            text_body=(
+                                f"Renaming '{f.basename}' (file #{f.id}) to "
+                                f"'{new_relative}' was refused: {detail}.\n\n"
+                                f"Delete one of the copies, then re-assign "
+                                f"the TMDb id to finish the rename."
+                            ),
+                            html_body=(
+                                f"<p>Renaming '{f.basename}' (file #{f.id}) "
+                                f"to '{new_relative}' was refused: {detail}."
+                                f"</p><p>Delete one of the copies, then "
+                                f"re-assign the TMDb id to finish the "
+                                f"rename.</p>"
+                            ),
+                        )
+                        continue
+
                     os.makedirs(
                         os.path.join(
                             current_app.config["LIBRARY_DIR"],
@@ -6149,21 +6299,28 @@ def apply_tmdb_refresh(
                         ),
                         exist_ok=True,
                     )
-                    old_file = os.path.join(
-                        current_app.config["LIBRARY_DIR"], f.file_path
-                    )
-                    old_directory = os.path.dirname(old_file)
-                    new_file = os.path.join(
-                        current_app.config["LIBRARY_DIR"], file_details.get("file_path")
-                    )
-                    if old_file != new_file and os.path.exists(old_file):
-                        current_app.logger.info(
-                            f"Renaming '{old_file}' to '{new_file}'"
-                        )
-                        try:
-                            os.rename(old_file, new_file)
-                        except FileNotFoundError:
-                            pass
+
+                    # Database first, disk second (#64): the path update
+                    # flushes inside a savepoint so a unique-index
+                    # conflict surfaces BEFORE the file moves, and a
+                    # failed move rolls the record straight back
+
+                    try:
+                        with db.session.begin_nested():
+                            f.file_path = new_relative
+                            f.dirname = file_details.get("dirname")
+                            f.basename = file_details.get("basename")
+                            f.plex_title = file_details.get("plex_title")
+                            db.session.flush()
+
+                            if old_file != new_file and os.path.exists(old_file):
+                                current_app.logger.info(
+                                    f"Renaming '{old_file}' to '{new_file}'"
+                                )
+                                os.rename(old_file, new_file)
+                    except Exception:
+                        current_app.logger.error(traceback.format_exc())
+                        continue
 
                     # delete any old local assets
                     try:
@@ -6212,10 +6369,8 @@ def apply_tmdb_refresh(
                     except OSError:
                         pass
 
-                    f.file_path = file_details.get("file_path")
-                    f.dirname = file_details.get("dirname")
-                    f.basename = file_details.get("basename")
-                    f.plex_title = file_details.get("plex_title")
+                    # The path fields were already updated inside the
+                    # savepoint, before the physical rename
 
                     try:
                         db.session.commit()
