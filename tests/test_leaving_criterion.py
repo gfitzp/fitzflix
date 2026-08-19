@@ -376,7 +376,7 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
     for title in ("Shelf Fresh", "Shelf Owned", "Shelf Wanted", "Shelf Dismissed"):
         assert f"{title} (1956)" in body
     assert body.count('title="In your Fitzflix library"') == 1
-    assert 'badge-info mr-1">Seen' in body
+    assert 'text-bg-info me-1">Seen' in body
     assert "On your watchlist" in body
     assert "A stranger rides into town." in body
 

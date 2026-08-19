@@ -4,11 +4,11 @@
    results, and filmography rows so every surface renders providers
    identically. #}
 {% macro library_badge() -%}
-<span class="badge badge-light border align-middle mr-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="mr-1">In library</span>
+<span class="badge text-bg-light border align-middle me-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="me-1">In library</span>
 {%- endmacro %}
 
 {% macro availability_badge(provider) -%}
 {%- set action = {"rent": "Rent from"}.get(provider.kind, "Streaming on") -%}
 {%- set suffix = {"ads": " (with ads)", "rent": " (rent)"}.get(provider.kind, "") -%}
-<span class="badge badge-light border align-middle mr-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
+<span class="badge text-bg-light border align-middle me-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
 {%- endmacro %}

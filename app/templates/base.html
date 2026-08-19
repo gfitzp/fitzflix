@@ -7,8 +7,10 @@
 {% from "_search_form.html" import global_search_form %}
 
 {% block navbar %}
-<nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top">
-	<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="mr-1" alt="Fitzflix logo"></a>
+{# bg-body-tertiary adapts to the active color mode (#20) — the old
+   navbar-light bg-light stayed light in dark mode #}
+<nav class="navbar navbar-expand-lg bg-body-tertiary fixed-top">
+	<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="me-1" alt="Fitzflix logo"></a>
 	{# The text brand is redundant next to the logo on phones, and hiding it
 	   keeps the brand, search box, and menu toggle on a single navbar row #}
 	<a class="navbar-brand d-none d-sm-block" href="{{ url_for('main.index') }}">Fitzflix</a>
@@ -16,9 +18,9 @@
 	{# Phones only: outside the collapse so the search box stays visible with
 	   the menu collapsed; the explicit width in the macro keeps it on the
 	   navbar's single row #}
-	{{ global_search_form("ml-auto mr-2 d-lg-none") }}
+	{{ global_search_form("ms-auto me-2 d-lg-none") }}
 	{% endif %}
-	<button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+	<button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
 		<span class="navbar-toggler-icon"></span>
 	</button>
 	<div class="collapse navbar-collapse" id="navbarNav">
@@ -31,7 +33,7 @@
 				<a class="nav-link" href="{{ url_for('main.recently_added') }}">Recently Added</a>
 			</li>
 			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 					Library
 				</a>
 				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
@@ -45,7 +47,7 @@
 				</div>
 			</li>
 			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 					Shopping Lists
 				</a>
 				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
@@ -69,7 +71,7 @@
 			</li>
 			{% endif %}
 		</ul>
-		<ul class="navbar-nav ml-auto">
+		<ul class="navbar-nav ms-auto">
 			{% if current_user.is_anonymous %}
 			<li class="nav-item">
 				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
@@ -81,19 +83,19 @@
 			{# Desktop only: the search box sits in the right-side menu, just
 			   left of Queue; phones use the always-visible copy outside the
 			   collapse instead #}
-			<li class="nav-item d-none d-lg-block align-self-center mr-2">
+			<li class="nav-item d-none d-lg-block align-self-center me-2">
 				{{ global_search_form("") }}
 			</li>
 			<li class="nav-item">
 				{% set queue_count = current_user.get_queue_count() %}
-				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge badge-secondary ml-1" id="queue_count">{{ queue_count }}</span></a>
+				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge text-bg-secondary ms-1" id="queue_count">{{ queue_count }}</span></a>
 			</li>
 			{% if current_user.admin %}
 			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 					Admin
 				</a>
-				<div class="dropdown-menu dropdown-menu-right" aria-labeledby="navbarDropdownMenuLink">
+				<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarDropdownMenuLink">
 					<a class="dropdown-item" href="{{ url_for('main.maintenance') }}">Library Maintenance</a>
 					<a class="dropdown-item" href="{{ url_for('main.system') }}">System</a>
 					<div class="dropdown-divider"></div>
@@ -281,19 +283,21 @@
 			var QUEUE_URL = '{{ url_for('api.queue_details') }}';
 			var POLL_MS = 5000;
 			var pollTimer = null;
-			var lastCount = parseInt($("#queue_count").text(), 10);
+			var queueBadge = document.getElementById("queue_count");
+			var lastCount = queueBadge ? parseInt(queueBadge.textContent, 10) : NaN;
 			var runningSignature = null;
 			var allSignature = null;
 
 			function flashQueueCount(color) {
-				$("#queue_count").addClass("flash-" + color);
+				if (!queueBadge) return;
+				queueBadge.classList.add("flash-" + color);
 				setTimeout(function() {
-					$("#queue_count").removeClass("flash-" + color);
+					queueBadge.classList.remove("flash-" + color);
 				}, 1000);
 			}
 
 			function setQueueCount(count) {
-				$("#queue_count").text(count);
+				if (queueBadge) queueBadge.textContent = count;
 				if (!isNaN(lastCount)) {
 					if (count < lastCount) flashQueueCount("green");
 					else if (count > lastCount) flashQueueCount("red");

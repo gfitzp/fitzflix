@@ -9,7 +9,7 @@
 	<div class="position-relative" style="width: {{ width }};">
 		<input class="form-control form-control-sm w-100{% if typeahead %} global-search-input{% endif %}" type="search" name="q" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}"{% if value %} value="{{ value }}"{% endif %}>
 		{% if typeahead %}
-		<div class="dropdown-menu dropdown-menu-right w-100 global-search-suggestions" style="max-height: 50vh; overflow-y: auto;"></div>
+		<div class="dropdown-menu dropdown-menu-end w-100 global-search-suggestions" style="max-height: 50vh; overflow-y: auto;"></div>
 		{% endif %}
 	</div>
 </form>

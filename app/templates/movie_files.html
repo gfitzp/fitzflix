@@ -11,7 +11,7 @@
 <h2 class="mt-n2">{{ title }}</h2>
 <div class="table-responsive">
 	<table class="table table-striped">
-		<thead class="thead-light">
+		<thead class="table-light">
 			<tr>
 				<th scope="col">ID</th>
 				<th scope="col">File</th>
@@ -26,10 +26,10 @@
 			<tr>
 				<th scope="row" class="align-middle">{{ file.id }}</th>
 				<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
-				<td class="align-middle">{% if feature.feature_type %}<span class="badge badge-info">{{ feature.feature_type }}</span>{% endif %}</td>
+				<td class="align-middle">{% if feature.feature_type %}<span class="badge text-bg-info">{{ feature.feature_type }}</span>{% endif %}</td>
 				<td class="align-middle">{{ quality.quality_title }}</td>
-				<td class="align-middle">{% if quality.physical_media %}<span class="badge badge-success">Physical media</span>{% endif %}</td>
-				<td class="align-middle">{% if rank == 1 %}<span class="badge badge-success">Best</span>{% endif %}</td>
+				<td class="align-middle">{% if quality.physical_media %}<span class="badge text-bg-success">Physical media</span>{% endif %}</td>
+				<td class="align-middle">{% if rank == 1 %}<span class="badge text-bg-success">Best</span>{% endif %}</td>
 			</tr>
 			{% endfor %}
 		</tbody>

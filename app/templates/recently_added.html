@@ -2,7 +2,7 @@
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto mr-auto">{{ title }}</h2>
+	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
 </div>
 <hr>
 {% if import_activity.deferred or import_activity.rejects %}
@@ -21,7 +21,7 @@
 		<p class="mb-0"><b>Recently rejected</b> <span class="small text-muted">(in the rejects folder{% if import_activity.reject_count > import_activity.rejects|length %}; showing {{ import_activity.rejects|length }} of {{ import_activity.reject_count }}{% endif %})</span>:</p>
 		<ul class="mb-0 small">
 			{% for reject in import_activity.rejects %}
-			<li>{{ reject.basename }} &mdash; <span class="badge badge-warning">{{ reject.reason or 'unspecified' }}</span> <span class="small text-muted">{{ moment(reject.when).fromNow(refresh=True) }}</span></li>
+			<li>{{ reject.basename }} &mdash; <span class="badge text-bg-warning">{{ reject.reason or 'unspecified' }}</span> <span class="small text-muted">{{ moment(reject.when).fromNow(refresh=True) }}</span></li>
 			{% endfor %}
 		</ul>
 		{% endif %}
@@ -77,13 +77,13 @@
 </nav>
 
 {% for file in recently_added %}
-<div class="media mb-2">
+<div class="d-flex mb-2">
 	{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
 			{% include "_movie_poster_small.html" %}
 		</a>
-		<div class="media-body">
+		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
@@ -95,19 +95,19 @@
 			   library pages; extras aren't upgrade candidates, so they stay
 			   neutral #}
 			{% if file.feature_type_id %}
-			<span class="badge badge-light">{{ file.quality.quality_title }}</span><br/>
+			<span class="badge text-bg-light">{{ file.quality.quality_title }}</span><br/>
 			{% else %}
-			<span class="badge badge-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and file.quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ file.quality.quality_title }}</span><br/>
+			<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and file.quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ file.quality.quality_title }}</span><br/>
 			{% endif %}
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge badge-warning">
-				{% elif track.default == 1 %}<span class="badge badge-success">
-				{% else %}<span class="badge badge-light">
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning">
+				{% elif track.default == 1 %}<span class="badge text-bg-success">
+				{% else %}<span class="badge text-bg-light">
 				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
-				{% if track.default == 1 %}<span class="badge badge-success">
-				{% elif track.forced == 1 %}<span class="badge badge-warning">
-				{% else %}<span class="badge badge-light">
+				{% if track.default == 1 %}<span class="badge text-bg-success">
+				{% elif track.forced == 1 %}<span class="badge text-bg-warning">
+				{% else %}<span class="badge text-bg-light">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 		</div>
 	{% elif file.tv_series %}
@@ -115,7 +115,7 @@
 		<a href="{{ url_for('main.file', file_id=file.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
-		<div class="media-body">
+		<div class="flex-grow-1">
 			<div class="text-muted small font-italic">Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</div>
 			<h5 class="mt-0 mb-0">
 				<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
@@ -124,16 +124,16 @@
 			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
 			{# Physical-media TV seasons count as final, matching the search
 			   page's DVD-green rule #}
-			<span class="badge badge-{{ 'success' if (file.quality.physical_media or file.quality.preference >= upgrade_threshold) else 'warning' }}">{{ file.quality.quality_title }}</span><br/>
+			<span class="badge text-bg-{{ 'success' if (file.quality.physical_media or file.quality.preference >= upgrade_threshold) else 'warning' }}">{{ file.quality.quality_title }}</span><br/>
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge badge-warning">
-				{% elif track.default == 1 %}<span class="badge badge-success">
-				{% else %}<span class="badge badge-light">
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning">
+				{% elif track.default == 1 %}<span class="badge text-bg-success">
+				{% else %}<span class="badge text-bg-light">
 				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
-				{% if track.default == 1 %}<span class="badge badge-success">
-				{% elif track.forced == 1 %}<span class="badge badge-warning">
-				{% else %}<span class="badge badge-light">
+				{% if track.default == 1 %}<span class="badge text-bg-success">
+				{% elif track.forced == 1 %}<span class="badge text-bg-warning">
+				{% else %}<span class="badge text-bg-light">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 		</div>
 	{% endif %}

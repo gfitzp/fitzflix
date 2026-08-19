@@ -10,7 +10,7 @@
 	<div class="list-group-item">
 		<h6 class="mb-1 text-break">{{ entry.basename }}</h6>
 		<p class="mb-2 small">
-			<span class="badge badge-warning">{{ entry.reason }}</span>
+			<span class="badge text-bg-warning">{{ entry.reason }}</span>
 			<span class="text-muted">{{ entry.size|filesizeformat }} &middot; rejected {{ moment(entry.rejected_at).fromNow() }}</span>
 		</p>
 		<form action="" method="post" class="d-inline">

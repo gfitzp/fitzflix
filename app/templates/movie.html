@@ -52,7 +52,7 @@
 				   claims completeness #}
 				<p class="mb-2">
 					{% for award in awards[:16] %}
-					<span class="badge badge-light border font-weight-normal mr-1 mb-1">{% if award.win %}<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trophy-fill mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M2.5.5A.5.5 0 0 1 3 0h10a.5.5 0 0 1 .5.5c0 .538-.012 1.05-.034 1.536a3 3 0 1 1-1.133 5.89c-.79 1.865-1.878 2.777-2.833 3.011v2.173l1.425.356c.194.048.377.135.537.255L13.3 15.1a.5.5 0 0 1-.3.9H3a.5.5 0 0 1-.3-.9l1.838-1.379c.16-.12.343-.207.537-.255L6.5 13.11v-2.173c-.955-.234-2.043-1.146-2.833-3.012a3 3 0 1 1-1.132-5.89A33.076 33.076 0 0 1 2.5.5zm.099 2.54a2 2 0 0 0 .72 3.935c-.333-1.05-.588-2.346-.72-3.935zm10.083 3.935a2 2 0 0 0 .72-3.935c-.133 1.59-.388 2.885-.72 3.935z"/></svg> {% endif %}{{ award.award_name }}{% if award.year %} ({{ award.year }}){% endif %}{% if not award.win %} &mdash; nominated{% endif %}</span>
+					<span class="badge text-bg-light border fw-normal me-1 mb-1">{% if award.win %}<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trophy-fill mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M2.5.5A.5.5 0 0 1 3 0h10a.5.5 0 0 1 .5.5c0 .538-.012 1.05-.034 1.536a3 3 0 1 1-1.133 5.89c-.79 1.865-1.878 2.777-2.833 3.011v2.173l1.425.356c.194.048.377.135.537.255L13.3 15.1a.5.5 0 0 1-.3.9H3a.5.5 0 0 1-.3-.9l1.838-1.379c.16-.12.343-.207.537-.255L6.5 13.11v-2.173c-.955-.234-2.043-1.146-2.833-3.012a3 3 0 1 1-1.132-5.89A33.076 33.076 0 0 1 2.5.5zm.099 2.54a2 2 0 0 0 .72 3.935c-.333-1.05-.588-2.346-.72-3.935zm10.083 3.935a2 2 0 0 0 .72-3.935c-.133 1.59-.388 2.885-.72 3.935z"/></svg> {% endif %}{{ award.award_name }}{% if award.year %} ({{ award.year }}){% endif %}{% if not award.win %} &mdash; nominated{% endif %}</span>
 					{% endfor %}
 					{% if awards|length > 16 %}
 					<span class="small text-muted text-nowrap">+ {{ awards|length - 16 }} more</span>
@@ -107,7 +107,7 @@
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
-		<div class="btn-group show btn-block">
+		<div class="btn-group show w-100">
 			{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
 				<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
 			{% elif movie.criterion_spine_number or movie.criterion_set_title %}
@@ -115,8 +115,8 @@
 			{% else %}
 				<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&submit=Search&action=search" rel="noreferrer">Find</a>
 			{% endif %}
-			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-expanded="false">
-				<span class="sr-only">Toggle dropdown</span>
+			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+				<span class="visually-hidden">Toggle dropdown</span>
 			</button>
 			{% include "_shopping_search_dropdown.html" %}
 		</div>
@@ -142,7 +142,7 @@
 			{% endif %}
 		</form>
 	</div>
-	<div class="col-md mt-1 mb-1 ml-n3">
+	<div class="col-md mt-1 mb-1 ms-n3">
 		<hr class="d-block d-md-none">
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
@@ -161,13 +161,13 @@
 {% if review or on_watchlist or might_interest %}
 <div class="mt-1">
 	{% if review %}
-	<span class="badge badge-info mr-1">Seen{% if review.rating is not none %} &mdash; rated {{ review.rating }}{% endif %}</span>
+	<span class="badge text-bg-info me-1">Seen{% if review.rating is not none %} &mdash; rated {{ review.rating }}{% endif %}</span>
 	{% endif %}
 	{% if on_watchlist %}
-	<span class="badge badge-warning mr-1">On your watchlist</span>
+	<span class="badge text-bg-warning me-1">On your watchlist</span>
 	{% endif %}
 	{% if might_interest %}
-	<span class="badge badge-info mr-1">Might interest you</span>
+	<span class="badge text-bg-info me-1">Might interest you</span>
 	{% endif %}
 </div>
 {% endif %}
@@ -191,7 +191,7 @@
 		{{ not_interested_form.csrf_token }}
 		<button type="submit" name="interested_submit" value="Undo Not Interested" class="btn btn-sm btn-outline-secondary">Undo Not Interested</button>
 	</form>
-	<span class="small text-muted ml-1">This film won't be recommended.</span>
+	<span class="small text-muted ms-1">This film won't be recommended.</span>
 	{% elif not films and not review %}
 	<form action="" method="post" class="d-inline">
 		{{ not_interested_form.csrf_token }}
@@ -207,7 +207,7 @@
 		{{ radarr_form.csrf_token }}
 		{{ radarr_form.movie_id(value=movie.id) }}
 		{% if in_radarr %}
-		<span class="badge badge-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
+		<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
 		<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary">Remove from Radarr</button>
 		{% else %}
 		<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary">Request via Radarr</button>
@@ -222,7 +222,7 @@
 	<div class="col-sm-4">
 		<form action="" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
-			<div class="form-group">
+			<div class="mb-3">
 				{{ tmdb_lookup_form.tmdb_id.label }}
 				{{ tmdb_lookup_form.tmdb_id(size=10, class_="form-control form-control-sm col-md-4", value=(movie.tmdb_id if movie.tmdb_id)) }}
 			</div>
@@ -237,14 +237,14 @@
 	<div class="col-sm-4">
 		<form action="" method="post">
 			{{ criterion_form.hidden_tag() }}
-			<div class="form-group">
+			<div class="mb-3">
 				{{ criterion_form.spine_number.label }}
 				{{ criterion_form.spine_number(class_="form-control form-control-sm col-md-4", value=(movie.criterion_spine_number if movie.criterion_spine_number)) }}
 				{% for error in criterion_form.spine_number.errors %}
 				<div class="text-danger small">{{ error }}</div>
 				{% endfor %}
 			</div>
-			<div class="form-group">
+			<div class="mb-3">
 				{{ criterion_form.set_title.label }}
 				{{ criterion_form.set_title(class_="form-control form-control-sm", value=(movie.criterion_set_title if movie.criterion_set_title)) }}
 				{% for error in criterion_form.set_title.errors %}
@@ -255,9 +255,9 @@
 				{{ criterion_form.in_print(class_="form-check-input", checked=(movie.criterion_in_print|default(false, true))) }}
 				{{ criterion_form.in_print.label }}
 			</div>
-			<div class="form-group form-inline">
-				{{ criterion_form.quality.label(class_="mr-2") }}
-				{{ criterion_form.quality(class_="form-control form-control-sm") }}
+			<div class="mb-3 form-inline">
+				{{ criterion_form.quality.label(class_="me-2") }}
+				{{ criterion_form.quality(class_="form-select form-select-sm") }}
 			</div>
 			<div class="form-check mt-n1">
 				{{ criterion_form.owned(class_="form-check-input", checked=(movie.criterion_disc_owned|default(false, true))) }}

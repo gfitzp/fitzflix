@@ -26,16 +26,16 @@
 	{% if seasons %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
 		<div class="dropdown show">
-			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Seasons</a>
+			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Seasons</a>
 			{% include "_tv_season_dropdown.html" %}
 		</div>
 	</div>
 	{% endif %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
-		<div class="btn-group show btn-block">
+		<div class="btn-group show w-100">
 			<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on&submit=Search&action=search" rel="noreferrer">Find</a>
-			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-expanded="false">
-				<span class="sr-only">Toggle dropdown</span>
+			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+				<span class="visually-hidden">Toggle dropdown</span>
 			</button>
 			{% include "_shopping_search_dropdown.html" %}
 		</div>
@@ -70,7 +70,7 @@
 	<div class="col-sm-4">
 		<form action="" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
-			<div class="form-group">
+			<div class="mb-3">
 				{{ tmdb_lookup_form.tmdb_id.label }}
 				{{ tmdb_lookup_form.tmdb_id(size=10, class_="form-control form-control-sm col-md-4", value=(tv.tmdb_id if tv.tmdb_id)) }}
 			</div>

@@ -23,7 +23,7 @@
 			{# A ladder tap re-rates this viewing in place; saving without
 			   one keeps the stars exactly as they are #}
 			<div class="row">
-				<div class="form-group col-sm-5">
+				<div class="mb-3 col-sm-5">
 					{{ movie_review_form.date_watched.label }}
 					{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
 					{% for error in movie_review_form.date_watched.errors %}
@@ -31,7 +31,7 @@
 					{% endfor %}
 				</div>
 			</div>
-			<div class="form-group">
+			<div class="mb-3">
 				{{ movie_review_form.review.label }}
 				{{ movie_review_form.review(class_="form-control form-control-sm", rows=6) }}
 				{% for error in movie_review_form.review.errors %}
@@ -39,7 +39,7 @@
 				{% endfor %}
 			</div>
 			{{ movie_review_form.review_submit(class_="btn btn-sm btn-success", value="Save Review") }}
-			<a class="btn btn-sm btn-outline-secondary ml-2" href="{{ url_for('main.history', page=page) }}" role="button">Cancel</a>
+			<a class="btn btn-sm btn-outline-secondary ms-2" href="{{ url_for('main.history', page=page) }}" role="button">Cancel</a>
 		</form>
 	</div>
 </div>

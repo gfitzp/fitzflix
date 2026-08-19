@@ -142,7 +142,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert 'title="In your Fitzflix library"' in page
     assert "Bluray-1080p" not in page
     # Seen but unowned: info badge plus the liked heart
-    assert 'badge-info mr-1">Seen' in page
+    assert 'text-bg-info me-1">Seen' in page
     assert "bi-heart-fill" in page
     # No local record at all: listed from TMDb, linking to the review form
     assert "Career Unknown Film" in page
@@ -300,10 +300,10 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
 
     page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
     assert page.count('title="In your Fitzflix library"') == 2
-    assert page.count('badge-info mr-1">Seen') == 1
+    assert page.count('text-bg-info me-1">Seen') == 1
     assert page.count("On your watchlist") == 1
     assert page.index("Funnel Owned Seen Film (1960)") < page.index(
-        'badge-info mr-1">Seen'
+        'text-bg-info me-1">Seen'
     )
     assert page.index("Funnel Owned Wanted Film (1965)") < page.index(
         "On your watchlist"
@@ -555,10 +555,10 @@ def test_library_page_badges_quality_by_upgradability(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/library/movie").get_data(as_text=True)
-    assert 'badge-warning">DVD' in page
-    assert 'badge-success">Bluray-1080p' in page
+    assert 'text-bg-warning">DVD' in page
+    assert 'text-bg-success">Bluray-1080p' in page
     # An excluded movie's copy counts as final even below the threshold
-    assert 'badge-success">DVD' in page
+    assert 'text-bg-success">DVD' in page
 
 
 def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):

@@ -148,7 +148,7 @@ def test_movie_page_funnel_badges(app, admin_client):
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "On your watchlist" in page
     assert "Might interest you" in page
-    assert 'badge-info mr-1">Seen' not in page
+    assert 'text-bg-info me-1">Seen' not in page
 
     with app.app_context():
         admin = User.query.filter_by(admin=True).first()

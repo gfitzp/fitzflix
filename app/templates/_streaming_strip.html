@@ -19,13 +19,13 @@
 	{% endfor %}
 	{% if not streaming.local and not streaming.matches and not streaming.rentals %}
 		{% if streaming.known %}
-		<span class="badge badge-secondary align-middle mr-1">Not on your services</span>
+		<span class="badge text-bg-secondary align-middle me-1">Not on your services</span>
 		{% else %}
-		<span class="small text-muted mr-1">Streaming availability unknown right now.</span>
+		<span class="small text-muted me-1">Streaming availability unknown right now.</span>
 		{% endif %}
 	{% endif %}
 	{% if streaming.matches or streaming.rentals or not streaming.local %}
-		{% if streaming.link %}<a class="small mr-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
+		{% if streaming.link %}<a class="small me-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
 		<span class="small text-muted">Streaming data by JustWatch</span>
 	{% endif %}
 </div>

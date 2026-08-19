@@ -34,23 +34,15 @@
 			<form method="post" enctype="multipart/form-data">
 				<fieldset {% if not upload_enabled %}disabled{% endif %}>
 				{{ custom_poster_form.hidden_tag() }}
-				<div class="form-group">
-					{{ custom_poster_form.custom_poster.label }}
-					<div class="custom-file">
-						{{ custom_poster_form.custom_poster(type="file", class_="form-control-sm custom-file-input", id="custom-poster", accept="image/*") }}
-						<label class="form-control-sm custom-file-label" for="custom-poster">Choose poster image</label>
-					</div>
+				<div class="mb-3">
+					{{ custom_poster_form.custom_poster.label(class_="form-label") }}
+					{# BS5 native file input — the custom-file wrapper and its
+					   filename-mirroring script are gone with Bootstrap 4 #}
+					{{ custom_poster_form.custom_poster(type="file", class_="form-control form-control-sm", id="custom-poster", accept="image/*") }}
 				</div>
 				{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}
 				</fieldset>
 			</form>
-			<script>
-				document.querySelector('.custom-file-input').addEventListener('change',function(e){
-					var fileName = document.getElementById("custom-poster").files[0].name;
-					var nextSibling = e.target.nextElementSibling;
-					nextSibling.innerText = fileName;
-				})
-			</script>
 		</div>
 	</div>
 </div>
@@ -73,7 +65,7 @@
 	<div class="d-flex flex-wrap">
 		{% for poster in posters %}
 		{% set is_default = default_poster_path and poster.file_path == default_poster_path %}
-		<div class="mr-3 mb-4 text-center" style="width: 154px;">
+		<div class="me-3 mb-4 text-center" style="width: 154px;">
 			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ poster.file_path }}" loading="lazy" class="border mb-1{% if is_default %} border-primary{% endif %}" alt="Poster option {{ loop.index }}" style="width: 154px;{% if is_default %} border-width: 3px !important;{% endif %}">
 			<div class="small text-muted">{{ poster.width }}&times;{{ poster.height }}{% if poster.iso_639_1 %} &middot; {{ poster.iso_639_1 }}{% endif %}</div>
 			<form method="post">
@@ -81,7 +73,7 @@
 				{{ poster_select_form.poster_path(value=poster.file_path) }}
 				{{ poster_select_form.poster_select_submit(class_="btn btn-sm btn-outline-primary mt-1", disabled=not upload_enabled) }}
 			</form>
-			{% if is_default %}<div><span class="badge badge-primary">TMDb default</span></div>{% endif %}
+			{% if is_default %}<div><span class="badge text-bg-primary">TMDb default</span></div>{% endif %}
 		</div>
 		{% endfor %}
 	</div>

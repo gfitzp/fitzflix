@@ -25,8 +25,8 @@
 	{% set file = entry.file %}
 	<a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.subtitle_triage')) }}" class="list-group-item list-group-item-action">
 		{{ file.basename }}
-		<span class="badge badge-light border font-weight-normal ml-1">{{ entry.tracks | length }} track{{ 's' if entry.tracks | length != 1 }}</span>
-		{% if file.container != "Matroska" %}<span class="badge badge-secondary ml-1" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
+		<span class="badge text-bg-light border fw-normal ms-1">{{ entry.tracks | length }} track{{ 's' if entry.tracks | length != 1 }}</span>
+		{% if file.container != "Matroska" %}<span class="badge text-bg-secondary ms-1" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
 	</a>
 	{% endfor %}
 </div>
@@ -41,8 +41,8 @@
 <div class="card mb-3">
 	<div class="card-header py-2">
 		<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
-		{% if file.container != "Matroska" %}<span class="badge badge-secondary ml-2" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
-		<form action="" method="post" class="float-right">
+		{% if file.container != "Matroska" %}<span class="badge text-bg-secondary ms-2" title="Only MKV files can have their flags edited in place">{{ file.container or "unknown container" }}</span>{% endif %}
+		<form action="" method="post" class="float-end">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
 			{{ triage_form.dismiss_submit(class_="btn btn-sm btn-outline-secondary") }}
@@ -53,7 +53,7 @@
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
 			<table class="table table-sm mb-0">
-				<thead class="thead-light">
+				<thead class="table-light">
 					<tr>
 						{% if file.container == "Matroska" %}<th scope="col" style="width: 2rem;"></th>{% endif %}
 						<th scope="col">Track</th>
@@ -89,7 +89,7 @@
 								   the shared modal below, instead of leaving
 								   the page #}
 								{% for snap in item.aids.snapshots %}
-								<img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded mr-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
+								<img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded me-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
 								{% endfor %}
 							</div>
 						</td>
@@ -114,7 +114,7 @@
 <div class="modal fade" id="triageSnapshotModal" tabindex="-1" role="dialog" aria-label="Enlarged snapshot" aria-hidden="true">
 	<div class="modal-dialog modal-lg modal-dialog-centered" role="document">
 		<div class="modal-content bg-transparent border-0 shadow-none">
-			<img id="triageSnapshotModalImage" src="" class="mw-100 d-block mx-auto border rounded" style="cursor: zoom-out;" alt="Enlarged subtitle snapshot" data-dismiss="modal">
+			<img id="triageSnapshotModalImage" src="" class="mw-100 d-block mx-auto border rounded" style="cursor: zoom-out;" alt="Enlarged subtitle snapshot" data-bs-dismiss="modal">
 		</div>
 	</div>
 </div>
@@ -132,7 +132,7 @@
 		var snapshot = event.target.closest(".triage-snapshot");
 		if (!snapshot) return;
 		document.getElementById("triageSnapshotModalImage").src = snapshot.src;
-		$("#triageSnapshotModal").modal("show");
+		bootstrap.Modal.getOrCreateInstance(document.getElementById("triageSnapshotModal")).show();
 	});
 	document.addEventListener("keydown", function (event) {
 		if (event.key !== "Enter") return;

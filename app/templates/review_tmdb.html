@@ -65,15 +65,15 @@
    no local record yet #}
 <div class="row">
 	<div class="col-sm-3 col-md-2 my-1">
-		<div class="btn-group show btn-block">
+		<div class="btn-group show w-100">
 			<a class="btn btn-primary btn-sm" style="width: 100%;" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ movie.title|urlencode }}&yearfrom={{ movie.year }}&yearto={{ movie.year }}&submit=Search&action=search" rel="noreferrer">Find</a>
-			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-toggle="dropdown" aria-expanded="false">
-				<span class="sr-only">Toggle dropdown</span>
+			<button type="button" class="btn btn-primary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+				<span class="visually-hidden">Toggle dropdown</span>
 			</button>
 			{% include "_shopping_search_dropdown.html" %}
 		</div>
 	</div>
-	<div class="col-md mt-1 mb-1 ml-n3">
+	<div class="col-md mt-1 mb-1 ms-n3">
 		<hr class="d-block d-md-none">
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>

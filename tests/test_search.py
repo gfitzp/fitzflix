@@ -79,7 +79,7 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
-    assert 'badge-warning">DVD' in page
+    assert 'text-bg-warning">DVD' in page
 
     # The overview excerpt reads under the badges, like the TMDb page
 
@@ -87,8 +87,8 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
 
     page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
     assert "Jurassic Park (1993)" in page
-    assert 'badge-success">Bluray-2160p Remux' in page
-    assert "badge-warning" not in page
+    assert 'text-bg-success">Bluray-2160p Remux' in page
+    assert "text-bg-warning" not in page
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
@@ -284,7 +284,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
-    assert page.count('badge-info mr-1">Seen') == 1
+    assert page.count('text-bg-info me-1">Seen') == 1
     assert page.count("On your watchlist") == 1
     assert page.index("Funnel Wanted (1978)") < page.index("On your watchlist")
 
@@ -383,8 +383,8 @@ def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=mixed+bag").get_data(as_text=True)
-    assert 'badge-warning" title="2 episodes">Season 1: Unknown' in page
-    assert 'badge-success" title="1 episode">Season 2: Bluray-1080p' in page
+    assert 'text-bg-warning" title="2 episodes">Season 1: Unknown' in page
+    assert 'text-bg-success" title="1 episode">Season 2: Bluray-1080p' in page
 
 
 def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
@@ -400,16 +400,16 @@ def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=disc+only").get_data(as_text=True)
-    assert 'badge-success" title="1 episode">Season 1: DVD' in page
-    assert 'badge-success" title="1 episode">Season 2: Bluray-480p' in page
-    assert 'badge-warning" title="1 episode">Season 3: WEBDL-480p' in page
+    assert 'text-bg-success" title="1 episode">Season 1: DVD' in page
+    assert 'text-bg-success" title="1 episode">Season 2: Bluray-480p' in page
+    assert 'text-bg-warning" title="1 episode">Season 3: WEBDL-480p' in page
 
     # The TV library page uses the same flag on its season badges
 
     page = admin_client.get("/library/tv").get_data(as_text=True)
-    assert 'badge-success">DVD' in page
-    assert 'badge-success">Bluray-480p' in page
-    assert 'badge-warning">WEBDL-480p' in page
+    assert 'text-bg-success">DVD' in page
+    assert 'text-bg-success">Bluray-480p' in page
+    assert 'text-bg-warning">WEBDL-480p' in page
 
 
 def test_search_wildcard_ignores_word_gaps(app, admin_client):
@@ -553,8 +553,8 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
-    assert 'badge-success">DVD &mdash; excluded' in page
-    assert "badge-warning" not in page
+    assert 'text-bg-success">DVD &mdash; excluded' in page
+    assert "text-bg-warning" not in page
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
@@ -569,7 +569,7 @@ def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=titled+episodes").get_data(as_text=True)
-    assert 'badge-success" title="1 episode">Season 1: Bluray-1080p' in page
+    assert 'text-bg-success" title="1 episode">Season 1: Bluray-1080p' in page
 
 
 def test_search_finds_people(app, admin_client):

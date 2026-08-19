@@ -8,11 +8,11 @@
     	<p>Email address: {{ current_user.email }}</p>
     	<form action="" method="post">
     		{{ email_form.hidden_tag() }}
-    		<div class="form-group">
+    		<div class="mb-3">
 				{{ email_form.email.label }}
 				{{ email_form.email(size=32, class_="form-control") }}
 			</div>
-			<div class="form-group">
+			<div class="mb-3">
 				{{ email_form.email2.label }}
 				{{ email_form.email2(size=32, class_="form-control") }}
 			</div>
@@ -30,7 +30,7 @@
     	<p>Plex username:{% if current_user.plex_username %} {{ current_user.plex_username }}{% else %} <span class="text-muted">not mapped</span>{% endif %}</p>
     	<form action="" method="post">
     		{{ plex_form.hidden_tag() }}
-    		<div class="form-group">
+    		<div class="mb-3">
     			{{ plex_form.plex_username.label }}
     			{{ plex_form.plex_username(size=32, class_="form-control", value=current_user.plex_username or "") }}
     		</div>
@@ -42,7 +42,7 @@
     	<p>Letterboxd username:{% if current_user.letterboxd_username %} {{ current_user.letterboxd_username }}{% else %} <span class="text-muted">not syncing</span>{% endif %}</p>
     	<form action="" method="post">
     		{{ letterboxd_form.hidden_tag() }}
-    		<div class="form-group">
+    		<div class="mb-3">
     			{{ letterboxd_form.letterboxd_username.label }}
     			{{ letterboxd_form.letterboxd_username(size=32, class_="form-control", value=current_user.letterboxd_username or "") }}
     		</div>
@@ -66,7 +66,7 @@
 			{{ option(class_="form-check-input") }}
 			<label class="form-check-label" for="{{ option.id }}">
 				{% set logo = provider_logos.get(option.data) %}
-				{% if logo %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ logo }}" alt="" style="height: 1.4em;" class="rounded mr-1">{% endif %}{{ option.label.text }}
+				{% if logo %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ logo }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ option.label.text }}
 			</label>
 		</div>
 		{% endfor %}

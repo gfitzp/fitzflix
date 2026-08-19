@@ -5,13 +5,13 @@
 <hr>
 <h3>Rejected files</h3>
 <p class="small text-muted">Files that couldn't be imported, sorted by the reason they were rejected.</p>
-<a class="btn btn-sm btn-{{ "warning" if rejected_count else "outline-secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge badge-light">{{ rejected_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if rejected_count else "outline-secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
 <hr>
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}
 <p class="small text-muted">These movies share a TMDb id. Merging moves each duplicate's files and reviews to the oldest record (marked kept) and deletes the duplicate.</p>
 <table class="table table-sm mt-3">
-	<thead class="thead-light">
+	<thead class="table-light">
 		<tr>
 			<th scope="col">TMDb id</th>
 			<th scope="col">Movies</th>
@@ -46,13 +46,13 @@
 <hr>
 <h3>Possibly-forced subtitles</h3>
 <p class="small text-muted">Unforced subtitle tracks that are far smaller than a same-language sibling in the same file &mdash; the shape of a foreign-parts-only track that should carry the forced flag.</p>
-<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge badge-light">{{ subtitle_triage_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
 <hr>
 <h3>Filename tester</h3>
 <p class="small text-muted">Preview how a filename would be parsed and filed on import, without importing anything.</p>
 <form action="" method="post" class="form-inline">
 	{{ filename_test_form.hidden_tag() }}
-	{{ filename_test_form.test_filename(class_="form-control form-control-sm mr-2", size=60, placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
+	{{ filename_test_form.test_filename(class_="form-control form-control-sm me-2", size=60, placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
 	{{ filename_test_form.filename_test_submit(class_="btn btn-sm btn-primary") }}
 </form>
 {% if filename_test_result %}

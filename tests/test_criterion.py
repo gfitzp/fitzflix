@@ -301,10 +301,10 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     # release case the page deliberately calls done
 
     assert page.count('title="In your Fitzflix library"') == 2
-    assert 'badge-warning mr-1">DVD' in page
-    assert 'badge-warning mr-1">Bluray-2160p Remux' in page
-    assert 'badge-warning mr-1">Bluray-1080p' not in page
-    assert 'badge-info mr-1">Seen' in page
+    assert 'text-bg-warning me-1">DVD' in page
+    assert 'text-bg-warning me-1">Bluray-2160p Remux' in page
+    assert 'text-bg-warning me-1">Bluray-1080p' not in page
+    assert 'text-bg-info me-1">Seen' in page
     assert "On your watchlist" in page
     assert page.count("Might interest you") == 1
     assert page.index("Criterion Unowned Disc (1965)") < page.index(

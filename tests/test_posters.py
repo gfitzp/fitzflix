@@ -149,7 +149,7 @@ def test_picker_without_tmdb_id_offers_upload_only(app, admin_client):
 
     page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
     assert "no TMDb id" in page
-    assert "custom-file-input" in page  # the upload form is still there
+    assert 'id="custom-poster"' in page  # the upload form is still there
 
 
 def test_picking_a_tmdb_poster_runs_the_pipeline(

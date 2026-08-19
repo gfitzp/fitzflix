@@ -5,14 +5,14 @@
 	<h2>{{ title }}</h2>
 </div>
 <div class="row align-items-end mt-n2">
-	<div class="col-md-6 mb-n4 mr-auto">
+	<div class="col-md-6 mb-n4 me-auto">
 		<form action="" method="post">
 			{{ filter_form.hidden_tag() }}
-			<div class="form-row">
+			<div class="row g-2">
 				<div class="col-12 col-sm-11">
-					<div class="form-group form-inline">
-						{{ filter_form.quality.label(class_="mr-2") }}
-						{{ filter_form.quality(class_="form-control form-control-sm col-5 mr-2") }}
+					<div class="mb-3 form-inline">
+						{{ filter_form.quality.label(class_="me-2") }}
+						{{ filter_form.quality(class_="form-select form-select-sm col-5 me-2") }}
 						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col") }}
 					</div>
 				</div>
@@ -22,8 +22,8 @@
 	<div class="col-md-6 col-lg-4 mt-4 mb-n2">
 		<form class="form-inline" action="" method="post">
 			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm mr-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ml-2 col") }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
 		</form>
 	</div>
 </div>
@@ -31,16 +31,16 @@
 {% if series %}
 {% for tv in series %}
 {# Stacked on phones (poster above the seasons), side-by-side from sm up #}
-<div class="media flex-column flex-sm-row">
+<div class="d-flex flex-column flex-sm-row">
 	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 	</div>
-	<div class="media-body w-100">
+	<div class="flex-grow-1 w-100">
 		<h5 class="mt-2 mt-sm-0"><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_title if tv.tmdb_title else tv.title }}</a></h5>
 		{% if tv.seasons %}
-			<ul class="list-group col-12 col-md-8 col-lg-4 pl-0 pl-sm-3">
+			<ul class="list-group col-12 col-md-8 col-lg-4 ps-0 pl-sm-3">
 			{% for season in tv.seasons %}
 				<li class="list-group-item">
 					<h6><a href="{{ url_for('main.season', series_id=tv.id, season=season.season) }}"><span class="text-body">{% if season.season == 0 %}Specials{% else %}Season {{ season.season }}{% endif %}</span></a></h6>
@@ -48,8 +48,8 @@
 					{% if season.instruction != "Already owned" %}
 						<div class="btn-group mt-n2">
 							<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on&submit=Search&action=search" rel="noreferrer">Find</a>
-							<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-toggle="dropdown" aria-expanded="false">
-								<span class="sr-only">Toggle dropdown</span>
+							<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-bs-toggle="dropdown" aria-expanded="false">
+								<span class="visually-hidden">Toggle dropdown</span>
 							</button>
 							{% include "_shopping_search_dropdown.html" %}
 						</div>

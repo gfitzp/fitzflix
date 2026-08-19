@@ -296,11 +296,11 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
 
     page = admin_client.get("/recently-added").get_data(as_text=True)
     # Movie rules: DVD is an upgrade candidate, Blu-ray is final
-    assert 'badge-warning">DVD' in page
-    assert 'badge-success">Bluray-1080p' in page
+    assert 'text-bg-warning">DVD' in page
+    assert 'text-bg-success">Bluray-1080p' in page
     # TV rules: a physical-media DVD season is final; SDTV is not
-    assert 'badge-success">DVD' in page
-    assert 'badge-warning">SDTV' in page
+    assert 'text-bg-success">DVD' in page
+    assert 'text-bg-warning">SDTV' in page
 
 
 def test_genre_links_filter_the_library(app, admin_client):

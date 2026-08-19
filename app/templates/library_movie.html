@@ -8,11 +8,11 @@
 	<div class="col-sm-12 col-md-7 col-lg-8 mb-md-n4">
 		<form action="" method="post">
 			{{ filter_form.hidden_tag() }}
-			<div class="form-row">
+			<div class="row g-2">
 				<div class="col-12 col-sm-11 col-md-11">
-					<div class="form-group form-inline">
-						{{ filter_form.quality.label(class_="mr-2") }}
-						{{ filter_form.quality(class_="form-control form-control-sm col-5 col-md-6 col-lg-5 mr-2") }}
+					<div class="mb-3 form-inline">
+						{{ filter_form.quality.label(class_="me-2") }}
+						{{ filter_form.quality(class_="form-select form-select-sm col-5 col-md-6 col-lg-5 me-2") }}
 						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col col-md-2") }}
 					</div>
 				</div>
@@ -22,8 +22,8 @@
 	<div class="col-sm-12 col-md-5 col-lg-4 mb-md-n3">
 		<form class="form-inline float-sm-right mb-2" action="" method="post">
 			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm mr-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ml-2 col") }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
 		</form>
 	</div>
 </div>
@@ -61,7 +61,7 @@
 		<p class="text-center">
 			<strong><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></strong><br>
 			{% if file.edition %}<span class="text-muted">{{ file.edition }}</span><br>{% endif %}
-			<span class="badge badge-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
+			<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
 		</p>
 	</div>
 	{% endfor %}
@@ -123,7 +123,7 @@
 				{% include "_movie_poster_small.html" %}
 				<h6><span class="text-body">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</span></h6>
 				<p class="mt-n2">
-					{% if file.edition %}<span class="text-body">{{ file.edition }}</span>&nbsp;–&nbsp;{% endif %}<span class="badge badge-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
+					{% if file.edition %}<span class="text-body">{{ file.edition }}</span>&nbsp;–&nbsp;{% endif %}<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
 				</p>
 			</div>
 		</a>

@@ -32,11 +32,11 @@
 	<p>{% if file.season == 0 %}<a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">Special</a> for{% else %}Episode from{% endif %} TV Series <a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>{% if file.season != 0 %}, <a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">season {{ file.season }}</a>{% endif %}</p>
 {% endif %}
 <p>
-	Fullscreen: {% if file.fullscreen == True %}<span class="badge badge-danger">{{ file.fullscreen }}</span>{% else %}<span class="badge badge-secondary">{{ file.fullscreen }}</span>{% endif %}<br>
+	Fullscreen: {% if file.fullscreen == True %}<span class="badge text-bg-danger">{{ file.fullscreen }}</span>{% else %}<span class="badge text-bg-secondary">{{ file.fullscreen }}</span>{% endif %}<br>
 	Container: {{ file.container }}<br>
 	Codec: {{ file.codec }}
 	{% if file.hdr_format %}
-		<br>HDR Format: {{ file.hdr_format }}{% if file.dolby_vision_profile %} <span class="badge badge-dark align-text-bottom" title="Dolby Vision profile">DV Profile {{ file.dolby_vision_profile }}</span>{% endif %}
+		<br>HDR Format: {{ file.hdr_format }}{% if file.dolby_vision_profile %} <span class="badge text-bg-dark align-text-bottom" title="Dolby Vision profile">DV Profile {{ file.dolby_vision_profile }}</span>{% endif %}
 	{% endif %}
 	{% if file.video_bitrate_kbps %}
 		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
@@ -58,7 +58,7 @@
 {% if audio_tracks or subtitle_tracks %}
 <hr>
 <div class="row mt-n2 mb-n3 d-flex">
-	<h3 class="col-12 col-sm-auto mr-auto mb-n1">Tracks</h3>
+	<h3 class="col-12 col-sm-auto me-auto mb-n1">Tracks</h3>
 	<div class="col-12 col-sm-auto mt-2">
 		<form class="form-inline float-sm-right mb-2" action="" method="post">
 			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
@@ -71,7 +71,7 @@
 <div class="table-responsive mt-3">
 	<table class="table">
 		{% if audio_tracks %}
-		<thead class="thead-light">
+		<thead class="table-light">
 			<tr>
 				<th scope="col">Audio Track</th>
 				<th scope="col">Language</th>
@@ -99,15 +99,15 @@
 					{% endif %}
 				</td>
 				<td>{{ audio.compression_mode }}</td>
-				<td>{% if audio.default %}<span class="badge badge-info">Default audio track</span>{% endif %}</td>
+				<td>{% if audio.default %}<span class="badge text-bg-info">Default audio track</span>{% endif %}</td>
 			</tr>
 			{% endfor %}
 		</tbody>
 		{% endif %}
 		{% if subtitle_tracks %}
-		<thead class="thead-light">
+		<thead class="table-light">
 			<tr>
-				<th scope="col">Subtitle Track{% if pending_subtitle_triage %} <a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small font-weight-normal ml-2">Review possibly-forced tracks&hellip;</a>{% endif %}</th>
+				<th scope="col">Subtitle Track{% if pending_subtitle_triage %} <a href="{{ url_for('main.subtitle_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small fw-normal ms-2">Review possibly-forced tracks&hellip;</a>{% endif %}</th>
 				<th scope="col">Language</th>
 				<th scope="col">Format</th>
 				<th scope="col">Elements</th>
@@ -125,7 +125,7 @@
 				<td>{{ subtitle.elements }}</td>
 				<td></td>
 				<td></td>
-				<td>{% if subtitle.default %}<span class="badge badge-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge badge-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge badge-danger">Forced</span>{% endif %}</td>
+				<td>{% if subtitle.default %}<span class="badge text-bg-info">Default subtitle track</span> {% endif %}{% if subtitle.forced is none %}<span class="badge text-bg-warning">Possibly forced</span>{% elif subtitle.forced %}<span class="badge text-bg-danger">Forced</span>{% endif %}</td>
 			</tr>
 			{% endfor %}
 		</tbody>
@@ -142,7 +142,7 @@
 			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvpropedit_form.hidden_tag() }}
 			{% if audio_tracks %}
-				<div class="form-group">
+				<div class="mb-3">
 					Default audio track:
 					{% for subfield in mkvpropedit_form.default_audio %}
 					<div class="form-check">
@@ -154,7 +154,7 @@
 			{% endif %}
 			{% if subtitle_tracks %}
 				<div class="row align-items-end">
-					<div class="form-group col-xl-4 col-lg-5">
+					<div class="mb-3 col-xl-4 col-lg-5">
 						Default subtitle track:
 						{% for subfield in mkvpropedit_form.default_subtitle %}
 						<div class="form-check">
@@ -163,7 +163,7 @@
 						</div>
 						{% endfor %}
 					</div>
-					<div class="form-group col">
+					<div class="mb-3 col">
 						Forced subtitle tracks:
 						{% for subfield in mkvpropedit_form.forced_subtitles %}
 						<div class="form-check">
@@ -186,7 +186,7 @@
 			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvmerge_form.hidden_tag() }}
 			{% if audio_tracks %}
-			<div class="form-group">
+			<div class="mb-3">
 				Audio tracks:
 				{% for subfield in mkvmerge_form.audio_tracks %}
 				<div class="form-check">
@@ -197,7 +197,7 @@
 			</div>
 			{% endif %}
 			{% if subtitle_tracks %}
-			<div class="form-group">
+			<div class="mb-3">
 				Subtitle tracks:
 				{% for subfield in mkvmerge_form.subtitle_tracks %}
 				<div class="form-check">
