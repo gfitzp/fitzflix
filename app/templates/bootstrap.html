@@ -89,16 +89,25 @@
 		   verdict paints the overlay gold — ★★★☆☆ — and the engine's
 		   estimate paints it gray, never mistakable for a verdict; the
 		   unfilled remainder shows the outline underneath. The overlay
-		   mirrors the button's padding so the two glyphs align, and the
-		   hard-stop gradient + background-clip keeps the fractional
-		   boundary exact to the glyph's own pixels (half-star ratings,
-		   fractional estimates). --fill / --est-fill arrive from the
-		   macro or the live repaint only when partial; full stars use
-		   the 100% fallback */
+		   mirrors the button's padding so the two glyphs align, and
+		   clip-path trims the fractional boundary (half-star ratings,
+		   fractional estimates; the -20% vertical slack keeps the glyph
+		   unclipped at line-height 1). --fill / --est-fill arrive from
+		   the macro or the live repaint only when partial; full stars
+		   use the 100% fallback.
+
+		   WebKit constraint, learned the hard way: the overlay's color
+		   and clip-path MUST be keyed by class selectors on ::before
+		   (.filled::before), not by custom properties consumed from
+		   the button — Safari neither resolves a var()-driven
+		   background-clip:text gradient reliably nor repaints a pseudo
+		   when only inherited custom properties change, which left
+		   partial stars rendering whole and toggle-off taps looking
+		   like they did nothing on iOS */
 		.star-row .star { position: relative; }
-		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; background: linear-gradient(90deg, var(--paint, transparent) var(--pct, 0%), transparent var(--pct, 0%)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-		.star-row .star.filled { --paint: #f0ad4e; --pct: var(--fill, 100%); }
-		.star-row .star.estimated { --paint: #adb5bd; --pct: var(--est-fill, 100%); }
+		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }
+		.star-row .star.filled::before { color: #f0ad4e; clip-path: inset(-20% calc(100% - var(--fill, 100%)) -20% 0); }
+		.star-row .star.estimated::before { color: #adb5bd; clip-path: inset(-20% calc(100% - var(--est-fill, 100%)) -20% 0); }
 		/* Hover previews exist only where hover does (#62 follow-up):
 		   iOS keeps a tapped element in :hover until the next tap
 		   elsewhere, so on touch these rules repainted the row as a
@@ -106,8 +115,8 @@
 		   rating looked unchanged. Touch gets no preview; the tap's
 		   state change IS the feedback */
 		@media (hover: hover) {
-			.star-row:has(.star:hover) .star { --paint: transparent; }
-			.star-row:hover .star:hover, .star-row:hover .star:hover ~ .star { --paint: #f0ad4e; --pct: 100%; }
+			.star-row:has(.star:hover) .star::before { color: transparent; }
+			.star-row:hover .star:hover::before, .star-row:hover .star:hover ~ .star::before { color: #f0ad4e; clip-path: none; }
 		}
 		/* The ✕'s visual gap to the stars is PADDING, not margin, so
 		   the whole row is one continuous hit area — clicking between
