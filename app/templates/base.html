@@ -528,10 +528,13 @@
 		// The poster popover (#45c): anchors marked data-card-url fetch
 		// their film's card fragment once and show it in a Bootstrap
 		// popover. Hover-capable pointers preview on hover, with a grace
-		// period to travel into the card; touch screens tap once for the
-		// card and tap again to navigate (Glenn's spec). The star row
-		// inside rides the ladder script above; the watchlist toggle
-		// posts in the background below. One card shows at a time.
+		// period to travel into the card; on touch a poster tap only
+		// ever TOGGLES its card — never navigates — and the card's
+		// title link is the way to the film's page (Glenn's revision,
+		// Aug 2026: tap-again-to-navigate meant a stray tap opened a
+		// page when closing the card was meant). The star row inside
+		// rides the ladder script above; the watchlist toggle posts in
+		// the background below. One card shows at a time.
 
 		var cardOpen = null;    // the anchor whose card is showing
 		var cardWanted = null;  // the anchor a pending hover/fetch intends
@@ -635,9 +638,12 @@
 				if (cardOpen && !event.target.closest(".movie-card-pop")) cardHide();
 				return;
 			}
-			if (cardHover) return;            // pointer users navigate on click
-			if (cardOpen === anchor) return;  // second tap follows the link
+			if (cardHover) return;  // pointer users navigate on click
 			event.preventDefault();
+			if (cardOpen === anchor) {
+				cardHide();
+				return;
+			}
 			cardShow(anchor);
 		});
 
