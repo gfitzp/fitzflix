@@ -436,6 +436,8 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
     import app.videos as videos
 
+    from app import tracks
+
     from app import db
     from tests.factories import make_movie, make_movie_file
 
@@ -449,7 +451,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
         def flaky_unlocked(*args, **kwargs):
             raise OSError(errno.EBADF, "Bad file descriptor")
 
-        monkeypatch.setattr(videos, "mkvpropedit_unlocked", flaky_unlocked)
+        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky_unlocked)
 
         assert videos.mkvpropedit_task(file_id, "2", None, []) is False
 
@@ -481,6 +483,8 @@ def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch)
 
     import app.videos as videos
 
+    from app import tracks
+
     from app import db
     from tests.factories import make_movie, make_movie_file
 
@@ -495,7 +499,7 @@ def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch)
             error.retry_unsafe = True
             raise error
 
-        monkeypatch.setattr(videos, "mkvpropedit_unlocked", unsafe_unlocked)
+        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", unsafe_unlocked)
 
         with pytest.raises(OSError):
             videos.mkvpropedit_task(file_id, "2", None, [])
