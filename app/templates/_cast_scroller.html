@@ -16,7 +16,9 @@
 		<div class="d-flex cast-scroller" style="overflow-x: auto; scroll-snap-type: x proximity; gap: 12px; padding-bottom: 4px; -webkit-overflow-scrolling: touch;">
 			{% for person in cast %}
 			<figure class="figure text-center mb-0" style="flex: 0 0 92px; scroll-snap-align: start;">
-				<a href="{{ url_for('main.movie_library', credit=person.id) }}">
+				{# The portrait carries the name as a tooltip — the caption
+				   truncates long names, the hover never does #}
+				<a href="{{ url_for('main.movie_library', credit=person.id) }}" title="{{ person.name }}{% if person.character %} as {{ person.character }}{% endif %}">
 				{% if person.profile_path %}
 					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">
 				{% else %}
