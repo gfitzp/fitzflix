@@ -96,3 +96,58 @@ def test_tv_multi_episode_file_wins_quality_ties(app):
         ranks = ranked_tv_files(db.session)
         assert ranks[double.id] == 1
         assert ranks[single.id] == 2
+
+
+def test_tv_replacement_ignores_the_edition_title(app):
+    """A TV episode's identity is series + season + episode span, never
+    the edition — for TV files the edition holds the filename's
+    episode-title segment, and two releases can title the same episode
+    differently (Glenn's Seeds of Doom case: the Blu-ray special named
+    the extra differently from the DVD, so neither replacement query
+    saw the two files as the same episode)."""
+
+    with app.app_context():
+        series = make_tv_series("Doctor Who (1963)")
+        dvd = make_tv_file(
+            series, 0, 85007, "DVD", edition="The Seeds of Doom - Photo Gallery"
+        )
+        bluray = make_tv_file(
+            series,
+            0,
+            85007,
+            "Bluray-480p",
+            edition="The Seeds of Doom - Graeme Harper Featurette",
+        )
+
+        # The better retitled release prunes its predecessor…
+        assert dvd in bluray.find_worse_files()
+
+        # …and the worse one can never prune the better
+        assert bluray not in dvd.find_worse_files()
+
+        # An incoming same-episode file is blocked by a better release
+        # regardless of what either disc titled the extra
+        blockers = File(
+            media_library="TV Shows",
+            dirname=dvd.dirname,
+            title="Doctor Who (1963)",
+            season=0,
+            episode=85007,
+            last_episode=85007,
+            edition="Yet Another Title",
+            quality_title="DVD",
+            fullscreen=False,
+        ).find_better_files()
+        assert bluray in blockers
+
+
+def test_movie_replacement_still_respects_editions(app):
+    """Movies keep edition identity: different cuts of the same film
+    coexist, never pruning one another."""
+
+    with app.app_context():
+        movie = make_movie("Blade Runner", 1982)
+        theatrical = make_movie_file(movie, "Bluray-1080p")
+        final_cut = make_movie_file(movie, "DVD", edition="Final Cut")
+        assert final_cut not in theatrical.find_worse_files()
+        assert theatrical not in final_cut.find_worse_files()

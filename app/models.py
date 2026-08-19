@@ -1660,8 +1660,15 @@ class File(db.Model):
                 )
 
         elif self.media_library == "TV Shows":
-            # If the new file is a full screen version, existing files that would
-            # prevent this file from importing would be:
+            # A TV episode's identity is series + season + episode span —
+            # NEVER the edition: for TV files the edition holds the
+            # filename's episode-title segment (#68), and two releases of
+            # the same episode can title it differently (Glenn's Seeds of
+            # Doom case: a Blu-ray special failed to replace its DVD
+            # predecessor because the discs named the extra differently).
+            #
+            # If the new file is a full screen version, existing files that
+            # would prevent this file from importing would be:
             # - same tv episode range, also full screen, in same quality
             # - wider tv episode range, also full screen, in same or better quality
             # - same tv episode range, NOT full screen, in same quality
@@ -1681,33 +1688,21 @@ class File(db.Model):
                             db.and_(
                                 File.last_episode == self.last_episode,
                                 File.fullscreen == True,
-                                File.edition == self.edition,
                                 RefQuality.preference == source_quality.preference,
                             ).self_group(),
                             db.and_(
                                 File.last_episode > self.last_episode,
                                 File.fullscreen == True,
-                                File.edition == self.edition,
                                 RefQuality.preference >= source_quality.preference,
                             ).self_group(),
                             db.and_(
                                 File.last_episode == self.last_episode,
                                 File.fullscreen == False,
-                                db.or_(
-                                    db.func.concat("Full Screen") == self.edition,
-                                    db.func.concat(File.edition, " - Full Screen")
-                                    == self.edition,
-                                ).self_group(),
                                 RefQuality.preference == source_quality.preference,
                             ).self_group(),
                             db.and_(
                                 File.last_episode > self.last_episode,
                                 File.fullscreen == False,
-                                db.or_(
-                                    db.func.concat("Full Screen") == self.edition,
-                                    db.func.concat(File.edition, " - Full Screen")
-                                    == self.edition,
-                                ).self_group(),
                                 RefQuality.preference >= source_quality.preference,
                             ).self_group(),
                         ).self_group(),
@@ -1741,7 +1736,6 @@ class File(db.Model):
                             ).self_group(),
                         ).self_group(),
                         File.fullscreen == False,
-                        File.edition == self.edition,
                     )
                     .all()
                 )
@@ -1772,6 +1766,12 @@ class File(db.Model):
             )
 
         elif self.media_library == "TV Shows":
+            # Edition deliberately absent (#68 follow-up): for TV files it
+            # holds the filename's episode-title segment, and two releases
+            # of the same episode can title it differently — the episode
+            # span is the identity, so a retitled upgrade still prunes its
+            # predecessor
+
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
                 .options(joinedload(File.quality, innerjoin=True))
@@ -1779,7 +1779,6 @@ class File(db.Model):
                     File.series_id == self.series_id,
                     File.season == self.season,
                     File.episode == self.episode,
-                    File.edition == self.edition,
                     db.or_(
                         File.last_episode < self.last_episode,
                         db.and_(
