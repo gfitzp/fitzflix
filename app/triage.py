@@ -117,6 +117,19 @@ def remove_triage_snapshots(file_id):
     shutil.rmtree(triage_snapshot_dir(file_id), ignore_errors=True)
 
 
+def reset_triage_state(file):
+    """A replaced file's subtitle content is new evidence: any earlier
+    reviewed verdict applied to the OLD tracks, and stale inspection
+    aids picture streams that no longer exist. Both reset on import so
+    the file re-earns its way off the triage page (#74, Glenn's rule:
+    a replacement may carry a forced track the original didn't — the
+    A Fish Called Wanda case, where an Aug 12 dismissal silently gated
+    the file re-imported Aug 18)."""
+
+    file.subtitle_triage_reviewed = None
+    remove_triage_snapshots(file.id)
+
+
 def _hms(seconds):
     """A H:MM:SS clock string."""
 

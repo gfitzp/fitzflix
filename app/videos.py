@@ -1739,8 +1739,15 @@ def finalize_localization(
 
             # Set file subtitle track info. The flag pass marks
             # suspicious tracks' forced state unknown; whether the file
-            # needs triage is decided later by the candidates query
+            # needs triage is decided later by the candidates query.
+            # Imported content is NEW evidence: a re-imported file
+            # wipes any earlier reviewed verdict and stale aids first
+            # (#74 — a replacement may carry a forced track the
+            # original didn't)
 
+            from app.triage import reset_triage_state
+
+            reset_triage_state(file)
             flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
             for i, track in enumerate(output_subtitle_tracks):

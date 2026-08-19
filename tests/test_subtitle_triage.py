@@ -400,3 +400,30 @@ def test_suspicious_first_track_is_a_candidate(app):
         assert len(entries) == 1
         assert [e["track"].track for e in entries[0]["tracks"]] == [1]
         assert maybe_enqueue_triage_snapshots(file.id) is True
+
+
+def test_reset_triage_state_clears_verdict_and_aids(app):
+    """A replaced file's earlier dismissal applied to tracks that no
+    longer exist (#74, the Wanda case): reset clears the reviewed mark
+    and the stale inspection aids so the new content re-earns its way
+    off the triage page."""
+
+    from datetime import datetime
+
+    from app.triage import reset_triage_state, triage_snapshot_dir
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Reset Subject", 1988), "DVD")
+        file.subtitle_triage_reviewed = datetime(2026, 8, 12)
+        db.session.commit()
+
+        aid_dir = os.path.join(triage_snapshot_dir(file.id), "2")
+        os.makedirs(aid_dir, exist_ok=True)
+        with open(os.path.join(aid_dir, "timeline.json"), "w") as fh:
+            fh.write("{}")
+
+        reset_triage_state(file)
+        db.session.commit()
+
+        assert file.subtitle_triage_reviewed is None
+        assert not os.path.isdir(triage_snapshot_dir(file.id))
