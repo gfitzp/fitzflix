@@ -98,21 +98,33 @@ def test_twins_match_count_wise_within_a_group(app):
     ]
 
 
-def test_twins_only_count_within_language_and_channels(app):
-    """A French FLAC doesn't cover an English lossless track, and a
-    stereo FLAC doesn't cover a 5.1 one."""
+def test_twins_match_by_language_not_channels(app):
+    """A French FLAC doesn't cover an English lossless track — but a
+    same-language FLAC with a DIFFERENT channel count does: MediaInfo
+    labels DTS-ES Matrix sources 6.0 while their discrete content (and
+    any FLAC decode of it) is 5.1, so channel-strict matching would
+    stack redundant twins on correct rips (the LOTR discs)."""
 
     from app.videos import plan_audio_supplements
 
     tracks = [
         track("FLAC", "Lossless", language="fr"),
-        track("FLAC", "Lossless", channels="2.0"),
         track("MLP FBA", "Lossless"),
     ]
     assert plan_audio_supplements(tracks) == [
         ("copy", 0),
+        ("flac", 1),
         ("copy", 1),
-        ("flac", 2),
+    ]
+
+    es_shaped = [
+        track("FLAC", "Lossless", channels="5.1"),
+        track("DTS-HD Master Audio", "Lossless", channels="6.0"),
+        track("DTS", "Lossy", channels="6.0"),
+    ]
+    assert plan_audio_supplements(es_shaped) == [
+        ("copy", 0),
+        ("copy", 1),
         ("copy", 2),
     ]
 

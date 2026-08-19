@@ -6370,13 +6370,18 @@ def plan_audio_supplements(audio_tracks):
     twin placed immediately before it, mirroring the MakeMKV "FLAC
     Plus Original Audio" rip profile; the original is always kept.
     A FLAC counts as an existing twin ONLY when it sits immediately
-    before a lossless track with the same language and channel count —
-    the exact shape the rip profile produces. A FLAC anywhere else
-    could be anything (a commentary, say), so it is never counted as
-    a twin, never moved, and never given the default slot (#69,
-    Glenn's rule); its neighbor earns a freshly converted twin
-    instead. Files already in the twinned shape plan as pure copies,
-    keeping the pass idempotent across disc rips and S3 re-downloads.
+    before a lossless track in the same language — the exact shape
+    the rip profile produces. A FLAC anywhere else could be anything
+    (a commentary, say), so it is never counted as a twin, never
+    moved, and never given the default slot (#69, Glenn's rule); its
+    neighbor earns a freshly converted twin instead. Channel counts
+    deliberately do NOT have to match: MediaInfo labels DTS-ES Matrix
+    sources "6.0" while their discrete content — and therefore any
+    lossless FLAC decode of them — is 5.1 (the LOTR discs), so a
+    channel-strict match would call correct twins imperfect and stack
+    redundant ones. Files already in the twinned shape plan as pure
+    copies, keeping the pass idempotent across disc rips and S3
+    re-downloads.
     """
 
     plan = []
@@ -6390,7 +6395,6 @@ def plan_audio_supplements(audio_tracks):
                 previous is not None
                 and previous.get("format") == "FLAC"
                 and previous.get("language") == track.get("language")
-                and previous.get("channels") == track.get("channels")
             )
             if not twinned:
                 plan.append(("flac", index))
@@ -6693,12 +6697,14 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     f"vs {file_duration}"
                 )
 
-            # The verified output takes the source's name so the
-            # untouched-archive upload derives the same S3 key
+            # The output already carries the clean basename (unlike the
+            # atmos task, whose OUTPUT was the dotfile) — so the upload
+            # derives the right S3 key from staging_output itself; the
+            # first run renamed output onto the .src- name and uploaded
+            # 40GB under 'untouched/src-…' (the Fellowship incident)
 
             os.remove(staging_source)
-            final_staging = staging_source
-            os.rename(staging_output, final_staging)
+            final_staging = staging_output
 
             hidden_library = os.path.join(os.path.dirname(file_path), f".{basename}")
             copy_with_progress(
