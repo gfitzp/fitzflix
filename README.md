@@ -25,6 +25,8 @@ Files named like these…
 
 It supports reviewing films to help keep track of what you've seen. Reviews interoperate with [Letterboxd](https://letterboxd.com) in both directions: the My Movie Reviews page imports a Letterboxd account-export zip as-is — combining `diary.csv` (watch dates), `ratings.csv`, `reviews.csv`, `likes/films.csv`, and `watchlist.csv` into review and watchlist records, matching films against the library or TMDb (films you've seen but don't own are created as review-only records), and merging idempotently so re-importing a newer export updates rather than duplicates — and the export button emails a CSV in the [Letterboxd import format](https://letterboxd.com/about/importing-data/), ready to upload to Letterboxd's importer. Exports default to only the entries added or edited since the last export, with a checkbox for a full export.
 
+Ongoing sync is hands-free: enter a Letterboxd username on the Profile page and Fitzflix polls that account's public RSS feed twice an hour, merging each diary entry or review into the local diary by its feed id — new watches add rows, edited reviews update in place, and a bare Plex-recorded watch of the same film is *completed* with the Letterboxd verdict (rating, review text, like, rewatch flag, spoiler flag) rather than duplicated, so one viewing stays one row no matter how many systems report it. Reviews keep Letterboxd's inline formatting (`<i>`, `<b>`, and friends render as formatting, never as visible tags), likes are stored verbatim (a sub-three-star guilty pleasure keeps its heart), and feed-synced rows are excluded from the CSV export so the two directions never ping-pong. The CSV import remains the backfill path for history older than the feed's ~50-item window.
+
 <img width="1206" alt="Screen Shot 2022-05-31 at 11 56 40 AM" src="https://user-images.githubusercontent.com/10539597/171219852-9de3c5de-863f-4c9a-b88f-c844186e57ca.png">
 
 It also supports TV shows:
@@ -87,7 +89,7 @@ Season `00` marks a special, which is filed into the show's `Specials` folder:
 
 ### After import
 
-Fitzflix tracks every file's quality, so the library pages show the best copy you own of each title, and the shopping list pages show which titles could be upgraded (e.g. a full screen DVD that could be replaced with a widescreen Blu-ray). Movies are matched to TMDb for artwork, cast and crew, and review tracking; the file detail page lets you set default audio/subtitle tracks, strip unwanted tracks, transcode with HandBrake, and manage the AWS archive copy.
+Fitzflix tracks every file's quality, so the library pages show the best copy you own of each title, and the shopping list pages show which titles could be upgraded (e.g. a full screen DVD that could be replaced with a widescreen Blu-ray). Movies are matched to TMDb for artwork, cast and crew, and review tracking; the file detail page lets you set default audio/subtitle tracks, strip unwanted tracks, transcode with HandBrake, and manage the AWS archive copy. Track scanning also records each file's video format, bitrate, and HDR format — including the Dolby Vision flavor (profile 5, 7, 8.1, …) parsed from MediaInfo, badged on the file page.
 
 ### Using Fitzflix on a phone
 
@@ -96,17 +98,17 @@ Fitzflix installs as a web app for shopping trips: open it in the phone's browse
 
 ## Reviews, the watchlist, and the rating drive
 
-Every film page carries a quick-answer rating ladder — **Not interested** (zero stars) through **Loved it** (five) — plus an optional review text and watch date; a rating of three stars or more automatically flags the film as liked. Log entries default to date-less (Plex watches carry real timestamps; films seen elsewhere usually don't), with the date field there when it's known. Films you haven't got can be logged too, from their TMDb page — a review-only record is created and enriched through the normal TMDb refresh.
+Every film page carries a quick-answer rating ladder — **Not interested** (zero stars) through **Loved it** (five) — plus an optional review text and watch date; a rating of three stars or more automatically flags the film as liked. Until you rate a film, the ladder previews the engine's **estimated rating** for you in paler gold, at full fractional precision (a 3.75 estimate fills the fourth star three-quarters); your own taps stay whole-star, while imported Letterboxd ratings can carry halves and display that way. Rating twice on the same day edits that day's verdict in place rather than logging a phantom rewatch; the newest diary entry's rating is a film's standing verdict everywhere. Log entries default to date-less (Plex watches carry real timestamps; films seen elsewhere usually don't), with the date field there when it's known. Films you haven't got can be logged too, from their TMDb page — a review-only record is created and enriched through the normal TMDb refresh.
 
 Each user also has a **watchlist**: any movie page (owned or not) has an add/remove toggle, the My Watchlist page lists everything with streaming availability per row, and logging a film — by hand, from Plex, or via a Letterboxd import — removes it automatically. Watchlisted films influence the recommendation shelves (below) without blocking them, and feed the taste profile as a mild interest signal.
 
-The **Rate Films** page is a Netflix-style rating drive for seeding taste data: it deals one film at a time from the library, chosen to maximize what each answer reveals about your taste, with the quick-answer ladder plus **Add to watchlist**, **Haven't seen it** (permanently out of the drive — you can still rate it from its movie page), and **Skip** (rests the film for a week). Rating a film positively earns two or three "Since you liked…" suggestions that can be rated in place or banked to the watchlist, and the same suggestion strip appears on a movie page right after rating it there.
+The **Rate Films** page is a Netflix-style rating drive for seeding taste data: it deals one film at a time from the library, chosen to maximize what each answer reveals about your taste, with the quick-answer ladder plus **Add to watchlist** and **No Opinion** (for films seen but unremembered as much as never seen — out of the drive for two years, and still ratable any time from the movie page). Rating a film positively earns two or three "Since you liked…" suggestions that can be rated in place or banked to the watchlist, and the same suggestion strip appears on a movie page right after rating it there.
 
 Search results, TMDb results, filmographies, and movie pages all wear per-user **funnel badges** along the way: *Might interest you* (taste profile) → *On your watchlist* (intent) → *Seen* (diary).
 
 ## Discovery: the landing page and the recommendation engine
 
-The landing page is built around "what should we watch tonight": a **library shelf** of twelve owned films picked from a taste-ranked pool so that nothing repeats within roughly a month, a **Watch it again** shelf of old favorites not seen in two years or more, a **streaming shelf** of films on the services you've picked (see below), and — for Criterion Channel subscribers — a **Leaving the Criterion Channel** shelf of the month's departures with a full inventory page behind it. Watchlisted films pin into the shelves (capped, so discovery keeps the majority of the cards), each day's cards shuffle to day-stable positions, and a runtime filter ("only films that fit your evening") trims every shelf at once. Each card says *why* it was picked.
+The landing page is built around "what should we watch tonight": a **library shelf** of twelve owned films picked from a taste-ranked pool so that nothing repeats within roughly a month, a **Watch it again** shelf of old favorites not seen in two years or more, a **streaming shelf** of films on the services you've picked (see below), and — for Criterion Channel subscribers — an **On Criterion24/7 now** card showing what the Channel's 24/7 feed is airing this minute (scraped from [whatsonnow.criterionchannel.com](https://whatsonnow.criterionchannel.com) by a poller that re-checks right as each film ends; the card carries the TMDb poster and rating ladder on a director-verified match, filmography-linked credits, and Watch Live/More links) plus a **Leaving the Criterion Channel** shelf of the month's departures with a full inventory page behind it. Watchlisted films pin into the shelves (capped, so discovery keeps the majority of the cards), each day's cards shuffle to day-stable positions, and a runtime filter ("only films that fit your evening") trims every shelf at once. Each card says *why* it was picked.
 
 The engine behind it is content-based and deliberately free of ML runtime dependencies: a nightly job (1:45 AM) builds a per-user taste profile from that user's own diary — likes, chosen watches, rewatches, and mean-centered star ratings, spread across genre, decade, language, director, actor, cinematographer, composer, writer, editor, and keyword features with Bayesian shrinkage — and scores every owned, unwatched film against it. Three quality signals ride on top:
 
@@ -146,9 +148,11 @@ When a download completes, Fitzflix renames the file with a *downgraded* quality
 
 Downloads with a custom format score below 1600 are labeled `WEBRip` instead of `WEBDL`. The file is imported in place from the download client's folder (not copied to the import directory), TV episodes that aired within the last 14 days jump to the front of the import queue, and Sonarr is asked to rescan the series after the rename so its records stay accurate.
 
+Before accepting a webhook delivery, Fitzflix verifies the downloaded file is structurally complete (the same truncation probe the import directory uses). An incomplete file — a stalled or corrupted download — is not imported: Fitzflix marks the grab **failed** back in Sonarr/Radarr, which blocklists that release and searches for another, then deletes the bad file and emails a report; if the failure can't be reported (so the *arr wouldn't re-download), the file is left in place for manual handling and the email says so.
+
 ## Tracking Plex watches
 
-Fitzflix can record movie watches straight from Plex. Every watch bumps the movie's shopping-list priority for the whole household, and a watcher mapped to a Fitzflix account also gets the watch recorded in their diary as an unrated entry — flagged as a rewatch when they've logged the film before. Two sources feed the same recording logic and de-duplicate against each other, so they can (and ideally should) run together: the webhook reports watches in real time, and the poller catches anything the webhook missed while Fitzflix was down.
+Fitzflix can record movie watches straight from Plex. Every watch bumps the movie's shopping-list priority for the whole household, and a watcher mapped to a Fitzflix account also gets the watch recorded in their diary as an unrated entry — flagged as a rewatch when they've logged the film before. Paired with the Letterboxd RSS sync above, the whole diary loop is hands-free: Plex supplies the timestamped watch, the Letterboxd review supplies the verdict, and the sync merges them into one row. Two sources feed the same recording logic and de-duplicate against each other, so they can (and ideally should) run together: the webhook reports watches in real time, and the poller catches anything the webhook missed while Fitzflix was down.
 
 ### Webhook (real time; requires Plex Pass)
 
@@ -280,9 +284,11 @@ A TMDb refresh runs in two phases: the API queries happen on `fitzflix-user-requ
 
 #### Scheduler
 
+One scheduler process handles all recurring and deferred jobs (rq's native cron plus the scheduled-job mover — no separate `rq-scheduler` package). Cron expressions are evaluated on the server's local clock, and each task's last and next run shows on the System page:
+
 ```
 source venv/bin/activate &&
-rqscheduler
+python scheduler.py
 ```
 
 #### Workers
@@ -443,7 +449,7 @@ The database is backed up nightly at 12:30 AM to a compressed dump in `DB_BACKUP
 
 ### Subtitle triage
 
-Discs sometimes carry a forced-subtitle track (the translations burned over foreign dialogue) without the forced flag set, so Plex never shows it. The **Library Maintenance → Possibly-forced subtitles** page applies a heuristic to every file — an unforced track with a small fraction of its largest same-language sibling's cue count — and presents each candidate with inspection aids generated at import: a cue-density timeline and five burned-in snapshots taken at the track's own cue times, so a real forced track (sparse translation cues) is easy to tell from a trivia or commentary track. Flagging selected tracks sets the forced flag in place with mkvpropedit; dismissing marks the file reviewed. `flask triage backfill` queues aids for files that predate the feature.
+Discs sometimes carry a forced-subtitle track (the translations burned over foreign dialogue) without the forced flag set, so Plex never shows it. The **Library Maintenance → Possibly-forced subtitles** page applies a heuristic to every file — an unforced track with a small fraction of its largest same-language sibling's cue count — and presents each candidate with inspection aids generated at import: a cue-density timeline and five burned-in snapshots taken at the track's own cue times, so a real forced track (sparse translation cues) is easy to tell from a trivia or commentary track. Flagging selected tracks sets the forced flag in place with mkvpropedit; dismissing marks the file reviewed. Each candidate also gets a **per-file triage page** (linked from its card and from the file's own page while candidates are pending) that loads just that file's snapshots, with actions returning to whichever page you came from. Re-importing a replacement file resets the file's triage state — a new file is new evidence, so its candidates are re-presented even if an earlier copy was reviewed. `flask triage backfill` queues aids for files that predate the feature.
 
 ### Custom posters
 
