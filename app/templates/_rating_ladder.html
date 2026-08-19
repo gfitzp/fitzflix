@@ -29,7 +29,12 @@
 	{% for n in range(5, 0, -1) %}
 	{% set cur_pct = (100 if cur >= n else ((cur - n + 1) * 100) | round | int) if cur > n - 1 else 0 %}
 	{% set est_pct = (100 if est >= n else ((est - n + 1) * 100) | round | int) if est > n - 1 else 0 %}
-	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if cur_pct == 100 %} filled{% elif cur_pct > 0 %} filled fill-partial{% endif %}{% if est_pct == 100 %} estimated{% elif est_pct > 0 %} estimated est-partial{% endif %}"{% if 0 < cur_pct < 100 %} style="--fill: {{ cur_pct }}%"{% elif 0 < est_pct < 100 %} style="--est-fill: {{ est_pct }}%"{% endif %} title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9734;</button>
+	{# The boundary star's fraction rides as a QUANTIZED fill-N class
+	   (5% steps, matching bootstrap.html's fixed clip rules) — never
+	   an inline custom property, which iOS Safari mis-resolves inside
+	   a pseudo-element (#70's WebKit lesson) #}
+	{% set frac = cur_pct if 0 < cur_pct < 100 else (est_pct if 0 < est_pct < 100 else 0) %}
+	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if cur_pct == 100 %} filled{% elif cur_pct > 0 %} filled fill-partial{% endif %}{% if est_pct == 100 %} estimated{% elif est_pct > 0 %} estimated est-partial{% endif %}{% if frac %} fill-{{ [5, [95, ((frac / 5) | round | int) * 5] | min] | max }}{% endif %}" title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9734;</button>
 	{% endfor %}
 	{% if allow_not_interested %}
 	<button type="submit" name="quick_rating" value="0" class="star-btn x-btn{% if flagged %} active{% endif %}" title="{{ 'Undo not interested' if flagged else 'Not interested — never saw it' }}" aria-label="Not interested">&#10005;</button>

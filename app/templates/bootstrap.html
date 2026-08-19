@@ -96,18 +96,24 @@
 		   the macro or the live repaint only when partial; full stars
 		   use the 100% fallback.
 
-		   WebKit constraint, learned the hard way: the overlay's color
-		   and clip-path MUST be keyed by class selectors on ::before
-		   (.filled::before), not by custom properties consumed from
-		   the button — Safari neither resolves a var()-driven
-		   background-clip:text gradient reliably nor repaints a pseudo
-		   when only inherited custom properties change, which left
-		   partial stars rendering whole and toggle-off taps looking
-		   like they did nothing on iOS */
+		   WebKit constraint, learned the hard way (twice): everything
+		   about the overlay MUST be keyed by plain class selectors on
+		   ::before with static values — Safari's handling of custom
+		   properties consumed inside a pseudo-element is broken across
+		   versions (no repaint when an inherited custom property
+		   changes; var()-in-gradient and var()-in-clip-path resolve
+		   wrongly on some iOS builds even at initial render, so a
+		   fraction renders whole on the phone while desktop looks
+		   right). The fraction is therefore QUANTIZED to 5% steps as a
+		   fill-N class mapped to fixed clip-path rules — no var(), no
+		   calc(), nothing for an engine to mis-resolve */
 		.star-row .star { position: relative; }
 		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }
-		.star-row .star.filled::before { color: #f0ad4e; clip-path: inset(-20% calc(100% - var(--fill, 100%)) -20% 0); }
-		.star-row .star.estimated::before { color: #adb5bd; clip-path: inset(-20% calc(100% - var(--est-fill, 100%)) -20% 0); }
+		.star-row .star.filled::before { color: #f0ad4e; }
+		.star-row .star.estimated::before { color: #adb5bd; }
+		{% for pct in range(5, 100, 5) -%}
+		.star-row .star.fill-{{ pct }}::before { -webkit-clip-path: inset(-20% {{ 100 - pct }}% -20% 0); clip-path: inset(-20% {{ 100 - pct }}% -20% 0); }
+		{% endfor -%}
 		/* Hover previews exist only where hover does (#62 follow-up):
 		   iOS keeps a tapped element in :hover until the next tap
 		   elsewhere, so on touch these rules repainted the row as a

@@ -1116,7 +1116,7 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
     page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
     assert page.count("star estimated") == 5
     assert page.count("estimated est-partial") == 1
-    assert "--est-fill: 50%" in page
+    assert "fill-50" in page
     assert "star filled" not in page
     assert "Estimated 4.5 for you" in page
 

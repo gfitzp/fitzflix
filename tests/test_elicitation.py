@@ -1013,7 +1013,7 @@ def test_rate_featured_card_shows_the_estimate(app, admin_client):
 
     assert page.count("star estimated") == 5
     assert page.count("estimated est-partial") == 1
-    assert "--est-fill: 50%" in page
+    assert "fill-50" in page
     assert "Estimated 4.5 for you" in page
 
 
@@ -1041,5 +1041,5 @@ def test_half_star_ratings_render_a_partial_fill(app, admin_client):
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert page.count("star filled") == 4
     assert page.count("filled fill-partial") == 1
-    assert "--fill: 50%" in page
+    assert "fill-50" in page
     assert "star estimated" not in page

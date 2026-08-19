@@ -483,15 +483,18 @@
 					star.classList.toggle("fill-partial", fillPct > 0 && fillPct < 100);
 					star.classList.toggle("estimated", estPct > 0);
 					star.classList.toggle("est-partial", estPct > 0 && estPct < 100);
-					if (fillPct > 0 && fillPct < 100) {
-						star.style.setProperty("--fill", fillPct + "%");
-					} else {
-						star.style.removeProperty("--fill");
-					}
-					if (estPct > 0 && estPct < 100) {
-						star.style.setProperty("--est-fill", estPct + "%");
-					} else {
-						star.style.removeProperty("--est-fill");
+					// The fraction rides as a quantized fill-N class
+					// (5% steps, fixed CSS rules) — never a custom
+					// property, which iOS Safari mis-resolves inside
+					// a pseudo-element (#70's WebKit lesson)
+					Array.prototype.slice.call(star.classList).forEach(function (cls) {
+						if (/^fill-\d+$/.test(cls)) star.classList.remove(cls);
+					});
+					var frac = (fillPct > 0 && fillPct < 100) ? fillPct
+						: ((estPct > 0 && estPct < 100) ? estPct : 0);
+					if (frac) {
+						star.classList.add("fill-" + Math.max(5, Math.min(95,
+							Math.round(frac / 5) * 5)));
 					}
 					star.title = (state.rating !== null && value === state.rating)
 						? "Tap again to remove your rating"
