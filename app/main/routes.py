@@ -4399,6 +4399,7 @@ def system():
         health=system_health(current_app),
         scheduled_tasks=_scheduled_tasks(),
         relative_time=_relative_time,
+        local_time=_local_time_text,
         failed_jobs=failed_jobs,
         failed_job_form=failed_job_form,
     )
@@ -4434,10 +4435,24 @@ def _scheduled_tasks():
                     "name": job.description or job.id,
                     "schedule": cron_descriptions.get(cron_string, cron_string),
                     "last_run": job.ended_at,
+                    "next_run": next_run,
                     "next_run_text": _next_run_text(next_run),
                 }
             )
     return scheduled_tasks
+
+
+def _local_time_text(when):
+    """A naive-UTC timestamp (rq job and scheduler times) rendered in
+    the server's local zone for mouseover tooltips — the server shares
+    a household, and therefore a timezone, with its viewers. Matches
+    moment.js's LLL format so the queue table's browser-local tooltips
+    and these server-local ones read identically."""
+
+    if when is None:
+        return ""
+    local = when.replace(tzinfo=timezone.utc).astimezone()
+    return local.strftime("%B %-d, %Y %-I:%M %p")
 
 
 def _next_run_text(next_run):
@@ -4506,6 +4521,7 @@ def system_metrics():
         health=system_health(current_app),
         scheduled_tasks=_scheduled_tasks(),
         relative_time=_relative_time,
+        local_time=_local_time_text,
     )
     response = make_response(fragment)
     response.headers["Cache-Control"] = "no-store"

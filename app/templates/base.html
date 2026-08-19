@@ -383,16 +383,19 @@
 					description.className = "col-5 col-sm-5 col-lg-7";
 					description.textContent = task.description;
 
+					// Tooltips carry the viewer's LOCAL time, not the
+					// raw GMT timestamp the API serves
+
 					var enqueuedDate = document.createElement("abbr");
-					enqueuedDate.setAttribute("title", task.enqueued_at);
+					enqueuedDate.setAttribute("title", moment(task.enqueued_at).format("LLL"));
 					enqueuedDate.textContent = moment(task.enqueued_at).fromNow();
 					var enqueued = document.createElement("td");
 					enqueued.className = "col-3 col-sm-3 col-lg-2";
 					enqueued.appendChild(enqueuedDate);
 
 					var startedDate = document.createElement("abbr");
-					startedDate.setAttribute("title", task.started_at);
 					if (task.started_at) {
+						startedDate.setAttribute("title", moment(task.started_at).format("LLL"));
 						startedDate.textContent = moment(task.started_at).fromNow();
 					}
 					var started = document.createElement("td");

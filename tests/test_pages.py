@@ -351,3 +351,17 @@ def test_genre_links_filter_the_library(app, admin_client):
     assert "Genre Oater on DVD" not in listing
 
     assert admin_client.get("/library/movie?genre=99999").status_code == 404
+
+
+def test_local_time_text_renders_server_local():
+    """Tooltip timestamps interpret naive rq/scheduler times as UTC and
+    render them in the server's local zone, in moment.js's LLL shape."""
+
+    from datetime import datetime, timezone
+
+    from app.main.routes import _local_time_text
+
+    when = datetime(2026, 8, 18, 21, 0, 21)
+    expected = when.replace(tzinfo=timezone.utc).astimezone()
+    assert _local_time_text(when) == expected.strftime("%B %-d, %Y %-I:%M %p")
+    assert _local_time_text(None) == ""

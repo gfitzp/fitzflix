@@ -71,8 +71,8 @@
 		<tr>
 			<td>{{ task.name }}</td>
 			<td>{{ task.schedule }}</td>
-			<td>{% if task.last_run %}{{ relative_time(task.last_run) }}{% else %}&mdash;{% endif %}</td>
-			<td>{{ task.next_run_text }}</td>
+			<td>{% if task.last_run %}<abbr title="{{ local_time(task.last_run) }}">{{ relative_time(task.last_run) }}</abbr>{% else %}&mdash;{% endif %}</td>
+			<td>{% if task.next_run %}<abbr title="{{ local_time(task.next_run) }}">{{ task.next_run_text }}</abbr>{% else %}{{ task.next_run_text }}{% endif %}</td>
 		</tr>
 		{% endfor %}
 	</tbody>
