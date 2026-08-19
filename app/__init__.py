@@ -224,6 +224,20 @@ def cron_table(config):
             )
         )
 
+        # Scan Plex libraries and empty their trashes, guarded per
+        # section on every declared location being mounted — replaces
+        # the external curl cron (a scan against a dropped mount plus
+        # emptyTrash rebuilds the library from scratch)
+
+        table.append(
+            (
+                "3,18,33,48 * * * *",
+                "app.plex_library.refresh_plex_libraries",
+                600,
+                "Refreshing Plex libraries",
+            )
+        )
+
     # Reconcile the Plex and Fitzflix watchlists both ways (#67); the
     # account-level discover API needs only the token, not the server
 
