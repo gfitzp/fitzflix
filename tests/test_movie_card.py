@@ -125,12 +125,12 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
     """A film with no local record renders from TMDb, and its forms
     post to the TMDb log route — whose first tap creates the record."""
 
-    import app.main.routes as main_routes
+    import app.main.discover as discover
     from tests.test_reviews import JAWS_2_DETAILS, FakeTMDbDetails
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
@@ -222,12 +222,12 @@ def test_card_watchlist_add_creates_the_record_for_a_tmdb_film(
     """Banking a record-less rail film from its card posts to the TMDb
     log route, which creates the record and answers the same JSON."""
 
-    import app.main.routes as main_routes
+    import app.main.discover as discover
     from tests.test_reviews import JAWS_2_DETAILS, FakeTMDbDetails
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
     token = csrf_token_from(

@@ -358,7 +358,7 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
     """Unowned films on a filmography get a modest marker when their
     cached genre ids and decade match the stored taste profile."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app import db
     from app.recommendations import PROFILE_KEY
@@ -419,7 +419,7 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
         return FakeTMDb({"name": "Marker Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),
@@ -447,7 +447,7 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
 
 
 def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app import db
 
@@ -491,7 +491,7 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         return FakeTMDb({"name": "Profileless Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=777002").get_data(as_text=True)
     assert "Might interest you" not in page
@@ -615,7 +615,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     scorer, minus the person term: on-profile films badge, off-profile
     films don't, and owned matches never do."""
 
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     from app import db
     from app.recommendations import PROFILE_KEY
@@ -699,7 +699,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
         return FakeTMDb({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=search+marker").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -1356,7 +1356,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
     """A stored marker bar gates the badge: a film must beat the user's
     own baseline percentile, not just match a liked genre."""
 
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     from app.recommendations import PROFILE_KEY
     from app.models import User
@@ -1430,7 +1430,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
         return FakeTMDb({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/search/tmdb?q=bar").get_data(as_text=True)
     assert page.count("Might interest you") == 1

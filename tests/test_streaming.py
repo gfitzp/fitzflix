@@ -323,7 +323,7 @@ def test_movie_page_without_subscriptions_shows_nothing(app, admin_client, monke
 
 
 def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
@@ -342,7 +342,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
         return FakeTMDb({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -367,7 +367,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
 def test_search_results_without_matches_carry_no_attribution(
     app, admin_client, monkeypatch
 ):
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
@@ -386,7 +386,7 @@ def test_search_results_without_matches_carry_no_attribution(
         return FakeTMDb({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     plant_availability(
@@ -401,7 +401,7 @@ def test_search_results_without_matches_carry_no_attribution(
 def test_review_tmdb_page_shows_rental_badge_for_your_stores(
     app, admin_client, monkeypatch
 ):
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     def fake_tmdb_get(url, **kwargs):
         return FakeTMDb(
@@ -417,7 +417,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -591,7 +591,7 @@ def test_filmography_badges_unowned_films_on_your_services(
     """Career rows without a local file get the same logo badges as the
     other surfaces; owned rows keep their quality badge unadorned."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app import db
     from app.models import TMDBCredit, MovieCast
@@ -642,7 +642,7 @@ def test_filmography_badges_unowned_films_on_your_services(
         return FakeTMDb({"name": "Streaming Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
@@ -677,7 +677,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     """When the bounded batch defers ids, one warm task lands on the
     maintenance queue and the marker stops reload storms."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app import db
     from app.models import MovieCast, TMDBCredit
@@ -721,9 +721,9 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
         return FakeTMDb({"name": "Deferred Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(
-        main_routes, "batch_title_availability", lambda ids, **kw: ({}, [921])
+        library, "batch_title_availability", lambda ids, **kw: ({}, [921])
     )
 
     subscribe(app, 8, "Netflix")

@@ -38,7 +38,7 @@ def poster_pipeline(monkeypatch):
     """Capture custom-poster pipeline calls instead of writing into
     app/static — in this repo that's the real production artwork tree."""
 
-    import app.main.routes as routes
+    import app.main.posters as posters
 
     calls = {"saved": [], "library": []}
 
@@ -52,9 +52,9 @@ def poster_pipeline(monkeypatch):
         )
         return os.path.join(custom_poster_dir, "original", poster_filename)
 
-    monkeypatch.setattr(routes, "save_custom_poster", fake_save)
+    monkeypatch.setattr(posters, "save_custom_poster", fake_save)
     monkeypatch.setattr(
-        routes,
+        posters,
         "replace_library_poster",
         lambda library_directory, original_file, poster_filename: calls[
             "library"
@@ -67,7 +67,7 @@ def poster_pipeline(monkeypatch):
 def tmdb_image_cdn(monkeypatch):
     """A fake TMDb image CDN serving PNG bytes for any poster path."""
 
-    import app.main.routes as routes
+    import app.main.posters as posters
 
     fetched = []
 
@@ -81,7 +81,7 @@ def tmdb_image_cdn(monkeypatch):
         fetched.append(url)
         return FakeResponse()
 
-    monkeypatch.setattr(routes.requests, "get", fake_get)
+    monkeypatch.setattr(posters.requests, "get", fake_get)
     return fetched
 
 
@@ -429,7 +429,7 @@ def test_save_custom_poster_builds_thumbnails(app, tmp_path):
 
     from werkzeug.datastructures import FileStorage
 
-    from app.main.routes import save_custom_poster
+    from app.main.posters import save_custom_poster
 
     with app.app_context():
         upload = FileStorage(stream=io.BytesIO(png_bytes()), filename="poster.png")

@@ -283,12 +283,12 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
     sent = {}
 
-    import app.main.routes as main_routes
+    import app.main.account as account
 
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent["attachments"] = kwargs.get("attachments")
 
-    monkeypatch.setattr(main_routes, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "send_email", fake_send_email)
 
     page = admin_client.get("/history").get_data(as_text=True)
     response = admin_client.post(
@@ -336,14 +336,14 @@ def capture_sent_attachments(monkeypatch):
     """Stub the History page's send_email; returns the list that collects
     each call's attachments."""
 
-    import app.main.routes as main_routes
+    import app.main.account as account
 
     sent = []
 
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent.append(kwargs.get("attachments"))
 
-    monkeypatch.setattr(main_routes, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "send_email", fake_send_email)
     return sent
 
 
@@ -741,11 +741,11 @@ def test_movie_page_logs_bare_watches(app, admin_client):
 
 
 def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatch):
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
     from app import db
@@ -788,11 +788,11 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):
     from app.models import Movie, User, UserMovieReview
 
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -847,7 +847,7 @@ def test_review_tmdb_not_interested_creates_flagged_record(
     record and flags it in one step — no diary row, any watchlist entry
     cleared — so the film leaves every recommendation surface."""
 
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     from app.models import (
         Movie,
@@ -859,7 +859,7 @@ def test_review_tmdb_not_interested_creates_flagged_record(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        main_routes, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -1424,12 +1424,12 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
 
     sent = {}
 
-    import app.main.routes as main_routes
+    import app.main.account as account
 
     def fake_send_email(subject, sender, recipients, **kwargs):
         sent["attachments"] = kwargs.get("attachments")
 
-    monkeypatch.setattr(main_routes, "send_email", fake_send_email)
+    monkeypatch.setattr(account, "send_email", fake_send_email)
 
     page = admin_client.get("/history").get_data(as_text=True)
     admin_client.post(

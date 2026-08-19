@@ -257,7 +257,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         ),
     )
 
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     class FakeResponse:
         def __init__(self, results):
@@ -284,7 +284,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
@@ -321,7 +321,7 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
         ),
     )
 
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     class FakeResponse:
         def __init__(self, results):
@@ -344,7 +344,7 @@ def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypat
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -472,7 +472,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         db.session.commit()
         owned_id = owned.id
 
-    import app.main.routes as main_routes
+    import app.main.search as search
 
     class FakeResponse:
         def __init__(self, results):
@@ -506,7 +506,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
         return FakeResponse([])
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_get)
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page

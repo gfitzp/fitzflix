@@ -266,7 +266,7 @@ def test_cron_frequency_sort_orders_by_class_then_parameter():
     minute, daily by time, weekly by day and time, monthly by
     day-of-month and time."""
 
-    from app.main.routes import _cron_frequency_key
+    from app.main.admin import _cron_frequency_key
 
     ordered = [
         "*/10 * * * *",

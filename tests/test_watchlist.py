@@ -346,7 +346,7 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
 
 
 def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeypatch):
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     from app.models import Movie
 
@@ -381,7 +381,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/review/tmdb/9306").get_data(as_text=True)
     assert 'name="add_watchlist_submit"' in page
@@ -477,7 +477,7 @@ def test_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
     freezing the streaming rail — discovery keeps most of the cards."""
 
     from app import db
-    from app.main.routes import WATCHLIST_PIN_LIMIT
+    from app.main.discover import WATCHLIST_PIN_LIMIT
     from app.models import UserWatchlist
     from app.streaming_rail import RAIL_KEY
 
@@ -526,7 +526,7 @@ def test_library_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
     the cap keeps the daily discovery slots in the majority."""
 
     from app import db
-    from app.main.routes import WATCHLIST_PIN_LIMIT
+    from app.main.discover import WATCHLIST_PIN_LIMIT
     from app.models import UserWatchlist
     from app.recommendations import RECS_KEY
 
@@ -655,7 +655,7 @@ def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
             def today(cls):
                 return cls(*frozen)
 
-        monkeypatch.setattr("app.main.routes.date", FrozenDate)
+        monkeypatch.setattr("app.main.discover.date", FrozenDate)
         body = admin_client.get("/").get_data(as_text=True)
         shown = sorted(
             (body.index(title), title)

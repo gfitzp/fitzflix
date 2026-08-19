@@ -304,7 +304,7 @@ def plant_profile(app, user_id):
 
 def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeypatch):
     import app.criterion_now as criterion_now
-    import app.main.routes as main_routes
+    import app.main.discover as discover
 
     # The TMDb log route fetches film details up front; feed it the
     # airing film so the first tap can create the record
@@ -329,7 +329,7 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", lambda *a, **k: FakeDetails())
+    monkeypatch.setattr(discover, "tmdb_get", lambda *a, **k: FakeDetails())
 
     user_id = subscribe_criterion(app)
     plant_profile(app, user_id)

@@ -340,7 +340,7 @@ def _ladder_state_for(user, tmdb_id, payload):
 
     # Routes imports this module at startup, so its helpers load lazily
 
-    from app.main.routes import _latest_review_row
+    from app.main.helpers import _latest_review_row
     from app.models import Movie, UserMovieStatus
     from app.recommendations import (
         estimated_rating,

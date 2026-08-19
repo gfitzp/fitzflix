@@ -49,7 +49,7 @@ def test_system_page_is_monitoring_only(admin_client):
 def test_relative_time_covers_past_and_future():
     from datetime import datetime, timedelta, timezone
 
-    from app.main.routes import _relative_time
+    from app.main.admin import _relative_time
 
     now = datetime.now(timezone.utc)
     assert _relative_time(now - timedelta(seconds=30)) == "under a minute ago"
@@ -69,7 +69,7 @@ def test_next_run_never_renders_as_the_past():
 
     from datetime import datetime, timedelta, timezone
 
-    from app.main.routes import _next_run_text
+    from app.main.admin import _next_run_text
 
     now = datetime.now(timezone.utc)
     assert _next_run_text(now + timedelta(minutes=8)) == "in 8 minutes"
@@ -359,7 +359,7 @@ def test_local_time_text_renders_server_local():
 
     from datetime import datetime, timezone
 
-    from app.main.routes import _local_time_text
+    from app.main.admin import _local_time_text
 
     when = datetime(2026, 8, 18, 21, 0, 21)
     expected = when.replace(tzinfo=timezone.utc).astimezone()

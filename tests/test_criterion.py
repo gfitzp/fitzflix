@@ -619,7 +619,7 @@ def test_criterion_catalog_pagination():
     """The page-number window keeps the ends and the neighborhood of
     the current page, with gaps marked."""
 
-    from app.main.routes import _page_window
+    from app.main.library import _page_window
 
     assert _page_window(1, 1) == [1]
     assert _page_window(2, 3) == [1, 2, 3]

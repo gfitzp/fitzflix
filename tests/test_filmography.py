@@ -56,7 +56,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     """TMDb's credit list fills in films with no local record; local rows
     carry their badges and the unknown films link to the review page."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     with app.app_context():
         user_id = User.query.first().id
@@ -130,7 +130,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=535353").get_data(as_text=True)
     assert "/w185/career.jpg" in page
@@ -165,7 +165,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
 
     import json
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app.recommendations import RECS_KEY
 
@@ -226,7 +226,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
         return FakeTMDb({"name": "Ranked Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=636363").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -241,7 +241,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
     """Owned rows carry the full funnel: the library badge no longer
     hides Seen, and a watchlisted owned film badges the watchlist."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app.models import UserWatchlist
 
@@ -300,7 +300,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
         return FakeTMDb({"name": "Funnel Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
     assert page.count('title="In your Fitzflix library"') == 2
@@ -320,7 +320,7 @@ def test_filmography_serves_people_without_local_credit_rows(
     """A person from a not-in-library film's cast has no TMDBCredit row;
     their filmography still renders, with the name and career from TMDb."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     class FakeTMDb:
         def __init__(self, payload):
@@ -357,7 +357,7 @@ def test_filmography_serves_people_without_local_credit_rows(
         )
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
@@ -377,7 +377,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     out, and owned crew films attach their local record through
     MovieCrew."""
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     from app.models import MovieCrew
 
@@ -464,7 +464,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
         return FakeTMDb({"name": "Career Director"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=838383").get_data(as_text=True)
 
@@ -490,7 +490,7 @@ def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monke
 
     import json
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     with app.app_context():
         person = TMDBCredit(id=848484, name="Cached Actor")
@@ -519,7 +519,7 @@ def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monke
             return {"name": "Cached Actor"}
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", lambda url, **kwargs: FakeTMDb())
+    monkeypatch.setattr(library, "tmdb_get", lambda url, **kwargs: FakeTMDb())
 
     page = admin_client.get("/library/movie?credit=848484").get_data(as_text=True)
     assert "Old Cache Film (1990)" in page
@@ -537,13 +537,13 @@ def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatc
 
     import requests
 
-    import app.main.routes as main_routes
+    import app.main.library as library
 
     def raising_tmdb_get(url, **kwargs):
         raise requests.HTTPError("404 Client Error")
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(main_routes, "tmdb_get", raising_tmdb_get)
+    monkeypatch.setattr(library, "tmdb_get", raising_tmdb_get)
 
     assert admin_client.get("/library/movie?credit=888888888").status_code == 404
 

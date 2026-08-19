@@ -168,7 +168,7 @@ def test_estimate_prefers_recorded_aws_size_over_padded_local_size(app):
 
     from types import SimpleNamespace
 
-    from app.main.routes import restore_cost_estimate
+    from app.main.library import restore_cost_estimate
 
     files = [
         # Exact AWS size recorded: used as-is, local size and pad ignored
