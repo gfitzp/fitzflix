@@ -1124,6 +1124,13 @@ class UserMovieReview(db.Model):
 
     letterboxd_guid = db.Column(db.String(64), unique=True)
 
+    # Letterboxd's spoiler checkbox, known only for feed-synced rows
+    # (the CSV export has no spoiler column, so imports leave it NULL).
+    # Stored as data for now; whether it affects review display is a
+    # separate, undecided question
+
+    contains_spoilers = db.Column(db.Boolean)
+
     def __repr__(self):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"
 

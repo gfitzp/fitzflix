@@ -111,6 +111,61 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
     assert review["review"] == "<b>My cat</b> hated the soundtrack."
 
 
+def test_parser_strips_spoiler_boilerplate_into_flag(app, monkeypatch):
+    from app.letterboxd import parse_letterboxd_feed
+
+    xml = build_feed(
+        feed_item(
+            "letterboxd-review-843274716",
+            718821,
+            title="Twisters",
+            year=2024,
+            rating="2.5",
+            body=(
+                "<p><em>This review may contain spoilers.</em></p> "
+                "<p>It was like a PSA about what not to do during a tornado.</p>"
+            ),
+        ),
+        feed_item("letterboxd-watch-77", 659994, title="Rams", year=2020),
+    )
+    entries = {entry["guid"]: entry for entry in parse_letterboxd_feed(xml)}
+    spoilery = entries["letterboxd-review-843274716"]
+    plain = entries["letterboxd-watch-77"]
+    assert spoilery["contains_spoilers"] is True
+    assert spoilery["review"] == (
+        "It was like a PSA about what not to do during a tornado."
+    )
+    assert plain["contains_spoilers"] is False
+
+    # A row that stored the sentence before the strip existed self-heals
+    # through the guid-edit path, and the flag lands with it
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+        movie = make_movie("Twisters", 2024, tmdb_id=718821)
+        db.session.add(
+            UserMovieReview(
+                user_id=user.id,
+                movie_id=movie.id,
+                letterboxd_guid="letterboxd-review-843274716",
+                review=(
+                    "This review may contain spoilers.\n\nIt was like a PSA "
+                    "about what not to do during a tornado."
+                ),
+            )
+        )
+        db.session.commit()
+        run_sync(app, xml, monkeypatch)
+        db.session.expire_all()
+        row = UserMovieReview.query.filter_by(
+            letterboxd_guid="letterboxd-review-843274716"
+        ).one()
+        assert row.review == (
+            "It was like a PSA about what not to do during a tornado."
+        )
+        assert row.contains_spoilers is True
+
+
 def test_parser_unescapes_html_entities_in_review_text(app):
     from app.letterboxd import parse_letterboxd_feed
 

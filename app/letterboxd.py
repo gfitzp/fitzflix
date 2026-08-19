@@ -43,6 +43,13 @@ NAMESPACES = {
 
 BOILERPLATE_RE = re.compile(r"^\s*(Watched|Rewatched) on \w+ \w+ \d{1,2}, \d{4}\.?\s*$")
 
+# The spoiler checkbox rendered as an injected paragraph — metadata,
+# not authored text (the CSV export's review text never contains it)
+
+SPOILER_RE = re.compile(
+    r"^\s*(<em>)?\s*This review may contain spoilers\.?\s*(</em>)?\s*$"
+)
+
 
 def parse_letterboxd_feed(xml_text):
     """The feed's diary entries as plain dicts, oldest first.
@@ -92,6 +99,7 @@ def parse_letterboxd_feed(xml_text):
         # review's paragraphs (or the watch boilerplate)
 
         text_paragraphs = []
+        contains_spoilers = False
         description = item.findtext("description") or ""
         for paragraph in re.findall(
             r"<p>(.*?)</p>", description, flags=re.DOTALL | re.IGNORECASE
@@ -107,6 +115,9 @@ def parse_letterboxd_feed(xml_text):
 
             cleaned = html.unescape(strip_disallowed_tags(paragraph)).strip()
             if not cleaned or BOILERPLATE_RE.match(cleaned):
+                continue
+            if SPOILER_RE.match(cleaned):
+                contains_spoilers = True
                 continue
             text_paragraphs.append(cleaned)
 
@@ -125,6 +136,7 @@ def parse_letterboxd_feed(xml_text):
                 "rewatch": (rewatch.strip() == "Yes" if rewatch is not None else None),
                 "liked": liked is not None and liked.strip() == "Yes",
                 "review": "\n\n".join(text_paragraphs),
+                "contains_spoilers": contains_spoilers,
                 "logged_at": logged_at,
             }
         )
@@ -193,6 +205,7 @@ def _apply_entry_fields(row, entry):
     changed = False
     fields = dict(star_rating_fields(entry["rating"]))
     fields["liked"] = entry["liked"]
+    fields["contains_spoilers"] = entry["contains_spoilers"]
     fields["review"] = entry["review"] or row.review or ""
     if entry["rewatch"] is not None:
         fields["rewatch"] = entry["rewatch"]
@@ -323,6 +336,7 @@ def _ingest_entry(user_id, entry, created_movies):
         movie_id=movie.id,
         letterboxd_guid=entry["guid"],
         liked=entry["liked"],
+        contains_spoilers=entry["contains_spoilers"],
         review=entry["review"],
         date_watched=entry["watched_date"],
         date_reviewed=(
