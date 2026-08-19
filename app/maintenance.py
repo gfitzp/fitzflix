@@ -1013,9 +1013,43 @@ def cleanup_orphaned_files():
                     current_app.logger.info(f"'{path}' Deleted orphaned partial file")
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
+        # Empty-directory pass (#66 follow-up): Radarr/Sonarr import
+        # leftovers and hand-emptied folders. Only a directory that is
+        # COMPLETELY empty falls — os.rmdir refuses anything else, so a
+        # .DS_Store keeps its folder alive — and only after sitting
+        # undisturbed for the same week the file pass uses. The roots
+        # themselves are never candidates, hidden directories are never
+        # entered, and mtimes are captured before any removal so an
+        # aged empty tree collapses in a single pass.
+
+        removed_dirs = []
+        for root in roots:
+            if not os.path.isdir(root):
+                continue
+            candidates = []
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                for name in dirnames:
+                    path = os.path.join(dirpath, name)
+                    try:
+                        candidates.append((path, os.stat(path).st_mtime))
+                    except OSError:
+                        continue
+            for path, mtime in sorted(
+                candidates, key=lambda entry: -entry[0].count(os.sep)
+            ):
+                if mtime > cutoff:
+                    continue
+                try:
+                    os.rmdir(path)
+                except OSError:
+                    continue
+                current_app.logger.info(f"'{path}' Deleted empty directory")
+                removed_dirs.append(path)
+
         dropped_scratch_db = _drop_leftover_restore_database()
 
-        if not removed and not dropped_scratch_db:
+        if not removed and not removed_dirs and not dropped_scratch_db:
             current_app.logger.info("Orphan cleanup found nothing to delete")
             return
 
@@ -1026,6 +1060,13 @@ def cleanup_orphaned_files():
                 f"{ORPHAN_MAX_AGE_DAYS} days:"
             )
             lines.extend(f"  {entry}" for entry in removed)
+        if removed_dirs:
+            lines.append(
+                f"Removed {len(removed_dirs)} empty director"
+                f"{'y' if len(removed_dirs) == 1 else 'ies'} untouched for "
+                f"{ORPHAN_MAX_AGE_DAYS} days:"
+            )
+            lines.extend(f"  {entry}" for entry in removed_dirs)
         if dropped_scratch_db:
             lines.append(
                 f"Dropped the leftover {RESTORE_CHECK_DATABASE} scratch database "

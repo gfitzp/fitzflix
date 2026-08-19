@@ -74,6 +74,68 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
                 os.remove(path)
 
 
+def test_cleanup_removes_week_old_empty_directories(app, monkeypatch):
+    """The empty-directory pass (#66 follow-up, for Radarr/Sonarr import
+    leftovers): strictly empty, week-undisturbed directories fall — an
+    aged empty TREE in one pass — while fresh, occupied, or
+    .DS_Store-holding folders survive."""
+
+    sent = []
+    monkeypatch.setattr(
+        maintenance,
+        "task_send_email",
+        lambda subject, sender, recipients, text_body, html_body: sent.append(
+            {"subject": subject, "body": text_body}
+        ),
+    )
+    movies = app.config["MOVIE_LIBRARY"]
+    old = time.time() - 8 * 86400
+
+    def make_dir(path, aged=False):
+        os.makedirs(path, exist_ok=True)
+        if aged:
+            os.utime(path, (old, old))
+        return path
+
+    # An aged empty tree: child and parent both go in ONE pass (mtimes
+    # are captured before removals begin)
+
+    nested_child = make_dir(os.path.join(movies, "Gone (1999)", "Extras"), aged=True)
+    nested_parent = os.path.join(movies, "Gone (1999)")
+    os.utime(nested_parent, (old, old))
+
+    # Survivors: freshly emptied, still occupied, or metadata-anchored
+
+    fresh = make_dir(os.path.join(movies, "Fresh (2000)"))
+    occupied = make_dir(os.path.join(movies, "Occupied (2001)"))
+    resident = plant(os.path.join(occupied, "Occupied (2001) - [DVD].mkv"), age_days=30)
+    os.utime(occupied, (old, old))
+    finder_touched = make_dir(os.path.join(movies, "Browsed (2002)"))
+    ds_store = plant(os.path.join(finder_touched, ".DS_Store"), age_days=30)
+    os.utime(finder_touched, (old, old))
+
+    try:
+        maintenance.cleanup_orphaned_files()
+
+        assert not os.path.exists(nested_child)
+        assert not os.path.exists(nested_parent)
+        assert os.path.exists(fresh)
+        assert os.path.exists(occupied) and os.path.exists(resident)
+        assert os.path.exists(finder_touched) and os.path.exists(ds_store)
+        assert os.path.isdir(movies)  # the root itself is never a candidate
+
+        assert len(sent) == 1
+        assert "2 empty directories" in sent[0]["body"]
+        assert "orphaned partial file" not in sent[0]["body"]
+    finally:
+        for leftover in (resident, ds_store):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+        for leftover_dir in (fresh, occupied, finder_touched):
+            if os.path.isdir(leftover_dir):
+                os.rmdir(leftover_dir)
+
+
 def test_cleanup_stays_quiet_when_nothing_is_stranded(app, monkeypatch):
     sent = []
     monkeypatch.setattr(
