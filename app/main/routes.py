@@ -155,9 +155,10 @@ from app.videos import (
     track_metadata_scan,
     untouched_key_still_claimed,
 )
+from rq.cron import CronScheduler
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from rq.registry import FailedJobRegistry, StartedJobRegistry
+from rq.registry import FailedJobRegistry, ScheduledJobRegistry, StartedJobRegistry
 
 from functools import wraps
 
@@ -808,13 +809,15 @@ def recently_added():
             )
 
         deferred = []
-        for job, next_run in current_app.import_scheduler.get_jobs(with_times=True):
-            if (
-                job.func_name == "app.videos.localization_task"
-                and job.origin == "fitzflix-import"
-            ):
+        registry = ScheduledJobRegistry(queue=current_app.import_queue)
+        for job_id in registry.get_job_ids():
+            job = current_app.import_queue.fetch_job(job_id)
+            if job is not None and job.func_name == "app.videos.localization_task":
                 deferred.append(
-                    {"description": job.description or job.id, "next_run": next_run}
+                    {
+                        "description": job.description or job.id,
+                        "next_run": registry.get_scheduled_time(job_id),
+                    }
                 )
         deferred.sort(key=lambda entry: entry["next_run"])
 
@@ -4375,14 +4378,28 @@ def system():
             job = queue.fetch_job(job_id)
             if job is None:
                 continue
-            exc_lines = (job.exc_info or "").strip().splitlines()
+
+            # rq 2's stored Result carries the structured error (#23);
+            # exc_info remains as the fallback for older failures
+
+            error = ""
+            try:
+                result = job.latest_result()
+            except Exception:
+                result = None
+            if result is not None and result.exc_string:
+                error_lines = result.exc_string.strip().splitlines()
+                error = error_lines[-1][:200] if error_lines else ""
+            if not error:
+                exc_lines = (job.exc_info or "").strip().splitlines()
+                error = exc_lines[-1][:200] if exc_lines else ""
             failed_jobs.append(
                 {
                     "id": job_id,
                     "queue": queue_name,
                     "description": job.description or job.func_name,
                     "failed_at": job.ended_at,
-                    "error": exc_lines[-1][:200] if exc_lines else "",
+                    "error": error,
                 }
             )
     # rq 2 job timestamps are timezone-aware, so the missing-date fallback
@@ -4425,21 +4442,61 @@ def _scheduled_tasks():
         "* * * * *": "Every minute",
     }
     scheduled_tasks = []
-    for scheduler in (current_app.maintenance_scheduler,):
-        for job, next_run in scheduler.get_jobs(with_times=True):
-            if job.origin != scheduler.queue_name:
-                continue
-            cron_string = job.meta.get("cron_string", "")
+    for scheduler in CronScheduler.all(current_app.redis):
+        for cron_job in scheduler.get_jobs():
+            meta = cron_job.job_options.get("meta") or {}
+            cron_string = cron_job.cron or meta.get("cron_string", "")
+            next_run = cron_job.next_enqueue_time or cron_job.get_next_enqueue_time()
             scheduled_tasks.append(
                 {
-                    "name": job.description or job.id,
+                    "name": meta.get("description") or cron_job.func_name,
                     "schedule": cron_descriptions.get(cron_string, cron_string),
-                    "last_run": job.ended_at,
-                    "next_run": next_run,
-                    "next_run_text": _next_run_text(next_run),
+                    "cron_string": cron_string,
+                    # rq.cron records enqueue times, so "last ran" means
+                    # "last started" now, not "last finished"
+                    "last_run": _naive_utc(cron_job.latest_enqueue_time),
+                    "next_run": _naive_utc(next_run),
+                    "next_run_text": _next_run_text(_naive_utc(next_run)),
                 }
             )
+
+    # Most-frequent first (#22, Glenn's ordering): every-X-minutes by X,
+    # hourly by minute, daily by time, weekly by day and time, monthly by
+    # day-of-month and time
+
+    scheduled_tasks.sort(key=lambda task: _cron_frequency_key(task["cron_string"]))
     return scheduled_tasks
+
+
+def _naive_utc(when):
+    """rq.cron hands back timezone-aware UTC datetimes; the relative and
+    tooltip renderers speak naive-UTC like the rest of rq."""
+
+    if when is None:
+        return None
+    if when.tzinfo is not None:
+        return when.astimezone(timezone.utc).replace(tzinfo=None)
+    return when
+
+
+def _cron_frequency_key(cron_string):
+    """Sort key for the scheduled-tasks table: frequency class first
+    (every-X-minutes, hourly, daily, weekly, monthly), then the class's
+    own parameter — X, the minute, the time, the day+time."""
+
+    try:
+        minute, hour, dom, _, dow = cron_string.split()
+        if minute.startswith("*/"):
+            return (0, (int(minute[2:]),))
+        if hour == "*":
+            return (1, (int(minute),))
+        if dom == "*" and dow == "*":
+            return (2, (int(hour), int(minute)))
+        if dow != "*":
+            return (3, (int(dow), int(hour), int(minute)))
+        return (4, (int(dom), int(hour), int(minute)))
+    except (ValueError, AttributeError):
+        return (9, ())
 
 
 def _local_time_text(when):

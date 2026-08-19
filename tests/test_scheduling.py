@@ -1,7 +1,7 @@
 """Deferred-retry scheduling: deterministic job ids that replace rather than
 stack, scheduled jobs that actually bind to their target functions (the
-enqueue_in kwarg-leak bug class), cron re-registration that preserves run
-history, and the import-directory watchdog.
+enqueue_in kwarg-leak bug class), the native ScheduledJobRegistry defers
+(#22), the cron table, and the import-directory watchdog.
 """
 
 import inspect
@@ -10,14 +10,12 @@ import os
 import threading
 import time
 
-from datetime import datetime, timezone
-
 import pytest
 
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from app import register_cron, retry_job_id, safe_job_id
+from app import cron_table, retry_job_id, safe_job_id
 from app.videos import (
     acquire_lock_or_defer,
     localization_task,
@@ -25,8 +23,22 @@ from app.videos import (
 )
 
 
-def scheduled_ids(scheduler):
-    return [job.id for job, _ in scheduler.get_jobs(with_times=True)]
+def scheduled_ids(queue):
+    """Job ids in the queue's native ScheduledJobRegistry (#22)."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    return ScheduledJobRegistry(queue=queue).get_job_ids()
+
+
+def scheduled_jobs(queue):
+    """The scheduled jobs themselves, skipping any already-expired ids."""
+
+    return [
+        job
+        for job in (queue.fetch_job(job_id) for job_id in scheduled_ids(queue))
+        if job is not None
+    ]
 
 
 def assert_binds(job):
@@ -60,7 +72,7 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
             result = acquire_lock_or_defer(
                 "test-title-lock",
                 30000,
-                app.import_scheduler,
+                app.import_queue,
                 "app.videos.localization_task",
                 minutes=(45, 75),
                 timeout=3600,
@@ -71,7 +83,7 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
 
         retries = [
             job_id
-            for job_id in scheduled_ids(app.import_scheduler)
+            for job_id in scheduled_ids(app.import_queue)
             if job_id.startswith("retry_")
         ]
         assert retries == [
@@ -96,7 +108,7 @@ def test_defer_with_positional_args_binds(app, held_lock):
         acquire_lock_or_defer(
             "test-args-lock",
             30000,
-            app.import_scheduler,
+            app.import_queue,
             "app.videos.localization_task",
             minutes=(5, 15),
             timeout=3600,
@@ -116,7 +128,7 @@ def test_acquire_returns_lock_when_free(app):
         lock = acquire_lock_or_defer(
             "test-free-lock",
             30000,
-            app.import_scheduler,
+            app.import_queue,
             "app.videos.localization_task",
             minutes=(5, 15),
             timeout=3600,
@@ -126,7 +138,7 @@ def test_acquire_returns_lock_when_free(app):
         assert lock
         app.lock_manager.unlock(lock)
         assert safe_job_id("retry:localization_task:'free.mkv'") not in scheduled_ids(
-            app.import_scheduler
+            app.import_queue
         )
 
 
@@ -160,7 +172,7 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
 
             retries = [
                 job_id
-                for job_id in scheduled_ids(app.import_scheduler)
+                for job_id in scheduled_ids(app.import_queue)
                 if job_id.startswith("retry_")
             ]
             assert retries == [safe_job_id(f"retry:localization_task:'{basename}'")]
@@ -192,7 +204,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
             localization_task(file_path)
             retries = [
                 job_id
-                for job_id in scheduled_ids(app.import_scheduler)
+                for job_id in scheduled_ids(app.import_queue)
                 if job_id.startswith("retry_")
             ]
             assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
@@ -229,35 +241,46 @@ def test_sync_defers_while_queues_are_busy(app):
             marker.delete()
 
 
-def test_register_cron_preserves_run_history(app):
+def test_cron_table_entries_are_well_formed(app):
+    """Every cron-table row names a resolvable function, a five-field
+    cron string, the maintenance queue, and a description — the
+    scheduler process trusts the table blindly (#22)."""
+
+    import importlib
+
     with app.app_context():
+        entries = cron_table(app.config)
 
-        def register(cron_string):
-            register_cron(
-                app.maintenance_scheduler,
-                cron_string,
-                func="app.maintenance.rotate_logs",
-                job_id="test-cron",
-                timeout=600,
-                description="Test cron",
-            )
+    assert len(entries) >= 10
+    for entry in entries:
+        assert len(entry["cron"].split()) == 5, entry
+        module_name, func_name = entry["func"].rsplit(".", 1)
+        assert hasattr(importlib.import_module(module_name), func_name), entry
+        assert entry["queue"] == "fitzflix-maintenance"
+        assert entry["description"]
+        assert isinstance(entry["timeout"], int)
 
-        register("0 0 * * *")
-        job = Job.fetch("test-cron", connection=app.redis)
-        # rq 2 round-trips job timestamps as aware UTC
-        last_run = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        job.ended_at = last_run
-        job.save()
 
-        # Identical registration: run history survives
-        register("0 0 * * *")
-        assert Job.fetch("test-cron", connection=app.redis).ended_at == last_run
+def test_cron_frequency_sort_orders_by_class_then_parameter():
+    """The System page's ordering (#22): every-X-minutes by X, hourly by
+    minute, daily by time, weekly by day and time, monthly by
+    day-of-month and time."""
 
-        # Changed schedule: the job is rewritten
-        register("30 0 * * *")
-        rewritten = Job.fetch("test-cron", connection=app.redis)
-        assert rewritten.ended_at is None
-        assert rewritten.meta.get("cron_string") == "30 0 * * *"
+    from app.main.routes import _cron_frequency_key
+
+    ordered = [
+        "*/10 * * * *",
+        "*/15 * * * *",
+        "0 * * * *",
+        "30 * * * *",
+        "0 0 * * *",
+        "45 1 * * *",
+        "15 2 * * *",
+        "15 4 * * 1",
+        "0 4 1 * *",
+        "0 3 18 * *",
+    ]
+    assert sorted(reversed(ordered), key=_cron_frequency_key) == ordered
 
 
 def test_watchdog_enqueues_new_import_files(app):
@@ -292,7 +315,7 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
         acquire_lock_or_defer(
             "catchall-lock",
             30000,
-            app.file_scheduler,
+            app.file_queue,
             "app.videos.localization_task",
             minutes=(5, 15),
             timeout=3600,
@@ -301,7 +324,7 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
         )
 
         checked = 0
-        for job, _ in app.file_scheduler.get_jobs(with_times=True):
+        for job in scheduled_jobs(app.file_queue):
             try:
                 assert_binds(job)
             except NoSuchJobError:
@@ -342,7 +365,7 @@ def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkey
 
         retries = [
             job
-            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.sql_queue)
             if job.id.startswith("retry_finalize_transcoding")
         ]
         assert [job.id for job in retries] == [
@@ -395,7 +418,7 @@ def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
 
         assert not any(
             job.id.startswith("retry_finalize_transcoding")
-            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.sql_queue)
         )
 
         # The lock was released by the finally
@@ -432,7 +455,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
         retries = [
             job
-            for job, _ in app.file_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.file_queue)
             if job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
         ]
         assert [job.id for job in retries] == [
@@ -479,7 +502,7 @@ def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch)
 
         assert not any(
             job.id.startswith(safe_job_id("retry:mkvpropedit_task"))
-            for job, _ in app.file_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.file_queue)
         )
 
 
@@ -506,7 +529,7 @@ def test_download_transient_error_defers(app, monkeypatch):
 
     retries = [
         job
-        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        for job in scheduled_jobs(app.file_queue)
         if job.id.startswith(safe_job_id("retry:download_task"))
     ]
     assert [job.id for job in retries] == [
@@ -546,7 +569,7 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
     assert not any(
         job.id.startswith(safe_job_id("retry:download_task"))
-        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        for job in scheduled_jobs(app.file_queue)
     )
 
 
@@ -656,7 +679,7 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
 
         retries = [
             job
-            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.sql_queue)
             if job.id.startswith("retry_apply_tmdb_refresh")
         ]
         assert [job.id for job in retries] == [
@@ -689,7 +712,7 @@ def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
         assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is False
         assert any(
             job.id == safe_job_id(f"retry:apply_tmdb_refresh:Movies:{source_id}")
-            for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.sql_queue)
         )
 
 

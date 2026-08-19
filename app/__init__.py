@@ -16,8 +16,11 @@ from redlock import Redlock
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 from rq.registry import StartedJobRegistry
-from rq_scheduler import Scheduler
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import (
+    FileCreatedEvent,
+    FileMovedEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers.polling import PollingObserver
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -79,35 +82,129 @@ def enqueue_import_scan(
     )
 
 
-def register_cron(scheduler, cron_string, func, job_id, timeout, description):
-    """Register a recurring job unless an identical one is already scheduled.
-
-    Re-registering rewrites the stored job, wiping runtime details like the
-    last run time, so matching registrations are left untouched.
+def cron_table(config):
+    """The recurring-jobs table (#22): every scheduled task as a plain
+    row, config-dependent entries included only when configured. The
+    scheduler.py process registers these with rq's native CronScheduler;
+    nothing else registers cron jobs, so the table is authoritative on
+    every scheduler start.
     """
 
-    try:
-        job = Job.fetch(job_id, connection=scheduler.connection)
-    except NoSuchJobError:
-        job = None
+    table = [
+        # Rotate the application log daily at midnight
+        (
+            "0 0 * * *",
+            "app.maintenance.rotate_logs",
+            54000,
+            "Rotating application logs",
+        ),
+        # Back up the database nightly: the media files are archived at
+        # AWS, but the database itself exists only on this machine, so
+        # each dump is also copied to the S3 bucket
+        (
+            "30 0 * * *",
+            "app.maintenance.backup_database",
+            3600,
+            "Backing up the database",
+        ),
+        # Sweep the import directory hourly as a safety net in case the
+        # filesystem observer misses an arrival
+        (
+            "0 * * * *",
+            "app.videos.manual_import_task",
+            3600,
+            "Scanning import directory for files",
+        ),
+        # Monthly restore drill: prove the newest offsite dump restores
+        (
+            "0 4 1 * *",
+            "app.maintenance.restore_drill",
+            3600,
+            "Verifying the offsite database backup restores",
+        ),
+        # Refresh Criterion spine numbers from Wikidata monthly; the 18th
+        # leaves time for Wikidata to catch up with the mid-month reveal
+        (
+            "0 3 18 * *",
+            "app.videos.refresh_criterion_collection_info",
+            3600,
+            "Refreshing Criterion Collection information",
+        ),
+        # Sweep orphaned partial files weekly, after the backup window
+        (
+            "0 1 * * 0",
+            "app.maintenance.cleanup_orphaned_files",
+            3600,
+            "Cleaning up orphaned partial files",
+        ),
+        ("*/10 * * * *", "app.maintenance.health_probe", 600, "Probing system health"),
+        # Recompute per-user film recommendations nightly, after the log
+        # rotation and backup windows
+        (
+            "45 1 * * *",
+            "app.recommendations.recompute_recommendations",
+            3600,
+            "Recomputing film recommendations",
+        ),
+        # Refresh the leaving-Criterion set monthly
+        (
+            "30 3 1 * *",
+            "app.leaving_criterion.refresh_leaving_criterion",
+            3600,
+            "Refreshing the leaving-Criterion film set",
+        ),
+        # Refresh film awards from Wikidata weekly, early Monday
+        (
+            "15 4 * * 1",
+            "app.awards.refresh_awards",
+            7200,
+            "Refreshing film awards from Wikidata",
+        ),
+        # Rebuild the streaming rail nightly, after the 1:45 profiles
+        (
+            "15 2 * * *",
+            "app.streaming_rail.recompute_streaming_rail",
+            3600,
+            "Recomputing the streaming rail",
+        ),
+    ]
 
-    if (
-        job is not None
-        and job_id in scheduler
-        and job.func_name == func
-        and job.origin == scheduler.queue_name
-        and job.meta.get("cron_string") == cron_string
-    ):
-        return
+    # Download files restored from Glacier: poll SQS hourly, offset from
+    # the import sweep so the maintenance worker isn't handed both at once
 
-    scheduler.cron(
-        cron_string,
-        func=func,
-        id=job_id,
-        use_local_timezone=True,
-        timeout=timeout,
-        description=description,
-    )
+    if config.get("AWS_SQS_URL"):
+        table.append(
+            (
+                "30 * * * *",
+                "app.videos.sqs_retrieve_task",
+                7200,
+                "Polling AWS SQS for files to download",
+            )
+        )
+
+    # Poll Plex watch history every 15 minutes as the self-healing
+    # backstop to the real-time webhook
+
+    if config.get("PLEX_URL") and config.get("PLEX_TOKEN"):
+        table.append(
+            (
+                "*/15 * * * *",
+                "app.videos.plex_history_poll",
+                900,
+                "Polling Plex for watch history",
+            )
+        )
+
+    return [
+        {
+            "cron": cron_string,
+            "func": func,
+            "queue": "fitzflix-maintenance",
+            "timeout": timeout,
+            "description": description,
+        }
+        for cron_string, func, timeout, description in table
+    ]
 
 
 def get_app(watch_import_dir=False):
@@ -316,190 +413,6 @@ def create_app(config_class=Config, watch_import_dir=False):
     app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
     app.file_queue = rq.Queue("fitzflix-file-operation", connection=app.redis)
 
-    app.maintenance_scheduler = Scheduler("fitzflix-maintenance", connection=app.redis)
-    app.sql_scheduler = Scheduler("fitzflix-sql", connection=app.redis)
-    app.request_scheduler = Scheduler("fitzflix-user-request", connection=app.redis)
-    app.import_scheduler = Scheduler("fitzflix-import", connection=app.redis)
-    app.transcode_scheduler = Scheduler("fitzflix-transcode", connection=app.redis)
-    app.file_scheduler = Scheduler("fitzflix-file-operation", connection=app.redis)
-
-    # Rotate the application log daily at midnight; the fixed job id keeps a
-    # single registration shared by every process
-
-    register_cron(
-        app.maintenance_scheduler,
-        "0 0 * * *",
-        func="app.maintenance.rotate_logs",
-        job_id="rotate-logs",
-        timeout=54000,
-        description="Rotating application logs",
-    )
-
-    # Back up the database nightly: the media files are archived at AWS, but
-    # the database itself exists only on this machine, so each dump is also
-    # copied to the S3 bucket
-
-    register_cron(
-        app.maintenance_scheduler,
-        "30 0 * * *",
-        func="app.maintenance.backup_database",
-        job_id="backup-database",
-        timeout="1h",
-        description="Backing up the database",
-    )
-
-    # Sweep the import directory hourly as a safety net in case the
-    # filesystem observer misses an arrival
-
-    register_cron(
-        app.maintenance_scheduler,
-        "0 * * * *",
-        func="app.videos.manual_import_task",
-        job_id="import-sweep",
-        timeout="1h",
-        description="Scanning import directory for files",
-    )
-
-    # Monthly restore drill: download the newest offsite database dump and
-    # prove it restores into a scratch database, comparing row counts
-    # against live — backups that were never restored are just hopes
-
-    register_cron(
-        app.maintenance_scheduler,
-        "0 4 1 * *",
-        func="app.maintenance.restore_drill",
-        job_id="restore-drill",
-        timeout="1h",
-        description="Verifying the offsite database backup restores",
-    )
-
-    # Refresh Criterion Collection spine numbers from Wikidata monthly.
-    # Criterion announces each month's new titles around the 15th (or the
-    # nearest weekday), so the 18th leaves time for Wikidata to catch up
-
-    register_cron(
-        app.maintenance_scheduler,
-        "0 3 18 * *",
-        func="app.videos.refresh_criterion_collection_info",
-        job_id="criterion-refresh",
-        timeout="1h",
-        description="Refreshing Criterion Collection information",
-    )
-
-    # Weekly sweep for the hidden partial files failed tasks strand — and a
-    # failed restore drill's leftover scratch database — early Sunday,
-    # after the nightly backup window
-
-    register_cron(
-        app.maintenance_scheduler,
-        "0 1 * * 0",
-        func="app.maintenance.cleanup_orphaned_files",
-        job_id="orphan-cleanup",
-        timeout="1h",
-        description="Cleaning up orphaned partial files",
-    )
-
-    # Probe external services and system health every ten minutes; results
-    # feed the admin page's health card, and new problems are emailed
-
-    register_cron(
-        app.maintenance_scheduler,
-        "*/10 * * * *",
-        func="app.maintenance.health_probe",
-        job_id="health-probe",
-        timeout="10m",
-        description="Probing system health",
-    )
-
-    # Download files restored from Glacier: poll the AWS SQS queue hourly for
-    # restore-completed notifications, offset from the import sweep so the
-    # maintenance worker isn't handed both at once
-
-    if app.config["AWS_SQS_URL"]:
-        register_cron(
-            app.maintenance_scheduler,
-            "30 * * * *",
-            func="app.videos.sqs_retrieve_task",
-            job_id="sqs-retrieve",
-            timeout="2h",
-            description="Polling AWS SQS for files to download",
-        )
-    elif "sqs-retrieve" in app.maintenance_scheduler:
-        # Drop the schedule if SQS was unconfigured, so the poller doesn't
-        # keep running and failing against a missing queue URL
-
-        app.maintenance_scheduler.cancel("sqs-retrieve")
-
-    # Recompute per-user film recommendations nightly, after the log
-    # rotation and backup windows: taste profiles and ranked lists land in
-    # Redis for the landing page and the filmography interest markers
-
-    register_cron(
-        app.maintenance_scheduler,
-        "45 1 * * *",
-        func="app.recommendations.recompute_recommendations",
-        job_id="recompute-recommendations",
-        timeout="1h",
-        description="Recomputing film recommendations",
-    )
-
-    # Refresh the leaving-Criterion set monthly: the new leaving page
-    # appears at the start of each month, and the shelf hides itself
-    # once a departure date passes
-
-    register_cron(
-        app.maintenance_scheduler,
-        "30 3 1 * *",
-        func="app.leaving_criterion.refresh_leaving_criterion",
-        job_id="leaving-criterion-refresh",
-        timeout="1h",
-        description="Refreshing the leaving-Criterion film set",
-    )
-
-    # Refresh film awards from Wikidata weekly, early Monday: the film
-    # pass resolves the library in a couple dozen polite SPARQL batches,
-    # the craft pass rebuilds the person-held for-work categories on top
-    # (a second sweep of the same film batches), and the nightly
-    # recommendation recompute folds the results in as a quality prior
-
-    register_cron(
-        app.maintenance_scheduler,
-        "15 4 * * 1",
-        func="app.awards.refresh_awards",
-        job_id="awards-refresh",
-        timeout="2h",
-        description="Refreshing film awards from Wikidata",
-    )
-
-    # Rebuild the per-user "Streaming on your services" rail nightly,
-    # after the taste profiles recompute at 1:45 — the rail scores
-    # discover-pool candidates against those profiles
-
-    register_cron(
-        app.maintenance_scheduler,
-        "15 2 * * *",
-        func="app.streaming_rail.recompute_streaming_rail",
-        job_id="recompute-streaming-rail",
-        timeout="1h",
-        description="Recomputing the streaming rail",
-    )
-
-    # Poll Plex watch history every 15 minutes as the self-healing backstop
-    # to the real-time webhook: watches scrobbled while the app was down
-    # are picked up from the stored cursor on the next poll
-
-    if app.config["PLEX_URL"] and app.config["PLEX_TOKEN"]:
-        register_cron(
-            app.maintenance_scheduler,
-            "*/15 * * * *",
-            func="app.videos.plex_history_poll",
-            job_id="plex-history-poll",
-            timeout="15m",
-            description="Polling Plex for watch history",
-        )
-    elif "plex-history-poll" in app.maintenance_scheduler:
-        app.maintenance_scheduler.cancel("plex-history-poll")
-
     # Configure the Redis redlock manager
 
     app.lock_manager = Redlock([app.redis])
@@ -615,8 +528,13 @@ def create_app(config_class=Config, watch_import_dir=False):
 
         def start_observer():
             observer = PollingObserver()
+            # Only created/moved file events matter to the handler, so
+            # the emitter filters everything else before dispatch (#24)
             observer.schedule(
-                event_handler, path=app.config["IMPORT_DIR"], recursive=False
+                event_handler,
+                path=app.config["IMPORT_DIR"],
+                recursive=False,
+                event_filter=[FileCreatedEvent, FileMovedEvent],
             )
             observer.start()
             return observer

@@ -71,7 +71,7 @@ FAILCOUNT_KEY = "fitzflix:health:failcount"
 ISSUES_KEY = "fitzflix:health:issues"
 ALERTED_KEY_PREFIX = "fitzflix:health:alerted:"
 OBSERVER_KEY_PREFIX = "fitzflix:observer:"
-SCHEDULER_KEY_PREFIX = "rq:scheduler_instance:"
+SCHEDULER_KEY_PREFIX = "rq:cron_scheduler:"
 
 # While a problem persists, re-alert daily rather than every probe
 
@@ -288,10 +288,10 @@ def observer_health(connection):
 
 
 def scheduler_health(connection):
-    """Report whether an rq-scheduler instance is registered and alive.
+    """Report whether the recurring-jobs process is registered and alive.
 
-    The scheduler registers itself under a key that expires shortly after
-    its polling interval, so a live key means a live scheduler.
+    rq's CronScheduler heartbeats its hash with a short TTL (#22), so a
+    live key means a live scheduler.py process.
     """
 
     alive = any(True for _ in connection.scan_iter(f"{SCHEDULER_KEY_PREFIX}*"))

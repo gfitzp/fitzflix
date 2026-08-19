@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from tests.test_scheduling import scheduled_jobs
 from app import retry_job_id, safe_job_id
 
 import app.videos as videos
@@ -259,7 +260,7 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
 
         retries = [
             job.id
-            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
         assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
@@ -296,7 +297,7 @@ def test_staging_copy_transient_error_defers_and_retries(
 
         retries = [
             job
-            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
@@ -363,7 +364,7 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
                 assert localization_task(source, transient_retries=attempt) is True
                 scheduled = {
                     job.id: job.kwargs["transient_retries"]
-                    for job, _ in app.import_scheduler.get_jobs(with_times=True)
+                    for job in scheduled_jobs(app.import_queue)
                     if job.id.startswith("retry_")
                 }
                 assert scheduled == {
@@ -373,15 +374,17 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
                     + 1
                 }, f"attempt {attempt} did not schedule attempt {attempt + 1}"
 
-                for job, _ in app.import_scheduler.get_jobs(with_times=True):
-                    app.import_scheduler.cancel(job)
+                from rq.registry import ScheduledJobRegistry
+
+                registry = ScheduledJobRegistry(queue=app.import_queue)
+                for job_id in registry.get_job_ids():
+                    registry.remove(job_id, delete_job=True)
 
             # And the attempt after the last one gives up instead of deferring
 
             localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
             assert not any(
-                job.id.startswith("retry_")
-                for job, _ in app.import_scheduler.get_jobs(with_times=True)
+                job.id.startswith("retry_") for job in scheduled_jobs(app.import_queue)
             )
             assert basename in rejected_files(app)
             os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
@@ -411,8 +414,7 @@ def test_staging_copy_transient_error_rejects_after_max_retries(
         localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
 
     assert not any(
-        job.id.startswith("retry_")
-        for job, _ in app.import_scheduler.get_jobs(with_times=True)
+        job.id.startswith("retry_") for job in scheduled_jobs(app.import_queue)
     )
     assert basename in rejected_files(app)
     os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
@@ -438,8 +440,7 @@ def test_staging_copy_permanent_error_rejects_immediately(
         localization_task(source)
 
     assert not any(
-        job.id.startswith("retry_")
-        for job, _ in app.import_scheduler.get_jobs(with_times=True)
+        job.id.startswith("retry_") for job in scheduled_jobs(app.import_queue)
     )
     assert basename in rejected_files(app)
     os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
@@ -482,9 +483,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
         assert result is False
 
         retries = [
-            job
-            for job, _ in app.file_scheduler.get_jobs(with_times=True)
-            if job.id.startswith("retry_")
+            job for job in scheduled_jobs(app.file_queue) if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
             retry_job_id("move_localized_file", f"'{basename}'", 1)
@@ -548,8 +547,7 @@ def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
         )
 
     assert not any(
-        job.id.startswith("retry_")
-        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        job.id.startswith("retry_") for job in scheduled_jobs(app.file_queue)
     )
     assert basename in rejected_files(app)
     assert not os.path.exists(hidden)
@@ -572,7 +570,7 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
 
     retries = [
         job.id
-        for job, _ in app.sql_scheduler.get_jobs(with_times=True)
+        for job in scheduled_jobs(app.sql_queue)
         if job.id.startswith("retry_finalize")
     ]
     assert retries == [
@@ -954,7 +952,7 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
 
     retries = [
         job.id
-        for job, _ in app.file_scheduler.get_jobs(with_times=True)
+        for job in scheduled_jobs(app.file_queue)
         if job.id.startswith("retry_move_localized_file")
     ]
     assert retries == [
@@ -1015,7 +1013,7 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
 
         retries = [
             job
-            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
@@ -1051,7 +1049,7 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
 
         retries = [
             job
-            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            for job in scheduled_jobs(app.import_queue)
             if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
@@ -1083,8 +1081,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         # It proceeded into the pipeline instead of deferring again
 
         assert not any(
-            job.id.startswith("retry_")
-            for job, _ in app.import_scheduler.get_jobs(with_times=True)
+            job.id.startswith("retry_") for job in scheduled_jobs(app.import_queue)
         )
         move_jobs = [
             job

@@ -309,7 +309,7 @@ def _dead_volumes(paths):
 def acquire_lock_or_defer(
     resource,
     ttl_ms,
-    scheduler,
+    queue,
     func,
     minutes,
     timeout,
@@ -320,6 +320,8 @@ def acquire_lock_or_defer(
     """Take the redlock for a title, or schedule the task to retry later.
 
     Returns the lock on success, or None after scheduling the retry.
+    The retry lands in the queue's native ScheduledJobRegistry (#22);
+    scheduler.py's mover enqueues it when due.
     """
 
     lock = current_app.lock_manager.lock(resource, ttl_ms)
@@ -337,15 +339,15 @@ def acquire_lock_or_defer(
     # instead of stacking new ones; the day-long result ttl keeps a finished
     # retry's record alive long enough for any retry it scheduled itself
 
-    scheduler.enqueue_in(
+    queue.enqueue_in(
         timedelta(minutes=sleep_duration),
         func,
         *args,
         **(kwargs or {}),
-        timeout=timeout,
+        job_timeout=timeout,
         job_id=safe_job_id(f"retry:{func.rsplit('.', 1)[-1]}:{description}"),
-        job_result_ttl=86400,
-        job_description=description,
+        result_ttl=86400,
+        description=description,
     )
     return None
 
@@ -489,7 +491,7 @@ def localization_task(
                     f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
                     f"returning to queue to try again in 5 minutes"
                 )
-                current_app.import_scheduler.enqueue_in(
+                current_app.import_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.localization_task",
                     file_path=file_path,
@@ -497,15 +499,15 @@ def localization_task(
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
-                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
                         f"'{basename}'",
                         transient_retries,
                         completeness_retries,
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{basename}'",
+                    result_ttl=86400,
+                    description=f"'{basename}'",
                 )
                 return True
 
@@ -528,7 +530,7 @@ def localization_task(
                     f"'{basename}' is still being copied, "
                     f"returning to queue to try again in 1 minute"
                 )
-                current_app.import_scheduler.enqueue_in(
+                current_app.import_queue.enqueue_in(
                     timedelta(minutes=1),
                     "app.videos.localization_task",
                     file_path=file_path,
@@ -536,15 +538,15 @@ def localization_task(
                     ignore_etag=ignore_etag,
                     transient_retries=transient_retries,
                     completeness_retries=completeness_retries,
-                    timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "localization_task",
                         f"'{basename}'",
                         transient_retries,
                         completeness_retries,
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{basename}'",
+                    result_ttl=86400,
+                    description=f"'{basename}'",
                 )
                 return True
 
@@ -579,7 +581,7 @@ def localization_task(
                         f"again in 1 minute (check {completeness_retries + 1} "
                         f"of {MAX_COMPLETENESS_RETRIES})"
                     )
-                    current_app.import_scheduler.enqueue_in(
+                    current_app.import_queue.enqueue_in(
                         timedelta(minutes=1),
                         "app.videos.localization_task",
                         file_path=file_path,
@@ -587,15 +589,15 @@ def localization_task(
                         ignore_etag=ignore_etag,
                         transient_retries=transient_retries,
                         completeness_retries=completeness_retries + 1,
-                        timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=retry_job_id(
                             "localization_task",
                             f"'{basename}'",
                             transient_retries,
                             completeness_retries + 1,
                         ),
-                        job_result_ttl=86400,
-                        job_description=f"'{basename}'",
+                        result_ttl=86400,
+                        description=f"'{basename}'",
                     )
                     return True
 
@@ -639,7 +641,7 @@ def localization_task(
             lock = acquire_lock_or_defer(
                 file_identifier,
                 current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000,
-                current_app.import_scheduler,
+                current_app.import_queue,
                 "app.videos.localization_task",
                 minutes=(45, 75),
                 timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
@@ -734,7 +736,7 @@ def localization_task(
                     if lock:
                         current_app.lock_manager.unlock(lock)
                         current_app.logger.info(f"Removed lock {lock}")
-                    current_app.import_scheduler.enqueue_in(
+                    current_app.import_queue.enqueue_in(
                         timedelta(minutes=5),
                         "app.videos.localization_task",
                         file_path=source_path,
@@ -742,15 +744,15 @@ def localization_task(
                         ignore_etag=ignore_etag,
                         transient_retries=transient_retries + 1,
                         completeness_retries=completeness_retries,
-                        timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                         job_id=retry_job_id(
                             "localization_task",
                             f"'{basename}'",
                             transient_retries + 1,
                             completeness_retries,
                         ),
-                        job_result_ttl=86400,
-                        job_description=f"'{basename}'",
+                        result_ttl=86400,
+                        description=f"'{basename}'",
                     )
                     return True
 
@@ -1422,7 +1424,7 @@ def move_localized_file(
                 f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
                 f"retrying the library copy in 5 minutes"
             )
-            current_app.file_scheduler.enqueue_in(
+            current_app.file_queue.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.move_localized_file",
                 source_path,
@@ -1430,12 +1432,12 @@ def move_localized_file(
                 lock,
                 hidden_output_file,
                 transient_retries=transient_retries,
-                timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=retry_job_id(
                     "move_localized_file", f"'{basename}'", transient_retries
                 ),
-                job_result_ttl=86400,
-                job_description=f"'{basename}'",
+                result_ttl=86400,
+                description=f"'{basename}'",
             )
             return False
 
@@ -1493,7 +1495,7 @@ def move_localized_file(
                     os.remove(destination_hidden)
                 except OSError:
                     pass
-                current_app.file_scheduler.enqueue_in(
+                current_app.file_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.move_localized_file",
                     source_path,
@@ -1501,12 +1503,12 @@ def move_localized_file(
                     lock,
                     hidden_output_file,
                     transient_retries=transient_retries + 1,
-                    timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "move_localized_file", f"'{basename}'", transient_retries + 1
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{basename}'",
+                    result_ttl=86400,
+                    description=f"'{basename}'",
                 )
                 return False
 
@@ -1576,19 +1578,19 @@ def finalize_localization(
                 f"'{file_details.get('basename')}' Volumes unavailable "
                 f"({', '.join(dead)}), retrying finalization in 5 minutes"
             )
-            current_app.sql_scheduler.enqueue_in(
+            current_app.sql_queue.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.finalize_localization",
                 file_path,
                 file_details,
                 lock,
                 hidden_output_file,
-                timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 job_id=safe_job_id(
                     f"retry:finalize_localization:'{file_details.get('basename')}'"
                 ),
-                job_result_ttl=86400,
-                job_description=f"'{file_details.get('basename')}'",
+                result_ttl=86400,
+                description=f"'{file_details.get('basename')}'",
             )
             return False
 
@@ -2072,18 +2074,18 @@ def finalize_transcoding(file_id, lock, transient_retries=0):
                     f"transient I/O error ({e}), retrying in 5 minutes "
                     f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                 )
-                current_app.sql_scheduler.enqueue_in(
+                current_app.sql_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.finalize_transcoding",
                     file_id,
                     lock,
                     transient_retries=transient_retries + 1,
-                    timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "finalize_transcoding", file_id, transient_retries + 1
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{file.plex_title}'",
+                    result_ttl=86400,
+                    description=f"'{file.plex_title}'",
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
@@ -2219,14 +2221,14 @@ def track_metadata_scan_task(file_id):
                     f"'{file.basename}' Lock exists, "
                     f"returning to queue after {sleep_duration} minutes"
                 )
-                current_app.file_scheduler.enqueue_in(
+                current_app.file_queue.enqueue_in(
                     timedelta(minutes=sleep_duration),
                     "app.videos.track_metadata_scan_task",
                     file_id=file_id,
-                    timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
                     job_id=safe_job_id(f"retry:track_metadata_scan_task:{file_id}"),
-                    job_result_ttl=86400,
-                    job_description=f"'{file.basename}'",
+                    result_ttl=86400,
+                    description=f"'{file.basename}'",
                 )
                 return True
 
@@ -2368,7 +2370,7 @@ def mkvpropedit_task(
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-            current_app.file_scheduler,
+            current_app.file_queue,
             "app.videos.mkvpropedit_task",
             minutes=(5, 15),
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
@@ -2407,7 +2409,7 @@ def mkvpropedit_task(
                     f"transient I/O error ({e}), retrying in 5 minutes "
                     f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
                 )
-                current_app.file_scheduler.enqueue_in(
+                current_app.file_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.mkvpropedit_task",
                     file_id,
@@ -2415,12 +2417,12 @@ def mkvpropedit_task(
                     default_subtitle_track,
                     forced_subtitle_tracks,
                     transient_retries=transient_retries + 1,
-                    timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "mkvpropedit_task", file_id, transient_retries + 1
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{file.basename}'",
+                    result_ttl=86400,
+                    description=f"'{file.basename}'",
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
@@ -2742,7 +2744,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["MKVPROPEDIT_TASK_TIMEOUT"] * 1000,
-            current_app.import_scheduler,
+            current_app.import_queue,
             "app.videos.mkvmerge_task",
             minutes=(5, 15),
             timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
@@ -2938,13 +2940,13 @@ def sync_aws_s3_storage_task():
                 busy.append(f"{queue_name}: {count}")
 
         if busy:
-            current_app.request_scheduler.enqueue_in(
+            current_app.request_queue.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.sync_aws_s3_storage_task",
-                timeout="24h",
+                job_timeout="24h",
                 job_id=safe_job_id("retry:sync_aws_s3_storage_task"),
-                job_result_ttl=86400,
-                job_description="Syncing files with AWS S3 storage",
+                result_ttl=86400,
+                description="Syncing files with AWS S3 storage",
                 at_front=True,
             )
             current_app.logger.info(
@@ -4016,7 +4018,7 @@ def transcode_task(file_id):
             lock = acquire_lock_or_defer(
                 file.file_identifier(),
                 current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-                current_app.transcode_scheduler,
+                current_app.transcode_queue,
                 "app.videos.transcode_task",
                 minutes=(45, 75),
                 timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
@@ -4169,19 +4171,19 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                     f"minutes (attempt {transient_retries + 1} of "
                     f"{MAX_TRANSIENT_RETRIES})"
                 )
-                current_app.file_scheduler.enqueue_in(
+                current_app.file_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.download_task",
                     key,
                     basename,
                     sqs_receipt_handle,
                     transient_retries=transient_retries + 1,
-                    timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "download_task", f"'{basename}'", transient_retries + 1
                     ),
-                    job_result_ttl=86400,
-                    job_description=f"'{basename}' — Downloading from AWS",
+                    result_ttl=86400,
+                    description=f"'{basename}' — Downloading from AWS",
                 )
                 return False
             current_app.logger.error(traceback.format_exc())
@@ -6156,7 +6158,7 @@ def apply_tmdb_refresh(
                             f"by another task, returning the TMDb refresh to "
                             f"the queue after {sleep_duration} minutes"
                         )
-                        current_app.sql_scheduler.enqueue_in(
+                        current_app.sql_queue.enqueue_in(
                             timedelta(minutes=sleep_duration),
                             "app.videos.apply_tmdb_refresh",
                             library=library,
@@ -6164,12 +6166,12 @@ def apply_tmdb_refresh(
                             tmdb_id=tmdb_id,
                             tmdb_payload=tmdb_payload,
                             notify_if_missing=notify_if_missing,
-                            timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                             job_id=safe_job_id(
                                 f"retry:apply_tmdb_refresh:{library}:{id}"
                             ),
-                            job_result_ttl=86400,
-                            job_description=(
+                            result_ttl=86400,
+                            description=(
                                 f"Updating '{movie.title} ({movie.year})' "
                                 f"with TMDb data"
                             ),
@@ -6769,7 +6771,7 @@ def remux_audio_plan_task(file_id, plan):
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-            current_app.transcode_scheduler,
+            current_app.transcode_queue,
             "app.videos.remux_audio_plan_task",
             minutes=(5, 15),
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],

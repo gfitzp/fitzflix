@@ -20,7 +20,7 @@ def health_env(app, monkeypatch):
     and makes the HTTP probes fail on demand.
     """
 
-    app.redis.set("rq:scheduler_instance:test", "1", ex=600)
+    app.redis.set("rq:cron_scheduler:test", "1", ex=600)
     # Two observer heartbeats: observer_health expects one per import worker
     app.redis.set("fitzflix:observer:test-1", "1", ex=600)
     app.redis.set("fitzflix:observer:test-2", "1", ex=600)
@@ -128,7 +128,7 @@ def test_disk_floor_alerts_and_recovers(app, health_env, monkeypatch):
 
 
 def test_missing_scheduler_and_observer_are_reported(health_env):
-    health_env.redis.delete("rq:scheduler_instance:test")
+    health_env.redis.delete("rq:cron_scheduler:test")
     health_env.redis.delete("fitzflix:observer:test-1")
     health_env.redis.delete("fitzflix:observer:test-2")
     emails = health_env.run()

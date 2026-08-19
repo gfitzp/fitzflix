@@ -345,7 +345,7 @@ def atmos_supplement_task(file_id):
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-            current_app.transcode_scheduler,
+            current_app.transcode_queue,
             "app.atmos.atmos_supplement_task",
             minutes=(5, 15),
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
