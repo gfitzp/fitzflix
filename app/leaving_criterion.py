@@ -35,7 +35,7 @@ from app import db, get_app
 from app.models import File, Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
-from app.videos import tmdb_get
+from app.models import tmdb_get
 
 # This process's app instance, resolved lazily so the monthly task can
 # run on a worker without building a second application

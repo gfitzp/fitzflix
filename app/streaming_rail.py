@@ -39,7 +39,7 @@ from app.streaming import (
     streaming_matches,
     user_provider_ids,
 )
-from app.videos import tmdb_get
+from app.models import tmdb_get
 
 # This process's app instance, resolved lazily so the nightly task can
 # run on a worker without building a second application

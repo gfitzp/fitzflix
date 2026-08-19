@@ -579,6 +579,9 @@ def test_finalize_defers_when_volumes_dead(app, monkeypatch):
 
 
 def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
+
+    from app import importing
+
     source = os.path.join(incoming_dir, "reject-me.mkv")
     with open(source, "wb") as f:
         f.write(b"video")
@@ -586,8 +589,8 @@ def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
     def dead(*args, **kwargs):
         raise OSError(57, "Socket is not connected")
 
-    monkeypatch.setattr(videos.os, "rename", dead)
-    monkeypatch.setattr(videos.shutil, "copy2", dead)
+    monkeypatch.setattr(importing.os, "rename", dead)
+    monkeypatch.setattr(importing.shutil, "copy2", dead)
     try:
         with app.app_context():
             assert move_to_rejects(source, "exception") is False
@@ -613,6 +616,8 @@ def test_move_to_rejects_cross_volume_move_is_staged_atomically(
     """When rename fails, the copy is staged through a hidden name and the
     source is only removed after the copy is promoted."""
 
+    from app import importing
+
     basename = "cross-volume.mkv"
     source = os.path.join(incoming_dir, basename)
     content = b"the complete file contents"
@@ -622,7 +627,7 @@ def test_move_to_rejects_cross_volume_move_is_staged_atomically(
     def refuse_rename(src, dst):
         raise OSError(errno.EXDEV, "Cross-device link")
 
-    monkeypatch.setattr(videos.os, "rename", refuse_rename)
+    monkeypatch.setattr(importing.os, "rename", refuse_rename)
 
     with app.app_context():
         assert move_to_rejects(source, "exception") is True
@@ -638,6 +643,8 @@ def test_move_to_rejects_cross_volume_move_is_staged_atomically(
 def test_move_to_rejects_failed_copy_leaves_no_partial(app, incoming_dir, monkeypatch):
     """A copy that dies partway leaves nothing in rejects, hidden or not."""
 
+    from app import importing
+
     basename = "half-copied.mkv"
     source = os.path.join(incoming_dir, basename)
     with open(source, "wb") as f:
@@ -651,8 +658,8 @@ def test_move_to_rejects_failed_copy_leaves_no_partial(app, incoming_dir, monkey
             f.write(b"half")
         raise OSError(errno.EIO, "Input/output error")
 
-    monkeypatch.setattr(videos.os, "rename", refuse_rename)
-    monkeypatch.setattr(videos.shutil, "copy2", partial_copy)
+    monkeypatch.setattr(importing.os, "rename", refuse_rename)
+    monkeypatch.setattr(importing.shutil, "copy2", partial_copy)
     try:
         with app.app_context():
             assert move_to_rejects(source, "exception") is False
@@ -670,6 +677,8 @@ def test_move_to_rejects_unremovable_source_discards_the_copy(
     deleted (revoked SMB handle). The state must collapse back to 'the
     source stays where it is' — no duplicate left in rejects."""
 
+    from app import importing
+
     basename = "undeletable-source.mkv"
     source = os.path.join(incoming_dir, basename)
     with open(source, "wb") as f:
@@ -685,8 +694,8 @@ def test_move_to_rejects_unremovable_source_discards_the_copy(
             raise OSError(errno.EBADF, "Bad file descriptor")
         return real_remove(path, *args, **kwargs)
 
-    monkeypatch.setattr(videos.os, "rename", refuse_rename)
-    monkeypatch.setattr(videos.os, "remove", refuse_source_remove)
+    monkeypatch.setattr(importing.os, "rename", refuse_rename)
+    monkeypatch.setattr(importing.os, "remove", refuse_source_remove)
     try:
         with app.app_context():
             assert move_to_rejects(source, "exception") is False
@@ -961,6 +970,9 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
 
 
 def test_rename_with_retries_rides_out_transient_errors(app, tmp_path, monkeypatch):
+
+    from app import importing
+
     src = tmp_path / "source.mkv"
     dst = tmp_path / "final.mkv"
     src.write_bytes(b"video")
@@ -974,7 +986,7 @@ def test_rename_with_retries_rides_out_transient_errors(app, tmp_path, monkeypat
         except StopIteration:
             real_rename(a, b)
 
-    monkeypatch.setattr(videos.os, "rename", flaky_rename)
+    monkeypatch.setattr(importing.os, "rename", flaky_rename)
     with app.app_context():
         videos._rename_with_retries(str(src), str(dst), attempts=5, delay=0)
 

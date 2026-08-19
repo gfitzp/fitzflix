@@ -20,7 +20,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app
-from app.videos import tmdb_get
+from app.models import tmdb_get
 
 # This process's app instance, resolved lazily so the warm task can run
 # on a worker without building a second application
