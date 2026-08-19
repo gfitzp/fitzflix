@@ -1,0 +1,46 @@
+{# The poster popover's card (#45c): the fragment /movie_card renders
+   for one film — title, credits, synopsis, availability, the live
+   star row, and the watchlist toggle — fetched on hover (or first
+   tap) and injected into a Bootstrap popover by the script in
+   base.html. Served for library records and bare TMDb ids alike; a
+   record-less film's forms post to the TMDb log route, whose first
+   tap creates the record (and which 307-forwards once it exists).
+   Every form carries from_card, so acting here never moves the
+   rating drive's anchor — only the featured card and a film's own
+   page surface the "since you liked…" strip. #}
+{% from "_rating_ladder.html" import rating_ladder %}
+{% from "_availability_badges.html" import library_badge %}
+<div class="movie-card">
+	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
+	{% if directors or runtime %}
+	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}</p>
+	{% endif %}
+	{% if overview %}
+	<p class="small mb-1 movie-card-overview">{{ overview }}</p>
+	{% endif %}
+	{% if top_cast %}
+	<p class="small text-muted mb-1">Starring {% for credit_id, name in top_cast %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+	{% endif %}
+	{# The shared strip keeps the availability grammar (and the
+	   mandatory JustWatch credit) identical to the movie page; a film
+	   the strip can't speak for still badges its library copy #}
+	{% if streaming %}
+		{% include "_streaming_strip.html" %}
+	{% elif in_library %}
+		<div class="mt-1">{{ library_badge() }}</div>
+	{% endif %}
+	<form action="{{ ladder_action }}" method="post" class="mt-1 mb-1 d-flex align-items-center">
+		{{ review_form.csrf_token }}
+		<input type="hidden" name="from_card" value="1">
+		{{ rating_ladder(compact=true, allow_not_interested=not has_review, current=current, flagged=flagged, live=true, estimated=estimated) }}
+	</form>
+	{# Both toggle faces render, one hidden — the card script swaps
+	   them in place on the JSON response, and syncs them when a
+	   rating or ✕ clears the list entry server-side #}
+	<form action="{{ watchlist_action }}" method="post" data-card-watchlist>
+		{{ watchlist_form.csrf_token }}
+		<input type="hidden" name="from_card" value="1">
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{{ ' d-none' if on_watchlist }}">Add to Watchlist</button>
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{{ ' d-none' if not on_watchlist }}">Remove from Watchlist</button>
+	</form>
+</div>

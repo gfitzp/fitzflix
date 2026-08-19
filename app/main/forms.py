@@ -234,9 +234,6 @@ class RateFilmForm(FlaskForm):
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
     watchlist_submit = SubmitField("Add to Watchlist")
     unseen_submit = SubmitField("No Opinion")
-    # Adds a SUGGESTED film to the watchlist without touching the
-    # drive's steering, unlike watchlist_submit on the featured card
-    want_suggestion_submit = SubmitField("Add to Watchlist")
 
 
 class ReviewExportForm(FlaskForm):

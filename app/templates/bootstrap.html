@@ -168,6 +168,14 @@
 		@media (hover: hover) {
 			.star-row .x-btn:hover { color: #dc3545; }
 		}
+		/* The poster popover's card (#45c): roomier than Bootstrap's
+		   276px default so the credits and star row breathe, but never
+		   wider than the screen; the synopsis clamps to four lines like
+		   the Criterion card's. --bs-popover-max-width is the tip's own
+		   design token, so no cascade race with the CDN stylesheet */
+		.movie-card-pop { --bs-popover-max-width: min(22rem, calc(100vw - 1rem)); }
+		.movie-card-pop .movie-card { min-width: min(19rem, calc(100vw - 3rem)); }
+		.movie-card .movie-card-overview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
     </style>
 	{%- endblock styles %}
 

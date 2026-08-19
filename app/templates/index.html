@@ -32,7 +32,10 @@
 <div class="row">
 	{% for rec in recs %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
-		<a href="{{ url_for('main.movie', movie_id=rec.movie.id) }}" class="text-decoration-none text-body">
+		{# data-card-url arms the poster popover (#45c): hover (or first
+		   tap) shows the film's card, a click (or second tap) follows
+		   the link #}
+		<a href="{{ url_for('main.movie', movie_id=rec.movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=rec.movie.id) }}">
 			{% if rec.movie.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + rec.movie.id|string + '/w342/' + rec.movie.custom_poster) }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ rec.movie.title }} ({{ rec.movie.year }})">
 			{% elif rec.movie.tmdb_poster_path %}
@@ -79,7 +82,7 @@
 <div class="row mt-3">
 	{% for item in again %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
-		<a href="{{ url_for('main.movie', movie_id=item.movie.id) }}" class="text-decoration-none text-body">
+		<a href="{{ url_for('main.movie', movie_id=item.movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=item.movie.id) }}">
 			{% if item.movie.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + item.movie.id|string + '/w342/' + item.movie.custom_poster) }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ item.movie.title }} ({{ item.movie.year }})">
 			{% elif item.movie.tmdb_poster_path %}
@@ -112,7 +115,7 @@
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
 		{# The card links to the log page, which shows the film's details
 		   and availability strip (and redirects if a record exists) #}
-		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body">
+		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}">
 			{% if item.poster_path %}
 				<img src="{{ config['TMDB_IMAGE_URL'] }}/w342{{ item.poster_path }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}">
 			{% else %}
@@ -214,7 +217,7 @@
 <div class="row mt-3">
 	{% for item in shelf %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
-		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body">
+		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}">
 			{% if item.poster_path %}
 				<img src="{{ config['TMDB_IMAGE_URL'] }}/w342{{ item.poster_path }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}">
 			{% else %}

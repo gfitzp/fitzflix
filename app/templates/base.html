@@ -424,8 +424,9 @@
 			}
 
 			function poll() {
-				$.ajax({ url: QUEUE_URL, dataType: "json" })
-					.done(function(queue_details) {
+				fetch(QUEUE_URL, { credentials: "same-origin" })
+					.then(function(response) { return response.json(); })
+					.then(function(queue_details) {
 						// An expired session redirects to the login page, which
 						// isn't queue data — never paint that into the badge
 
@@ -434,7 +435,8 @@
 						renderRunning(queue_details.running || []);
 						renderAll(queue_details.all || []);
 					})
-					.always(scheduleNext);
+					.catch(function() {})
+					.finally(scheduleNext);
 			}
 
 			document.addEventListener("visibilitychange", function() {
@@ -511,6 +513,161 @@
 						? "Undo not interested"
 						: "Not interested — never saw it";
 				}
+				// Inside a poster card (#45c) the watchlist toggle keeps
+				// up with server-side clears — a rating or a ✕ un-lists
+				// the film, and the card should say so immediately
+				var cardRoot = row.closest(".movie-card");
+				if (cardRoot && typeof state.on_watchlist !== "undefined") {
+					cardSyncWatchlist(cardRoot, state.on_watchlist);
+				}
+			}).catch(function() {
+				form.submit();
+			});
+		});
+
+		// The poster popover (#45c): anchors marked data-card-url fetch
+		// their film's card fragment once and show it in a Bootstrap
+		// popover. Hover-capable pointers preview on hover, with a grace
+		// period to travel into the card; touch screens tap once for the
+		// card and tap again to navigate (Glenn's spec). The star row
+		// inside rides the ladder script above; the watchlist toggle
+		// posts in the background below. One card shows at a time.
+
+		var cardOpen = null;    // the anchor whose card is showing
+		var cardWanted = null;  // the anchor a pending hover/fetch intends
+		var cardShowTimer = null;
+		var cardHideTimer = null;
+		var cardHover = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+		function cardSyncWatchlist(root, onWatchlist) {
+			var form = root.querySelector("[data-card-watchlist]");
+			if (!form) return;
+			var add = form.querySelector("[name=add_watchlist_submit]");
+			var remove = form.querySelector("[name=remove_watchlist_submit]");
+			if (add) add.classList.toggle("d-none", !!onWatchlist);
+			if (remove) remove.classList.toggle("d-none", !onWatchlist);
+		}
+
+		function cardHide() {
+			cardWanted = null;
+			clearTimeout(cardShowTimer);
+			clearTimeout(cardHideTimer);
+			if (cardOpen && cardOpen._cardPop) cardOpen._cardPop.hide();
+			cardOpen = null;
+		}
+
+		function cardShow(anchor) {
+			if (cardOpen === anchor) return;
+			if (cardOpen) cardHide();
+			cardWanted = anchor;
+			if (anchor._cardPop) {
+				anchor._cardPop.show();
+				cardOpen = anchor;
+				return;
+			}
+			if (anchor._cardLoading) return;
+			anchor._cardLoading = true;
+			fetch(anchor.getAttribute("data-card-url"), {credentials: "same-origin"})
+				.then(function(response) {
+					if (!response.ok) throw new Error("card fetch failed");
+					return response.text();
+				})
+				.then(function(html) {
+					anchor._cardLoading = false;
+					var holder = document.createElement("div");
+					holder.innerHTML = html;
+					var content = holder.querySelector(".movie-card");
+					if (!content) throw new Error("empty card");
+					// The same content node is reused across shows, so
+					// state painted by the ladder script survives a
+					// close-and-reopen
+					anchor._cardPop = new bootstrap.Popover(anchor, {
+						content: content,
+						html: true,
+						sanitize: false,
+						trigger: "manual",
+						placement: "auto",
+						container: "body",
+						customClass: "movie-card-pop"
+					});
+					// Show only if the pointer still wants this card —
+					// hovers move on faster than fetches return
+					if (cardWanted === anchor) {
+						anchor._cardPop.show();
+						cardOpen = anchor;
+					}
+				})
+				.catch(function() {
+					anchor._cardLoading = false;
+				});
+		}
+
+		if (cardHover) {
+			document.addEventListener("mouseover", function(event) {
+				var anchor = event.target.closest("[data-card-url]");
+				if (anchor) {
+					clearTimeout(cardHideTimer);
+					if (cardOpen === anchor || cardWanted === anchor) return;
+					clearTimeout(cardShowTimer);
+					cardWanted = anchor;
+					cardShowTimer = setTimeout(function() { cardShow(anchor); }, 350);
+					return;
+				}
+				if (event.target.closest(".movie-card-pop")) {
+					clearTimeout(cardHideTimer);
+					return;
+				}
+				if (cardWanted && !cardOpen) {
+					cardWanted = null;
+					clearTimeout(cardShowTimer);
+				}
+				if (cardOpen) {
+					clearTimeout(cardHideTimer);
+					cardHideTimer = setTimeout(cardHide, 300);
+				}
+			});
+		}
+
+		document.addEventListener("click", function(event) {
+			var anchor = event.target.closest("[data-card-url]");
+			if (!anchor) {
+				// Clicks inside the card act on it; anywhere else closes it
+				if (cardOpen && !event.target.closest(".movie-card-pop")) cardHide();
+				return;
+			}
+			if (cardHover) return;            // pointer users navigate on click
+			if (cardOpen === anchor) return;  // second tap follows the link
+			event.preventDefault();
+			cardShow(anchor);
+		});
+
+		document.addEventListener("keydown", function(event) {
+			if (event.key === "Escape") cardHide();
+		});
+
+		// The card's watchlist toggle posts in the background and swaps
+		// its two faces on the JSON state; any failure falls back to a
+		// normal form submission
+
+		document.addEventListener("submit", function(event) {
+			var form = event.target.closest("form[data-card-watchlist]");
+			if (!form) return;
+			event.preventDefault();
+			var data = new FormData(form);
+			if (event.submitter && event.submitter.name) {
+				data.set(event.submitter.name, event.submitter.value || "1");
+			}
+			fetch(form.getAttribute("action"), {
+				method: "POST",
+				body: data,
+				credentials: "same-origin",
+				headers: {"X-Requested-With": "card"}
+			}).then(function(response) {
+				if (!response.ok) throw new Error("watchlist post failed");
+				return response.json();
+			}).then(function(state) {
+				var root = form.closest(".movie-card");
+				if (root) cardSyncWatchlist(root, state.on_watchlist);
 			}).catch(function() {
 				form.submit();
 			});

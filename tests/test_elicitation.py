@@ -475,10 +475,10 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
     assert "Page Strip Similar Two (1962)" not in page
 
 
-def test_rate_suggestions_are_rateable_and_reanchor(app, admin_client):
-    """On the drive, a ladder tap on a suggestion card rates that film
-    and RE-ANCHORS the session to it — the chain continues from the
-    film just rated."""
+def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
+    """A ladder tap in a suggestion's poster popover (#45c) rates that
+    film but leaves the drive anchored where it was — only rating the
+    FEATURED film moves the session along (Glenn's rule, Aug 2026)."""
 
     import json
 
@@ -524,18 +524,30 @@ def test_rate_suggestions_are_rateable_and_reanchor(app, admin_client):
     strip = admin_client.get("/rate").get_data(as_text=True)
     assert "Chain Similar (1961)" in strip
 
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(similar_id), "quick_rating": "5"},
+    # The card's ladder posts to the suggestion's own movie route with
+    # the from_card marker, and gets ladder-state JSON back
+
+    response = admin_client.post(
+        f"/movie/{similar_id}",
+        data={"csrf_token": token, "from_card": "1", "quick_rating": "5"},
+        headers={"X-Requested-With": "ladder"},
     )
+    assert response.status_code == 200
+    state = response.get_json()
+    assert state["rating"] == 5.0
+    assert state["on_watchlist"] is False
     with app.app_context():
         row = UserMovieReview.query.filter_by(
             user_id=user_id, movie_id=similar_id
         ).one()
         assert float(row.rating) == 5.0
-        state = last_response(app.redis, user_id)
-        assert state["movie_id"] == similar_id
-        assert state["positive"] is True
+
+        # The anchor never moved — the strip stays the rated featured
+        # film's reward, minus the now-rated suggestion
+
+        last = last_response(app.redis, user_id)
+        assert last["movie_id"] == anchor_id
+        assert last["positive"] is True
 
 
 def test_rate_page_shows_featured_details_only(app, admin_client):
@@ -653,18 +665,28 @@ def test_positive_rating_earns_suggestions(app, admin_client):
     strip = page[page.index("Since you liked") :]
     assert "Suggest Unrelated" not in strip
 
-    # Banking the suggestion adds it to the watchlist WITHOUT moving
-    # the steering — the strip stays anchored, minus the banked film
+    # Suggested posters carry the popover card (#45c) instead of
+    # inline forms — banking happens in the card, which posts to the
+    # suggestion's own movie route with the from_card marker
+
+    assert f'data-card-url="/movie_card?movie_id={similar_id}"' in strip
+    assert "want_suggestion_submit" not in page
+
+    # Banking the suggestion through its card adds it to the watchlist
+    # WITHOUT moving the steering — the strip stays anchored, minus
+    # the banked film
 
     response = admin_client.post(
-        "/rate",
+        f"/movie/{similar_id}",
         data={
             "csrf_token": token,
-            "movie_id": str(similar_id),
-            "want_suggestion_submit": "Add to Watchlist",
+            "from_card": "1",
+            "add_watchlist_submit": "Add to Watchlist",
         },
+        headers={"X-Requested-With": "card"},
     )
-    assert response.status_code == 302
+    assert response.status_code == 200
+    assert response.get_json() == {"on_watchlist": True}
     with app.app_context():
         assert (
             UserWatchlist.query.filter_by(user_id=user_id, movie_id=similar_id).first()
@@ -672,10 +694,6 @@ def test_positive_rating_earns_suggestions(app, admin_client):
         )
         assert last_response(app.redis, user_id)["movie_id"] == anchor_id
 
-    # The first GET renders the one-shot flash (which names the film);
-    # the second shows the page's own steady state
-
-    admin_client.get("/rate")
     page = admin_client.get("/rate").get_data(as_text=True)
     assert "Suggest Similar (1961)" not in page
 
@@ -947,21 +965,36 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         headers=headers,
     )
     assert response.status_code == 200
-    assert response.get_json() == {"rating": 5.0, "flagged": False, "estimated": None}
+    assert response.get_json() == {
+        "rating": 5.0,
+        "flagged": False,
+        "estimated": None,
+        "on_watchlist": False,
+    }
 
     response = admin_client.post(
         f"/movie/{movie_id}",
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "5"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": False, "estimated": None}
+    assert response.get_json() == {
+        "rating": None,
+        "flagged": False,
+        "estimated": None,
+        "on_watchlist": False,
+    }
 
     response = admin_client.post(
         f"/movie/{movie_id}",
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": True, "estimated": None}
+    assert response.get_json() == {
+        "rating": None,
+        "flagged": True,
+        "estimated": None,
+        "on_watchlist": False,
+    }
 
     # The page renders the lit ✕ while flagged; a second ✕ undoes it
 
@@ -972,7 +1005,12 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         data={"csrf_token": token, "review_submit": "y", "quick_rating": "0"},
         headers=headers,
     )
-    assert response.get_json() == {"rating": None, "flagged": False, "estimated": None}
+    assert response.get_json() == {
+        "rating": None,
+        "flagged": False,
+        "estimated": None,
+        "on_watchlist": False,
+    }
 
 
 def test_rate_featured_card_shows_the_estimate(app, admin_client):

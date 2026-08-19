@@ -262,6 +262,14 @@ def _ladder_fetch():
     return request.headers.get("X-Requested-With") == "ladder"
 
 
+def _card_fetch():
+    """True when the post came from the poster popover's card (#45c) —
+    its watchlist toggle wants compact JSON state back, never a
+    redirect, and flash messages would queue up unseen."""
+
+    return request.headers.get("X-Requested-With") == "card"
+
+
 def _latest_review_row(user_id, movie_id):
     """The diary row whose verdict the star widget shows: newest review
     first, bare watches last, newest id breaking ties — the same
@@ -326,6 +334,14 @@ def _ladder_state(user_id, movie_id):
             ),
             "flagged": flagged,
             "estimated": estimated,
+            # A rating or a ✕ clears the film's watchlist entry, so the
+            # popover card (#45c) syncs its toggle from the same payload
+            "on_watchlist": (
+                UserWatchlist.query.filter_by(
+                    user_id=int(user_id), movie_id=int(movie_id)
+                ).first()
+                is not None
+            ),
         }
     )
 
@@ -1960,7 +1976,10 @@ def movie(movie_id):
                 if not _ladder_fetch():
                     flash(f"'{target_title}' can be recommended again", "success")
             elif _mark_not_interested(current_user.id, target.id):
-                if target.id == movie.id:
+                # A poster-card post (#45c) never steers the drive —
+                # only a film's own page (and the featured card) moves
+                # the last-response state
+                if target.id == movie.id and not request.form.get("from_card"):
                     set_last_response(
                         current_app.redis, current_user.id, movie.id, "not_interested"
                     )
@@ -2028,7 +2047,7 @@ def movie(movie_id):
                 clear_watchlist(current_user.id, target.id)
                 clear_not_interested(current_user.id, target.id)
                 db.session.commit()
-                if target.id == movie.id:
+                if target.id == movie.id and not request.form.get("from_card"):
                     set_last_response(
                         current_app.redis,
                         current_user.id,
@@ -2091,8 +2110,9 @@ def movie(movie_id):
             # positive rating earns the "since you liked…" strip on the
             # redirect back here, and steers the drive's next card too.
             # Rating a suggestion doesn't move the anchor — the strip
-            # refreshes in place with the rated film gone
-            if target.id == movie.id:
+            # refreshes in place with the rated film gone — and neither
+            # does a poster-card rating (#45c)
+            if target.id == movie.id and not request.form.get("from_card"):
                 set_last_response(
                     current_app.redis,
                     current_user.id,
@@ -2134,6 +2154,8 @@ def movie(movie_id):
         ).first():
             db.session.add(UserWatchlist(user_id=current_user.id, movie_id=target.id))
             db.session.commit()
+        if _card_fetch():
+            return jsonify({"on_watchlist": True})
         target_title = (
             f"{target.tmdb_title if target.tmdb_title else target.title} "
             f"({target.tmdb_release_date.strftime('%Y') if target.tmdb_title and target.tmdb_release_date else target.year})"
@@ -2146,6 +2168,8 @@ def movie(movie_id):
     ):
         clear_watchlist(current_user.id, movie.id)
         db.session.commit()
+        if _card_fetch():
+            return jsonify({"on_watchlist": False})
         flash(f"Removed '{title}' from your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
@@ -2388,6 +2412,178 @@ def movie(movie_id):
         refused=refused,
         suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
+    )
+
+
+@bp.route("/movie_card")
+@login_required
+def movie_card():
+    """The poster popover's card fragment (#45c): one film's title,
+    credits, synopsis, availability, live star row, and watchlist
+    toggle — keyed by movie_id for library records, or tmdb_id for
+    films with no local row (the streaming rail and the leaving
+    shelf). Fetched only when a poster is hovered or tapped, so
+    gallery pages stay light."""
+
+    movie_id = request.args.get("movie_id", type=int)
+    tmdb_id = request.args.get("tmdb_id", type=int)
+    movie = None
+    if movie_id:
+        movie = db.session.get(Movie, movie_id)
+        if movie is None:
+            abort(404)
+    elif tmdb_id:
+        movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
+    else:
+        abort(404)
+
+    review_form = MovieReviewForm()
+    watchlist_form = WatchlistForm()
+
+    if movie is not None:
+        directors = list(
+            db.session.query(TMDBCredit.id, TMDBCredit.name)
+            .join(MovieCrew, MovieCrew.credit_id == TMDBCredit.id)
+            .filter(MovieCrew.movie_id == movie.id)
+            .filter(MovieCrew.job == "Director")
+            .distinct()
+        )
+        top_cast = list(
+            db.session.query(TMDBCredit.id, TMDBCredit.name)
+            .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
+            .filter(MovieCast.movie_id == movie.id)
+            .order_by(MovieCast.billing_order.asc())
+            .limit(TOP_BILLING_CUTOFF)
+        )
+        review = _latest_review_row(current_user.id, movie.id)
+        flagged = (
+            UserMovieStatus.query.filter_by(
+                user_id=int(current_user.id),
+                movie_id=movie.id,
+                kind="not_interested",
+            ).first()
+            is not None
+        )
+
+        # Estimated the way the movie page estimates (#45a): the stored
+        # nightly score when the film was ranked, a live single-film
+        # score otherwise — never shown once the user has a verdict
+
+        estimated = None
+        if review is None and not flagged:
+            profile = stored_profile(current_app.redis, current_user.id)
+            score = stored_scores(current_app.redis, current_user.id).get(movie.id)
+            if score is None:
+                score = single_movie_score(current_user.id, movie, profile)
+            if score is not None:
+                estimated = estimated_rating(profile, score)
+
+        on_watchlist = (
+            UserWatchlist.query.filter_by(
+                user_id=int(current_user.id), movie_id=movie.id
+            ).first()
+            is not None
+        )
+        in_library = (
+            db.session.query(File.id)
+            .filter(File.movie_id == movie.id)
+            .filter(File.feature_type_id == None)
+            .first()
+            is not None
+        )
+        return render_template(
+            "_movie_card.html",
+            display_title=(
+                f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
+                f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+            ),
+            href=url_for("main.movie", movie_id=movie.id),
+            runtime=movie.tmdb_runtime,
+            overview=movie.tmdb_overview,
+            directors=directors,
+            top_cast=top_cast,
+            current=(review.rating if review and review.rating is not None else None),
+            has_review=review is not None,
+            flagged=flagged,
+            estimated=estimated,
+            on_watchlist=on_watchlist,
+            in_library=in_library,
+            streaming=(
+                user_streaming(
+                    movie.tmdb_id,
+                    current_user,
+                    negative=not in_library,
+                    local=in_library,
+                )
+                if movie.tmdb_id
+                else None
+            ),
+            ladder_action=url_for("main.movie", movie_id=movie.id),
+            watchlist_action=url_for("main.movie", movie_id=movie.id),
+            review_form=review_form,
+            watchlist_form=watchlist_form,
+        )
+
+    # No local record: the card renders from TMDb directly, and its
+    # forms post to the TMDb log route — whose first tap creates the
+    # record, and which 307-forwards once it exists
+
+    if not current_app.config["TMDB_API_KEY"]:
+        abort(404)
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
+            params={
+                "api_key": current_app.config["TMDB_API_KEY"],
+                "append_to_response": "credits",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        abort(503)
+
+    details = r.json()
+    film_title = details.get("title")
+    release_year = (details.get("release_date") or "")[:4]
+    if not film_title or not release_year.isdigit():
+        abort(404)
+
+    directors = [
+        (person.get("id"), person.get("name"))
+        for person in (details.get("credits") or {}).get("crew") or []
+        if person.get("job") == "Director" and person.get("id") is not None
+    ]
+    billed_cast = sorted(
+        (details.get("credits") or {}).get("cast") or [],
+        key=lambda person: person.get("order", 99),
+    )
+    top_cast = [
+        (person.get("id"), person.get("name"))
+        for person in billed_cast[:TOP_BILLING_CUTOFF]
+        if person.get("id") is not None
+    ]
+
+    return render_template(
+        "_movie_card.html",
+        display_title=f"{film_title} ({release_year})",
+        href=url_for("main.review_tmdb", tmdb_id=tmdb_id),
+        runtime=details.get("runtime"),
+        overview=details.get("overview"),
+        directors=directors,
+        top_cast=top_cast,
+        current=None,
+        has_review=False,
+        flagged=False,
+        estimated=None,
+        on_watchlist=False,
+        in_library=False,
+        streaming=user_streaming(tmdb_id, current_user, negative=True),
+        ladder_action=url_for("main.review_tmdb", tmdb_id=tmdb_id),
+        watchlist_action=url_for("main.review_tmdb", tmdb_id=tmdb_id),
+        review_form=review_form,
+        watchlist_form=watchlist_form,
     )
 
 
@@ -5946,7 +6142,11 @@ def rate():
             )
             _enqueue_profile_recompute()
             flash(f"Rated '{title}' {rating:g} out of 5", "success")
-        elif form.watchlist_submit.data or form.want_suggestion_submit.data:
+        elif form.watchlist_submit.data:
+            # The featured card's own watchlist button — it moves the
+            # session along. Banking a SUGGESTED film happens in its
+            # poster popover (#45c), whose card posts never touch the
+            # steering
             if not UserWatchlist.query.filter_by(
                 user_id=int(current_user.id), movie_id=movie.id
             ).first():
@@ -5954,13 +6154,7 @@ def rate():
                     UserWatchlist(user_id=current_user.id, movie_id=movie.id)
                 )
                 db.session.commit()
-            # Banking a SUGGESTED film keeps the steering (and the
-            # strip) anchored on the rated film; answering the featured
-            # card's own watchlist button moves the session along
-            if form.watchlist_submit.data:
-                set_last_response(
-                    current_app.redis, current_user.id, movie.id, "watchlist"
-                )
+            set_last_response(current_app.redis, current_user.id, movie.id, "watchlist")
             flash(f"Added '{title}' to your watchlist", "success")
         elif form.unseen_submit.data:
             mark_unseen(current_user.id, movie.id)
@@ -6049,9 +6243,10 @@ def review_tmdb(tmdb_id):
         # A live ladder tap aimed here after the record appeared (the
         # landing card's first tap creates it) forwards with the method
         # and body intact — 307, not 302 — so the movie route's full
-        # ladder handling (re-rate, toggle-off, ✕) takes over
+        # ladder handling (re-rate, toggle-off, ✕) takes over; poster-
+        # card watchlist toggles (#45c) forward the same way
 
-        if _ladder_fetch() and request.method == "POST":
+        if (_ladder_fetch() or _card_fetch()) and request.method == "POST":
             return redirect(url_for("main.movie", movie_id=movie.id), code=307)
         return redirect(url_for("main.movie", movie_id=movie.id))
 
@@ -6145,6 +6340,8 @@ def review_tmdb(tmdb_id):
                     f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
                 ),
             )
+        if _card_fetch():
+            return jsonify({"on_watchlist": True})
         flash(f"Added '{film_title} ({year})' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
@@ -6274,14 +6471,16 @@ def review_tmdb(tmdb_id):
             # The redirect lands on the movie page, where a positive
             # rating earns the "since you liked…" strip (a just-created
             # record has no features yet, so its strip stays empty
-            # until the enrichment lands — harmless)
-            set_last_response(
-                current_app.redis,
-                current_user.id,
-                movie.id,
-                "rated",
-                positive=rating >= 3,
-            )
+            # until the enrichment lands — harmless). A poster-card
+            # rating (#45c) never moves the drive's anchor
+            if not request.form.get("from_card"):
+                set_last_response(
+                    current_app.redis,
+                    current_user.id,
+                    movie.id,
+                    "rated",
+                    positive=rating >= 3,
+                )
             _enqueue_profile_recompute()
 
         if created:
