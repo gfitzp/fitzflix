@@ -187,6 +187,7 @@ def plant_enriched(app, tmdb_id=33667):
                 "year": "1963",
                 "poster_path": "/shock.jpg",
                 "runtime": 101,
+                "overview": "A reporter has himself committed to crack a murder.",
                 "original_language": "en",
                 "genres": [{"id": 18, "name": "Drama"}],
                 "keywords": [],
@@ -286,6 +287,10 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
     assert "credit=101" in body
     assert "credit=103" in body
     assert "credit=104" not in body
+
+    # The TMDb synopsis rides on the card
+
+    assert "A reporter has himself committed to crack a murder." in body
 
     # The unlogged film previews the engine's estimate, posting to the
     # TMDb log route (no record exists yet)

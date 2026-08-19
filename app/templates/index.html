@@ -178,6 +178,12 @@
 		{% elif now_playing.starring %}
 		<p class="mb-1 small text-muted">Starring {{ now_playing.starring }}</p>
 		{% endif %}
+		{% if now_playing.overview %}
+		{# The TMDb synopsis, clamped to four lines — enough to know
+		   what the film is about at a glance without swallowing the
+		   card (the More link carries the full description) #}
+		<p class="mb-1 small" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ now_playing.overview }}</p>
+		{% endif %}
 		{% if now_playing.tmdb_id %}
 		{# The star row (#58): the viewer's own verdict, or the engine's
 		   estimate in paler gold until there is one. Taps post live to

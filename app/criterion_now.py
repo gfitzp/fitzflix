@@ -269,6 +269,7 @@ def criterion_now_card(user):
         "more_url": stored.get("more_url"),
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
+        "overview": (payload or {}).get("overview"),
         "ladder": _ladder_state_for(user, tmdb_id, payload),
         **_credited_people(payload),
     }
