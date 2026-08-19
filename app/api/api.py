@@ -25,7 +25,15 @@ def queue_details():
     """
 
     if current_user.is_authenticated:
-        return jsonify(current_user.get_queue_details())
+        details = current_user.get_queue_details()
+
+        # The per-file pipeline trails (#18): where each recent file
+        # sits in its journey through the import pipeline
+
+        from app.pipeline import pipeline_trails
+
+        details["files"] = pipeline_trails(current_app.redis)
+        return jsonify(details)
 
     # The user could not be authenticated, return a 401 http error code
 

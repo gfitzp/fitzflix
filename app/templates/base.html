@@ -417,6 +417,74 @@
 				allSignature = signature;
 			}
 
+			// Per-file pipeline trails (#18): one list-group row per
+			// recent file, its journey as stage chips — done green,
+			// running blue, queued gray, retry-wait amber, failed red
+
+			var filesSignature = null;
+
+			function renderFiles(files) {
+				var holder = document.getElementById("pipeline-files");
+				var section = document.getElementById("pipeline-files-section");
+				if (!holder || !section) return;
+
+				var signature = files.map(function(file) {
+					return file.basename + "|" + file.updated + "|" + file.entries.length;
+				}).join("\n");
+				if (signature === filesSignature) return;
+
+				section.style.display = files.length ? "" : "none";
+				holder.textContent = "";
+				var chipClass = {
+					done: "text-bg-success",
+					started: "text-bg-primary",
+					queued: "text-bg-secondary",
+					scheduled: "text-bg-warning",
+					failed: "text-bg-danger"
+				};
+				var chipWord = {
+					done: "done",
+					started: "running",
+					queued: "queued",
+					scheduled: "waiting to retry",
+					failed: "failed"
+				};
+				files.forEach(function(file) {
+					var row = document.createElement("div");
+					row.className = "list-group-item";
+
+					var name = document.createElement("div");
+					name.className = "fw-bold small";
+					name.textContent = file.basename;
+					row.appendChild(name);
+
+					var chips = document.createElement("div");
+					chips.className = "mt-1";
+					file.entries.forEach(function(entry, index) {
+						if (index) {
+							chips.appendChild(document.createTextNode(" → "));
+						}
+						var chip = document.createElement("span");
+						chip.className = "badge fw-normal "
+							+ (chipClass[entry.status] || "text-bg-light");
+						chip.textContent = entry.stage
+							+ (entry.status === "done" ? "" : " · " + (chipWord[entry.status] || entry.status));
+						chip.setAttribute("title", entry.stage + " — "
+							+ (chipWord[entry.status] || entry.status) + " at " + entry.at);
+						chips.appendChild(chip);
+					});
+					row.appendChild(chips);
+
+					var updated = document.createElement("div");
+					updated.className = "small text-muted mt-1";
+					updated.textContent = "Updated " + file.updated;
+					row.appendChild(updated);
+
+					holder.appendChild(row);
+				});
+				filesSignature = signature;
+			}
+
 			function scheduleNext() {
 				clearTimeout(pollTimer);
 				if (document.hidden) return;
@@ -434,6 +502,7 @@
 						setQueueCount(queue_details.count);
 						renderRunning(queue_details.running || []);
 						renderAll(queue_details.all || []);
+						renderFiles(queue_details.files || []);
 					})
 					.catch(function() {})
 					.finally(scheduleNext);

@@ -465,15 +465,19 @@ def create_app(config_class=Config, watch_import_dir=False):
             "built-in default outside debug mode"
         )
 
-    # Configure the Redis connection and queues
+    # Configure the Redis connection and queues. TrackedQueue leaves
+    # per-file trail entries at enqueue time (#18); jobs that aren't
+    # pipeline stages record nothing
+
+    from app.pipeline import TrackedQueue
 
     app.redis = Redis.from_url(app.config["REDIS_URL"])
-    app.maintenance_queue = rq.Queue("fitzflix-maintenance", connection=app.redis)
-    app.sql_queue = rq.Queue("fitzflix-sql", connection=app.redis)
-    app.request_queue = rq.Queue("fitzflix-user-request", connection=app.redis)
-    app.import_queue = rq.Queue("fitzflix-import", connection=app.redis)
-    app.transcode_queue = rq.Queue("fitzflix-transcode", connection=app.redis)
-    app.file_queue = rq.Queue("fitzflix-file-operation", connection=app.redis)
+    app.maintenance_queue = TrackedQueue("fitzflix-maintenance", connection=app.redis)
+    app.sql_queue = TrackedQueue("fitzflix-sql", connection=app.redis)
+    app.request_queue = TrackedQueue("fitzflix-user-request", connection=app.redis)
+    app.import_queue = TrackedQueue("fitzflix-import", connection=app.redis)
+    app.transcode_queue = TrackedQueue("fitzflix-transcode", connection=app.redis)
+    app.file_queue = TrackedQueue("fitzflix-file-operation", connection=app.redis)
 
     # Configure the Redis redlock manager
 

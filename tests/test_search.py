@@ -90,7 +90,9 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
     assert "Jurassic Park (1993)" in page
     assert 'text-bg-success">Bluray-2160p Remux' in page
-    assert "text-bg-warning" not in page
+    # The chip-color map in base.html's poll script mentions the
+    # class on every page, so assert on rendered badges only
+    assert 'text-bg-warning">' not in page
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
@@ -556,7 +558,9 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
 
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
     assert 'text-bg-success">DVD &mdash; excluded' in page
-    assert "text-bg-warning" not in page
+    # The chip-color map in base.html's poll script mentions the
+    # class on every page, so assert on rendered badges only
+    assert 'text-bg-warning">' not in page
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):

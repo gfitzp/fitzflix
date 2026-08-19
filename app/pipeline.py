@@ -1,0 +1,270 @@
+"""Per-file pipeline trails (#18).
+
+Every file moving through the import pipeline leaves one ordered trail
+in Redis — Localizing → Moving into the library → Cataloging →
+Archiving to S3, plus remuxes, transcodes, and restores — so the queue
+page can answer "where is my file right now" without reading worker
+logs.
+
+State updates come from JOB LIFECYCLE HOOKS, never from instrumenting
+task bodies: TrackedQueue records "queued"/"scheduled" as jobs are
+enqueued (deferred retries surface as "scheduled"), and PipelineWorker
+records "started"/"done"/"failed" around execution. Which file a job
+belongs to is derived centrally by the STAGES registry from the job's
+function name and arguments — tasks the registry doesn't know are
+simply not trails (SQL refreshes, maintenance sweeps).
+
+Recording must never break the pipeline: every hook swallows and logs
+its own failures, and a trail is only ever advisory display state —
+three days of TTL, newest hundred files kept.
+"""
+
+import hashlib
+import json
+import os
+import time
+import traceback
+
+from datetime import datetime
+
+from rq import Queue, SimpleWorker
+
+FILE_KEY = "fitzflix:pipeline:file:{digest}"
+ACTIVE_KEY = "fitzflix:pipeline:active"
+TRAIL_TTL_SECONDS = 3 * 86400
+ACTIVE_LIMIT = 100
+
+
+def _basename_from_path(args, kwargs):
+    """The file's basename from a leading path argument."""
+
+    return os.path.basename(args[0]) if args else None
+
+
+def _basename_from_details(args, kwargs):
+    """The basename inside a file_details dict (second argument)."""
+
+    if len(args) > 1 and isinstance(args[1], dict):
+        return args[1].get("basename")
+    return None
+
+
+def _basename_from_second_arg(args, kwargs):
+    """A literal basename passed second (download_task's signature)."""
+
+    return args[1] if len(args) > 1 else None
+
+
+def _basename_from_file_id(args, kwargs):
+    """The File record's basename, looked up by a leading file_id.
+
+    Enqueue-side hooks already run inside an app context (the test
+    app's included — never trust the get_app() singleton in tests);
+    worker-side hooks run outside one, so fall back to the worker's
+    own app.
+    """
+
+    if not args:
+        return None
+    from flask import current_app
+
+    from app import db
+
+    try:
+        flask_app = current_app._get_current_object()
+    except RuntimeError:
+        from app import get_app
+
+        flask_app = get_app()
+    from app.models import File
+
+    with flask_app.app_context():
+        file = db.session.get(File, args[0])
+        return file.basename if file else None
+
+
+# Every per-file pipeline task, by rq function name: the stage label
+# the trail shows, and how to derive the file's basename from the
+# job's arguments. Anything not listed leaves no trail.
+
+STAGES = {
+    "app.videos.localization_task": ("Localizing", _basename_from_path),
+    "app.videos.move_localized_file": (
+        "Moving into the library",
+        _basename_from_details,
+    ),
+    "app.videos.finalize_localization": ("Cataloging", _basename_from_details),
+    "app.videos.upload_task": ("Archiving to S3", _basename_from_file_id),
+    "app.videos.track_metadata_scan_task": (
+        "Scanning track metadata",
+        _basename_from_file_id,
+    ),
+    "app.videos.mkvpropedit_task": ("Setting track flags", _basename_from_file_id),
+    "app.videos.mkvmerge_task": ("Remuxing", _basename_from_file_id),
+    "app.videos.remux_audio_plan_task": (
+        "Rebuilding audio",
+        _basename_from_file_id,
+    ),
+    "app.videos.transcode_task": ("Transcoding", _basename_from_file_id),
+    "app.videos.download_task": ("Restoring from S3", _basename_from_second_arg),
+}
+
+
+def _stage_for(job):
+    """(basename, stage label) for a pipeline job, or None."""
+
+    entry = STAGES.get(job.func_name)
+    if entry is None:
+        return None
+    label, extractor = entry
+    basename = extractor(job.args or (), job.kwargs or {})
+    if not basename:
+        return None
+    return basename, label
+
+
+def _digest(basename):
+    """The stable Redis key fragment for one file's trail."""
+
+    return hashlib.sha1(basename.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def record_job_event(connection, job, event):
+    """Append (or update in place) one stage entry on the job's file
+    trail. Advisory only — any failure is logged and swallowed, never
+    surfaced to the pipeline itself."""
+
+    try:
+        found = _stage_for(job)
+        if found is None:
+            return
+        basename, stage = found
+        digest = _digest(basename)
+        key = FILE_KEY.format(digest=digest)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        raw = connection.hget(key, "trail")
+        trail = json.loads(raw) if raw else []
+
+        # The same job moving through its lifecycle updates its own
+        # entry — queued → started → done is one line, not three; a
+        # re-enqueued retry is a NEW job id, so it appends a fresh
+        # entry and the earlier failure stays visible
+
+        for entry in reversed(trail):
+            if entry.get("job") == job.id and entry.get("stage") == stage:
+                entry["status"] = event
+                entry["at"] = now
+                break
+        else:
+            trail.append({"stage": stage, "status": event, "at": now, "job": job.id})
+        del trail[:-40]
+
+        connection.hset(
+            key,
+            mapping={"basename": basename, "trail": json.dumps(trail), "updated": now},
+        )
+        connection.expire(key, TRAIL_TTL_SECONDS)
+        connection.zadd(ACTIVE_KEY, {digest: time.time()})
+        connection.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
+
+
+def pipeline_trails(connection, limit=25):
+    """The newest file trails for the queue page, most recent first:
+    [{basename, updated, entries: [{stage, status, at}, …]}, …]."""
+
+    trails = []
+    try:
+        digests = connection.zrevrange(ACTIVE_KEY, 0, limit - 1)
+        for digest in digests:
+            digest = digest.decode() if isinstance(digest, bytes) else digest
+            data = connection.hgetall(FILE_KEY.format(digest=digest))
+            if not data:
+                connection.zrem(ACTIVE_KEY, digest)
+                continue
+            decoded = {
+                (k.decode() if isinstance(k, bytes) else k): (
+                    v.decode() if isinstance(v, bytes) else v
+                )
+                for k, v in data.items()
+            }
+            entries = [
+                {
+                    "stage": entry.get("stage"),
+                    "status": entry.get("status"),
+                    "at": entry.get("at"),
+                }
+                for entry in json.loads(decoded.get("trail") or "[]")
+            ]
+            trails.append(
+                {
+                    "basename": decoded.get("basename"),
+                    "updated": decoded.get("updated"),
+                    "entries": entries,
+                }
+            )
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
+    return trails
+
+
+class TrackedQueue(Queue):
+    """An rq Queue that leaves trail entries as jobs are enqueued —
+    "queued" for immediate work, "scheduled" for deferred retries —
+    so a file waiting its turn is already visible on the queue page."""
+
+    def enqueue_job(self, job, pipeline=None, at_front=False, unique=False):
+        """Enqueue and stamp the trail: the job is waiting its turn."""
+
+        job = super().enqueue_job(
+            job, pipeline=pipeline, at_front=at_front, unique=unique
+        )
+        record_job_event(self.connection, job, "queued")
+        return job
+
+    def schedule_job(self, job, datetime, pipeline=None, unique=False):
+        """Schedule and stamp the trail: a deferred retry is booked."""
+
+        job = super().schedule_job(job, datetime, pipeline=pipeline, unique=unique)
+        record_job_event(self.connection, job, "scheduled")
+        return job
+
+
+class PipelineWorker(SimpleWorker):
+    """A SimpleWorker that stamps the trail around execution: started
+    when a job is picked up, done or failed when it lands."""
+
+    def execute_job(self, job, queue):
+        """Stamp started, then run the job as SimpleWorker does."""
+
+        record_job_event(self.connection, job, "started")
+        return super().execute_job(job, queue)
+
+    def handle_job_success(self, job, queue, started_job_registry):
+        """Run rq's success handling, then stamp the trail done."""
+
+        super().handle_job_success(job, queue, started_job_registry)
+        record_job_event(self.connection, job, "done")
+
+    def handle_job_failure(self, job, queue, started_job_registry=None, exc_string=""):
+        """Run rq's failure handling, then stamp the trail failed."""
+
+        super().handle_job_failure(
+            job,
+            queue,
+            started_job_registry=started_job_registry,
+            exc_string=exc_string,
+        )
+        record_job_event(self.connection, job, "failed")
