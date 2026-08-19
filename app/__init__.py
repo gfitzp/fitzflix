@@ -212,6 +212,18 @@ def cron_table(config):
             )
         )
 
+        # Title Plex episodes from filename-carried titles (#68) —
+        # replaces the external write-Plex's-SQLite-directly cron
+
+        table.append(
+            (
+                "25 3 * * *",
+                "app.plex_titles.sync_plex_episode_titles",
+                1800,
+                "Syncing episode titles into Plex",
+            )
+        )
+
     # Reconcile the Plex and Fitzflix watchlists both ways (#67); the
     # account-level discover API needs only the token, not the server
 
