@@ -1384,3 +1384,63 @@ def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_
         },
     )
     assert response.headers["Location"].endswith("/history")
+
+
+def test_feed_created_rows_never_export_back_to_letterboxd(
+    app, admin_client, monkeypatch
+):
+    """A row carrying a letterboxd_guid came FROM the feed (#61) — it is
+    already on Letterboxd, and exporting it back would round-trip a
+    duplicate."""
+
+    import csv as csv_module
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        local = make_movie("Local Verdict", 1980)
+        synced = make_movie("Synced From Feed", 1981)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=local.id,
+                date_watched=datetime(2026, 8, 1),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=synced.id,
+                date_watched=datetime(2026, 8, 2),
+                letterboxd_guid="letterboxd-watch-99",
+                **star_rating_fields(5.0),
+            )
+        )
+        db.session.commit()
+
+    sent = {}
+
+    import app.main.routes as main_routes
+
+    def fake_send_email(subject, sender, recipients, **kwargs):
+        sent["attachments"] = kwargs.get("attachments")
+
+    monkeypatch.setattr(main_routes, "send_email", fake_send_email)
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    admin_client.post(
+        "/history",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "export_submit": "Export Reviews",
+            "full_export": "y",
+        },
+    )
+    _, _, contents = sent["attachments"][0]
+    titles = [row[2] for row in csv_module.reader(io.StringIO(contents))][1:]
+    assert "Local Verdict" in titles
+    assert "Synced From Feed" not in titles

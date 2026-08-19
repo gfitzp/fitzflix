@@ -62,6 +62,14 @@ class PlexUsernameForm(FlaskForm):
     plex_submit = SubmitField("Update Plex Mapping")
 
 
+class LetterboxdUsernameForm(FlaskForm):
+    """Name the Letterboxd account whose RSS feed syncs into this
+    user's diary (#61); blank disables the sync."""
+
+    letterboxd_username = StringField("Letterboxd Username", validators=[Optional()])
+    letterboxd_submit = SubmitField("Update Letterboxd Sync")
+
+
 class ImportForm(FlaskForm):
     """Manually trigger an import-directory scan."""
 

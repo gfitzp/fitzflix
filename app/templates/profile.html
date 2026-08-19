@@ -38,6 +38,18 @@
     	</form>
     	<p class="small text-muted mt-1">Plex watches by this account are recorded in your diary. Leave blank to unmap.</p>
     </div>
+    <div class="col-md-4">
+    	<p>Letterboxd username:{% if current_user.letterboxd_username %} {{ current_user.letterboxd_username }}{% else %} <span class="text-muted">not syncing</span>{% endif %}</p>
+    	<form action="" method="post">
+    		{{ letterboxd_form.hidden_tag() }}
+    		<div class="form-group">
+    			{{ letterboxd_form.letterboxd_username.label }}
+    			{{ letterboxd_form.letterboxd_username(size=32, class_="form-control", value=current_user.letterboxd_username or "") }}
+    		</div>
+    		{{ letterboxd_form.letterboxd_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">Diary entries and reviews from this Letterboxd account's public RSS feed sync into your history twice an hour. Leave blank to disable.</p>
+    </div>
 </div>
 <hr>
 <h5>Streaming Services</h5>

@@ -138,6 +138,14 @@ def cron_table(config):
             "Cleaning up orphaned partial files",
         ),
         ("*/10 * * * *", "app.maintenance.health_probe", 600, "Probing system health"),
+        # Sync Letterboxd diaries from each user's RSS feed (#61); the
+        # task no-ops for users without a configured username
+        (
+            "20,50 * * * *",
+            "app.letterboxd.sync_letterboxd_feeds",
+            900,
+            "Syncing Letterboxd diaries",
+        ),
         # Recompute per-user film recommendations nightly, after the log
         # rotation and backup windows
         (

@@ -72,6 +72,7 @@ from app.main.forms import (
     TranscodeForm,
     WatchlistForm,
     TVShoppingFilterForm,
+    LetterboxdUsernameForm,
     PlexUsernameForm,
     StreamingProvidersForm,
     UpdateAPIKeyForm,
@@ -4057,9 +4058,15 @@ def history():
         # by id rather than date_watched, which can be backdated past the
         # last export
 
-        export_query = UserMovieReview.query.join(
-            Movie, (Movie.id == UserMovieReview.movie_id)
-        ).filter(UserMovieReview.user_id == int(current_user.id))
+        export_query = (
+            UserMovieReview.query.join(
+                Movie, (Movie.id == UserMovieReview.movie_id)
+            ).filter(UserMovieReview.user_id == int(current_user.id))
+            # Rows that came FROM the Letterboxd feed never export back
+            # to Letterboxd (#61) — they are already there, and the
+            # round-trip would duplicate them
+            .filter(UserMovieReview.letterboxd_guid.is_(None))
+        )
 
         last_exported_at = current_user.date_reviews_exported
         incremental = (
@@ -4260,6 +4267,21 @@ def profile():
     # Form to map this account to a Plex username, so Plex watches land in
     # this user's diary
 
+    letterboxd_form = LetterboxdUsernameForm()
+    if letterboxd_form.letterboxd_submit.data and letterboxd_form.validate_on_submit():
+        username = (letterboxd_form.letterboxd_username.data or "").strip() or None
+        current_user.letterboxd_username = username
+        db.session.commit()
+        if username:
+            flash(
+                f"Letterboxd diary entries by '{username}' now sync into "
+                f"your history.",
+                "success",
+            )
+        else:
+            flash("Letterboxd sync disabled.", "info")
+        return redirect(url_for("main.profile"))
+
     plex_form = PlexUsernameForm()
     if plex_form.plex_submit.data and plex_form.validate_on_submit():
         plex_username = (plex_form.plex_username.data or "").strip() or None
@@ -4322,6 +4344,7 @@ def profile():
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         plex_form=plex_form,
+        letterboxd_form=letterboxd_form,
         streaming_form=streaming_form,
         provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )
@@ -4441,6 +4464,7 @@ def _scheduled_tasks():
         "30 3 1 * *": "Monthly on the 1st at 3:30 AM",
         "0 * * * *": "Hourly",
         "30 * * * *": "Hourly at :30",
+        "20,50 * * * *": "Twice hourly at :20 and :50",
         "*/10 * * * *": "Every 10 minutes",
         "*/15 * * * *": "Every 15 minutes",
         "* * * * *": "Every minute",
@@ -4493,7 +4517,7 @@ def _cron_frequency_key(cron_string):
         if minute.startswith("*/"):
             return (0, (int(minute[2:]),))
         if hour == "*":
-            return (1, (int(minute),))
+            return (1, (int(minute.split(",")[0]),))
         if dom == "*" and dow == "*":
             return (2, (int(hour), int(minute)))
         if dow != "*":

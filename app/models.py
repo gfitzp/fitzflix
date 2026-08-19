@@ -787,6 +787,11 @@ class User(UserMixin, db.Model):
     date_reviews_exported = db.Column(db.DateTime)
     last_export_review_id = db.Column(db.Integer)
 
+    # The Letterboxd account whose RSS feed syncs into this user's diary
+    # (#61); empty disables the poll for this user
+
+    letterboxd_username = db.Column(db.String(64))
+
     # The streaming services this user subscribes to — availability
     # displays are customized per user, never site-wide
 
@@ -1112,6 +1117,12 @@ class UserMovieReview(db.Model):
     # rows where nobody knows
 
     rewatch = db.Column(db.Boolean)
+
+    # The Letterboxd feed item this row came from or was matched by
+    # (#61): the dedup/edit key, and rows carrying one never re-export
+    # to Letterboxd — they are already there
+
+    letterboxd_guid = db.Column(db.String(64), unique=True)
 
     def __repr__(self):
         return f"<UserMovieReview '{self.user_id}:{self.movie_id}:{self.rating}'>"
