@@ -186,6 +186,16 @@ def cron_table(config):
             3600,
             "Recomputing the streaming rail",
         ),
+        # Pre-warm estimate payloads nightly, after the recompute has
+        # dropped the overlays and the rail's enrichments are cached —
+        # affinity people's careers plus the TMDb charts, pre-scored
+        # into the tmdb overlay so tiles paint without waiting
+        (
+            "45 2 * * *",
+            "app.estimate_warm.warm_estimates",
+            3600,
+            "Pre-warming estimate payloads",
+        ),
         # Top up and rotate the Name that Frame pool (#21) nightly;
         # the coordinator queues per-film extractions on the serial
         # transcode lane, so a big backfill can't crowd anything out

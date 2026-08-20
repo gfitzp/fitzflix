@@ -1,0 +1,206 @@
+"""The nightly estimate pre-warming task: affinity people's careers
+and the TMDb charts warmed into the enrichment cache under a fetch
+budget, rolling cursors, the month-long TTL, and the pre-scored tmdb
+overlay that lets tiles paint estimates without waiting."""
+
+import json
+
+from tests.factories import make_movie
+
+NIGHTLY_PROFILE = {
+    "affinities": {
+        "genre:35": {"class": "genre", "label": "Comedy", "count": 3, "score": 0.5},
+        "actor:9001": {
+            "class": "actor",
+            "label": "Warm Actor",
+            "count": 4,
+            "score": 0.9,
+        },
+        "director:9002": {
+            "class": "director",
+            "label": "Warm Director",
+            "count": 2,
+            "score": 0.4,
+        },
+        # The same person acting AND directing counts once, at their best
+        "director:9001": {
+            "class": "director",
+            "label": "Warm Actor",
+            "count": 1,
+            "score": 0.2,
+        },
+    },
+    "movies": 5,
+    "calibration": {
+        "scores": [0.0, 0.1, 0.2, 0.3],
+        "stars": [1.0, 2.0, 4.0, 4.5],
+    },
+}
+
+
+class FakeTMDb:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.payload
+
+
+def install_warm_fakes(app, monkeypatch, fetched):
+    """Fake tmdb_get for the warm task and the enrichment module:
+    person 9001's career is films 700001-700003, person 9002's is
+    700003-700004 (an overlap), the charts serve one page each, and
+    every /movie/{id} enrichment is recorded in `fetched`."""
+
+    import app.estimate_warm as estimate_warm
+    import app.streaming_rail as streaming_rail
+
+    def fake_tmdb_get(url, params=None, timeout=None):
+        if "/person/9001/movie_credits" in url:
+            return FakeTMDb(
+                {
+                    "cast": [{"id": 700001}, {"id": 700002}],
+                    "crew": [{"id": 700003, "job": "Director"}],
+                }
+            )
+        if "/person/9002/movie_credits" in url:
+            return FakeTMDb(
+                {
+                    "cast": [],
+                    "crew": [
+                        {"id": 700003, "job": "Director"},
+                        {"id": 700004, "job": "Director"},
+                        {"id": 700005, "job": "Best Boy"},
+                    ],
+                }
+            )
+        if url.endswith("/movie/popular"):
+            return FakeTMDb(
+                {"results": [{"id": 700010}, {"id": 700011}], "total_pages": 1}
+            )
+        if url.endswith("/movie/top_rated"):
+            return FakeTMDb({"results": [{"id": 700020}], "total_pages": 1})
+        for tmdb_id in (700001, 700002, 700003, 700004, 700010, 700011, 700020):
+            if url.endswith(f"/movie/{tmdb_id}"):
+                fetched.append(tmdb_id)
+                return FakeTMDb(
+                    {
+                        "id": tmdb_id,
+                        "title": f"Warm Film {tmdb_id}",
+                        "release_date": "1994-05-01",
+                        "original_language": "en",
+                        "genres": [{"id": 35, "name": "Comedy"}],
+                        "keywords": {"keywords": []},
+                        "credits": {"cast": [], "crew": []},
+                    }
+                )
+        return FakeTMDb({"results": []})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(estimate_warm, "tmdb_get", fake_tmdb_get)
+    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+
+
+def plant_profile(app, user_id):
+    app.redis.set(f"fitzflix:recs:profile:{user_id}", json.dumps(NIGHTLY_PROFILE))
+
+
+def admin_id(app):
+    from app.models import User
+
+    with app.app_context():
+        return User.query.filter_by(admin=True).first().id
+
+
+def test_affinity_people_rank_and_dedupe(app):
+    from app.estimate_warm import _affinity_people
+
+    people = _affinity_people(NIGHTLY_PROFILE)
+    assert people == [9001, 9002]
+
+
+def test_warm_task_caches_scores_and_rolls_cursors(app, monkeypatch):
+    """One night's run warms every candidate payload with the long TTL,
+    pre-scores record-less films into the tmdb overlay (recorded films
+    sit out — the movie lane owns them), and rolls the cursors so the
+    next night resumes further on."""
+
+    from app import db
+    from app.estimate_warm import CURSORS_KEY, warm_estimates
+    from app.recommendations import TMDB_PATCH_SCORES_KEY
+
+    user_id = admin_id(app)
+    plant_profile(app, user_id)
+    with app.app_context():
+        make_movie("Warm Recorded", 1994, tmdb_id=700010)
+        db.session.commit()
+
+    fetched = []
+    install_warm_fakes(app, monkeypatch, fetched)
+
+    assert warm_estimates() is True
+
+    # Every candidate payload is cached, deduplicated (700003 appears
+    # in both careers but fetches once), and holds the month TTL
+
+    assert sorted(set(fetched)) == sorted(fetched)
+    for tmdb_id in (700001, 700002, 700003, 700004, 700010, 700011, 700020):
+        key = f"fitzflix:tmdb:movie:{tmdb_id}:enriched"
+        assert app.redis.exists(key)
+        assert app.redis.ttl(key) > 7 * 86400
+
+    # The overlay carries pre-scores for the record-less films only
+
+    overlay = {
+        field.decode(): float(value)
+        for field, value in app.redis.hgetall(
+            TMDB_PATCH_SCORES_KEY.format(user_id=user_id)
+        ).items()
+    }
+    for tmdb_id in ("700001", "700002", "700003", "700004", "700011", "700020"):
+        assert tmdb_id in overlay and overlay[tmdb_id] > 0
+    assert "700010" not in overlay
+
+    # Cursors rolled: both people warmed (wrapping to the start), both
+    # exhausted single-page charts wrapped to zero
+
+    cursors = {
+        field.decode(): int(value)
+        for field, value in app.redis.hgetall(CURSORS_KEY).items()
+    }
+    assert cursors[f"people:{user_id}"] == 0
+    assert cursors["chart:popular"] == 0
+    assert cursors["chart:top_rated"] == 0
+
+    # A tile batch the next morning reads finished numbers: no fetch,
+    # no live scoring — the estimate is already on the shelf
+
+    fetched.clear()
+    with app.test_client() as client:
+        with client.session_transaction() as session:
+            session["_user_id"] = str(user_id)
+            session["_fresh"] = True
+        payload = client.get("/movie_states?tmdb_ids=700001,700020").get_json()
+    assert payload["tmdb"]["700001"]["estimated"] is not None
+    assert payload["tmdb"]["700020"]["estimated"] is not None
+    assert fetched == []
+
+
+def test_warm_task_respects_the_fetch_budget(app, monkeypatch):
+    """The nightly budget caps fresh enrichment fetches; candidates
+    past it wait for the next night's roll."""
+
+    import app.estimate_warm as estimate_warm
+
+    user_id = admin_id(app)
+    plant_profile(app, user_id)
+
+    fetched = []
+    install_warm_fakes(app, monkeypatch, fetched)
+    monkeypatch.setattr(estimate_warm, "WARM_FETCH_BUDGET", 2)
+
+    assert estimate_warm.warm_estimates() is True
+    assert len(fetched) == 2
