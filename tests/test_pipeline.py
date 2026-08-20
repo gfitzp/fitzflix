@@ -116,6 +116,90 @@ def test_a_retry_after_failure_appends_a_fresh_entry(app):
     assert entries[0]["stage"] == entries[1]["stage"] == "Localizing"
 
 
+def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
+    """#76: the move job starts the instant localization enqueues it,
+    so the file-operation worker's "started" stamp races the import
+    worker's "done" stamp on the same trail. The loser of the old
+    read-modify-write erased the winner (two files froze at
+    "Localizing · running" overnight); the WATCHed write must retry
+    and keep both."""
+
+    import app.pipeline as pipeline
+    from app.pipeline import pipeline_trails, record_job_event
+
+    basename = "Trail Race (2026) - [DVD].mkv"
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+        )
+        move = app.file_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/.{basename}", {"basename": basename}, None, None),
+        )
+    record_job_event(app.redis, localize, "started")
+
+    # Interleave deterministically: while the localization "done" write
+    # sits between its read and its write, the move job's "started"
+    # lands on the same trail — the WATCH must fire and re-read
+
+    real_decode = pipeline._decode_trail
+    interleaved = []
+
+    def racing_decode(raw):
+        if not interleaved:
+            interleaved.append(True)
+            record_job_event(app.redis, move, "started")
+        return real_decode(raw)
+
+    monkeypatch.setattr(pipeline, "_decode_trail", racing_decode)
+    record_job_event(app.redis, localize, "done")
+
+    statuses = {
+        (entry["stage"], entry["status"])
+        for entry in pipeline_trails(app.redis)[0]["entries"]
+    }
+    assert ("Localizing", "done") in statuses
+    assert ("Moving into the library", "started") in statuses
+
+
+def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
+    """A phase inside one job — the staging copy — lands on the same
+    trail as its own chip, keyed by the job's id but under its own
+    stage label, so it never collides with the job-level entry."""
+
+    import rq
+
+    from app.pipeline import pipeline_trails, record_job_event, record_task_stage
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Staging (2026) - [DVD].mkv",),
+        )
+    record_job_event(app.redis, job, "started")
+
+    monkeypatch.setattr(rq, "get_current_job", lambda: job)
+    record_task_stage("Copying to staging", "started")
+    record_task_stage("Copying to staging", "done")
+
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Localizing", "started"),
+        ("Copying to staging", "done"),
+    ]
+
+
+def test_task_sub_stage_without_a_job_is_a_noop(app):
+    """Direct task calls (tests, shells) have no current job; the
+    sub-stage emitter must record nothing rather than guess."""
+
+    from app.pipeline import pipeline_trails, record_task_stage
+
+    record_task_stage("Copying to staging", "started")
+    assert pipeline_trails(app.redis) == []
+
+
 def test_non_pipeline_tasks_leave_no_trail(app):
     """Tasks outside the stage registry — refreshes, sweeps — record
     nothing."""
@@ -145,6 +229,28 @@ def test_queue_details_payload_carries_the_trails(app, admin_client):
     assert payload["files"][0]["entries"][0]["stage"] == "Localizing"
 
 
+def test_queue_details_files_limit_is_adjustable(app, admin_client):
+    """The pipeline page asks the shared poll for more than the queue
+    page's newest 25 via ?files=… (#76); the value is clamped so a
+    hand-typed query can't ask Redis for the moon."""
+
+    with app.app_context():
+        for index in range(3):
+            app.import_queue.enqueue(
+                "app.videos.localization_task",
+                args=(f"/import/Trail Limit {index} (2024) - [DVD].mkv",),
+            )
+
+    limited = admin_client.get("/api/queue-details?files=2").get_json()
+    assert len(limited["files"]) == 2
+
+    clamped = admin_client.get("/api/queue-details?files=99999").get_json()
+    assert len(clamped["files"]) == 3
+
+    nonsense = admin_client.get("/api/queue-details?files=-5").get_json()
+    assert len(nonsense["files"]) == 1
+
+
 def test_pipeline_page_renders_the_files_section(admin_client):
     """The trails live on their own page (Glenn's call, Aug 2026),
     linked from Library Maintenance; the queue page no longer carries
@@ -154,9 +260,11 @@ def test_pipeline_page_renders_the_files_section(admin_client):
     assert 'id="pipeline-files-section"' in page
     assert 'id="pipeline-files"' in page
     assert 'id="pipeline-empty"' in page
+    assert "window.pipelineTrailLimit = 100" in page
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in queue_page
+    assert "pipelineTrailLimit = " not in queue_page
 
     maintenance = admin_client.get("/maintenance").get_data(as_text=True)
     assert "/maintenance/pipeline" in maintenance

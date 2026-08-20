@@ -28,11 +28,17 @@ def queue_details():
         details = current_user.get_queue_details()
 
         # The per-file pipeline trails (#18): where each recent file
-        # sits in its journey through the import pipeline
+        # sits in its journey through the import pipeline. The queue
+        # page's poll takes the default 25; the dedicated pipeline
+        # page asks for the full retained set with ?files=… (#76),
+        # clamped to what Redis actually keeps
 
-        from app.pipeline import pipeline_trails
+        from app.pipeline import ACTIVE_LIMIT, pipeline_trails
 
-        details["files"] = pipeline_trails(current_app.redis)
+        limit = request.args.get("files", 25, type=int) or 25
+        details["files"] = pipeline_trails(
+            current_app.redis, limit=max(1, min(limit, ACTIVE_LIMIT))
+        )
         return jsonify(details)
 
     # The user could not be authenticated, return a 401 http error code

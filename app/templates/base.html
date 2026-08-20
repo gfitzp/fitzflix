@@ -280,7 +280,10 @@
 		// slow responses can't overlap and land out of order
 
 		(function() {
-			var QUEUE_URL = '{{ url_for('api.queue_details') }}';
+			// A page may ask the poll for more file trails than the
+			// default 25 (the pipeline page wants the full retained set)
+			var QUEUE_URL = '{{ url_for('api.queue_details') }}'
+				+ (window.pipelineTrailLimit ? '?files=' + window.pipelineTrailLimit : '');
 			var POLL_MS = 5000;
 			var pollTimer = null;
 			var queueBadge = document.getElementById("queue_count");

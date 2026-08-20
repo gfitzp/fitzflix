@@ -56,6 +56,7 @@ from app.models import (
     User,
     tmdb_get,
 )
+from app.pipeline import record_task_stage
 from app.tracks import (
     _extract_media_details,
     flag_possibly_forced_subtitles,
@@ -416,6 +417,7 @@ def localization_task(
             if staging_free > os.path.getsize(file_path) * 2.5:
                 staged_path = os.path.join(staging_dir, basename)
                 staging_paths.append(staged_path)
+                record_task_stage("Copying to staging", "started")
                 try:
                     copy_with_progress(
                         file_path,
@@ -425,6 +427,7 @@ def localization_task(
                         "Copying to local staging",
                     )
                 except OSError as e:
+                    record_task_stage("Copying to staging", "failed")
                     if (
                         e.errno not in TRANSIENT_COPY_ERRNOS
                         or transient_retries >= MAX_TRANSIENT_RETRIES
@@ -468,6 +471,7 @@ def localization_task(
                     )
                     return True
 
+                record_task_stage("Copying to staging", "done")
                 file_path = staged_path
                 staged = True
 

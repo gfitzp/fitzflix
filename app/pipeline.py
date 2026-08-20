@@ -6,13 +6,17 @@ Archiving to S3, plus remuxes, transcodes, and restores — so the queue
 page can answer "where is my file right now" without reading worker
 logs.
 
-State updates come from JOB LIFECYCLE HOOKS, never from instrumenting
+State updates come from JOB LIFECYCLE HOOKS, not from instrumenting
 task bodies: TrackedQueue records "queued"/"scheduled" as jobs are
 enqueued (deferred retries surface as "scheduled"), and PipelineWorker
 records "started"/"done"/"failed" around execution. Which file a job
 belongs to is derived centrally by the STAGES registry from the job's
 function name and arguments — tasks the registry doesn't know are
-simply not trails (SQL refreshes, maintenance sweeps).
+simply not trails (SQL refreshes, maintenance sweeps). The one
+sanctioned in-task emitter is record_task_stage, for a phase that has
+no job boundary of its own (localization's copy to the staging
+directory); it still derives the file from the current job through
+the registry.
 
 Recording must never break the pipeline: every hook swallows and logs
 its own failures, and a trail is only ever advisory display state —
@@ -129,6 +133,82 @@ def _digest(basename):
     return hashlib.sha1(basename.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _decode_trail(raw):
+    """The trail list from its stored JSON (or a fresh empty one)."""
+
+    return json.loads(raw) if raw else []
+
+
+def _write_trail_entry(connection, basename, stage, status, job_id):
+    """Atomically apply one stage event to the file's trail.
+
+    Two workers touch the same trail at a stage handoff: the move job
+    starts the instant the localization task enqueues it, so the
+    file-operation worker's "started" stamp races the import worker's
+    "done" stamp for the stage before it. A plain read-modify-write
+    lets whichever lands second erase the other's update (#76 froze
+    two files at "Localizing · running" forever), so the write WATCHes
+    the trail key and retries from a fresh read when it changed
+    underneath. Bounded retries: the trail is advisory, never worth
+    stalling a worker over.
+    """
+
+    from redis import WatchError
+
+    digest = _digest(basename)
+    key = FILE_KEY.format(digest=digest)
+
+    for _ in range(10):
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with connection.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                trail = _decode_trail(pipe.hget(key, "trail"))
+
+                # The same job moving through its lifecycle updates its
+                # own entry — queued → started → done is one line, not
+                # three; a re-enqueued retry is a NEW job id, so it
+                # appends a fresh entry and the earlier failure stays
+                # visible. A task-emitted sub-stage shares its job's id
+                # but carries its own stage label, so it is its own line.
+
+                for entry in reversed(trail):
+                    if entry.get("job") == job_id and entry.get("stage") == stage:
+                        entry["status"] = status
+                        entry["at"] = now
+                        break
+                else:
+                    trail.append(
+                        {"stage": stage, "status": status, "at": now, "job": job_id}
+                    )
+                del trail[:-40]
+
+                pipe.multi()
+
+                # The file's FIRST start is the running banners' sort
+                # anchor (Glenn's original #18 ask): it never moves once
+                # set, so a file hopping queues keeps its place
+
+                if status == "started":
+                    pipe.hsetnx(key, "first_run", now)
+
+                pipe.hset(
+                    key,
+                    mapping={
+                        "basename": basename,
+                        "trail": json.dumps(trail),
+                        "updated": now,
+                    },
+                )
+                pipe.expire(key, TRAIL_TTL_SECONDS)
+                pipe.zadd(ACTIVE_KEY, {digest: time.time()})
+                pipe.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
+                pipe.execute()
+                return
+            except WatchError:
+                continue
+
+
 def record_job_event(connection, job, event):
     """Append (or update in place) one stage entry on the job's file
     trail. Advisory only — any failure is logged and swallowed, never
@@ -139,41 +219,37 @@ def record_job_event(connection, job, event):
         if found is None:
             return
         basename, stage = found
-        digest = _digest(basename)
-        key = FILE_KEY.format(digest=digest)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _write_trail_entry(connection, basename, stage, event, job.id)
+    except Exception:
+        try:
+            from flask import current_app
 
-        raw = connection.hget(key, "trail")
-        trail = json.loads(raw) if raw else []
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
 
-        # The same job moving through its lifecycle updates its own
-        # entry — queued → started → done is one line, not three; a
-        # re-enqueued retry is a NEW job id, so it appends a fresh
-        # entry and the earlier failure stays visible
 
-        for entry in reversed(trail):
-            if entry.get("job") == job.id and entry.get("stage") == stage:
-                entry["status"] = event
-                entry["at"] = now
-                break
-        else:
-            trail.append({"stage": stage, "status": event, "at": now, "job": job.id})
-        del trail[:-40]
+def record_task_stage(stage, status):
+    """A named phase INSIDE one pipeline job, reported from the task
+    body — for work that can fail before the job's own stage shows any
+    movement and has no job boundary of its own, like localization's
+    copy to the staging directory. The file is still derived from the
+    current job via the STAGES registry and the entry is keyed by that
+    job's id, so a retry job leaves its own fresh sub-stage line.
+    Advisory like every hook: failures are swallowed, and outside a
+    worker (direct calls in tests) it is a no-op."""
 
-        # The file's FIRST start is the running banners' sort anchor
-        # (Glenn's original #18 ask): it never moves once set, so a
-        # file hopping queues keeps its place in the list
+    try:
+        from rq import get_current_job
 
-        if event == "started":
-            connection.hsetnx(key, "first_run", now)
-
-        connection.hset(
-            key,
-            mapping={"basename": basename, "trail": json.dumps(trail), "updated": now},
-        )
-        connection.expire(key, TRAIL_TTL_SECONDS)
-        connection.zadd(ACTIVE_KEY, {digest: time.time()})
-        connection.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
+        job = get_current_job()
+        if job is None:
+            return
+        found = _stage_for(job)
+        if found is None:
+            return
+        basename, _ = found
+        _write_trail_entry(job.connection, basename, stage, status, job.id)
     except Exception:
         try:
             from flask import current_app
