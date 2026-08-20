@@ -449,6 +449,24 @@
 				failed: "failed"
 			};
 
+			// A landed stage reads as an accomplishment ("Localized"),
+			// a running one keeps the registry's present tense with no
+			// suffix — the tense alone says which is which
+
+			var chipPastTense = {
+				"Copying to staging": "Copied to staging",
+				"Localizing": "Localized",
+				"Moving into the library": "Moved into the library",
+				"Cataloging": "Cataloged",
+				"Archiving to S3": "Archived to S3",
+				"Scanning track metadata": "Scanned track metadata",
+				"Setting track flags": "Set track flags",
+				"Remuxing": "Remuxed",
+				"Rebuilding audio": "Rebuilt audio",
+				"Transcoding": "Transcoded",
+				"Restoring from S3": "Restored from S3"
+			};
+
 			function paintChips(target, entries) {
 				target.textContent = "";
 				entries.forEach(function(entry, index) {
@@ -458,8 +476,12 @@
 					var chip = document.createElement("span");
 					chip.className = "badge fw-normal "
 						+ (chipClass[entry.status] || "text-bg-light");
-					chip.textContent = entry.stage
-						+ (entry.status === "done" ? "" : " · " + (chipWord[entry.status] || entry.status));
+					var label = entry.status === "done"
+						? (chipPastTense[entry.stage] || entry.stage)
+						: entry.stage;
+					chip.textContent = label
+						+ (entry.status === "done" || entry.status === "started"
+							? "" : " · " + (chipWord[entry.status] || entry.status));
 					chip.setAttribute("title", entry.stage + " — "
 						+ (chipWord[entry.status] || entry.status) + " at " + entry.at);
 					target.appendChild(chip);
