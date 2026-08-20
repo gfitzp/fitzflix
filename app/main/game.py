@@ -12,6 +12,7 @@ page markup leaks the answer before a guess lands."""
 import random
 import re
 
+from datetime import datetime
 from difflib import SequenceMatcher
 
 from flask import (
@@ -21,7 +22,6 @@ from flask import (
     render_template,
     request,
     send_from_directory,
-    session,
     url_for,
 )
 from flask_login import current_user, login_required
@@ -31,7 +31,7 @@ from app import db
 from app.frames import POOL_KEY, pool_entries
 from app.main import bp
 from app.main.forms import GuessFrameForm
-from app.models import Movie, UserMovieReview
+from app.models import Movie, UserFrameScore, UserMovieReview
 
 # Difficulty → number of multiple-choice options (None = free text)
 
@@ -139,10 +139,23 @@ def _round_tokens(difficulty):
     return entries
 
 
-def _streak_key(difficulty):
-    """The session key holding this difficulty's running streak."""
+def _score_row(difficulty):
+    """The user's standings row for one difficulty, created on first
+    use — the DB keeps the running streak and the personal best, so
+    scores survive sessions and devices (Glenn's ask, Aug 20 2026)."""
 
-    return f"frame_streak_{difficulty}"
+    row = UserFrameScore.query.filter_by(
+        user_id=int(current_user.id), difficulty=difficulty
+    ).first()
+    if row is None:
+        row = UserFrameScore(
+            user_id=int(current_user.id),
+            difficulty=difficulty,
+            current_streak=0,
+            best_streak=0,
+        )
+        db.session.add(row)
+    return row
 
 
 def _deal_token(tokens):
@@ -205,9 +218,13 @@ def name_that_frame():
             chosen = db.session.get(Movie, int(guessed)) if guessed.isdigit() else None
             guess_shown = _display_title(chosen) if chosen else None
 
-        streak = session.get(_streak_key(difficulty), 0)
-        streak = streak + 1 if correct else 0
-        session[_streak_key(difficulty)] = streak
+        score = _score_row(difficulty)
+        score.current_streak = score.current_streak + 1 if correct else 0
+        new_best = correct and score.current_streak > score.best_streak
+        if new_best:
+            score.best_streak = score.current_streak
+            score.date_best = datetime.now()
+        db.session.commit()
 
         return render_template(
             "game.html",
@@ -219,10 +236,12 @@ def name_that_frame():
                 "guess": guess_shown,
                 "movie_id": movie.id,
                 "answer": _display_title(movie),
+                "new_best": new_best,
             },
             token=token,
             options=None,
-            streak=streak,
+            streak=score.current_streak,
+            best=score.best_streak,
             form=form,
             pool_size=len(pool_entries()),
         )
@@ -237,6 +256,10 @@ def name_that_frame():
     if token and DIFFICULTIES[difficulty] is not None:
         options = _build_options(tokens[token]["movie_id"], difficulty)
 
+    score = UserFrameScore.query.filter_by(
+        user_id=int(current_user.id), difficulty=difficulty
+    ).first()
+
     return render_template(
         "game.html",
         title="Name that Frame",
@@ -245,7 +268,8 @@ def name_that_frame():
         result=None,
         token=token,
         options=options,
-        streak=session.get(_streak_key(difficulty), 0),
+        streak=score.current_streak if score else 0,
+        best=score.best_streak if score else 0,
         form=form,
         pool_size=len(pool_entries()),
     )

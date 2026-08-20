@@ -2125,6 +2125,27 @@ class UserMovieStatus(db.Model):
         return f"<UserMovieStatus '{self.user_id}:{self.movie_id}:{self.kind}'>"
 
 
+class UserFrameScore(db.Model):
+    """Name that Frame standings (#21), one row per (user, difficulty):
+    the running streak and the personal best — persisted here so a
+    restart, another device, or a new session can't erase a high
+    score the way the original session-cookie streaks could."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("user.id"), index=True, nullable=False
+    )
+    difficulty = db.Column(db.String(16), nullable=False)
+    current_streak = db.Column(db.Integer, nullable=False, default=0)
+    best_streak = db.Column(db.Integer, nullable=False, default=0)
+    date_best = db.Column(db.DateTime)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "difficulty"),)
+
+    def __repr__(self):
+        return f"<UserFrameScore '{self.user_id}:{self.difficulty}:{self.best_streak}'>"
+
+
 class TVCast(db.Model):
     """Join row: a credit's acting role on a TV series."""
 

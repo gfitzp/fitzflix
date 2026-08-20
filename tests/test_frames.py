@@ -202,8 +202,16 @@ def test_game_round_and_choice_guessing(app, admin_client):
     ).get_data(as_text=True)
     assert "alert-danger" in wrong
     assert "Frame Answer Film (1994)" in wrong
-    with admin_client.session_transaction() as flask_session:
-        assert flask_session["frame_streak_difficult"] == 0
+
+    # Standings live in the DB now: the miss reset the run, the best
+    # from the earlier hit survives
+
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="difficult").one()
+        assert score.current_streak == 0
+        assert score.best_streak == 1
 
 
 def test_easy_serves_only_rated_films(app, admin_client):
@@ -347,3 +355,103 @@ def test_rounds_never_repeat_until_the_pool_laps(app, admin_client):
     fourth = deal()
     assert fourth in tokens
     assert fourth != first_lap[-1]
+
+
+def test_high_scores_persist_per_difficulty(app, admin_client):
+    """Two hits set a best of 2; a miss resets the run but never the
+    best, and each difficulty keeps its own standings row."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        answer = make_movie("Frame Score Film", 1998)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(8):
+            extra = make_movie(f"Frame Score Distractor {n}", 1960 + n)
+            make_movie_file(extra, "Bluray-1080p")
+        db.session.commit()
+        answer_id = answer.id
+
+    token = seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(difficulty, choice):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": difficulty,
+                "choice": choice,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    guess("difficult", str(answer_id))
+    body = guess("difficult", str(answer_id))
+    assert "That&rsquo;s 2 in a row &mdash; a new personal best." in body
+    guess("difficult", "999999")
+
+    # A hit on another difficulty starts its own row
+
+    guess("siracusa", "")  # a miss — but creates the row
+    with app.app_context():
+        difficult = UserFrameScore.query.filter_by(difficulty="difficult").one()
+        assert (difficult.current_streak, difficult.best_streak) == (0, 2)
+        assert difficult.date_best is not None
+        siracusa = UserFrameScore.query.filter_by(difficulty="siracusa").one()
+        assert (siracusa.current_streak, siracusa.best_streak) == (0, 0)
+
+    # The round page shows the standing best even after the reset
+
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert "Best: 2" in page
+
+
+def test_refresh_guarantees_the_rated_floor(app, monkeypatch):
+    """Each reviewer gets at least FRAME_POOL_MIN_RATED of their rated
+    films queued into the pool before the general fill."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.frames import refresh_frame_pool_task
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
+    monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
+    monkeypatch.setitem(app.config, "FRAME_POOL_MIN_RATED", 2)
+
+    with app.app_context():
+        rated_ids = []
+        for n in range(2):
+            movie = make_movie(f"Frame Floor Rated {n}", 1950 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id(),
+                    movie_id=movie.id,
+                    liked=True,
+                    **star_rating_fields(4.0),
+                )
+            )
+            rated_ids.append(movie.id)
+        for n in range(3):
+            unrated = make_movie(f"Frame Floor Unrated {n}", 1970 + n)
+            make_movie_file(unrated, "Bluray-1080p")
+        db.session.commit()
+
+        summary = refresh_frame_pool_task()
+        assert summary["queued"] == 3
+        job_ids = app.transcode_queue.get_job_ids()
+        jobs = [app.transcode_queue.fetch_job(job_id) for job_id in job_ids]
+        queued = [
+            job.args[0] for job in jobs if "extract_frame_task" in (job.func_name or "")
+        ]
+        # Both rated films made the cut despite five candidates for
+        # three slots
+        assert set(rated_ids) <= set(queued)

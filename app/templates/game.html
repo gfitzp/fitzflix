@@ -10,9 +10,10 @@
 		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ {"easy": "Easy", "difficult": "Difficult", "siracusa": "Siracusa"}[level] }}</a>
 	</li>
 	{% endfor %}
-	{% if streak %}
+	{% if streak or best %}
 	<li class="nav-item ms-auto align-self-center">
-		<span class="badge text-bg-success">Streak: {{ streak }}</span>
+		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
+		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty }} streak">Best: {{ best }}</span>{% endif %}
 	</li>
 	{% endif %}
 </ul>
@@ -21,7 +22,7 @@
 {# The reveal: verdict, the answer linking to its film page, and the
    frame stays up so the answer can be studied #}
 {% if result.correct %}
-<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}.</div>
+<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}

@@ -111,7 +111,12 @@ def refresh_frame_pool_task():
     """Task (nightly): prune dead pool entries, then queue extractions
     to top the pool up to FRAME_POOL_SIZE — rotating the oldest
     FRAME_POOL_ROTATE entries once it's full, preferring movies not
-    yet pooled so the whole library cycles through."""
+    yet pooled so the whole library cycles through. Each reviewer is
+    guaranteed FRAME_POOL_MIN_RATED pooled frames from their own
+    diary (capped by how many rated films they actually have), so
+    Easy mode never runs thin (Glenn's ask, Aug 20 2026)."""
+
+    from app.models import UserMovieReview
 
     with app.app_context():
         entries = pool_entries()
@@ -135,13 +140,40 @@ def refresh_frame_pool_task():
                 valid[token] = entry
 
         pooled_movies = {entry["movie_id"] for entry in valid.values()}
-        fresh = list(playable - pooled_movies)
-        random.shuffle(fresh)
-
         size = current_app.config["FRAME_POOL_SIZE"]
         rotate = current_app.config["FRAME_POOL_ROTATE"]
-        to_extract = fresh[: max(0, size - len(valid))]
-        fresh = fresh[len(to_extract) :]
+        min_rated = current_app.config["FRAME_POOL_MIN_RATED"]
+
+        # Per-reviewer floors first: whoever's Easy world is short of
+        # the minimum gets extractions from their own unpooled rated
+        # films before the general fill
+
+        to_extract = []
+        chosen = set()
+        reviewers = {
+            user_id
+            for (user_id,) in db.session.query(UserMovieReview.user_id).distinct()
+        }
+        for user_id in sorted(reviewers):
+            rated_playable = {
+                movie_id
+                for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+                .filter(UserMovieReview.user_id == user_id)
+                .filter(UserMovieReview.movie_id.isnot(None))
+            } & playable
+            floor = min(min_rated, len(rated_playable))
+            pooled_rated = len(rated_playable & (pooled_movies | chosen))
+            candidates = list(rated_playable - pooled_movies - chosen)
+            random.shuffle(candidates)
+            needed = candidates[: max(0, floor - pooled_rated)]
+            to_extract += needed
+            chosen |= set(needed)
+
+        fresh = list(playable - pooled_movies - chosen)
+        random.shuffle(fresh)
+        top_up = fresh[: max(0, size - len(valid) - len(to_extract))]
+        to_extract += top_up
+        fresh = fresh[len(top_up) :]
 
         # A full pool rotates its oldest entries: retire each one now
         # and queue a replacement — an unpooled movie when any remain,

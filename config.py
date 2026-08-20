@@ -128,8 +128,14 @@ class Config(object):
     # path, since a frame's filename must not hint at its answer
 
     FRAME_POOL_DIR                      = os.environ.get("FRAME_POOL_DIR") or os.path.join(basedir, "app", "frame_pool")
-    FRAME_POOL_SIZE                     = int(os.environ.get("FRAME_POOL_SIZE") or 300)
-    FRAME_POOL_ROTATE                   = int(os.environ.get("FRAME_POOL_ROTATE") or 30)
+    FRAME_POOL_SIZE                     = int(os.environ.get("FRAME_POOL_SIZE") or 600)
+    FRAME_POOL_ROTATE                   = int(os.environ.get("FRAME_POOL_ROTATE") or 60)
+
+    # Easy mode deals only films the player has rated, so the nightly
+    # refresh guarantees each reviewer at least this many pooled frames
+    # from their own diary (capped by how many rated films they have)
+
+    FRAME_POOL_MIN_RATED                = int(os.environ.get("FRAME_POOL_MIN_RATED") or 200)
 
     # AWS Glacier restore cost estimation, in USD: a per-object retrieval
     # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.
