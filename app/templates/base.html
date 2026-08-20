@@ -934,6 +934,30 @@
 					);
 				});
 			}
+			// The in-flight shimmer: every tile a request still owes an
+			// answer pulses (see state-loading in the stylesheet), and
+			// the pulse stops the moment its state paints — tiles a
+			// follow-up pass re-asks for keep pulsing until it lands
+			var byMovie = {};
+			var byTmdb = {};
+			tiles.forEach(function(tile) {
+				var id = tile.getAttribute("data-state-movie");
+				if (id) (byMovie[id] = byMovie[id] || []).push(tile);
+				id = tile.getAttribute("data-state-tmdb");
+				if (id) (byTmdb[id] = byTmdb[id] || []).push(tile);
+			});
+			function setLoading(movieIds, tmdbIds, on) {
+				movieIds.forEach(function(id) {
+					(byMovie[id] || []).forEach(function(tile) {
+						tile.classList.toggle("state-loading", on);
+					});
+				});
+				tmdbIds.forEach(function(id) {
+					(byTmdb[id] || []).forEach(function(tile) {
+						tile.classList.toggle("state-loading", on);
+					});
+				});
+			}
 			// A huge career page can hold more record-less films than
 			// the server's per-request TMDb fetch budget; ids that come
 			// back with no state at all re-ask in follow-up passes that
@@ -943,6 +967,7 @@
 				var params = [];
 				if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
 				if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
+				setLoading(movieIds, tmdbIds, true);
 				fetch("{{ url_for('main.movie_states') }}?" + params.join("&"),
 					{credentials: "same-origin"})
 					.then(function(response) {
@@ -951,6 +976,7 @@
 					})
 					.then(function(payload) {
 						paintFrom(payload);
+						setLoading(movieIds, tmdbIds, false);
 						var unresolved = tmdbIds.filter(function(id) {
 							var state = payload.tmdb[id];
 							return state && !state.has_review && !state.flagged
@@ -961,7 +987,9 @@
 							hydrate([], unresolved, rounds - 1);
 						}
 					})
-					.catch(function() {});
+					.catch(function() {
+						setLoading(movieIds, tmdbIds, false);
+					});
 			}
 			for (var start = 0; start < ids.length; start += STATE_CHUNK) {
 				var movieIds = [];

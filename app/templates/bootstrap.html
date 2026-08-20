@@ -135,6 +135,13 @@
 		   fill-N class mapped to fixed clip-path rules — no var(), no
 		   calc(), nothing for an engine to mis-resolve */
 		.star-row .star { position: relative; }
+		/* While a state fetch is in flight, unpainted rows pulse — the
+		   hydration script sets state-loading on each tile's state
+		   container and clears it the moment the tile paints (or the
+		   passes finish), so the shimmer IS the "estimating…" spinner */
+		.state-loading .star-btn { animation: state-pulse 1.2s ease-in-out infinite; }
+		@keyframes state-pulse { 0%, 100% { opacity: .35; } 50% { opacity: .9; } }
+		@media (prefers-reduced-motion: reduce) { .state-loading .star-btn { animation: none; opacity: .5; } }
 		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }
 		.star-row .star.filled::before { color: #f0ad4e; }
 		.star-row .star.estimated::before { color: #adb5bd; }
