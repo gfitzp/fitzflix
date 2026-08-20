@@ -232,6 +232,11 @@
 			</fieldset>
 		</form>
 		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
+		{# The tracked derived copies (#19) — they cascade away with
+		   this record, and their physical files are purged with it #}
+		{% for derived in file.derived_files %}
+		<div class="small text-muted">Copy: {{ derived.basename }}{% if derived.filesize_bytes %} &middot; {% if derived.filesize_bytes >= 1073741824 %}{{ "%.1f"|format(derived.filesize_bytes / 1073741824) }} GB{% else %}{{ "%.0f"|format(derived.filesize_bytes / 1048576) }} MB{% endif %}{% endif %}</div>
+		{% endfor %}
 	</div>
 	<div class="col-sm-4">
 		<form action="" method="post">

@@ -1434,6 +1434,18 @@ class File(db.Model):
     audiotrack = db.relationship(
         "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
+
+    # Derived copies (#19): the Handbrake transcodes made FROM this
+    # file. Rows cascade away with their source; the physical purge is
+    # the delete sites' job (see app.transcodes)
+
+    derived_files = db.relationship(
+        "DerivedFile",
+        backref="source_file",
+        lazy="select",
+        cascade="all,delete-orphan",
+        passive_deletes=True,
+    )
     custom_poster = db.Column(db.String(64))
 
     # Keys that aren't mapped columns, but that the import pipeline includes in
@@ -1817,6 +1829,42 @@ class File(db.Model):
             )
 
         return worse_files
+
+
+class DerivedFile(db.Model):
+    """A file derived from a library original (#19) — today the
+    Handbrake transcodes under TRANSCODES_DIR, eventually the 4K→SDR
+    and Dolby Vision conversions.
+
+    Deliberately NOT a File row: File.file_path is LIBRARY_DIR-relative
+    and unique, and every ranking, shopping, and import-replace query
+    treats File rows as originals — putting derived copies there would
+    demand a never-forget filter at every one of those sites, and a
+    missed filter aims deletions at the wrong root. Their own table
+    keeps them structurally invisible to all of it, while the
+    source_file_id link gives the movie/file pages and the linked
+    delete everything they need. file_path here is relative to
+    TRANSCODES_DIR."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    source_file_id = db.Column(
+        db.Integer,
+        db.ForeignKey("file.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind = db.Column(db.String(32), nullable=False, default="handbrake")
+    file_path = db.Column(db.String(512), nullable=False, unique=True, index=True)
+    basename = db.Column(db.String(255), nullable=False)
+    filesize_bytes = db.Column(db.BigInteger)
+    date_created = db.Column(
+        db.DateTime, nullable=False, default=db.func.utc_timestamp()
+    )
+
+    def __repr__(self):
+        """The derived copy's path, marked by kind."""
+
+        return f"<DerivedFile {self.kind} '{self.file_path}'>"
 
 
 class FileAudioTrack(db.Model):

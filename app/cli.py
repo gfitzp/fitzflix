@@ -244,6 +244,25 @@ def register(app):
         click.echo(build_copref_table(dataset))
 
     @app.cli.group()
+    def transcodes():
+        """Manage the derived transcoded copies (#19)."""
+        pass
+
+    @transcodes.command()
+    def adopt():
+        """Adopt untracked transcodes: walk TRANSCODES_DIR and create
+        DerivedFile rows for every copy whose source is identifiable."""
+
+        from flask import current_app
+
+        job = current_app.file_queue.enqueue(
+            "app.transcodes.adopt_transcodes_task",
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description="Adopting untracked transcoded copies",
+        )
+        click.echo(f"Enqueued transcode adoption as {job.id}")
+
+    @app.cli.group()
     def catalog():
         """Manage the film catalog's exclusion list."""
         pass

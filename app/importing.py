@@ -1459,6 +1459,7 @@ def finalize_localization(
             current_app.logger.info(f"{file} worse files: {worse_files}")
 
             worse_aws_keys = []
+            worse_derived_paths = []
 
             for worse in worse_files:
                 worse.delete_local_file()
@@ -1478,6 +1479,15 @@ def finalize_localization(
                         # database commit succeeds, so a failed commit can't cost
                         # us the backup of a record that rolled back
                         worse_aws_keys.append(worse.aws_untouched_key)
+
+                    # The replaced file's transcoded copies go with it
+                    # (#19) — paths noted now, removed after the commit,
+                    # same posture as the AWS keys; the rows themselves
+                    # cascade away with the delete
+
+                    from app.transcodes import derived_paths_for
+
+                    worse_derived_paths += derived_paths_for(worse)
                     db.session.delete(worse)
 
                 if (
@@ -1570,6 +1580,11 @@ def finalize_localization(
                     job_timeout=current_app.config["FILE_TASK_TIMEOUT"],
                     description=f"Deleting '{worse_key}' from AWS",
                 )
+
+            if worse_derived_paths:
+                from app.transcodes import purge_derived_paths
+
+                purge_derived_paths(worse_derived_paths)
 
             # Remove the file that was imported unless it was replaced by the localized file
             # (we don't want to remove the file we just created!)
@@ -1722,6 +1737,14 @@ def finalize_transcoding(file_id, lock, transient_retries=0):
 
             # Update the file record with the date it was transcoded
             file.date_transcoded = datetime.now(timezone.utc)
+
+            # Track the output as a derived file (#19): source-linked,
+            # structurally outside ranking/shopping, and purged with
+            # its original
+
+            from app.transcodes import record_transcode
+
+            record_transcode(file, output_file)
 
             db.session.commit()
 

@@ -2019,12 +2019,16 @@ def tv(series_id):
         and series_delete_form.validate_on_submit()
     ):
         aws_untouched_keys = []
+        derived_paths = []
+
+        from app.transcodes import derived_paths_for, purge_derived_paths
 
         try:
             files = File.query.filter(File.series_id == series_id).all()
             for file in files:
                 if file.aws_untouched_key:
                     aws_untouched_keys.append(file.aws_untouched_key)
+                derived_paths += derived_paths_for(file)
                 file.delete_local_file(delete_directory_tree=True)
                 db.session.delete(file)
 
@@ -2047,6 +2051,8 @@ def tv(series_id):
                 args=(aws_untouched_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
+
+        purge_derived_paths(derived_paths)
 
         flash(
             f"Deleted TV series '{title}' and its files from the database.", "success"
@@ -2613,6 +2619,14 @@ def file(file_id):
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
         aws_untouched_key = file.aws_untouched_key
 
+        # The file's transcoded copies go with it (#19): paths noted
+        # before the delete (the rows cascade away with the File),
+        # removed only after the commit — same posture as the AWS key
+
+        from app.transcodes import derived_paths_for, purge_derived_paths
+
+        derived_paths = derived_paths_for(file)
+
         try:
             file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
@@ -2632,6 +2646,8 @@ def file(file_id):
                 args=(aws_untouched_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
+
+        purge_derived_paths(derived_paths)
 
         flash(f"Deleted '{file.basename}' and removed from database.", "success")
 
