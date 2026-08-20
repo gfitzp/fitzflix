@@ -455,3 +455,42 @@ def test_refresh_guarantees_the_rated_floor(app, monkeypatch):
         # Both rated films made the cut despite five candidates for
         # three slots
         assert set(rated_ids) <= set(queued)
+
+
+def test_reveal_offers_the_answer_as_an_action_tile(app, admin_client):
+    """After a guess, the answer renders as a standard poster tile:
+    popover-armed anchor, hydration container, ladder, and the
+    watchlist toggle — so the film can be rated or banked in place."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        answer = make_movie("Frame Reveal Film", 1999)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(8):
+            extra = make_movie(f"Frame Reveal Distractor {n}", 1960 + n)
+            make_movie_file(extra, "Bluray-1080p")
+        db.session.commit()
+        answer_id = answer.id
+
+    token = seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    body = admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    ).get_data(as_text=True)
+
+    assert f'data-card-url="/movie_card?movie_id={answer_id}"' in body
+    assert f'data-state-movie="{answer_id}"' in body
+    assert 'name="add_watchlist_submit"' in body
+    assert 'data-ladder-live="1"' in body
+    assert f'href="/movie/{answer_id}"' in body

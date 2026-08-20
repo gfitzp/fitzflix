@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
 <h2 class="mt-n2">Name that Frame</h2>
@@ -26,7 +27,23 @@
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
-<img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded mb-3" style="max-height: 70vh;" alt="A frame from {{ result.answer }}">
+{# The answer as a standard poster tile beside the frame: the
+   popover carries the synopsis and badges, the tile the ladder and
+   watchlist toggle — rate it or bank it without leaving the game.
+   align-items-start keeps the short tile from stretching to the
+   frame's height, so its actions sit right under the poster #}
+<div class="row align-items-start mb-3">
+	<div class="col-12 col-md-8 col-lg-9 mb-3 mb-md-0">
+		<img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded" style="max-height: 70vh;" alt="A frame from {{ result.answer }}">
+	</div>
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 poster-cell">
+		<a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=result.movie_id) }}">
+			{{ poster_image(movie_poster_src(answer_movie), result.answer) }}
+			<p class="small mb-0">{{ result.answer }}</p>
+		</a>
+		{{ tile_actions(url_for('main.movie', movie_id=result.movie_id), movie_id=result.movie_id) }}
+	</div>
+</div>
 <div>
 	<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Next frame</a>
 </div>

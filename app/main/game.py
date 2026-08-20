@@ -238,6 +238,11 @@ def name_that_frame():
                 "answer": _display_title(movie),
                 "new_best": new_best,
             },
+            # The reveal shows the answer as a standard poster tile —
+            # popover card plus the ladder and watchlist toggle, so a
+            # film worth chasing can be rated or banked on the spot
+            # (Glenn's ask, Aug 20 2026)
+            answer_movie=movie,
             token=token,
             options=None,
             streak=score.current_streak,
