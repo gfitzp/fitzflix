@@ -494,3 +494,59 @@ def test_reveal_offers_the_answer_as_an_action_tile(app, admin_client):
     assert 'name="add_watchlist_submit"' in body
     assert 'data-ladder-live="1"' in body
     assert f'href="/movie/{answer_id}"' in body
+
+
+def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
+    """Distractors come from the answer's era: Difficult tries ±2 then
+    ±5 (an out-of-era title never appears while in-era ones remain),
+    and Easy's rated universe widens ±5 to ±10 the same way."""
+
+    import app.main.game as game
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    # Difficult at 3 options so two distractors decide the tiers
+
+    monkeypatch.setitem(game.DIFFICULTIES, "difficult", 3)
+
+    with app.app_context():
+        answer = make_movie("Era Answer", 1960)
+        make_movie_file(answer, "Bluray-1080p")
+        make_movie("Era Near", 1961)  # inside ±2
+        make_movie("Era Mid", 1964)  # inside ±5 only
+        make_movie("Era Far", 1990)  # out of every window
+        db.session.commit()
+        answer_id = answer.id
+
+    seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert "Era Near (1961)" in page
+    assert "Era Mid (1964)" in page  # ±2 alone can't fill two slots
+    assert "Era Far (1990)" not in page
+
+    # Easy: the rated universe widens before unrated films pad in
+
+    with app.app_context():
+        rated_near = make_movie("Era Rated Near", 1963)  # rated, ±5
+        rated_wide = make_movie("Era Rated Wide", 1968)  # rated, ±10 only
+        rated_far = make_movie("Era Rated Far", 1990)  # rated, out of era
+        for movie in (rated_near, rated_wide, rated_far, answer):
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id(),
+                    movie_id=movie.id,
+                    liked=True,
+                    **star_rating_fields(4.0),
+                )
+            )
+        db.session.commit()
+
+    page = admin_client.get("/game?difficulty=easy").get_data(as_text=True)
+    assert "Era Rated Near (1963)" in page
+    assert "Era Rated Wide (1968)" in page
+    assert "Era Rated Far (1990)" not in page
+    # The fourth slot pads from in-era unrated films, not the far one
+    assert "Era Far (1990)" not in page

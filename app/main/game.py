@@ -37,6 +37,12 @@ from app.models import Movie, UserFrameScore, UserMovieReview
 
 DIFFICULTIES = {"easy": 4, "difficult": 8, "siracusa": None}
 
+# Distractors stay within the answer's era (Glenn, Aug 20 2026: an
+# option decades away hands the round to process of deduction) —
+# each difficulty tries its tight window first, then its widened one
+
+YEAR_WINDOWS = {"easy": (5, 10), "difficult": (2, 5)}
+
 # How close a Siracusa guess must come to a real title, after
 # normalization — loose enough for a typo, tight enough that a random
 # film name doesn't score
@@ -98,27 +104,66 @@ def _rated_movie_ids():
     }
 
 
+def _display_year(year, tmdb_title, tmdb_release_date):
+    """The year the site displays for a film — TMDb's when it rules
+    the title, the local one otherwise."""
+
+    return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
+
+
 def _build_options(answer_id, difficulty):
     """The round's shuffled multiple-choice list: the answer plus
-    random distractors — drawn from the user's rated films on Easy
-    (padded from the whole library when their diary is small), from
-    everything on Difficult."""
+    random distractors from its own era — the tight year window
+    first, the widened one when the library runs thin there (±5→±10
+    on Easy, ±2→±5 on Difficult; Glenn's rule, Aug 20 2026). Easy
+    prefers the user's rated films within each window, but the era
+    always outranks ratedness — an out-of-era option is the
+    deduction giveaway this exists to close. Anything-goes is the
+    last resort so a round can always fill its slots."""
 
     count = DIFFICULTIES[difficulty]
-    all_ids = [
-        movie_id
-        for (movie_id,) in db.session.query(Movie.id).filter(Movie.id != answer_id)
-    ]
-    if difficulty == "easy":
-        preferred = list(_rated_movie_ids() - {answer_id})
-    else:
-        preferred = all_ids
-    distractors = random.sample(preferred, min(count - 1, len(preferred)))
-    if len(distractors) < count - 1:
-        leftovers = [m for m in all_ids if m not in distractors]
-        distractors += random.sample(
-            leftovers, min(count - 1 - len(distractors), len(leftovers))
-        )
+    answer = db.session.get(Movie, answer_id)
+    answer_year = _display_year(
+        answer.year, answer.tmdb_title, answer.tmdb_release_date
+    )
+    years = {
+        movie_id: _display_year(year, tmdb_title, tmdb_release_date)
+        for movie_id, year, tmdb_title, tmdb_release_date in db.session.query(
+            Movie.id, Movie.year, Movie.tmdb_title, Movie.tmdb_release_date
+        ).filter(Movie.id != answer_id)
+    }
+    rated = _rated_movie_ids() - {answer_id} if difficulty == "easy" else set()
+
+    def in_window(span):
+        return [
+            movie_id
+            for movie_id, year in years.items()
+            if year is not None
+            and answer_year is not None
+            and abs(year - answer_year) <= span
+        ]
+
+    # Easy's universe stays the rated films, widening its window per
+    # Glenn's fallback, before padding from in-era unrated films;
+    # Difficult widens over the whole library the same way
+
+    tight, wide = YEAR_WINDOWS[difficulty]
+    tiers = []
+    if rated:
+        tiers += [
+            [m for m in in_window(tight) if m in rated],
+            [m for m in in_window(wide) if m in rated],
+        ]
+    tiers += [in_window(tight), in_window(wide), list(years)]
+
+    distractors = []
+    for tier in tiers:
+        pool = [m for m in tier if m not in distractors]
+        random.shuffle(pool)
+        distractors += pool[: count - 1 - len(distractors)]
+        if len(distractors) == count - 1:
+            break
+
     ids = distractors + [answer_id]
     random.shuffle(ids)
     movies = {movie.id: movie for movie in Movie.query.filter(Movie.id.in_(ids)).all()}
