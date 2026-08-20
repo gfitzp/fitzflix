@@ -7,7 +7,7 @@
    filename rather than the File row's, so both names ride along. The
    hidden data-trail slot is where the poll paints this file's stage
    chips while Redis still retains its trail. #}
-<div class="d-flex mb-2" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}">
+<div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">

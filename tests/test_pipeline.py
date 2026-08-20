@@ -277,7 +277,7 @@ def test_pipeline_trails_render_on_the_file_activity_dashboard(admin_client):
     """The trails live on the File Activity dashboard since the pages
     merged (Glenn's call, Aug 2026), linked from Library Maintenance;
     the queue page still doesn't carry the section, and the old
-    dedicated page redirects."""
+    dedicated page is gone."""
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' in page
@@ -288,9 +288,7 @@ def test_pipeline_trails_render_on_the_file_activity_dashboard(admin_client):
     assert 'id="pipeline-files-section"' not in queue_page
     assert "pipelineTrailLimit = " not in queue_page
 
-    response = admin_client.get("/maintenance/pipeline")
-    assert response.status_code == 302
-    assert response.headers["Location"].endswith("/file-activity")
+    assert admin_client.get("/maintenance/pipeline").status_code == 404
 
     maintenance = admin_client.get("/maintenance").get_data(as_text=True)
     assert "/file-activity" in maintenance

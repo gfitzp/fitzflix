@@ -353,12 +353,10 @@ def test_file_activity_lives_at_its_own_route(app, admin_client):
     landing = admin_client.get("/").get_data(as_text=True)
     assert 'href="/file-activity"' in landing
 
-    # The page's two old addresses still land there
+    # The old addresses are gone, not redirected (Glenn's call, Aug 2026)
 
     for old in ("/recently-added", "/maintenance/pipeline"):
-        response = admin_client.get(old)
-        assert response.status_code == 302
-        assert response.headers["Location"].endswith("/file-activity")
+        assert admin_client.get(old).status_code == 404, old
 
 
 def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypatch):

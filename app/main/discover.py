@@ -545,15 +545,6 @@ def file_activity():
     )
 
 
-@bp.route("/recently-added")
-@login_required
-def recently_added():
-    """The dashboard's old address, from before the pipeline trails
-    moved in and the page became File Activity."""
-
-    return redirect(url_for("main.file_activity", **request.args))
-
-
 def _file_for_trail_basename(basename):
     """The File row a pipeline trail belongs to, or None.
 

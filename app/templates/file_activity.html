@@ -101,7 +101,7 @@
 {# The poll inserts a freshly landed file's card at the top of this
    holder, so it exists (empty is fine) even when nothing has landed
    in the last week #}
-<div id="file-activity-cards">
+<div id="file-activity-cards" class="list-group mb-3">
 {% for file in recently_added %}
 {% include "_file_activity_card.html" %}
 {% endfor %}

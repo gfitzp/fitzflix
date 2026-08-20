@@ -788,15 +788,6 @@ def queue():
     return render_template("queue.html", title="Queue")
 
 
-@bp.route("/maintenance/pipeline")
-@login_required
-def pipeline_activity():
-    """The per-file pipeline trails' old address — they live on the
-    File Activity dashboard since the two pages merged (Aug 2026)."""
-
-    return redirect(url_for("main.file_activity"))
-
-
 @bp.route("/library/files", methods=["GET", "POST"])
 @login_required
 def files():
