@@ -551,8 +551,12 @@ def movie_card():
     informational since Glenn's Aug 2026 revision: the star ladder
     and watchlist toggle live on the gallery tiles, so the card
     carries the quality badge in its shopping colors and the
-    watchlist badge instead. Fetched only when a poster is hovered
-    or tapped, so gallery pages stay light."""
+    watchlist badge instead. ?context=criterion (#77a) recolors the
+    quality badge with the Criterion page's settled rule — green
+    only when the disc is owned AND the copy matches the release's
+    format — instead of the generic shopping answer. Fetched only
+    when a poster is hovered or tapped, so gallery pages stay
+    light."""
 
     movie_id = request.args.get("movie_id", type=int)
     tmdb_id = request.args.get("tmdb_id", type=int)
@@ -604,9 +608,29 @@ def movie_card():
         quality_badge = None
         if best is not None:
             file, quality = best
-            settled = movie.shopping_list_exclude or (
-                not file.fullscreen and quality.preference >= _upgrade_threshold()
-            )
+            if request.args.get("context") == "criterion":
+                # The Criterion catalog's settled rule (#77a), mirroring
+                # criterion_collection: disc owned AND the copy meets the
+                # release's own format, capped at the app-wide threshold
+                # (an owned disc with a Bluray-1080p file is settled even
+                # if Criterion re-released in 2160p — chasing that upgrade
+                # is the shopping list's job)
+
+                threshold = _upgrade_threshold()
+                criterion_pref = (
+                    db.session.query(RefQuality.preference)
+                    .filter(RefQuality.id == movie.criterion_quality_id)
+                    .scalar()
+                    if movie.criterion_quality_id
+                    else None
+                )
+                target = min(criterion_pref or threshold, threshold)
+                upgradable = bool(file.fullscreen) or quality.preference < target
+                settled = bool(movie.criterion_disc_owned) and not upgradable
+            else:
+                settled = movie.shopping_list_exclude or (
+                    not file.fullscreen and quality.preference >= _upgrade_threshold()
+                )
             quality_badge = {
                 "label": (
                     f"Full Screen {quality.quality_title}"

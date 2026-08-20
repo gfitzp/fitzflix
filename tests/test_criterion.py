@@ -305,10 +305,16 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     # Two settled rows: the format match, and the 1080p-file-vs-2160p-
     # release case the page deliberately calls done
 
-    assert page.count('title="In your Fitzflix library"') == 2
-    assert 'text-bg-warning me-1">DVD' in page
-    assert 'text-bg-warning me-1">Bluray-2160p Remux' in page
-    assert 'text-bg-warning me-1">Bluray-1080p' not in page
+    # The settled/amber answer left the tiles too (#77a): the popover
+    # carries it, recolored by the criterion context on the card URL
+
+    assert 'title="In your Fitzflix library"' not in page
+    assert 'text-bg-warning me-1">DVD' not in page
+    assert (
+        f'data-card-url="/movie_card?movie_id={settled_id}&amp;context=criterion"'
+        in page
+    )
+    assert f'data-state-movie="{settled_id}"' in page
 
     # The funnel moved off the tiles (Aug 2026): Seen and the
     # watchlist answer through the hydrated widgets, might-interest
@@ -319,16 +325,41 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     assert "On your watchlist" not in page
     assert page.count("Might interest you") == 1
     assert (
-        f'data-card-url="/movie_card?movie_id={unowned_id}" '
+        f'data-card-url="/movie_card?movie_id={unowned_id}&amp;context=criterion" '
         "data-card-reasons='[\"Might interest you\"]'"
     ) in page
     assert "Part of the Essential Arthouse collector's set" in page
-    # Tiles keep the shopping answer; the synopsis lives in the
-    # poster popover now (#45d), fetched via data-card-url
+    # The synopsis lives in the poster popover (#45d)
     assert "A settled classic." not in page
-    assert f'data-card-url="/movie_card?movie_id={settled_id}"' in page
     assert f'href="/movie/{settled_id}"' in page
-    assert f'data-state-movie="{settled_id}"' in page
+
+    # The criterion-context card colors by the SETTLED rule: green
+    # only when the disc is owned AND the copy meets the release's
+    # format (capped at the app threshold — the owned disc with a
+    # 1080p file against a 2160p re-release stays green); the DVD rip
+    # of an owned disc and the unowned remux both go amber
+
+    with app.app_context():
+        ripless_id = Movie.query.filter_by(title="Criterion Disc Unripped").one().id
+        good_enough_id = Movie.query.filter_by(title="Criterion Good Enough").one().id
+
+    def criterion_card(movie_id):
+        return admin_client.get(
+            f"/movie_card?movie_id={movie_id}&context=criterion"
+        ).get_data(as_text=True)
+
+    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in criterion_card(settled_id)
+    assert 'text-bg-warning me-1 mb-1">DVD' in criterion_card(ripless_id)
+    assert 'text-bg-warning me-1 mb-1">Bluray-2160p Remux' in criterion_card(unowned_id)
+    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in criterion_card(good_enough_id)
+
+    # Without the context, the same unowned remux is green — the
+    # generic shopping answer — so the recolor is context-scoped
+
+    generic = admin_client.get(f"/movie_card?movie_id={unowned_id}").get_data(
+        as_text=True
+    )
+    assert 'text-bg-success me-1 mb-1">Bluray-2160p Remux' in generic
 
 
 def _seed_release_cache(app, releases):
@@ -470,9 +501,13 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert f'href="/movie/{record_id}"' in page
     assert 'href="/review/tmdb/555002"' not in page
     assert "On your watchlist" not in page
-    # The synopsis moved into the poster popover (#45d)
+    # The synopsis moved into the poster popover (#45d); the card URL
+    # carries the criterion context for the settled recolor (#77a)
     assert "A spine the library lacks." not in page
-    assert f'data-card-url="/movie_card?movie_id={record_id}"' in page
+    assert (
+        f'data-card-url="/movie_card?movie_id={record_id}&amp;context=criterion"'
+        in page
+    )
     assert f'data-state-movie="{record_id}"' in page
     assert 'title="Streaming on The Criterion Channel"' not in page
 

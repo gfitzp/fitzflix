@@ -14,7 +14,7 @@
    already exists #}
 <div class="row mb-2">
 	{% for item in inventory["items"] %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{% if item.movie_id %}{{ url_for('main.movie', movie_id=item.movie_id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}{% endif %}" class="text-decoration-none text-body" data-card-url="{% if item.movie_id %}{{ url_for('main.movie_card', movie_id=item.movie_id) }}{% else %}{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}{% endif %}"{% if item.because %} data-card-reasons='{{ item.because[:3] | tojson }}'{% endif %}>
 			{{ poster_image(config['TMDB_IMAGE_URL'] + '/w342' + item.poster_path if item.poster_path else none, item.title ~ (' (' ~ item.year ~ ')' if item.year else '')) }}
 			<p class="small mb-0">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}{% if item.runtime %} <span class="text-muted">&middot; {{ item.runtime }} min</span>{% endif %}</p>

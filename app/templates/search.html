@@ -28,7 +28,7 @@
 <div class="row mb-2">
 	{% for result in movie_results %}
 	{% set movie = result.movie %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if result.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</p>

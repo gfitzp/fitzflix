@@ -53,7 +53,7 @@
    ladder shows the verdict or estimate, the toggle the watchlist #}
 <div class="row">
 	{% for row in filmography %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="text-decoration-none text-body"{% if row.movie %} data-card-url="{{ url_for('main.movie_card', movie_id=row.movie.id) }}"{% elif row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{% if row.movie and row.movie.custom_poster %}
 				{{ poster_image(url_for('static', filename='custom/movie/' + row.movie.id|string + '/w342/' + row.movie.custom_poster), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}

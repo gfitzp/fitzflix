@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import library_badge %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% macro pagination_nav() %}
@@ -43,31 +42,28 @@
 {% if rows %}
 {{ pagination_nav() }}
 {# The catalog as a poster wall (#45d) — the way Criterion itself
-   shows spines. The popover carries each film's synopsis and badges
-   (the funnel and streaming badges moved there in Glenn's Aug 2026
-   revision); tiles keep the spine number, the settled/amber shopping
-   answer — Criterion-edition semantics the popover's generic quality
-   badge can't express — the actions, and the collector's-set line #}
+   shows spines. The popover carries each film's synopsis and badges;
+   its quality badge is recolored with the SETTLED rule via the card
+   URL's context=criterion (#77a — green only when the disc is owned
+   and the copy matches the release's format), so the tiles keep just
+   the spine caption, the collector's-set line, and the actions. The
+   set line renders BEFORE the actions so the bottom pin (#77's
+   variant 4) keeps every ladder on the row's shared baseline #}
+{% macro set_line(row) %}
+{% if row.set_title %}
+<p class="mb-0 mt-1 small text-muted">Part of the {{ row.set_title }} collector's set</p>
+{% endif %}
+{% endmacro %}
 <div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		{% if row.kind == "library" %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id, context='criterion') }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 		</a>
-		<p class="mb-0 mt-1">
-			{# Settled — the Criterion disc is owned and the file
-			   matches its format — wears the library badge; anything
-			   else shows its amber quality tier: go find the
-			   Criterion version #}
-			{% if row.settled %}
-			{{ library_badge() }}
-			{% else %}
-			<span class="badge text-bg-warning me-1">{{ row.quality.quality_title }}{% if row.file.fullscreen %} &mdash; full screen{% endif %}</span>
-			{% endif %}
-		</p>
+		{{ set_line(row) }}
 		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 		{% elif row.kind == "tmdb" %}
 		{# A release the library lacks: a file-less local record dresses
@@ -76,10 +72,10 @@
 		   releases open the log page, so they're watchlistable — and
 		   either way the popover serves the detail on hover #}
 		{% if movie %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id, context='criterion') }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 		{% elif row.year %}
-		<a href="{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}" class="text-decoration-none text-body"{% if row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}>
+		<a href="{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}" class="text-decoration-none text-body"{% if row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id, context='criterion') }}"{% endif %}>
 			{{ poster_image(none, row.title) }}
 		{% else %}
 		<div>
@@ -87,6 +83,7 @@
 		{% endif %}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 		{% if movie or row.year %}</a>{% else %}</div>{% endif %}
+		{{ set_line(row) }}
 		{% if movie %}
 		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 		{% elif row.year and row.tmdb_id %}
@@ -99,9 +96,7 @@
 			{{ poster_image(none, row.title) }}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 		</div>
-		{% endif %}
-		{% if row.set_title %}
-		<p class="mb-0 mt-1 small text-muted">Part of the {{ row.set_title }} collector's set</p>
+		{{ set_line(row) }}
 		{% endif %}
 	</div>
 	{% endfor %}

@@ -182,6 +182,19 @@
 		   of stretching it — the fix for labels that used to overflow
 		   the gallery cells (Glenn's Aug 2026 revision) */
 		.movie-card .badge { white-space: normal; text-align: start; line-height: 1.35; }
+		/* Gallery tiles (#77, Glenn's variant 4): each cell is a flex
+		   column with its actions pinned to the bottom — Bootstrap's
+		   row already stretches cells in a row to equal height, so
+		   every ladder and watchlist button lands on one shared
+		   baseline while captions wrap freely between poster and
+		   actions. Tile text centers under the poster (#77c); the
+		   pin rides margin-top: auto, which is why tile_actions uses
+		   pt-1 spacing, never mt-* (Bootstrap margins are !important
+		   and would defeat the auto margin). The watchlist page pins
+		   its whole button-cluster via .poster-bottom instead. */
+		.poster-cell { display: flex; flex-direction: column; text-align: center; }
+		.poster-cell > .poster-actions, .poster-cell > .poster-bottom { margin-top: auto; }
+		.poster-actions { display: flex; flex-direction: column; align-items: center; }
     </style>
 	{%- endblock styles %}
 

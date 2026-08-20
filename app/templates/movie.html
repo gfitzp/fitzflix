@@ -74,7 +74,7 @@
 <p class="small text-muted">These unseen films from your library share its DNA and fit your taste profile.</p>
 <div class="row">
 	{% for suggestion in suggestions %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{{ url_for('main.movie', movie_id=suggestion.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=suggestion.id) }}">
 			{% if suggestion.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + suggestion.id|string + '/w185/' + suggestion.custom_poster) }}" loading="lazy" class="img-fluid border rounded mb-1 w-100" alt="{{ suggestion.title }} ({{ suggestion.year }})">
