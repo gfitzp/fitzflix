@@ -365,3 +365,53 @@ def test_local_time_text_renders_server_local():
     expected = when.replace(tzinfo=timezone.utc).astimezone()
     assert _local_time_text(when) == expected.strftime("%B %-d, %Y %-I:%M %p")
     assert _local_time_text(None) == ""
+
+
+def test_every_template_reference_resolves(app):
+    """Every {% import/from/include/extends %} target in app/templates loads
+    through the Jinja environment. Guards against a dependency drop orphaning
+    a template served by a package (bootstrap/wtf.html, Aug 2026)."""
+
+    from pathlib import Path
+
+    reference = re.compile(
+        r"""\{%-?\s*(?:import|from|include|extends)\s+["']([^"']+)["']"""
+    )
+    templates = Path(app.root_path) / "templates"
+    referenced = {
+        (path, name)
+        for path in templates.rglob("*.html")
+        for name in reference.findall(path.read_text())
+    }
+    assert referenced, "no template cross-references found — regex broken?"
+
+    unresolved = []
+    for path, name in sorted(referenced):
+        try:
+            app.jinja_env.loader.get_source(app.jinja_env, name)
+        except Exception:
+            unresolved.append(f"{path.relative_to(templates)} -> {name}")
+    assert not unresolved, f"unresolvable template references: {unresolved}"
+
+
+def test_every_render_template_target_exists(app):
+    """Every template name passed to render_template in app/*.py exists."""
+
+    from pathlib import Path
+
+    call = re.compile(r"""render_template\(\s*["']([^"']+)["']""")
+    root = Path(app.root_path)
+    referenced = {
+        (path, name)
+        for path in root.rglob("*.py")
+        for name in call.findall(path.read_text())
+    }
+    assert referenced, "no render_template calls found — regex broken?"
+
+    unresolved = []
+    for path, name in sorted(referenced):
+        try:
+            app.jinja_env.loader.get_source(app.jinja_env, name)
+        except Exception:
+            unresolved.append(f"{path.relative_to(root)} -> {name}")
+    assert not unresolved, f"missing render_template targets: {unresolved}"
