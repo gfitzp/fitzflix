@@ -37,11 +37,16 @@
    ladder and watchlist toggle — rate it or bank it without leaving
    the game. align-items-start keeps the short tile from stretching
    to the frame's height, so its actions sit right under the poster #}
+{# Order utilities flip the reveal on phones (Glenn's ask, Aug 20
+   2026): frame, then Next, then the answer tile — while md-and-up
+   keeps the tile beside the frame with Next wrapping below #}
 <div class="row align-items-start mb-3">
-	<div class="col-12 col-md-8 col-lg-9 mb-3 mb-md-0">
-		<img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded" style="max-height: 70vh;" alt="{{ 'A frame from ' ~ result.answer if result else 'A frame from a mystery film' }}">
+	<div class="col-12 col-md-8 col-lg-9 mb-3 mb-md-0 order-1">
+		<div class="game-frame-box">
+			<img src="{{ url_for('main.game_frame', token=token) }}" alt="{{ 'A frame from ' ~ result.answer if result else 'A frame from a mystery film' }}">
+		</div>
 	</div>
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 poster-cell">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 poster-cell order-3 order-md-2">
 		{% if result %}
 		<a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=result.movie_id) }}">
 			{{ poster_image(movie_poster_src(answer_movie), result.answer) }}
@@ -50,12 +55,13 @@
 		{{ tile_actions(url_for('main.movie', movie_id=result.movie_id), movie_id=result.movie_id) }}
 		{% endif %}
 	</div>
+	{% if result %}
+	<div class="col-12 order-2 order-md-3 mb-3 mb-md-0 mt-md-3">
+		<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Next frame</a>
+	</div>
+	{% endif %}
 </div>
-{% if result %}
-<div>
-	<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Next frame</a>
-</div>
-{% else %}
+{% if not result %}
 <form action="{{ url_for('main.name_that_frame') }}" method="post" style="max-width: 40rem;">
 	{{ form.csrf_token }}
 	<input type="hidden" name="token" value="{{ token }}">
