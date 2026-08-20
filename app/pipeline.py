@@ -20,7 +20,9 @@ the registry.
 
 Recording must never break the pipeline: every hook swallows and logs
 its own failures, and a trail is only ever advisory display state —
-three days of TTL, newest hundred files kept.
+seven days of TTL (matching the File Activity page's SQL window, so a
+landed card keeps its chips as long as it stays on the page), newest
+hundred files kept.
 """
 
 import hashlib
@@ -35,7 +37,7 @@ from rq import Queue, SimpleWorker
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
 ACTIVE_KEY = "fitzflix:pipeline:active"
-TRAIL_TTL_SECONDS = 3 * 86400
+TRAIL_TTL_SECONDS = 7 * 86400
 ACTIVE_LIMIT = 100
 
 
