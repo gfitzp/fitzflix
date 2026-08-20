@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">Name that Frame</h2>
+<p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
+{# Difficulty pills: switching deals a fresh round at that level #}
+<ul class="nav nav-pills mb-3">
+	{% for level in difficulties %}
+	<li class="nav-item">
+		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ {"easy": "Easy", "difficult": "Difficult", "siracusa": "Siracusa"}[level] }}</a>
+	</li>
+	{% endfor %}
+	{% if streak %}
+	<li class="nav-item ms-auto align-self-center">
+		<span class="badge text-bg-success">Streak: {{ streak }}</span>
+	</li>
+	{% endif %}
+</ul>
+<hr>
+{% if result %}
+{# The reveal: verdict, the answer linking to its film page, and the
+   frame stays up so the answer can be studied #}
+{% if result.correct %}
+<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}.</div>
+{% else %}
+<div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
+{% endif %}
+<img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded mb-3" style="max-height: 70vh;" alt="A frame from {{ result.answer }}">
+<div>
+	<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, prev=token) }}">Next frame</a>
+</div>
+{% elif token %}
+<img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded mb-3" style="max-height: 70vh;" alt="A frame from a mystery film">
+<form action="{{ url_for('main.name_that_frame') }}" method="post" style="max-width: 40rem;">
+	{{ form.csrf_token }}
+	<input type="hidden" name="token" value="{{ token }}">
+	<input type="hidden" name="difficulty" value="{{ difficulty }}">
+	{% if options %}
+	<div class="mb-3">
+		{% for movie_id, label in options %}
+		<div class="form-check">
+			<input class="form-check-input" type="radio" name="choice" id="choice-{{ movie_id }}" value="{{ movie_id }}" required>
+			<label class="form-check-label" for="choice-{{ movie_id }}">{{ label }}</label>
+		</div>
+		{% endfor %}
+	</div>
+	{% else %}
+	{# Siracusa: type the title yourself — close counts (typos and
+	   missing articles forgiven), the year is optional #}
+	<div class="mb-3">
+		<input type="text" name="guess" class="form-control" placeholder="Type the film's title&hellip;" aria-label="Your guess" autocomplete="off" autofocus>
+	</div>
+	{% endif %}
+	<button type="submit" name="guess_submit" value="y" class="btn btn-primary">Guess</button>
+	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, prev=token) }}">Skip</a>
+</form>
+{% elif pool_size %}
+{# The pool has frames, just none this difficulty can serve — Easy
+   before the user has rated any pooled films #}
+<p class="lead">No frames to serve on this difficulty yet.</p>
+<p class="text-muted">Easy only deals films you've rated &mdash; rate a few on the <a href="{{ url_for('main.rate') }}">Rate Films</a> page, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Difficult</a>, which deals from the whole library.</p>
+{% else %}
+<p class="lead">The frame pool is still empty.</p>
+<p class="text-muted">Frames are extracted nightly from the library{% if current_user.admin %} &mdash; or start a fill now with <code>flask frames refresh</code>{% endif %}. Check back soon.</p>
+{% endif %}
+{% endblock %}

@@ -401,3 +401,15 @@ class FilenameTestForm(FlaskForm):
 
     test_filename = StringField("Filename", validators=[DataRequired()])
     filename_test_submit = SubmitField("Preview import")
+
+
+class GuessFrameForm(FlaskForm):
+    """Name that Frame guesses (#21): the hidden token names the
+    round, and either a chosen movie id or free text arrives,
+    depending on the difficulty."""
+
+    token = StringField(widget=HiddenInput(), validators=[Optional()])
+    difficulty = StringField(widget=HiddenInput(), validators=[Optional()])
+    choice = StringField(validators=[Optional()])
+    guess = StringField("Your guess", validators=[Optional()])
+    guess_submit = SubmitField("Guess")

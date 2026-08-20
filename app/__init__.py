@@ -186,6 +186,15 @@ def cron_table(config):
             3600,
             "Recomputing the streaming rail",
         ),
+        # Top up and rotate the Name that Frame pool (#21) nightly;
+        # the coordinator queues per-film extractions on the serial
+        # transcode lane, so a big backfill can't crowd anything out
+        (
+            "5 3 * * *",
+            "app.frames.refresh_frame_pool_task",
+            3600,
+            "Refreshing the Name that Frame pool",
+        ),
     ]
 
     # Download files restored from Glacier: poll SQS hourly, offset from

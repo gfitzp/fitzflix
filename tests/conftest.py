@@ -83,6 +83,7 @@ class TestConfig(Config):
     TRANSCODES_DIR = os.path.join(MEDIA_LOCATION, "transcoded")
     STAGING_DIR = os.path.join(_TMP, "staging")
     TRIAGE_SNAPSHOT_DIR = os.path.join(_TMP, "triage")
+    FRAME_POOL_DIR = os.path.join(_TMP, "frame_pool")
     SMB_URL_PREFIX = None
 
     LOG_FILE = os.path.join(_TMP, "logs", "fitzflix.log")

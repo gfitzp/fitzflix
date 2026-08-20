@@ -10,3 +10,4 @@ app.db
 /backups
 .pytest_cache/
 .claude/launch.json
+app/frame_pool/

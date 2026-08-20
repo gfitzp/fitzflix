@@ -263,6 +263,25 @@ def register(app):
         click.echo(f"Enqueued transcode adoption as {job.id}")
 
     @app.cli.group()
+    def frames():
+        """Manage the Name that Frame pool (#21)."""
+        pass
+
+    @frames.command()
+    def refresh():
+        """Prune and top up the frame pool now instead of waiting for
+        the nightly run — extractions queue on the transcode lane."""
+
+        from flask import current_app
+
+        job = current_app.maintenance_queue.enqueue(
+            "app.frames.refresh_frame_pool_task",
+            job_timeout=3600,
+            description="Refreshing the Name that Frame pool",
+        )
+        click.echo(f"Enqueued frame-pool refresh as {job.id}")
+
+    @app.cli.group()
     def catalog():
         """Manage the film catalog's exclusion list."""
         pass

@@ -123,6 +123,14 @@ class Config(object):
 
     TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "app", "static", "triage")
 
+    # Name that Frame (#21): the nightly pre-extracted frame pool —
+    # served through an authenticated route, never the public static
+    # path, since a frame's filename must not hint at its answer
+
+    FRAME_POOL_DIR                      = os.environ.get("FRAME_POOL_DIR") or os.path.join(basedir, "app", "frame_pool")
+    FRAME_POOL_SIZE                     = int(os.environ.get("FRAME_POOL_SIZE") or 300)
+    FRAME_POOL_ROTATE                   = int(os.environ.get("FRAME_POOL_ROTATE") or 30)
+
     # AWS Glacier restore cost estimation, in USD: a per-object retrieval
     # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.
     # Adjust to match the current AWS rate card if prices change
