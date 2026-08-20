@@ -183,9 +183,18 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
     record_job_event(app.redis, job, "started")
 
     monkeypatch.setattr(rq, "get_current_job", lambda: job)
-    record_task_stage("Copying to staging", "started")
-    record_task_stage("Copying to staging", "done")
 
+    # Only one chip runs at a time: while the staging copy runs, the
+    # job's own chip yields to it and reads "queued"
+
+    record_task_stage("Copying to staging", "started")
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Copying to staging", "started"),
+        ("Localizing", "queued"),
+    ]
+
+    record_task_stage("Copying to staging", "done")
     entries = pipeline_trails(app.redis)[0]["entries"]
     assert [(entry["stage"], entry["status"]) for entry in entries] == [
         ("Copying to staging", "done"),
@@ -197,9 +206,9 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
 
     record_job_event(app.redis, job, "done")
     entries = pipeline_trails(app.redis)[0]["entries"]
-    assert [entry["stage"] for entry in entries] == [
-        "Copying to staging",
-        "Localizing",
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Copying to staging", "done"),
+        ("Localizing", "done"),
     ]
 
 

@@ -139,7 +139,9 @@ def _decode_trail(raw):
     return json.loads(raw) if raw else []
 
 
-def _write_trail_entry(connection, basename, stage, status, job_id, before_job=False):
+def _write_trail_entry(
+    connection, basename, stage, status, job_id, before_job=False, sibling=None
+):
     """Atomically apply one stage event to the file's trail.
 
     Two workers touch the same trail at a stage handoff: the move job
@@ -195,6 +197,23 @@ def _write_trail_entry(connection, basename, stage, status, job_id, before_job=F
                         index,
                         {"stage": stage, "status": status, "at": now, "job": job_id},
                     )
+
+                # A sub-stage event may adjust its job's own entry in the
+                # same atomic write, so only one chip reads "running" at a
+                # time (Glenn, Aug 20): the job chip drops to "queued"
+                # while its sub-stage runs and resumes "started" after.
+                # Update-only — a sibling is never created here
+
+                if sibling is not None:
+                    sibling_stage, sibling_status = sibling
+                    for entry in reversed(trail):
+                        if (
+                            entry.get("job") == job_id
+                            and entry.get("stage") == sibling_stage
+                        ):
+                            entry["status"] = sibling_status
+                            entry["at"] = now
+                            break
                 del trail[:-40]
 
                 pipe.multi()
@@ -251,9 +270,10 @@ def record_task_stage(stage, status):
     current job via the STAGES registry and the entry is keyed by that
     job's id, so a retry job leaves its own fresh sub-stage line — and
     it renders AHEAD of the job's own chip, since it reports work that
-    precedes the job's headline stage. Advisory like every hook:
-    failures are swallowed, and outside a worker (direct calls in
-    tests) it is a no-op."""
+    precedes the job's headline stage — which reads "queued" while the
+    sub-stage runs, so only one chip is "running" at a time. Advisory
+    like every hook: failures are swallowed, and outside a worker
+    (direct calls in tests) it is a no-op."""
 
     try:
         from rq import get_current_job
@@ -264,9 +284,22 @@ def record_task_stage(stage, status):
         found = _stage_for(job)
         if found is None:
             return
-        basename, _ = found
+        basename, job_stage = found
+
+        # While the sub-stage runs, the job's own chip yields "running"
+        # to it — the headline phase hasn't begun, so it reads "queued"
+        # until the sub-stage lands, then resumes (the worker's own
+        # done/failed hook still has the last word at job end)
+
+        sibling = (job_stage, "queued" if status == "started" else "started")
         _write_trail_entry(
-            job.connection, basename, stage, status, job.id, before_job=True
+            job.connection,
+            basename,
+            stage,
+            status,
+            job.id,
+            before_job=True,
+            sibling=sibling,
         )
     except Exception:
         try:
