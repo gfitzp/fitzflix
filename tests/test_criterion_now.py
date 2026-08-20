@@ -273,6 +273,81 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
         ) == (None, None)
 
 
+def test_director_match_survives_romanization_differences(app, monkeypatch):
+    """TMDb credited 'Mabel Cheung Yuen-Ting' for An Autumn's Tale but
+    the Channel says 'Mabel Cheung' — a fuller romanization on either
+    side, reversed name order, or hyphen differences must still match."""
+
+    import app.criterion_now as criterion_now
+
+    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 64015)
+    monkeypatch.setattr(
+        criterion_now,
+        "enriched_movie",
+        lambda tmdb_id: {
+            "poster_path": "/autumn.jpg",
+            "crew": [{"id": 1, "name": "Mabel Cheung Yuen-Ting", "job": "Director"}],
+        },
+    )
+    with app.app_context():
+        assert criterion_now.matched_film(
+            "An Autumn's Tale",
+            {
+                "director": "Mabel Cheung",
+                "year": 1987,
+                "country": "Hong Kong",
+                "starring": None,
+            },
+        ) == (64015, "/autumn.jpg")
+
+    assert criterion_now._person_matches("Wong Kar-wai", "Kar-Wai Wong")
+    assert not criterion_now._person_matches("Samuel Fuller", "Alan Smithee")
+
+
+def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
+    """Without a director on both sides the Starring line stands in:
+    one scraped name among TMDb's top billing keeps the match, a total
+    miss degrades to a plain card. A cast miss alone must never veto a
+    film whose director agrees — the enriched cast is only top billing."""
+
+    import app.criterion_now as criterion_now
+
+    payload = {
+        "poster_path": "/autumn.jpg",
+        "crew": [],
+        "cast": [
+            {"id": 1, "name": "Chow Yun-Fat"},
+            {"id": 2, "name": "Cherie Chung Cho-Hung"},
+        ],
+    }
+    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 64015)
+    monkeypatch.setattr(criterion_now, "enriched_movie", lambda tmdb_id: payload)
+
+    info = {
+        "director": None,
+        "year": 1987,
+        "country": "Hong Kong",
+        "starring": "Cherie Chung, Chow Yun-fat and Danny Chan",
+    }
+    with app.app_context():
+        assert criterion_now.matched_film("An Autumn's Tale", info) == (
+            64015,
+            "/autumn.jpg",
+        )
+
+        # The wrong film's billing shares nobody with the Channel's line
+        payload["cast"] = [{"id": 3, "name": "Alan Smithee"}]
+        assert criterion_now.matched_film("An Autumn's Tale", info) == (None, None)
+
+        # But a matching director outranks a cast miss
+        payload["crew"] = [{"id": 4, "name": "Mabel Cheung", "job": "Director"}]
+        info["director"] = "Mabel Cheung"
+        assert criterion_now.matched_film("An Autumn's Tale", info) == (
+            64015,
+            "/autumn.jpg",
+        )
+
+
 def plant_enriched(app, tmdb_id=33667):
     """Cache an enriched payload for the airing film, as the poller's
     match would have."""

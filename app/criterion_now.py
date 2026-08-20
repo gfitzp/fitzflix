@@ -126,13 +126,36 @@ def parse_film_info(page_html):
     return info
 
 
+def _person_matches(scraped, credited_name):
+    """True when a scraped name plausibly names the same person as one
+    TMDb credit. Containment must run both ways — TMDb often carries a
+    fuller romanization ('Mabel Cheung Yuen-Ting') than the Channel's
+    'Mabel Cheung' — and two shared name tokens also count, which
+    covers reversed name order and hyphen differences."""
+
+    scraped = scraped.lower()
+    name = credited_name.lower()
+    if name in scraped or scraped in name:
+        return True
+    if name.split()[-1] in scraped:
+        return True
+    scraped_tokens = set(re.findall(r"[a-z]+", scraped))
+    name_tokens = set(re.findall(r"[a-z]+", name))
+    return len(scraped_tokens & name_tokens) >= 2
+
+
 def matched_film(title, info):
     """(tmdb_id, poster_path) for the airing film, or (None, None).
 
     Title-and-year search, then the match is verified against TMDb's
     credited directors when both sides know one — a wrong search hit
     must degrade to a plain card, never dress the wrong film's poster
-    over the right title."""
+    over the right title. Without a director on both sides, the
+    Channel's Starring line stands in: at least one scraped name must
+    appear among TMDb's top billing. The director stays the sole
+    verifier when it is available — the enriched cast stops at
+    TOP_BILLING_CUTOFF, so a cast miss alone must never veto a film
+    whose director agrees."""
 
     if not info["year"]:
         return None, None
@@ -148,16 +171,30 @@ def matched_film(title, info):
         for person in payload.get("crew") or []
         if person.get("job") == "Director" and person.get("name")
     ]
+    cast = [
+        person["name"] for person in payload.get("cast") or [] if person.get("name")
+    ]
+    scraped_stars = [
+        name.strip()
+        for name in re.split(r",|\band\b", info["starring"] or "")
+        if name.strip()
+    ]
     if info["director"] and credited:
-        scraped = info["director"].lower()
-        if not any(
-            name.lower() in scraped or name.split()[-1].lower() in scraped
-            for name in credited
-        ):
+        if not any(_person_matches(info["director"], name) for name in credited):
             current_app.logger.warning(
                 f"Criterion24/7: TMDb {tmdb_id} credits "
                 f"{', '.join(credited)} but the Channel says "
                 f"'{info['director']}' — treating as unmatched"
+            )
+            return None, None
+    elif scraped_stars and cast:
+        if not any(
+            _person_matches(scraped, name) for scraped in scraped_stars for name in cast
+        ):
+            current_app.logger.warning(
+                f"Criterion24/7: TMDb {tmdb_id} bills {', '.join(cast)} "
+                f"but the Channel says '{info['starring']}' — "
+                f"treating as unmatched"
             )
             return None, None
     return tmdb_id, payload.get("poster_path")
