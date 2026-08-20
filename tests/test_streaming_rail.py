@@ -257,6 +257,48 @@ def test_recompute_task_stores_rail_payloads(app, monkeypatch):
     assert stored["items"][0]["title"] == "Rail Comedy"
 
 
+def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
+    """Rail films found on TMDb alone get review-only records and the
+    standard refresh enqueued, so the shared score source can estimate
+    their tiles like any catalogued film's — instead of /movie_states
+    answering their tmdb ids with the empty state."""
+
+    from app.models import Movie
+    from app.streaming_rail import recompute_streaming_rail
+
+    user_id = subscribe(app, 8, "Netflix")
+    plant_profile(app, user_id, COMEDY_PROFILE)
+    install_rail_fakes(app, monkeypatch)
+    plant_availability(app, 5001, [NETFLIX])
+    plant_availability(app, 5002, [NETFLIX])
+    plant_availability(app, 5005, [])
+
+    assert recompute_streaming_rail() is True
+
+    with app.app_context():
+        comedy = Movie.query.filter_by(tmdb_id=5001).first()
+        drama = Movie.query.filter_by(tmdb_id=5002).first()
+        assert comedy is not None and comedy.title == "Rail Comedy"
+        assert comedy.year == 1994
+        assert drama is not None and drama.year == 1953
+        assert comedy.files.count() == 0
+
+        # Both records await the refresh that stamps tmdb_data_as_of
+
+        refresh_targets = {
+            job.args[1]
+            for job in app.maintenance_queue.jobs
+            if job.func_name == "app.videos.refresh_tmdb_info"
+        }
+        assert {comedy.id, drama.id} <= refresh_targets
+
+    # A second run reuses the records instead of duplicating them
+
+    assert recompute_streaming_rail() is True
+    with app.app_context():
+        assert Movie.query.filter_by(tmdb_id=5001).count() == 1
+
+
 def test_landing_page_renders_the_rail(app, admin_client):
     from app import db
     from app.models import UserMovieReview, User

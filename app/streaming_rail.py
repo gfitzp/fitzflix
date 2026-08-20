@@ -481,12 +481,45 @@ def compute_user_rail(user):
     return items[:STORED_RAIL_ITEMS]
 
 
+def ensure_rail_records(items):
+    """A real movie record for every rail film, so the shared score
+    source can estimate them like any owned or listed title.
+
+    Rail films found on TMDb alone have no record for /movie_states to
+    map their tile through, which left their ladders blank while films
+    with records showed estimates. Each gets a review-only record here —
+    through the same shared creation door the review and watchlist
+    surfaces walk — and anything never stamped by the standard TMDb
+    refresh gets one enqueued, after which the resolver scores it on
+    the first tile view and the nightly recompute folds it in."""
+
+    from app.tmdb_refresh import find_or_create_tmdb_movie
+
+    to_refresh = {}
+    for item in items:
+        year = str(item.get("year") or "")
+        if not item.get("title") or not year.isdigit():
+            continue
+        movie, _ = find_or_create_tmdb_movie(item["tmdb_id"], item["title"], int(year))
+        if movie.tmdb_data_as_of is None:
+            to_refresh[movie.id] = movie
+    db.session.commit()
+    for movie in to_refresh.values():
+        current_app.maintenance_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=("Movies", movie.id, movie.tmdb_id),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=(f"Refreshing TMDB data for '{movie.title} ({movie.year})'"),
+        )
+
+
 def recompute_streaming_rail():
     """Nightly task: rebuild the streaming rail for every user with a
     taste profile and provider picks, into Redis for the landing page."""
 
     with app.app_context():
         computed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rail_films = {}
         for user in User.query.all():
             if not user.streaming_providers.count():
                 continue
@@ -500,6 +533,9 @@ def recompute_streaming_rail():
             current_app.logger.info(
                 f"Streaming rail: stored {len(items)} films for user {user.id}"
             )
+            for item in items:
+                rail_films.setdefault(item["tmdb_id"], item)
+        ensure_rail_records(rail_films.values())
         return True
 
 
