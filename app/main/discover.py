@@ -421,10 +421,14 @@ def file_activity():
 
     page = request.args.get("page", 1, type=int)
 
-    # Show only files added in the last 7 days, as the AWS S3 lifecycle rule migrates
-    # older files that have been uploaded to S3 Deep Glacier storage; this way we only
-    # show files that are still in a Standard data storage class and can be re-downloaded
-    # without needing to unfreeze from S3 Glacier.
+    # Show only files added or updated in the last 7 days — the page's
+    # recency horizon, matching pipeline.TRAIL_TTL_SECONDS so a card
+    # keeps its trail chips for as long as it stays on the page. (This
+    # window once meant "still in S3 Standard, re-downloadable without a
+    # Glacier thaw", but the live lifecycle rule has transitioned
+    # untouched/ to Deep Archive at 0 days for some time — verified
+    # against the bucket Aug 2026 — so files here are usually already
+    # frozen after their first day.)
 
     recently_added = (
         File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
