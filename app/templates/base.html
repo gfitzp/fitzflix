@@ -894,48 +894,65 @@
 		});
 
 		// Gallery hydration (#45c, Aug 2026 revision): tiles render
-		// their star row blank and their toggle Add-first; one batched
-		// /movie_states fetch per page paints the real verdicts,
-		// estimates, and watchlist faces. Duplicate tiles for the same
-		// film (a movie's editions on the library wall) all paint from
-		// the one entry. A failed fetch leaves the widgets blank but
-		// working — posts still answer with authoritative state.
+		// their star row blank and their toggle Add-first; batched
+		// /movie_states fetches paint the real verdicts, estimates,
+		// and watchlist faces. Duplicate tiles for the same film (a
+		// movie's editions on the library wall) all paint from the
+		// one entry. The ids ride in chunks under the endpoint's
+		// 300-id cap — the unpaginated watchlist can carry hundreds
+		// of films, and one oversized request would 400 and leave
+		// every ladder blank. Each chunk paints its own tiles as it
+		// lands, so one failed chunk costs only its own tiles —
+		// posts still answer with authoritative state.
 
 		(function() {
 			var tiles = document.querySelectorAll("[data-state-movie], [data-state-tmdb]");
 			if (!tiles.length) return;
-			var movieIds = [];
-			var tmdbIds = [];
+			var STATE_CHUNK = 300;
+			var ids = [];
 			tiles.forEach(function(tile) {
-				var id = tile.getAttribute("data-state-movie");
-				if (id && movieIds.indexOf(id) < 0) movieIds.push(id);
-				id = tile.getAttribute("data-state-tmdb");
-				if (id && tmdbIds.indexOf(id) < 0) tmdbIds.push(id);
-			});
-			var params = [];
-			if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
-			if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
-			fetch("{{ url_for('main.movie_states') }}?" + params.join("&"),
-				{credentials: "same-origin"})
-				.then(function(response) {
-					if (!response.ok) throw new Error("state fetch failed");
-					return response.json();
-				})
-				.then(function(payload) {
-					tiles.forEach(function(tile) {
-						var state = tile.hasAttribute("data-state-movie")
-							? payload.movies[tile.getAttribute("data-state-movie")]
-							: payload.tmdb[tile.getAttribute("data-state-tmdb")];
-						if (!state) return;
-						var row = tile.querySelector(".star-row");
-						if (row) paintLadder(row, state);
-						syncWatchlistForm(
-							tile.querySelector("[data-card-watchlist]"),
-							state.on_watchlist
-						);
+				["data-state-movie", "data-state-tmdb"].forEach(function(attr) {
+					var id = tile.getAttribute(attr);
+					if (!id) return;
+					var known = ids.some(function(entry) {
+						return entry.attr === attr && entry.id === id;
 					});
-				})
-				.catch(function() {});
+					if (!known) ids.push({attr: attr, id: id});
+				});
+			});
+			function paintFrom(payload) {
+				tiles.forEach(function(tile) {
+					var state = tile.hasAttribute("data-state-movie")
+						? payload.movies[tile.getAttribute("data-state-movie")]
+						: payload.tmdb[tile.getAttribute("data-state-tmdb")];
+					if (!state) return;
+					var row = tile.querySelector(".star-row");
+					if (row) paintLadder(row, state);
+					syncWatchlistForm(
+						tile.querySelector("[data-card-watchlist]"),
+						state.on_watchlist
+					);
+				});
+			}
+			for (var start = 0; start < ids.length; start += STATE_CHUNK) {
+				var movieIds = [];
+				var tmdbIds = [];
+				ids.slice(start, start + STATE_CHUNK).forEach(function(entry) {
+					(entry.attr === "data-state-movie" ? movieIds : tmdbIds)
+						.push(entry.id);
+				});
+				var params = [];
+				if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
+				if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
+				fetch("{{ url_for('main.movie_states') }}?" + params.join("&"),
+					{credentials: "same-origin"})
+					.then(function(response) {
+						if (!response.ok) throw new Error("state fetch failed");
+						return response.json();
+					})
+					.then(paintFrom)
+					.catch(function() {});
+			}
 		})();
 
         {% endif %}
