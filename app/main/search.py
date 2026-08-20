@@ -518,6 +518,9 @@ def search_tmdb():
         bar = marker_bar(profile) if profile else None
         for match in movie_matches:
             record_id = record_ids.get(match["tmdb_id"])
+            # The row's star ladder posts to the movie route when any
+            # record exists (file or not), the TMDb log route otherwise
+            match["record_id"] = record_id
             match["seen"] = record_id in seen_ids
             match["watchlisted"] = record_id in watchlisted_ids
             if match["seen"] or record_id in refused_ids:

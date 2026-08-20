@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
+{% from "_rating_ladder.html" import rating_ladder %}
 {% from "_search_form.html" import global_search_form %}
 
 {% block app_content %}
@@ -22,18 +23,15 @@
 <h4>Movies on TMDb</h4>
 <div class="list-group mb-4">
 	{% for match in movie_matches %}
-	{# The whole row is the action, like the local search: owned matches
-	   open their movie page, unowned ones with a year open the log page;
-	   films without a release year can't be logged yet, so their row
-	   doesn't link #}
-	{% if match.library_id %}
-	<a href="{{ url_for('main.movie', movie_id=match.library_id) }}" class="list-group-item list-group-item-action">
-	{% elif match.year %}
-	<a href="{{ url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" class="list-group-item list-group-item-action">
-	{% else %}
+	{# Poster and title link — owned matches to their movie page,
+	   unowned ones with a year to the log page; films without a
+	   release year can't be logged yet, so they don't link. The row
+	   stopped being one whole anchor when the star ladder moved in
+	   (a form can't sit inside a link), like the history rows #}
+	{% set match_url = url_for('main.movie', movie_id=match.library_id) if match.library_id else (url_for('main.review_tmdb', tmdb_id=match.tmdb_id) if match.year else none) %}
 	<div class="list-group-item">
-	{% endif %}
 		<div class="d-flex">
+			{% if match_url %}<a href="{{ match_url }}" class="align-self-start">{% endif %}
 			{% if match.poster_path %}
 			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ match.poster_path }}" loading="lazy" class="me-3 border align-self-start" alt="{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}" style="width: 92px;">
 			{% else %}
@@ -43,8 +41,23 @@
 				</svg>
 			</div>
 			{% endif %}
+			{% if match_url %}</a>{% endif %}
 			<div class="flex-grow-1">
-				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
+				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
+				{# The live star ladder, like the history rows (#58): a
+				   record's ladder posts to its movie route, a bare TMDb
+				   result's to the log route whose first tap creates the
+				   record; the /movie_states hydration paints the verdict
+				   or the shared source's estimate — the tmdb lane, so
+				   record-less results estimate too #}
+				{% if match.record_id or match.year %}
+				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
+					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+					<input type="hidden" name="from_card" value="1">
+					{{ rating_ladder(compact=true, live=true) }}
+				</form>
+				<br/>
+				{% endif %}
 				{# Badges sit left-aligned under the title, like the local
 				   search rows, in the movie-page strip's grammar: the
 				   Fitzflix badge for owned matches, availability badges
@@ -72,7 +85,7 @@
 				{% endif %}
 			</div>
 		</div>
-	{% if match.library_id or match.year %}</a>{% else %}</div>{% endif %}
+	</div>
 	{% endfor %}
 </div>
 {% endif %}

@@ -94,10 +94,12 @@
 		{# Each viewing carries its own live star row (#58/#57), posting
 		   to review_edit — stars only, never the ✕: a logged film's
 		   floor is 1 star. The typed text rides along with a star tap
-		   (both fields belong to the same form) #}
+		   (both fields belong to the same form). An unrated viewing —
+		   a Plex watch, an unrated import — previews the engine's
+		   estimate until real stars land #}
 		<form action="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}" method="post" class="d-inline-flex align-items-center">
 			{{ review_upload_form.csrf_token }}
-			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), live=true) }}
+			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), live=true, estimated=estimates.get(review.movie_id)) }}
 		</form>
 		{% if review.rewatch %}
 			<span class="badge text-bg-secondary align-text-bottom" title="Rewatch">

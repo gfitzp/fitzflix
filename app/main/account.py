@@ -41,6 +41,12 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import _ladder_fetch, _quick_rating, _watched_timestamp
+from app.recommendations import (
+    estimated_rating,
+    resolved_score,
+    stored_profile,
+    stored_scores,
+)
 from app.email import send_email
 from app.streaming import (
     provider_registry,
@@ -144,7 +150,16 @@ def review_edit(review_id):
         if _ladder_fetch():
             # This page edits ONE viewing, so the row's state comes from
             # that row — not the latest-viewing lookup the movie page
-            # uses; a logged viewing never shows an estimate
+            # uses. Clearing the stars repaints the row back to the
+            # engine's estimate (#58's rule, extended to bare watches)
+            estimated = None
+            if user_review.rating is None:
+                profile = stored_profile(current_app.redis, current_user.id)
+                score = resolved_score(
+                    current_app.redis, current_user.id, movie, profile
+                )
+                if score is not None:
+                    estimated = estimated_rating(profile, score)
             return jsonify(
                 {
                     "rating": (
@@ -153,7 +168,7 @@ def review_edit(review_id):
                         else None
                     ),
                     "flagged": False,
-                    "estimated": None,
+                    "estimated": estimated,
                 }
             )
         flash(f"Updated your review of '{title}'", "success")
@@ -167,6 +182,13 @@ def review_edit(review_id):
             ),
         )
 
+    estimated = None
+    if user_review.rating is None:
+        profile = stored_profile(current_app.redis, current_user.id)
+        score = resolved_score(current_app.redis, current_user.id, movie, profile)
+        if score is not None:
+            estimated = estimated_rating(profile, score)
+
     return render_template(
         "review_edit.html",
         title=f'Edit review for "{title}"',
@@ -174,6 +196,7 @@ def review_edit(review_id):
         user_review=user_review,
         movie_review_form=movie_review_form,
         page=page,
+        estimated=estimated,
     )
 
 
@@ -442,12 +465,34 @@ def history():
                     )
         return redirect(url_for("main.history"))
 
+    # Unrated viewings — Plex watches, unrated imports — preview the
+    # engine's estimate in their ladder until Glenn's own stars land,
+    # through the shared score source like every other surface
+
+    estimates = {}
+    profile = stored_profile(current_app.redis, current_user.id)
+    if profile:
+        scores = stored_scores(current_app.redis, current_user.id)
+        for review in reviews.items:
+            if review.rating is not None or review.movie_id in estimates:
+                continue
+            score = resolved_score(
+                current_app.redis,
+                current_user.id,
+                review.movie,
+                profile,
+                scores=scores,
+            )
+            if score is not None:
+                estimates[review.movie_id] = estimated_rating(profile, score)
+
     return render_template(
         "history.html",
         title="My History",
         review_export_form=review_export_form,
         review_upload_form=review_upload_form,
         reviews=reviews.items,
+        estimates=estimates,
         next_url=next_url,
         prev_url=prev_url,
         pages=reviews,

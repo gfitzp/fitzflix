@@ -644,3 +644,59 @@ def test_exact_title_match_outranks_substring_matches(app, admin_client):
     assert all(pos >= 0 for pos in positions.values()), positions
     assert positions["Up"] < positions["Upgrade"] < positions["Blow-Up"]
     assert positions["Blow-Up"] < positions["Grown Ups"]
+
+
+def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
+    """Each TMDb movie result row carries a live star ladder like the
+    history rows: a record's ladder posts to its movie route and
+    hydrates by movie id, a bare result's posts to the log route and
+    hydrates by tmdb id — riding the shared source's tmdb lane; a
+    result with no release year can't be logged, so no ladder."""
+
+    with app.app_context():
+        recorded = make_movie("Ladder Recorded", 1975, tmdb_id=871)
+        db.session.commit()
+        recorded_id = recorded.id
+
+    import app.main.search as search
+
+    class FakeResponse:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                [
+                    {
+                        "id": 871,
+                        "title": "Ladder Recorded",
+                        "release_date": "1975-06-20",
+                    },
+                    {"id": 872, "title": "Ladder Bare", "release_date": "1981-03-13"},
+                    {"id": 873, "title": "Ladder Dateless"},
+                ]
+            )
+        return FakeResponse([])
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb?q=ladder").get_data(as_text=True)
+    assert f'data-state-movie="{recorded_id}"' in page
+    assert f'action="/movie/{recorded_id}"' in page
+    assert 'data-state-tmdb="872"' in page
+    assert 'action="/review/tmdb/872"' in page
+    assert 'data-state-tmdb="873"' not in page
+
+    # Two ladders (the dateless result gets none): five stars and the
+    # tile-standard ✕ each — the ✕ shares the star-btn base class
+
+    assert page.count('class="star-btn') == 12
+    assert page.count("star-btn x-btn") == 2

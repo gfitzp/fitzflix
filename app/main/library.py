@@ -1579,17 +1579,21 @@ def movie(movie_id):
     # the result back so every surface shows one number (Glenn's ask —
     # a low guess warns off a watchlist add as usefully as a high one
     # invites it), and the profile's calibration curve turns the score
-    # into "you might rate this around ★★★★" — never shown once the
-    # user has a verdict of their own
+    # into "you might rate this around ★★★★" — shown until the user's
+    # own STARS exist, so a bare unrated watch still previews the guess
 
     estimated = None
     might_interest = False
-    if review is None and not refused:
-        profile = stored_profile(current_app.redis, current_user.id)
+    profile = stored_profile(current_app.redis, current_user.id)
+    if (review is None or review.rating is None) and not refused:
         score = resolved_score(current_app.redis, current_user.id, movie, profile)
         if score is not None:
             estimated = estimated_rating(profile, score)
 
+    # "Might interest you" keeps the stricter diary rule: any watch —
+    # rated or not — already feeds the profile, so seen films never badge
+
+    if review is None and not refused:
         if films:
             might_interest = movie.id in recommended_movie_ids(
                 current_app.redis, current_user.id

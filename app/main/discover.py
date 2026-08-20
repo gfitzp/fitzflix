@@ -902,7 +902,7 @@ def movie_states():
             movie_id
             for movie_id in ordered_ids
             if movie_id not in scores
-            and movie_id not in latest
+            and (movie_id not in latest or latest[movie_id].rating is None)
             and movie_id not in flagged_ids
         ][:MOVIE_STATES_LIVE_SCORES]
         for movie in Movie.query.filter(Movie.id.in_(misses or [0])):
@@ -949,7 +949,9 @@ def movie_states():
         row = latest.get(movie_id)
         flagged = movie_id in flagged_ids
         estimated = None
-        if row is None and not flagged:
+        # The estimate previews until the user's own stars exist — a
+        # bare watch (a Plex viewing, an unrated import) still shows it
+        if (row is None or row.rating is None) and not flagged:
             score = scores.get(movie_id)
             if score is not None:
                 estimated = estimated_rating(profile, score)

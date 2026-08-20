@@ -151,9 +151,10 @@ def _same_day_rerate(user_id, movie_id, rating):
 def _ladder_state(user_id, movie_id):
     """The star row's current verdict for a film as its JSON payload:
     the latest viewing's rating (the row the movie page displays),
-    whether the not-interested flag is set, and — for UNLOGGED,
-    unflagged films — the engine's estimated rating, so removing a
-    verdict repaints the row back to its estimate (#58)."""
+    whether the not-interested flag is set, and — until the user's own
+    STARS exist (unlogged films and bare unrated watches alike) — the
+    engine's estimated rating, so removing a verdict repaints the row
+    back to its estimate (#58)."""
 
     row = _latest_review_row(user_id, movie_id)
     flagged = (
@@ -163,7 +164,7 @@ def _ladder_state(user_id, movie_id):
         is not None
     )
     estimated = None
-    if row is None and not flagged:
+    if (row is None or row.rating is None) and not flagged:
         profile = stored_profile(current_app.redis, int(user_id))
         movie = db.session.get(Movie, int(movie_id))
         score = resolved_score(current_app.redis, int(user_id), movie, profile)

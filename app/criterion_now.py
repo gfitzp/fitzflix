@@ -422,7 +422,7 @@ def _ladder_state_for(user, tmdb_id, payload):
             ).first()
             is not None
         )
-        if row is None and not state["flagged"]:
+        if (row is None or row.rating is None) and not state["flagged"]:
             score = resolved_score(current_app.redis, user.id, movie, profile)
             if score is not None:
                 state["estimated"] = estimated_rating(profile, score)

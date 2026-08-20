@@ -1444,3 +1444,110 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
     titles = [row[2] for row in csv_module.reader(io.StringIO(contents))][1:]
     assert "Local Verdict" in titles
     assert "Synced From Feed" not in titles
+
+
+def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
+    """An unrated viewing — a Plex watch, an unrated import — previews
+    the engine's estimate in its history ladder until real stars land;
+    rated rows show their verdict and no estimate."""
+
+    import json
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        watched = make_movie("History Bare Watch", 1994)
+        rated = make_movie("History Rated", 1995)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=watched.id, date_watched=datetime.now()
+            )
+        )
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=rated.id,
+                date_watched=datetime.now(),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        watched_id = watched.id
+
+    app.redis.set(
+        SCORES_KEY.format(user_id=user_id), json.dumps({str(watched_id): 9.0})
+    )
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert "Estimated 4.5 for you" in page
+    assert page.count("star estimated") == 5
+    assert page.count("estimated est-partial") == 1
+    assert page.count("star filled") == 4
+
+
+def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
+    """Tapping the current rating on a history row clears the stars,
+    and the live repaint answers with the engine's estimate — the row
+    falls back to the guess instead of going blank (#58's rule,
+    extended to logged-but-unrated viewings)."""
+
+    import json
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.recommendations import PROFILE_KEY, SCORES_KEY
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Clear To Estimate", 1996)
+        review = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            date_watched=datetime.now(),
+            **star_rating_fields(3.0),
+        )
+        db.session.add(review)
+        db.session.commit()
+        movie_id, review_id = movie.id, review.id
+
+    app.redis.set(SCORES_KEY.format(user_id=user_id), json.dumps({str(movie_id): 9.0}))
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    state = admin_client.post(
+        f"/review/{review_id}/edit",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "3"},
+        headers={"X-Requested-With": "ladder"},
+    ).get_json()
+    assert state["rating"] is None
+    assert state["estimated"] == 4.5

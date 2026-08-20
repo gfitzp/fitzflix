@@ -445,3 +445,42 @@ def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
             UserWatchlist.query.filter_by(user_id=admin_id(), movie_id=movie_id).first()
             is None
         )
+
+
+def test_movie_states_estimates_bare_unrated_watches(app, admin_client):
+    """A logged-but-unrated viewing — a Plex watch — keeps its tile's
+    estimate: the guess previews until the user's own stars exist, and
+    only a real rating (or the ✕) retires it."""
+
+    from app.recommendations import PROFILE_KEY
+
+    with app.app_context():
+        user_id = admin_id()
+        watched = make_movie("States Bare Watch", 1994, tmdb_data_as_of=datetime.now())
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=watched.id, date_watched=datetime.now()
+            )
+        )
+        db.session.commit()
+        watched_id = watched.id
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 0.1, 0.2, 0.3],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    payload = admin_client.get(f"/movie_states?movie_ids={watched_id}").get_json()
+    state = payload["movies"][str(watched_id)]
+    assert state["has_review"] is True
+    assert state["rating"] is None
+    assert state["estimated"] is not None
