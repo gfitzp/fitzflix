@@ -312,3 +312,38 @@ def test_empty_pool_renders_the_waiting_state(app, admin_client):
     page = admin_client.get("/game").get_data(as_text=True)
     assert "The frame pool is still empty." in page
     assert "flask frames refresh" in page
+
+
+def test_rounds_never_repeat_until_the_pool_laps(app, admin_client):
+    """Dealt frames land in a per-user seen set: three pooled films
+    deal three distinct rounds, and only then does the lap reset —
+    still never the same frame twice in a row (Glenn's Finding Nemo
+    report)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movies = []
+        for n in range(3):
+            movie = make_movie(f"Frame Cycle {n}", 1990 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            movies.append(movie)
+        db.session.commit()
+        movie_ids = [movie.id for movie in movies]
+
+    tokens = {seed_frame(app, movie_id) for movie_id in movie_ids}
+
+    def deal():
+        page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        return re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1)
+
+    first_lap = [deal() for _ in range(3)]
+    assert set(first_lap) == tokens  # all three served, no repeats
+
+    # The next deal starts a fresh lap without echoing the last frame
+
+    fourth = deal()
+    assert fourth in tokens
+    assert fourth != first_lap[-1]

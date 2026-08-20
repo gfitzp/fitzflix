@@ -27,7 +27,7 @@
 {% endif %}
 <img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded mb-3" style="max-height: 70vh;" alt="A frame from {{ result.answer }}">
 <div>
-	<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, prev=token) }}">Next frame</a>
+	<a class="btn btn-primary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Next frame</a>
 </div>
 {% elif token %}
 <img src="{{ url_for('main.game_frame', token=token) }}" class="img-fluid border rounded mb-3" style="max-height: 70vh;" alt="A frame from a mystery film">
@@ -52,7 +52,7 @@
 	</div>
 	{% endif %}
 	<button type="submit" name="guess_submit" value="y" class="btn btn-primary">Guess</button>
-	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, prev=token) }}">Skip</a>
+	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Skip</a>
 </form>
 {% elif pool_size %}
 {# The pool has frames, just none this difficulty can serve — Easy

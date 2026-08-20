@@ -145,6 +145,35 @@ def _streak_key(difficulty):
     return f"frame_streak_{difficulty}"
 
 
+def _deal_token(tokens):
+    """Pick this round's frame without repeats (Glenn's Finding Nemo
+    report, Aug 20 2026): every dealt frame lands in a per-user seen
+    set in Redis, and deals exclude seen frames until the difficulty's
+    whole pool has been served — then the lap resets and the frames
+    come around again, still never twice in a row (the last-dealt
+    frame is remembered server-side, so a plain page visit can't echo
+    it either). The set is shared across difficulties (a frame seen
+    on Easy is spoiled for Difficult too) and tokens that rotate out
+    of the pool age out with the keys' TTL."""
+
+    if not tokens:
+        return None
+    user_id = int(current_user.id)
+    seen_key = f"fitzflix:frames:seen:{user_id}"
+    last_key = f"fitzflix:frames:last:{user_id}"
+    seen = {member.decode() for member in current_app.redis.smembers(seen_key)}
+    last = (current_app.redis.get(last_key) or b"").decode()
+    remaining = [token for token in tokens if token not in seen and token != last]
+    if not remaining:
+        current_app.redis.srem(seen_key, *tokens)
+        remaining = [token for token in tokens if token != last] or list(tokens)
+    token = random.choice(remaining)
+    current_app.redis.sadd(seen_key, token)
+    current_app.redis.expire(seen_key, 60 * 24 * 3600)
+    current_app.redis.set(last_key, token, ex=60 * 24 * 3600)
+    return token
+
+
 @bp.route("/game", methods=["GET", "POST"])
 @login_required
 def name_that_frame():
@@ -203,11 +232,7 @@ def name_that_frame():
         difficulty = "easy"
 
     tokens = _round_tokens(difficulty)
-    prev = request.args.get("prev")
-    if len(tokens) > 1 and prev in tokens:
-        del tokens[prev]
-
-    token = random.choice(list(tokens)) if tokens else None
+    token = _deal_token(tokens)
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
         options = _build_options(tokens[token]["movie_id"], difficulty)
