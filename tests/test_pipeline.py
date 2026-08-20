@@ -166,7 +166,10 @@ def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
 def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
     """A phase inside one job — the staging copy — lands on the same
     trail as its own chip, keyed by the job's id but under its own
-    stage label, so it never collides with the job-level entry."""
+    stage label, and AHEAD of the job-level entry: the chips read in
+    pipeline order (staging copy, then localizing), not in order of
+    first stamp, which the job entry always wins by existing from
+    enqueue time."""
 
     import rq
 
@@ -185,8 +188,18 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
 
     entries = pipeline_trails(app.redis)[0]["entries"]
     assert [(entry["stage"], entry["status"]) for entry in entries] == [
-        ("Localizing", "started"),
         ("Copying to staging", "done"),
+        ("Localizing", "started"),
+    ]
+
+    # The in-place update must not have moved it: finishing the job
+    # keeps the sub-stage ahead of its chip
+
+    record_job_event(app.redis, job, "done")
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [entry["stage"] for entry in entries] == [
+        "Copying to staging",
+        "Localizing",
     ]
 
 

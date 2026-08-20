@@ -139,7 +139,7 @@ def _decode_trail(raw):
     return json.loads(raw) if raw else []
 
 
-def _write_trail_entry(connection, basename, stage, status, job_id):
+def _write_trail_entry(connection, basename, stage, status, job_id, before_job=False):
     """Atomically apply one stage event to the file's trail.
 
     Two workers touch the same trail at a stage handoff: the move job
@@ -178,8 +178,22 @@ def _write_trail_entry(connection, basename, stage, status, job_id):
                         entry["at"] = now
                         break
                 else:
-                    trail.append(
-                        {"stage": stage, "status": status, "at": now, "job": job_id}
+                    # A sub-stage reports preparatory work inside its job
+                    # (the staging copy precedes the localizing proper),
+                    # so it slots in AHEAD of the job's own entry — the
+                    # chips then read in pipeline order, not in order of
+                    # first stamp, which the job-level entry always wins
+                    # by existing from enqueue time (Glenn, Aug 2026)
+
+                    index = len(trail)
+                    if before_job:
+                        for position, existing in enumerate(trail):
+                            if existing.get("job") == job_id:
+                                index = position
+                                break
+                    trail.insert(
+                        index,
+                        {"stage": stage, "status": status, "at": now, "job": job_id},
                     )
                 del trail[:-40]
 
@@ -235,9 +249,11 @@ def record_task_stage(stage, status):
     movement and has no job boundary of its own, like localization's
     copy to the staging directory. The file is still derived from the
     current job via the STAGES registry and the entry is keyed by that
-    job's id, so a retry job leaves its own fresh sub-stage line.
-    Advisory like every hook: failures are swallowed, and outside a
-    worker (direct calls in tests) it is a no-op."""
+    job's id, so a retry job leaves its own fresh sub-stage line — and
+    it renders AHEAD of the job's own chip, since it reports work that
+    precedes the job's headline stage. Advisory like every hook:
+    failures are swallowed, and outside a worker (direct calls in
+    tests) it is a no-op."""
 
     try:
         from rq import get_current_job
@@ -249,7 +265,9 @@ def record_task_stage(stage, status):
         if found is None:
             return
         basename, _ = found
-        _write_trail_entry(job.connection, basename, stage, status, job.id)
+        _write_trail_entry(
+            job.connection, basename, stage, status, job.id, before_job=True
+        )
     except Exception:
         try:
             from flask import current_app
