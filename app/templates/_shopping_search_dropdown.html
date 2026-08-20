@@ -26,7 +26,29 @@
 		{% endif %}
         <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
-		{% if radarr_proxy_url %}
+		{# The ad-hoc Radarr hand-off (#66) rides the Find menu: one click
+		   requests an unowned film with the house settings and starts the
+		   search; once requested, the entry flips to Radarr's own page —
+		   where interactive search lives — plus the withdrawal. Pages
+		   that don't pass the Radarr context keep the plain link. #}
+		{% if radarr_requestable %}
+			{% if in_radarr %}
+				{% if radarr_proxy_url %}
+				<a class="dropdown-item" target="_blank" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}" title="Radarr is monitoring this film">Search in Radarr</a>
+				{% endif %}
+				<form action="{{ url_for('main.radarr_request', origin=(request.full_path if request.query_string else request.path)) }}" method="post">
+					{{ radarr_form.csrf_token }}
+					{{ radarr_form.movie_id(value=movie.id) }}
+					<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="dropdown-item" title="Radarr is monitoring this film — withdraw the request">Un-request from Radarr</button>
+				</form>
+			{% else %}
+				<form action="{{ url_for('main.radarr_request', origin=(request.full_path if request.query_string else request.path)) }}" method="post">
+					{{ radarr_form.csrf_token }}
+					{{ radarr_form.movie_id(value=movie.id) }}
+					<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="dropdown-item">Request via Radarr</button>
+				</form>
+			{% endif %}
+		{% elif radarr_proxy_url %}
 			<a class="dropdown-item" target="_blank" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}">Radarr</a>
 		{% endif %}
 		<a class="dropdown-item" target="_blank" href="https://omgwtfnzbs.org/browse.php?search={{ title|urlencode }}&cat=35" rel="noreferrer">omgwtfnzbs</a>

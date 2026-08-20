@@ -982,8 +982,8 @@ def watchlist():
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
     }
 
-    # The ad-hoc Radarr hand-off (#66): admins see request/withdraw
-    # buttons on unowned rows, badged from the hour-cached id set
+    # The ad-hoc Radarr hand-off (#66): admins get request/withdraw
+    # entries on unowned tiles' Find menus, from the hour-cached id set
 
     radarr_ids = (
         radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
@@ -1019,6 +1019,7 @@ def watchlist():
         watchlist_form=watchlist_form,
         radarr_form=RadarrForm(),
         radarr_available=bool(current_user.admin and radarr_configured()),
+        radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
         streaming_attribution=streaming_attribution,
     )
 
@@ -1029,10 +1030,10 @@ def watchlist():
 def radarr_request():
     """The ad-hoc Radarr hand-off (#66): request one unowned film for
     download, or withdraw a request — deliberate per-film actions from
-    the movie page or a watchlist row, never automatic (an auto-sync
-    of the whole watchlist would fill the volume). An `origin` query
-    param carries where the visitor came from, validated to a local
-    path."""
+    the Find menu on the movie page or a watchlist tile, never
+    automatic (an auto-sync of the whole watchlist would fill the
+    volume). An `origin` query param carries where the visitor came
+    from, validated to a local path."""
 
     radarr_form = RadarrForm()
     origin = request.args.get("origin", "", type=str)

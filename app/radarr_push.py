@@ -2,8 +2,9 @@
 
 Glenn's revision of the original always-sync design: pushing every
 watchlist film to Radarr would queue hundreds of downloads and fill
-the volume, so requesting is a deliberate per-film action — a button
-on unowned movie pages and watchlist rows — with a matching withdraw.
+the volume, so requesting is a deliberate per-film action — an entry
+on the Find menu of unowned movie pages and watchlist tiles — with a
+matching withdraw.
 Radarr's root folder is the library volume itself, so a granted
 request downloads, renames, and flows back in through the existing
 Radarr webhook without any further wiring.

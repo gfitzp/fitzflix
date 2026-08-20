@@ -27,18 +27,28 @@
 			   hidden_tag() would render a second, empty movie_id input,
 			   and WTForms reads the first one submitted #}
 			<div class="d-flex justify-content-center mt-1" style="gap: .25rem;">
-				{# The ad-hoc Radarr hand-off (#66) on unowned films:
-				   request the film for download, or withdraw #}
-				{% if radarr_available and not row.owned and movie.tmdb_id %}
-				<form action="{{ url_for('main.radarr_request', origin=url_for('main.watchlist')) }}" method="post">
-					{{ radarr_form.csrf_token }}
-					{{ radarr_form.movie_id(value=movie.id) }}
-					{% if row.in_radarr %}
-					<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary py-0" title="Radarr is monitoring this film — withdraw the request">Un-request</button>
+				{# The movie page's Find split button replaced the bare
+				   Request button (#66 revision): the face opens the best
+				   shop for the film, the menu fans out to the rest — the
+				   Radarr request and withdrawal now live on the menu #}
+				{% if not row.owned %}
+				{% set in_radarr = row.in_radarr %}
+				{% set radarr_requestable = radarr_available and movie.tmdb_id %}
+				{% set find_title = movie.tmdb_title if movie.tmdb_title else movie.title %}
+				{% set find_year = movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year %}
+				<div class="btn-group">
+					{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
+						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ find_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
+					{% elif movie.criterion_spine_number or movie.criterion_set_title %}
+						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ find_title|urlencode }} {{ find_year }} Criterion Collection" rel="noreferrer">Find</a>
 					{% else %}
-					<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary py-0">Request</button>
+						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ find_title|urlencode }}&yearfrom={{ find_year }}&yearto={{ find_year }}&submit=Search&action=search" rel="noreferrer">Find</a>
 					{% endif %}
-				</form>
+					<button type="button" class="btn btn-sm btn-outline-primary py-0 dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+						<span class="visually-hidden">Toggle dropdown</span>
+					</button>
+					{% include "_shopping_search_dropdown.html" %}
+				</div>
 				{% endif %}
 				<form action="" method="post">
 					{{ watchlist_form.csrf_token }}

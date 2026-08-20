@@ -95,6 +95,9 @@
 </div>
 {% endif %}
 <hr>
+{# Radarr request eligibility for the Find menu (#66): admin, Radarr
+   configured, unowned, and TMDb-known #}
+{% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
@@ -191,21 +194,10 @@
 		<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
 	</form>
 	{% endif %}
-	{# The ad-hoc Radarr hand-off (#66): request an unowned film for
-	   download — a deliberate per-film action, never automatic — or
-	   withdraw the request. Admin-only; a granted request imports
-	   through the existing Radarr webhook #}
-	{% if current_user.admin and radarr_available and not films and movie.tmdb_id %}
-	<form action="{{ url_for('main.radarr_request', origin=url_for('main.movie', movie_id=movie.id)) }}" method="post" class="d-inline">
-		{{ radarr_form.csrf_token }}
-		{{ radarr_form.movie_id(value=movie.id) }}
-		{% if in_radarr %}
-		<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
-		<button type="submit" name="radarr_remove_submit" value="Remove from Radarr" class="btn btn-sm btn-outline-secondary">Remove from Radarr</button>
-		{% else %}
-		<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="btn btn-sm btn-outline-primary">Request via Radarr</button>
-		{% endif %}
-	</form>
+	{# The ad-hoc Radarr hand-off (#66) lives on the Find menu now; the
+	   badge stays behind so a standing request reads at a glance #}
+	{% if radarr_requestable and in_radarr %}
+	<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
 	{% endif %}
 </div>
 <hr>

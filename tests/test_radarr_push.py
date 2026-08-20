@@ -1,6 +1,6 @@
 """The ad-hoc Radarr hand-off (#66): per-film request and withdrawal
-with the house settings, the watchlist and movie page buttons, and the
-badge cache."""
+with the house settings, the Find-menu entries on the watchlist and
+movie page, and the badge cache."""
 
 import re
 
@@ -143,8 +143,10 @@ def test_watchlist_rows_offer_request_and_unrequest(app, admin_client, monkeypat
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
 
-    # The unowned row offers Request; the owned row offers nothing
+    # The unowned tile carries the Find menu with the Request entry;
+    # the owned tile has no Find menu at all
 
+    assert page.count("dropdown-toggle-split") == 1
     assert page.count("radarr_request_submit") == 1
     assert f'value="{wanted_id}"' in page
 
@@ -156,10 +158,11 @@ def test_watchlist_rows_offer_request_and_unrequest(app, admin_client, monkeypat
             "radarr_request_submit": "Request via Radarr",
         },
     )
-    # The badge left the tiles (Aug 2026): the Un-request face itself
-    # says Radarr is monitoring the film
+    # Once requested, the Find menu flips: the Radarr page link plus
+    # the withdrawal, each saying Radarr is monitoring the film
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Un-request" in page
+    assert "Search in Radarr" in page
     assert "Radarr is monitoring this film" in page
     assert "radarr_request_submit" not in page
 

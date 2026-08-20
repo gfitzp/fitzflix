@@ -50,11 +50,14 @@ def remove_form_fields(page_html, movie_id):
     the submit button — so template/route field mismatches surface."""
 
     # Match on the movie_id INPUT, not any value attribute — the tile's
-    # star ladder renders buttons whose values collide with small ids
+    # star ladder renders buttons whose values collide with small ids —
+    # and require the remove submit, since the Find menu's Radarr form
+    # renders the same hidden fields earlier in the tile
 
     form_match = re.search(
         r"<form[^>]*>(?:(?!</form>).)*?"
-        rf'name="movie_id"[^>]*value="{movie_id}"(?:(?!</form>).)*?</form>',
+        rf'name="movie_id"[^>]*value="{movie_id}"(?:(?!</form>).)*?'
+        r'name="remove_watchlist_submit"(?:(?!</form>).)*?</form>',
         page_html,
         re.DOTALL,
     )
