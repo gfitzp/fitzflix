@@ -19,6 +19,7 @@ import json
 import os
 import re
 import threading
+import time
 import traceback
 import urllib.parse
 
@@ -549,7 +550,7 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
             current_app.logger.info(
                 f"Starting download of '{basename}' from AWS S3 storage"
             )
-            aws_download(key, basename, sqs_receipt_handle)
+            downloaded = aws_download(key, basename, sqs_receipt_handle)
 
         except OSError as e:
             if (
@@ -587,6 +588,16 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
             current_app.logger.error(traceback.format_exc())
 
         else:
+            # Any truthy status means the SQS message was handled: the file
+            # landed (DOWNLOAD_COMPLETE), or there was nothing to download
+            # (object missing, restore pending). False means the retry budget
+            # was exhausted or the message couldn't be cleaned up.
+
+            if not downloaded:
+                current_app.logger.error(
+                    f"'{basename}' download from AWS S3 storage failed"
+                )
+                return False
             return True
 
 
@@ -837,16 +848,60 @@ def aws_delete(key):
         return datetime.now(timezone.utc)
 
 
+# aws_download outcomes. Failure is a plain False; every success status is
+# truthy, so callers that only care whether the SQS message was handled can
+# boolean-test the result, while callers that need to know whether a file
+# actually landed compare against DOWNLOAD_COMPLETE
+
+DOWNLOAD_COMPLETE = "complete"
+DOWNLOAD_OBJECT_MISSING = "object-missing"
+DOWNLOAD_RESTORE_PENDING = "restore-pending"
+
+MAX_DOWNLOAD_RETRIES = 10
+
+# Client errors that fail identically on every attempt (credentials,
+# permissions, a missing bucket), so retrying only delays the failure report
+
+NON_RETRYABLE_DOWNLOAD_ERRORS = (
+    "AccessDenied",
+    "InvalidAccessKeyId",
+    "SignatureDoesNotMatch",
+    "NoSuchBucket",
+    "403",
+)
+
+# Seam for tests: retry backoff sleeps through this module attribute
+
+DOWNLOAD_RETRY_SLEEP = time.sleep
+
+
+def _spend_download_retry(retry):
+    """Spend one in-place download retry, backing off exponentially
+    (1s, 2s, 4s, ... capped at 60s) before the next attempt."""
+
+    retry -= 1
+    if retry > 0:
+        DOWNLOAD_RETRY_SLEEP(min(2 ** (MAX_DOWNLOAD_RETRIES - 1 - retry), 60))
+    return retry
+
+
 def aws_download(key, basename, sqs_receipt_handle=None):
-    """Download an object from AWS S3 storage."""
+    """Download an object from AWS S3 storage.
+
+    Returns DOWNLOAD_COMPLETE when the file landed in the import directory,
+    DOWNLOAD_OBJECT_MISSING when there is no such object at AWS, and
+    DOWNLOAD_RESTORE_PENDING when the object is in cold storage and a
+    restore's completion notification will re-trigger the download; all three
+    are truthy and mean the SQS message was handled. Returns False when the
+    retry budget was exhausted or the SQS message couldn't be deleted.
+    """
 
     # Retry plumbing still lives in app.videos; imported lazily so the
     # module import direction stays videos → aws_storage
 
     from app.videos import TRANSIENT_COPY_ERRNOS
 
-    MAX_RETRY_COUNT = 10
-    retry = MAX_RETRY_COUNT
+    retry = MAX_DOWNLOAD_RETRIES
 
     # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}"
     if "(edition-" in basename:
@@ -874,7 +929,6 @@ def aws_download(key, basename, sqs_receipt_handle=None):
             )
 
         # Don't resume if the file doesn't exist in AWS!
-        # TODO: this code may need additional testing...
         except botocore.exceptions.ClientError as error:
             # boto3 signals a missing object via Error.Code ("404"/"NoSuchKey");
             # keep the HTTP status code check as a fallback
@@ -887,7 +941,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 if sqs_receipt_handle:
                     if not delete_sqs_message(sqs_client, sqs_receipt_handle):
                         return False
-                return True
+                return DOWNLOAD_OBJECT_MISSING
 
             elif error_code == "InvalidObjectState":
                 # The restored copy expired before it could be downloaded, so
@@ -895,9 +949,17 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 # stale. Request a new restore unless one is already underway;
                 # its completion notification will re-trigger the download.
 
-                head_response = s3_client.head_object(
-                    Bucket=current_app.config["AWS_BUCKET"], Key=key
-                )
+                try:
+                    head_response = s3_client.head_object(
+                        Bucket=current_app.config["AWS_BUCKET"], Key=key
+                    )
+                except Exception:
+                    # A failed status check spends a retry like any other
+                    # error instead of escaping the loop
+
+                    current_app.logger.error(traceback.format_exc())
+                    retry = _spend_download_retry(retry)
+                    continue
                 restore_status = head_response.get("Restore") or ""
                 if 'ongoing-request="true"' in restore_status:
                     current_app.logger.info(
@@ -916,11 +978,19 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                         sqs_client, sqs_receipt_handle, note="stale message"
                     ):
                         return False
-                return True
+                return DOWNLOAD_RESTORE_PENDING
+
+            elif error_code in NON_RETRYABLE_DOWNLOAD_ERRORS or status_code == 403:
+                current_app.logger.error(traceback.format_exc())
+                current_app.logger.error(
+                    f"'{basename}' download failed with non-retryable error "
+                    f"'{error_code or status_code}'; giving up"
+                )
+                retry = 0
 
             else:
                 current_app.logger.error(traceback.format_exc())
-                retry = retry - 1
+                retry = _spend_download_retry(retry)
 
         except OSError as e:
             if e.errno in TRANSIENT_COPY_ERRNOS:
@@ -936,11 +1006,11 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                     pass
                 raise
             current_app.logger.error(traceback.format_exc())
-            retry = retry - 1
+            retry = _spend_download_retry(retry)
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
-            retry = retry - 1
+            retry = _spend_download_retry(retry)
 
         else:
             current_app.logger.info(f"'{basename}' downloaded from AWS S3 storage")
@@ -954,11 +1024,19 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 if not delete_sqs_message(sqs_client, sqs_receipt_handle):
                     return False
 
-            return True
+            return DOWNLOAD_COMPLETE
 
     current_app.logger.error(
-        f"Tried to download '{basename}' {str(MAX_RETRY_COUNT)} times but couldn't!"
+        f"'{basename}' could not be downloaded from AWS S3 storage; giving up"
     )
+
+    # Import scans skip dotfiles, so an abandoned partial download would
+    # otherwise sit invisibly in the import directory forever
+
+    try:
+        os.remove(os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"))
+    except OSError:
+        pass
     return False
 
 

@@ -611,6 +611,305 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
         assert not os.path.exists(hidden)
 
 
+def _client_error(code, status, operation):
+    """A botocore ClientError shaped like a real S3 error response."""
+
+    import botocore.exceptions
+
+    return botocore.exceptions.ClientError(
+        {
+            "Error": {"Code": code, "Message": code},
+            "ResponseMetadata": {"HTTPStatusCode": status},
+        },
+        operation,
+    )
+
+
+class _FakeSQS:
+    """Records SQS deletions instead of performing them."""
+
+    def __init__(self):
+        self.deleted = []
+
+    def delete_message(self, QueueUrl=None, ReceiptHandle=None):
+        self.deleted.append(ReceiptHandle)
+        return {}
+
+
+def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
+    """A 404 means the object is gone for good: no download retries, the SQS
+    message is deleted so it can't redeliver, and no partial file is left."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            raise _client_error("404", 404, "HeadObject")
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            raise _client_error("404", 404, "GetObject")
+
+    sqs = _FakeSQS()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+
+    with app.app_context():
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-404")
+            == aws_storage.DOWNLOAD_OBJECT_MISSING
+        )
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
+
+        # Without a receipt handle there is no message to clean up
+
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_OBJECT_MISSING
+        )
+
+    assert sqs.deleted == ["receipt-404"]
+
+
+def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
+    """When the restored copy expired before download, a new restore is
+    requested and the stale SQS message dropped; the restore's completion
+    notification will re-trigger the download."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            # No Restore header: the object is back in cold storage
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            raise _client_error("InvalidObjectState", 403, "GetObject")
+
+    sqs = _FakeSQS()
+    restored = []
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+
+    with app.app_context():
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
+            == aws_storage.DOWNLOAD_RESTORE_PENDING
+        )
+
+    assert restored == ["untouched/x.mkv"]
+    assert sqs.deleted == ["receipt-stale"]
+
+
+def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
+    """When a restore is already in progress, no duplicate restore request is
+    made; the stale SQS message is still dropped."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": 100, "Restore": 'ongoing-request="true"'}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            raise _client_error("InvalidObjectState", 403, "GetObject")
+
+    sqs = _FakeSQS()
+    restored = []
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+
+    with app.app_context():
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-stale")
+            == aws_storage.DOWNLOAD_RESTORE_PENDING
+        )
+
+    assert restored == []
+    assert sqs.deleted == ["receipt-stale"]
+
+
+def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
+    """If the restore-status check inside the InvalidObjectState handler
+    itself fails, that burns a retry like any other error instead of escaping
+    the loop; the SQS message is left for redelivery."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def __init__(self):
+            self.head_calls = 0
+
+        def head_object(self, Bucket, Key):
+            # Odd calls come from the progress callback sizing the download;
+            # even calls are the handler's restore-status check, which fails
+            self.head_calls += 1
+            if self.head_calls % 2 == 0:
+                raise _client_error("ServiceUnavailable", 503, "HeadObject")
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            raise _client_error("InvalidObjectState", 403, "GetObject")
+
+    s3 = FakeS3()
+    sqs = _FakeSQS()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
+
+    with app.app_context():
+        assert videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-503") is False
+
+    assert s3.head_calls == 20  # 10 retries, two head_object calls each
+    assert sqs.deleted == []
+
+
+def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
+    """Import scans skip dotfiles, so a download that burns its whole retry
+    budget must remove its partial file rather than leak it invisibly."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            with open(filename, "wb") as f:
+                f.write(b"partial")
+            raise RuntimeError("connection reset")
+
+    sqs = _FakeSQS()
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", lambda seconds: None)
+
+    with app.app_context():
+        assert videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-reset") is False
+
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
+
+    assert sqs.deleted == []
+
+
+def test_aws_download_backs_off_between_retries(app, monkeypatch):
+    """Retries back off exponentially, capped at 60 seconds, instead of
+    hammering S3 back-to-back; the final failure doesn't sleep."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            raise RuntimeError("connection reset")
+
+    delays = []
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: _FakeSQS())
+    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", delays.append)
+
+    with app.app_context():
+        assert videos.aws_download("untouched/x.mkv", "x.mkv") is False
+
+    assert delays == [1, 2, 4, 8, 16, 32, 60, 60, 60]
+
+
+def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
+    """A credentials or permissions error fails identically on every attempt,
+    so the retry budget isn't burned on it: one attempt, no backoff, and the
+    SQS message is left for redelivery once the operator fixes the account."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def __init__(self):
+            self.attempts = 0
+
+        def head_object(self, Bucket, Key):
+            return {"ContentLength": 100}
+
+        def download_file(self, bucket, key, filename, Callback=None):
+            self.attempts += 1
+            raise _client_error("AccessDenied", 403, "GetObject")
+
+    s3 = FakeS3()
+    sqs = _FakeSQS()
+    delays = []
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: s3)
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
+    monkeypatch.setattr(aws_storage, "DOWNLOAD_RETRY_SLEEP", delays.append)
+
+    with app.app_context():
+        assert (
+            videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-denied") is False
+        )
+
+    assert s3.attempts == 1
+    assert delays == []
+    assert sqs.deleted == []
+
+
+def test_download_task_reports_download_outcome(app, monkeypatch):
+    """download_task must not report success when aws_download exhausted its
+    retry budget; exhaustion is not a transient error, so no retry is
+    scheduled either."""
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    monkeypatch.setattr(aws_storage, "aws_download", lambda *args, **kwargs: False)
+
+    with app.app_context():
+        result = videos.download_task(
+            "untouched/Thing (2021) - [DVD].mkv",
+            "Thing (2021) - [DVD].mkv",
+            "receipt-123",
+        )
+    assert result is False
+
+    assert not any(
+        job.id.startswith(safe_job_id("retry:download_task"))
+        for job in scheduled_jobs(app.file_queue)
+    )
+
+    # Every truthy status counts as the message having been handled
+
+    for status in (
+        aws_storage.DOWNLOAD_COMPLETE,
+        aws_storage.DOWNLOAD_OBJECT_MISSING,
+        aws_storage.DOWNLOAD_RESTORE_PENDING,
+    ):
+        monkeypatch.setattr(
+            aws_storage, "aws_download", lambda *args, s=status, **kwargs: s
+        )
+
+        with app.app_context():
+            result = videos.download_task(
+                "untouched/Thing (2021) - [DVD].mkv",
+                "Thing (2021) - [DVD].mkv",
+                "receipt-123",
+            )
+        assert result is True
+
+
 def test_tmdb_refresh_hands_off_to_sql_queue(app):
     """The fetch phase runs on the multi-worker request queue; every
     database write happens in apply_tmdb_refresh on the single-worker sql
