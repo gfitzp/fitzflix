@@ -50,7 +50,10 @@
 					{% include "_shopping_search_dropdown.html" %}
 				</div>
 				{% endif %}
-				<form action="" method="post">
+				{# d-flex on the form drops its line-box strut, which
+				   otherwise stretches the neighboring Find group two
+				   pixels past the Remove button #}
+				<form action="" method="post" class="d-flex">
 					{{ watchlist_form.csrf_token }}
 					{{ watchlist_form.movie_id(value=movie.id) }}
 					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>

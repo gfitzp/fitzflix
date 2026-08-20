@@ -1029,11 +1029,13 @@ def watchlist():
 @admin_required
 def radarr_request():
     """The ad-hoc Radarr hand-off (#66): request one unowned film for
-    download, or withdraw a request — deliberate per-film actions from
-    the Find menu on the movie page or a watchlist tile, never
-    automatic (an auto-sync of the whole watchlist would fill the
-    volume). An `origin` query param carries where the visitor came
-    from, validated to a local path."""
+    download — a deliberate per-film action from the Find menu on the
+    movie page or a watchlist tile, never automatic (an auto-sync of
+    the whole watchlist would fill the volume). The withdraw branch
+    has no UI since Glenn dropped the Un-request entry (Aug 2026) —
+    films are removed in Radarr itself — but stays as the route-level
+    counterpart. An `origin` query param carries where the visitor
+    came from, validated to a local path."""
 
     radarr_form = RadarrForm()
     origin = request.args.get("origin", "", type=str)

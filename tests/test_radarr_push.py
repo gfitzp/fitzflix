@@ -89,15 +89,19 @@ def test_request_uses_the_house_settings(app, admin_client, monkeypatch):
     assert added["minimumAvailability"] == "released"
     assert added["addOptions"] == {"monitor": "movieOnly", "searchForMovie": True}
 
-    # The page now badges the request and offers withdrawal instead
+    # The page now badges the request, and the Find-menu entry reverts
+    # to the plain Radarr link — withdrawal lives in Radarr itself
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Requested via Radarr" in page
-    assert "Remove from Radarr" in page
+    assert 'title="Radarr is monitoring this film">Radarr</a>' in page
     assert "radarr_request_submit" not in page
+    assert "radarr_remove_submit" not in page
 
 
 def test_withdraw_deletes_keeping_files(app, admin_client, monkeypatch):
+    # Route-level only since the Un-request entry left the UI (Aug
+    # 2026) — kept as the counterpart to the request branch
     fake = wire(app, monkeypatch)
     with app.app_context():
         movie = make_movie("Major League", 1989, tmdb_id=9942)
@@ -129,7 +133,7 @@ def test_withdraw_deletes_keeping_files(app, admin_client, monkeypatch):
     assert fake.movies == {}
 
 
-def test_watchlist_rows_offer_request_and_unrequest(app, admin_client, monkeypatch):
+def test_watchlist_tiles_offer_request_then_plain_link(app, admin_client, monkeypatch):
     wire(app, monkeypatch)
     with app.app_context():
         user_id = 1
@@ -158,13 +162,13 @@ def test_watchlist_rows_offer_request_and_unrequest(app, admin_client, monkeypat
             "radarr_request_submit": "Request via Radarr",
         },
     )
-    # Once requested, the Find menu flips: the Radarr page link plus
-    # the withdrawal, each saying Radarr is monitoring the film
+    # Once requested, the menu entry reverts to the plain Radarr link,
+    # titled to say the film is monitored — no Un-request entry
     page = admin_client.get("/watchlist").get_data(as_text=True)
-    assert "Un-request" in page
-    assert "Search in Radarr" in page
-    assert "Radarr is monitoring this film" in page
+    assert "Un-request" not in page
+    assert 'title="Radarr is monitoring this film">Radarr</a>' in page
     assert "radarr_request_submit" not in page
+    assert "radarr_remove_submit" not in page
 
 
 def test_request_refuses_owned_films_and_non_admins(
