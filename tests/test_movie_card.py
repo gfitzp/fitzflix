@@ -484,3 +484,55 @@ def test_movie_states_estimates_bare_unrated_watches(app, admin_client):
     assert state["has_review"] is True
     assert state["rating"] is None
     assert state["estimated"] is not None
+
+
+def test_movie_states_fills_a_whole_page_in_one_pass(app, admin_client):
+    """One hydration pass covers every record-less film on a page —
+    cached payloads are never capped — so a filmography fills on the
+    first visit instead of twenty films per reload."""
+
+    from app.recommendations import PROFILE_KEY
+
+    with app.app_context():
+        user_id = admin_id()
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 0.1, 0.2, 0.3],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+    tmdb_ids = list(range(870001, 870031))
+    for tmdb_id in tmdb_ids:
+        app.redis.set(
+            f"fitzflix:tmdb:movie:{tmdb_id}:enriched",
+            json.dumps(
+                {
+                    "tmdb_id": tmdb_id,
+                    "title": f"Career Film {tmdb_id}",
+                    "year": "1994",
+                    "original_language": "en",
+                    "genres": [{"id": 35, "name": "Comedy"}],
+                    "keywords": [],
+                    "cast": [],
+                    "crew": [],
+                }
+            ),
+        )
+
+    payload = admin_client.get(
+        "/movie_states?tmdb_ids=" + ",".join(str(t) for t in tmdb_ids)
+    ).get_json()
+    estimated = [
+        tmdb_id
+        for tmdb_id in tmdb_ids
+        if payload["tmdb"][str(tmdb_id)]["estimated"] is not None
+    ]
+    assert len(estimated) == 30

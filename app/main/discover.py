@@ -5,6 +5,7 @@ watchlist, and the Radarr hand-off."""
 import os
 import traceback
 
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from datetime import date, datetime, timezone
@@ -95,7 +96,7 @@ from app.radarr_push import (
     withdraw_movie,
 )
 from app.leaving_criterion import leaving_inventory, leaving_shelf
-from app.streaming_rail import stored_rail
+from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
 from app.videos import (
     clear_not_interested,
     clear_watchlist,
@@ -796,13 +797,14 @@ def movie_card():
 # guards against abuse
 MOVIE_STATES_LIMIT = 300
 
-# How many films one state batch may score live when the nightly map
-# doesn't cover them — misses are only records created since the last
-# recompute, so a page rarely carries more than a handful; the cap
-# bounds the worst case, and anything past it catches up on the next
-# request once the resolver's patches land
+# How many enriched payloads one state batch may FETCH from TMDb for
+# the tmdb-keyed lane — sized to cover a whole filmography page in a
+# single hydration pass (fetches run 10 abreast, so ~100 completes in
+# a couple of seconds) while bounding the burst one request can aim
+# at TMDb; cached payloads and overlay hits cost nothing and are
+# never capped
 
-MOVIE_STATES_LIVE_SCORES = 20
+MOVIE_STATES_TMDB_FETCHES = 100
 
 
 @bp.route("/movie_states")
@@ -898,13 +900,17 @@ def movie_states():
                 ]
             )
         )
+        # Every miss on the page scores in this one pass — the work is
+        # local queries only, so even a full 300-id batch stays quick —
+        # and the resolver's patches make the next request free
+
         misses = [
             movie_id
             for movie_id in ordered_ids
             if movie_id not in scores
             and (movie_id not in latest or latest[movie_id].rating is None)
             and movie_id not in flagged_ids
-        ][:MOVIE_STATES_LIVE_SCORES]
+        ]
         for movie in Movie.query.filter(Movie.id.in_(misses or [0])):
             score = resolved_score(
                 current_app.redis, current_user.id, movie, profile, scores=scores
@@ -913,9 +919,14 @@ def movie_states():
                 scores[movie.id] = score
 
     # The tmdb-keyed lane: ids with no record at all — most of a
-    # filmography page — still estimate, from the overlay when it holds
-    # them and otherwise scored live from their cached enriched
-    # payloads, under the same per-request cap on fresh work
+    # filmography page — still estimate, from the overlay when it
+    # holds them and otherwise scored live from enriched payloads.
+    # Missing payloads warm in PARALLEL first (the rail's enrichment
+    # pattern), so one hydration pass covers a whole career page in a
+    # couple of seconds instead of twenty films per reload; the fetch
+    # cap bounds the burst a single request can aim at TMDb, and the
+    # page itself never waits — hydration is an async fetch after
+    # render
 
     tmdb_estimates = {}
     unmatched = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id not in tmdb_to_movie]
@@ -926,11 +937,35 @@ def movie_states():
                 TMDB_PATCH_SCORES_KEY.format(user_id=int(current_user.id))
             ).items()
         }
-        budget = MOVIE_STATES_LIVE_SCORES
+        misses = [tmdb_id for tmdb_id in unmatched if tmdb_id not in overlay]
+        scoreable = set()
+        if misses:
+            cached = {
+                tmdb_id
+                for tmdb_id, payload in zip(
+                    misses,
+                    current_app.redis.mget(
+                        [ENRICHED_KEY.format(tmdb_id=tmdb_id) for tmdb_id in misses]
+                    ),
+                )
+                if payload
+            }
+            to_fetch = [tmdb_id for tmdb_id in misses if tmdb_id not in cached][
+                :MOVIE_STATES_TMDB_FETCHES
+            ]
+            if to_fetch and current_app.config["TMDB_API_KEY"]:
+                flask_app = current_app._get_current_object()
+
+                def warm(tmdb_id):
+                    with flask_app.app_context():
+                        enriched_movie(tmdb_id)
+
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    list(executor.map(warm, to_fetch))
+            scoreable = cached | set(to_fetch)
         for tmdb_id in unmatched:
             score = overlay.get(tmdb_id)
-            if score is None and budget > 0:
-                budget -= 1
+            if score is None and tmdb_id in scoreable:
                 score = resolved_tmdb_score(
                     current_app.redis, current_user.id, tmdb_id, profile
                 )
