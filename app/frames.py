@@ -38,6 +38,13 @@ POOL_KEY = "fitzflix:frames:pool"
 
 OFFSET_LOW, OFFSET_HIGH = 0.05, 0.85
 
+# Decode this many seconds forward into the extraction point instead of
+# trusting the container's keyframe flags: VC-1 Blu-ray remuxes flag
+# non-keyframes as seekable, and an input-side seek that lands on one
+# decodes to a flat gray ghost frame (7 pooled frames, Aug 20 2026)
+
+SEEK_LEAD = 30
+
 
 def frame_path(token):
     """The pooled frame's image path for one token."""
@@ -229,12 +236,15 @@ def extract_frame_task(movie_id):
             return False
 
         offset = random.uniform(OFFSET_LOW, OFFSET_HIGH) * duration
+        pre_seek = max(0.0, offset - SEEK_LEAD)
         token = secrets.token_urlsafe(12)
         os.makedirs(current_app.config["FRAME_POOL_DIR"], exist_ok=True)
         out = frame_path(token)
         try:
             # Glenn's recipe from the issue, plus sar correction so
-            # anamorphic DVDs come out at display proportions
+            # anamorphic DVDs come out at display proportions; the
+            # seek is two-stage (fast to SEEK_LEAD early, accurate the
+            # rest) so the decoder crosses a real keyframe on the way
             subprocess.run(
                 [
                     current_app.config["FFMPEG_BIN"],
@@ -242,9 +252,11 @@ def extract_frame_task(movie_id):
                     "-v",
                     "error",
                     "-ss",
-                    f"{offset:.3f}",
+                    f"{pre_seek:.3f}",
                     "-i",
                     source,
+                    "-ss",
+                    f"{offset - pre_seek:.3f}",
                     "-vf",
                     "scale='min(1080,iw*sar)':-2",
                     "-frames:v",
