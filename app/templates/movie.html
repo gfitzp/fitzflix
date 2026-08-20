@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_rating_ladder.html" import rating_ladder %}
+{% from "_poster_tile.html" import tile_actions %}
 
 {% block app_content %}
 <nav aria-label="breadcrumb">
@@ -66,9 +67,9 @@
 </div>
 {% if suggestions %}
 <hr>
-{# Enjoyment picks earned by the positive rating just logged. Every
-   action lives in the poster's popover card (#45c) — rate it, bank
-   it, wave it off — and card posts never disturb the strip's anchor #}
+{# Enjoyment picks earned by the positive rating just logged. The
+   actions sit under each poster — rate it, bank it, wave it off —
+   and tile posts never disturb the strip's anchor #}
 <h5>Since you liked {{ title }}&hellip;</h5>
 <p class="small text-muted">These unseen films from your library share its DNA and fit your taste profile.</p>
 <div class="row">
@@ -88,6 +89,7 @@
 			{% endif %}
 			<p class="small mb-1">{{ suggestion.title }} ({{ suggestion.year }})</p>
 		</a>
+		{{ tile_actions(url_for('main.movie', movie_id=suggestion.id), movie_id=suggestion.id) }}
 	</div>
 	{% endfor %}
 </div>

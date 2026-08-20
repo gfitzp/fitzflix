@@ -37,6 +37,7 @@ from app.models import (
     Movie,
     MovieCast,
     MovieCrew,
+    RefQuality,
     TMDBCredit,
     TVSeries,
     UserMovieReview,
@@ -50,7 +51,6 @@ from app.main.helpers import (
     _enqueue_profile_recompute,
     _ladder_fetch,
     _ladder_state,
-    _latest_review_row,
     _mark_not_interested,
     _quick_rating,
     _same_day_rerate,
@@ -65,7 +65,6 @@ from app.recommendations import (
     rotate_daily,
     rotate_partition,
     shuffle_daily,
-    single_movie_score,
     stored_profile,
     stored_recommendations,
     stored_scores,
@@ -546,11 +545,14 @@ def recently_added():
 @login_required
 def movie_card():
     """The poster popover's card fragment (#45c): one film's title,
-    credits, synopsis, availability, live star row, and watchlist
-    toggle — keyed by movie_id for library records, or tmdb_id for
-    films with no local row (the streaming rail and the leaving
-    shelf). Fetched only when a poster is hovered or tapped, so
-    gallery pages stay light."""
+    credits, synopsis, availability, and at-a-glance badges — keyed
+    by movie_id for library records, or tmdb_id for films with no
+    local row (the streaming rail and the leaving shelf). Purely
+    informational since Glenn's Aug 2026 revision: the star ladder
+    and watchlist toggle live on the gallery tiles, so the card
+    carries the quality badge in its shopping colors and the
+    watchlist badge instead. Fetched only when a poster is hovered
+    or tapped, so gallery pages stay light."""
 
     movie_id = request.args.get("movie_id", type=int)
     tmdb_id = request.args.get("tmdb_id", type=int)
@@ -563,9 +565,6 @@ def movie_card():
         movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     else:
         abort(404)
-
-    review_form = MovieReviewForm()
-    watchlist_form = WatchlistForm()
 
     if movie is not None:
         directors = list(
@@ -582,42 +581,41 @@ def movie_card():
             .order_by(MovieCast.billing_order.asc())
             .limit(TOP_BILLING_CUTOFF)
         )
-        review = _latest_review_row(current_user.id, movie.id)
-        flagged = (
-            UserMovieStatus.query.filter_by(
-                user_id=int(current_user.id),
-                movie_id=movie.id,
-                kind="not_interested",
-            ).first()
-            is not None
-        )
-
-        # Estimated the way the movie page estimates (#45a): the stored
-        # nightly score when the film was ranked, a live single-film
-        # score otherwise — never shown once the user has a verdict
-
-        estimated = None
-        if review is None and not flagged:
-            profile = stored_profile(current_app.redis, current_user.id)
-            score = stored_scores(current_app.redis, current_user.id).get(movie.id)
-            if score is None:
-                score = single_movie_score(current_user.id, movie, profile)
-            if score is not None:
-                estimated = estimated_rating(profile, score)
-
         on_watchlist = (
             UserWatchlist.query.filter_by(
                 user_id=int(current_user.id), movie_id=movie.id
             ).first()
             is not None
         )
-        in_library = (
-            db.session.query(File.id)
+
+        # The owned copy's quality tier, badged with the library page's
+        # shopping answer: green when the copy is settled (or the film
+        # is excluded from the shopping list), amber when it's worth
+        # upgrading — the tile-level badge this replaces (Aug 2026)
+
+        best = (
+            db.session.query(File, RefQuality)
+            .join(RefQuality, RefQuality.id == File.quality_id)
             .filter(File.movie_id == movie.id)
             .filter(File.feature_type_id == None)
+            .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
             .first()
-            is not None
         )
+        quality_badge = None
+        if best is not None:
+            file, quality = best
+            settled = movie.shopping_list_exclude or (
+                not file.fullscreen and quality.preference >= _upgrade_threshold()
+            )
+            quality_badge = {
+                "label": (
+                    f"Full Screen {quality.quality_title}"
+                    if file.fullscreen
+                    else quality.quality_title
+                ),
+                "color": "success" if settled else "warning",
+            }
+        in_library = best is not None
         return render_template(
             "_movie_card.html",
             display_title=(
@@ -629,12 +627,9 @@ def movie_card():
             overview=movie.tmdb_overview,
             directors=directors,
             top_cast=top_cast,
-            current=(review.rating if review and review.rating is not None else None),
-            has_review=review is not None,
-            flagged=flagged,
-            estimated=estimated,
             on_watchlist=on_watchlist,
             in_library=in_library,
+            quality_badge=quality_badge,
             streaming=(
                 user_streaming(
                     movie.tmdb_id,
@@ -645,15 +640,9 @@ def movie_card():
                 if movie.tmdb_id
                 else None
             ),
-            ladder_action=url_for("main.movie", movie_id=movie.id),
-            watchlist_action=url_for("main.movie", movie_id=movie.id),
-            review_form=review_form,
-            watchlist_form=watchlist_form,
         )
 
-    # No local record: the card renders from TMDb directly, and its
-    # forms post to the TMDb log route — whose first tap creates the
-    # record, and which 307-forwards once it exists
+    # No local record: the card renders from TMDb directly
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
@@ -700,17 +689,130 @@ def movie_card():
         overview=details.get("overview"),
         directors=directors,
         top_cast=top_cast,
-        current=None,
-        has_review=False,
-        flagged=False,
-        estimated=None,
         on_watchlist=False,
         in_library=False,
+        quality_badge=None,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
-        ladder_action=url_for("main.review_tmdb", tmdb_id=tmdb_id),
-        watchlist_action=url_for("main.review_tmdb", tmdb_id=tmdb_id),
-        review_form=review_form,
-        watchlist_form=watchlist_form,
+    )
+
+
+# One request may carry at most this many films; every gallery page
+# shows a bounded set (rails of 12, paginated walls), so the cap only
+# guards against abuse
+MOVIE_STATES_LIMIT = 300
+
+
+@bp.route("/movie_states")
+@login_required
+def movie_states():
+    """Batch ladder-and-watchlist state for the poster tiles (#45c,
+    Aug 2026 revision): one fetch per gallery page hydrates every
+    tile's star row and watchlist toggle, so no gallery route has to
+    compute per-film verdicts itself. ?movie_ids= and ?tmdb_ids= are
+    comma-separated; tmdb ids are answered under their own key (mapped
+    through a local record when one exists, empty state otherwise).
+    Estimates come from the stored nightly scores alone — the same
+    source the live ladder repaints from."""
+
+    def parse_ids(name):
+        return [
+            int(part)
+            for part in (request.args.get(name) or "").split(",")
+            if part.strip().isdigit()
+        ]
+
+    movie_ids = parse_ids("movie_ids")
+    tmdb_ids = parse_ids("tmdb_ids")
+    if len(movie_ids) + len(tmdb_ids) > MOVIE_STATES_LIMIT:
+        abort(400)
+
+    tmdb_to_movie = {}
+    if tmdb_ids:
+        tmdb_to_movie = {
+            tmdb_id: movie_id
+            for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id).filter(
+                Movie.tmdb_id.in_(tmdb_ids)
+            )
+        }
+    all_ids = set(movie_ids) | set(tmdb_to_movie.values())
+
+    # The newest verdict per film — the row the movie page displays —
+    # gathered in one query and reduced here (newest review first,
+    # bare watches last, id breaking ties, like _latest_review_row)
+
+    latest = {}
+    if all_ids:
+        rows = (
+            UserMovieReview.query.filter(
+                UserMovieReview.user_id == int(current_user.id)
+            )
+            .filter(UserMovieReview.movie_id.in_(all_ids))
+            .order_by(
+                UserMovieReview.movie_id,
+                UserMovieReview.date_reviewed.desc(),
+                UserMovieReview.id.desc(),
+            )
+            .all()
+        )
+        for row in rows:
+            latest.setdefault(row.movie_id, row)
+
+    flagged_ids = set()
+    listed_ids = set()
+    if all_ids:
+        flagged_ids = {
+            movie_id
+            for (movie_id,) in db.session.query(UserMovieStatus.movie_id)
+            .filter(UserMovieStatus.user_id == int(current_user.id))
+            .filter(UserMovieStatus.kind == "not_interested")
+            .filter(UserMovieStatus.movie_id.in_(all_ids))
+        }
+        listed_ids = {
+            movie_id
+            for (movie_id,) in db.session.query(UserWatchlist.movie_id)
+            .filter(UserWatchlist.user_id == int(current_user.id))
+            .filter(UserWatchlist.movie_id.in_(all_ids))
+        }
+
+    profile = stored_profile(current_app.redis, current_user.id)
+    scores = stored_scores(current_app.redis, current_user.id)
+
+    def state_for(movie_id):
+        if movie_id is None:
+            return {
+                "rating": None,
+                "has_review": False,
+                "flagged": False,
+                "estimated": None,
+                "on_watchlist": False,
+            }
+        row = latest.get(movie_id)
+        flagged = movie_id in flagged_ids
+        estimated = None
+        if row is None and not flagged:
+            score = scores.get(movie_id)
+            if score is not None:
+                estimated = estimated_rating(profile, score)
+        return {
+            "rating": (
+                float(row.rating)
+                if row is not None and row.rating is not None
+                else None
+            ),
+            "has_review": row is not None,
+            "flagged": flagged,
+            "estimated": estimated,
+            "on_watchlist": movie_id in listed_ids,
+        }
+
+    return jsonify(
+        {
+            "movies": {str(movie_id): state_for(movie_id) for movie_id in movie_ids},
+            "tmdb": {
+                str(tmdb_id): state_for(tmdb_to_movie.get(tmdb_id))
+                for tmdb_id in tmdb_ids
+            },
+        }
     )
 
 
@@ -731,8 +833,9 @@ def leaving():
 @login_required
 def watchlist():
     """The user's want-to-watch list: the funnel stage before the
-    shopping list, with streaming and rental availability on every row
-    so "how can I watch this" is answered in place."""
+    shopping list. Availability is still batch-warmed here so each
+    tile's popover — where the badges live since Glenn's Aug 2026
+    revision — answers "how can I watch this" from a hot cache."""
 
     watchlist_form = WatchlistForm()
     if (

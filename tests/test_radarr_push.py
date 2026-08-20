@@ -156,9 +156,11 @@ def test_watchlist_rows_offer_request_and_unrequest(app, admin_client, monkeypat
             "radarr_request_submit": "Request via Radarr",
         },
     )
+    # The badge left the tiles (Aug 2026): the Un-request face itself
+    # says Radarr is monitoring the film
     page = admin_client.get("/watchlist").get_data(as_text=True)
-    assert "Requested via Radarr" in page
     assert "Un-request" in page
+    assert "Radarr is monitoring this film" in page
     assert "radarr_request_submit" not in page
 
 

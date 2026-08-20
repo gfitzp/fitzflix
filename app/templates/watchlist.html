@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge, library_badge %}
-{% from "_poster_tile.html" import poster_image, movie_poster_src %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
 <h2 class="mt-n2">My Watchlist</h2>
 <hr>
 {% if rows %}
 {# The watchlist as a poster gallery (#45d): the popover carries each
-   film's synopsis, credits, and availability detail; the tile keeps
-   the action buttons and the at-a-glance badges #}
+   film's synopsis, credits, availability, and badges (Glenn's Aug
+   2026 revision moved the library/provider badges there); the tile
+   keeps the actions — the star ladder plus this page's own Remove,
+   which clears the tile on reload, so the standard toggle is skipped #}
 <div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
@@ -17,19 +18,7 @@
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</p>
 		</a>
-		{% if row.owned or (row.in_radarr and not row.owned) or row.streaming or row.rentals %}
-		<p class="mb-0 mt-1">
-			{% if row.owned %}
-			{{ library_badge() }}
-			{% endif %}
-			{% if row.in_radarr and not row.owned %}
-			<span class="badge text-bg-info fw-normal" title="Radarr is monitoring this film for download">Requested via Radarr</span>
-			{% endif %}
-			{% for provider in row.streaming + row.rentals %}
-			{{ availability_badge(provider) }}
-			{% endfor %}
-		</p>
-		{% endif %}
+		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id, watchlist=false) }}
 		{# The form's own movie_id field carries the value —
 		   hidden_tag() would render a second, empty movie_id input,
 		   and WTForms reads the first one submitted #}
@@ -57,9 +46,6 @@
 	</div>
 	{% endfor %}
 </div>
-{% if streaming_attribution %}
-<p class="small text-muted">Streaming data by JustWatch</p>
-{% endif %}
 {% else %}
 <p class="lead">Nothing on your watchlist yet.</p>
 <p class="text-muted">Add films from their pages &mdash; search TMDb for anything you want to watch, owned or not. Watching a film clears it from the list automatically.</p>

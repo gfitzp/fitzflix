@@ -520,7 +520,62 @@
 
 		// The one-tap star row (#54): forms marked data-ladder-live post
 		// in the background and the row repaints in place — no reload.
-		// Any failure falls back to a normal form submission
+		// Any failure falls back to a normal form submission. The
+		// painting is shared with the gallery hydration below, which
+		// fills the blank tile ladders from one batched state fetch.
+
+		function paintLadder(row, state) {
+			var rating = state.rating === null ? 0 : state.rating;
+			var estimated = (state.rating === null && state.estimated)
+				? state.estimated : 0;
+			row.title = estimated
+				? "Estimated " + parseFloat(estimated.toFixed(2))
+					+ " for you — tap a star to rate it yourself" : "";
+			// The stars sit reversed in the DOM (see the ladder
+			// macro), so paint by each button's own value; both a
+			// half-star rating and a fractional estimate part-fill
+			// their last star via a gradient stop
+			row.querySelectorAll(".star").forEach(function(star) {
+				var value = parseInt(star.value, 10);
+				var fillPct = Math.round(
+					Math.max(0, Math.min(1, rating - value + 1)) * 100);
+				var estPct = Math.round(
+					Math.max(0, Math.min(1, estimated - value + 1)) * 100);
+				star.classList.toggle("filled", fillPct > 0);
+				star.classList.toggle("fill-partial", fillPct > 0 && fillPct < 100);
+				star.classList.toggle("estimated", estPct > 0);
+				star.classList.toggle("est-partial", estPct > 0 && estPct < 100);
+				// The fraction rides as a quantized fill-N class
+				// (5% steps, fixed CSS rules) — never a custom
+				// property, which iOS Safari mis-resolves inside
+				// a pseudo-element (#70's WebKit lesson)
+				Array.prototype.slice.call(star.classList).forEach(function (cls) {
+					if (/^fill-\d+$/.test(cls)) star.classList.remove(cls);
+				});
+				var frac = (fillPct > 0 && fillPct < 100) ? fillPct
+					: ((estPct > 0 && estPct < 100) ? estPct : 0);
+				if (frac) {
+					star.classList.add("fill-" + Math.max(5, Math.min(95,
+						Math.round(frac / 5) * 5)));
+				}
+				star.title = (state.rating !== null && value === state.rating)
+					? "Tap again to remove your rating"
+					: star.getAttribute("aria-label");
+			});
+			var x = row.querySelector(".x-btn");
+			if (x) {
+				x.classList.toggle("active", !!state.flagged);
+				// Seen films can't be waved off — hydration hides the
+				// ✕ once a diary row exists (allow_not_interested's
+				// client-side mirror); live posts don't carry the flag
+				if (typeof state.has_review !== "undefined") {
+					x.classList.toggle("d-none", !!state.has_review);
+				}
+				x.title = state.flagged
+					? "Undo not interested"
+					: "Not interested — never saw it";
+			}
+		}
 
 		document.addEventListener("click", function(event) {
 			var button = event.target.closest("[data-ladder-live] button[name=quick_rating]");
@@ -539,57 +594,17 @@
 				if (!response.ok) throw new Error("ladder post failed");
 				return response.json();
 			}).then(function(state) {
-				var row = button.closest(".star-row");
-				var rating = state.rating === null ? 0 : state.rating;
-				var estimated = (state.rating === null && state.estimated)
-					? state.estimated : 0;
-				row.title = estimated
-					? "Estimated " + parseFloat(estimated.toFixed(2))
-						+ " for you — tap a star to rate it yourself" : "";
-				// The stars sit reversed in the DOM (see the ladder
-				// macro), so paint by each button's own value; both a
-				// half-star rating and a fractional estimate part-fill
-				// their last star via a gradient stop
-				row.querySelectorAll(".star").forEach(function(star) {
-					var value = parseInt(star.value, 10);
-					var fillPct = Math.round(
-						Math.max(0, Math.min(1, rating - value + 1)) * 100);
-					var estPct = Math.round(
-						Math.max(0, Math.min(1, estimated - value + 1)) * 100);
-					star.classList.toggle("filled", fillPct > 0);
-					star.classList.toggle("fill-partial", fillPct > 0 && fillPct < 100);
-					star.classList.toggle("estimated", estPct > 0);
-					star.classList.toggle("est-partial", estPct > 0 && estPct < 100);
-					// The fraction rides as a quantized fill-N class
-					// (5% steps, fixed CSS rules) — never a custom
-					// property, which iOS Safari mis-resolves inside
-					// a pseudo-element (#70's WebKit lesson)
-					Array.prototype.slice.call(star.classList).forEach(function (cls) {
-						if (/^fill-\d+$/.test(cls)) star.classList.remove(cls);
-					});
-					var frac = (fillPct > 0 && fillPct < 100) ? fillPct
-						: ((estPct > 0 && estPct < 100) ? estPct : 0);
-					if (frac) {
-						star.classList.add("fill-" + Math.max(5, Math.min(95,
-							Math.round(frac / 5) * 5)));
-					}
-					star.title = (state.rating !== null && value === state.rating)
-						? "Tap again to remove your rating"
-						: star.getAttribute("aria-label");
-				});
-				var x = row.querySelector(".x-btn");
-				if (x) {
-					x.classList.toggle("active", !!state.flagged);
-					x.title = state.flagged
-						? "Undo not interested"
-						: "Not interested — never saw it";
-				}
-				// Inside a poster card (#45c) the watchlist toggle keeps
-				// up with server-side clears — a rating or a ✕ un-lists
-				// the film, and the card should say so immediately
-				var cardRoot = row.closest(".movie-card");
-				if (cardRoot && typeof state.on_watchlist !== "undefined") {
-					cardSyncWatchlist(cardRoot, state.on_watchlist);
+				paintLadder(button.closest(".star-row"), state);
+				// A rating or a ✕ clears the film's watchlist entry
+				// server-side; the toggle under the same poster keeps
+				// up, and the film's cached card is stale either way
+				var actions = form.closest(".poster-actions");
+				if (actions && typeof state.on_watchlist !== "undefined") {
+					syncWatchlistForm(
+						actions.querySelector("[data-card-watchlist]"),
+						state.on_watchlist
+					);
+					invalidateCard(actions);
 				}
 			}).catch(function() {
 				form.submit();
@@ -603,9 +618,10 @@
 		// ever TOGGLES its card — never navigates — and the card's
 		// title link is the way to the film's page (Glenn's revision,
 		// Aug 2026: tap-again-to-navigate meant a stray tap opened a
-		// page when closing the card was meant). The star row inside
-		// rides the ladder script above; the watchlist toggle posts in
-		// the background below. One card shows at a time.
+		// page when closing the card was meant). The card is
+		// informational only — the ladder and watchlist toggle live
+		// under the poster — so acting on a tile drops its cached card
+		// (the watchlist badge inside went stale). One card at a time.
 
 		var cardOpen = null;    // the anchor whose card is showing
 		var cardWanted = null;  // the anchor a pending hover/fetch intends
@@ -613,13 +629,21 @@
 		var cardHideTimer = null;
 		var cardHover = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
 
-		function cardSyncWatchlist(root, onWatchlist) {
-			var form = root.querySelector("[data-card-watchlist]");
+		function syncWatchlistForm(form, onWatchlist) {
 			if (!form) return;
 			var add = form.querySelector("[name=add_watchlist_submit]");
 			var remove = form.querySelector("[name=remove_watchlist_submit]");
 			if (add) add.classList.toggle("d-none", !!onWatchlist);
 			if (remove) remove.classList.toggle("d-none", !onWatchlist);
+		}
+
+		function invalidateCard(actions) {
+			if (!actions || !actions.parentElement) return;
+			var anchor = actions.parentElement.querySelector("[data-card-url]");
+			if (!anchor || !anchor._cardPop) return;
+			if (cardOpen === anchor) cardHide();
+			anchor._cardPop.dispose();
+			anchor._cardPop = null;
 		}
 
 		function cardHide() {
@@ -652,9 +676,24 @@
 					holder.innerHTML = html;
 					var content = holder.querySelector(".movie-card");
 					if (!content) throw new Error("empty card");
-					// The same content node is reused across shows, so
-					// state painted by the ladder script survives a
-					// close-and-reopen
+					// Page-specific labels ride the tile as a JSON
+					// array (data-card-reasons) and render as wrapping
+					// badges inside the card — long "liked by people
+					// who liked…" reasons fold to multiple lines
+					// within the popover's fixed width
+					var reasons = anchor.getAttribute("data-card-reasons");
+					var slot = content.querySelector("[data-card-reasons]");
+					if (reasons && slot) {
+						try {
+							JSON.parse(reasons).forEach(function(label) {
+								var badge = document.createElement("span");
+								badge.className = "badge text-bg-light border fw-normal me-1 mb-1";
+								badge.textContent = label;
+								slot.appendChild(badge);
+							});
+						} catch (err) {}
+					}
+					// The same content node is reused across shows
 					anchor._cardPop = new bootstrap.Popover(anchor, {
 						content: content,
 						html: true,
@@ -722,7 +761,7 @@
 			if (event.key === "Escape") cardHide();
 		});
 
-		// The card's watchlist toggle posts in the background and swaps
+		// The tile's watchlist toggle posts in the background and swaps
 		// its two faces on the JSON state; any failure falls back to a
 		// normal form submission
 
@@ -743,12 +782,57 @@
 				if (!response.ok) throw new Error("watchlist post failed");
 				return response.json();
 			}).then(function(state) {
-				var root = form.closest(".movie-card");
-				if (root) cardSyncWatchlist(root, state.on_watchlist);
+				syncWatchlistForm(form, state.on_watchlist);
+				invalidateCard(form.closest(".poster-actions"));
 			}).catch(function() {
 				form.submit();
 			});
 		});
+
+		// Gallery hydration (#45c, Aug 2026 revision): tiles render
+		// their star row blank and their toggle Add-first; one batched
+		// /movie_states fetch per page paints the real verdicts,
+		// estimates, and watchlist faces. Duplicate tiles for the same
+		// film (a movie's editions on the library wall) all paint from
+		// the one entry. A failed fetch leaves the widgets blank but
+		// working — posts still answer with authoritative state.
+
+		(function() {
+			var tiles = document.querySelectorAll("[data-state-movie], [data-state-tmdb]");
+			if (!tiles.length) return;
+			var movieIds = [];
+			var tmdbIds = [];
+			tiles.forEach(function(tile) {
+				var id = tile.getAttribute("data-state-movie");
+				if (id && movieIds.indexOf(id) < 0) movieIds.push(id);
+				id = tile.getAttribute("data-state-tmdb");
+				if (id && tmdbIds.indexOf(id) < 0) tmdbIds.push(id);
+			});
+			var params = [];
+			if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));
+			if (tmdbIds.length) params.push("tmdb_ids=" + tmdbIds.join(","));
+			fetch("{{ url_for('main.movie_states') }}?" + params.join("&"),
+				{credentials: "same-origin"})
+				.then(function(response) {
+					if (!response.ok) throw new Error("state fetch failed");
+					return response.json();
+				})
+				.then(function(payload) {
+					tiles.forEach(function(tile) {
+						var state = tile.hasAttribute("data-state-movie")
+							? payload.movies[tile.getAttribute("data-state-movie")]
+							: payload.tmdb[tile.getAttribute("data-state-tmdb")];
+						if (!state) return;
+						var row = tile.querySelector(".star-row");
+						if (row) paintLadder(row, state);
+						syncWatchlistForm(
+							tile.querySelector("[data-card-watchlist]"),
+							state.on_watchlist
+						);
+					});
+				})
+				.catch(function() {});
+		})();
 
         {% endif %}
     </script>

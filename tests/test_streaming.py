@@ -588,9 +588,11 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
 def test_filmography_badges_unowned_films_on_your_services(
     app, admin_client, monkeypatch
 ):
-    """Career rows without a local file get the same logo badges as the
-    other surfaces; owned rows keep their quality badge unadorned."""
+    """Availability moved into the popover (Aug 2026): filmography
+    tiles carry no provider badges, and an unowned career film's card
+    answers from the same cached availability the page warms."""
 
+    import app.main.discover as discover
     import app.main.library as library
 
     from app import db
@@ -664,13 +666,28 @@ def test_filmography_badges_unowned_films_on_your_services(
         )
 
     page = admin_client.get("/library/movie?credit=777003").get_data(as_text=True)
-    assert page.count('title="Streaming on Netflix"') == 1
-    assert page.count("Apple TV (rent)") == 1
-    assert page.index("Filmography Unowned") < page.index(
-        'title="Streaming on Netflix"'
-    )
-    assert "/w45/netflix.jpg" in page
-    assert "Streaming data by JustWatch" in page
+    assert 'title="Streaming on Netflix"' not in page
+    assert "Apple TV (rent)" not in page
+    assert 'data-state-tmdb="911"' in page
+
+    # The unowned film's card serves the badges from the cached
+    # availability — logo, rent suffix, and the mandatory credit
+
+    def fake_details_get(url, **kwargs):
+        return FakeTMDb(
+            {
+                "title": "Filmography Unowned",
+                "release_date": "1999-09-09",
+                "credits": {"cast": [], "crew": []},
+            }
+        )
+
+    monkeypatch.setattr(discover, "tmdb_get", fake_details_get)
+    card = admin_client.get("/movie_card?tmdb_id=911").get_data(as_text=True)
+    assert card.count('title="Streaming on Netflix"') == 1
+    assert card.count("Apple TV (rent)") == 1
+    assert "/w45/netflix.jpg" in card
+    assert "Streaming data by JustWatch" in card
 
 
 def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypatch):

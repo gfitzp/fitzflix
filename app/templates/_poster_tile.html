@@ -1,10 +1,14 @@
 {# Shared poster-gallery grammar (#45d): every gallery surface draws
    its posters through these macros — w342 artwork, a 2/3 placeholder
-   when there's none — while badges, buttons, and captions stay in
-   each page's own template. Tiles arm their anchor with data-card-url
-   so the poster popover (#45c) rides along; row-style lists never do,
-   keeping the touch gesture split clean: posters toggle cards, rows
-   navigate. #}
+   when there's none — while captions stay in each page's own
+   template. Tiles arm their anchor with data-card-url so the poster
+   popover (#45c) rides along; row-style lists never do, keeping the
+   touch gesture split clean: posters toggle cards, rows navigate.
+   tile_actions puts the star ladder and the watchlist toggle under
+   the poster (Glenn's Aug 2026 revision — the popover is
+   informational only); the widgets render blank and one batched
+   /movie_states fetch per page paints them, so gallery routes never
+   compute per-film state. #}
 
 {% macro poster_image(src, alt) -%}
 {% if src %}
@@ -25,3 +29,32 @@
 {{ config['TMDB_IMAGE_URL'] }}/w342{{ movie.tmdb_poster_path }}
 {%- endif -%}
 {%- endmacro %}
+
+{% from "_rating_ladder.html" import rating_ladder %}
+
+{% macro tile_actions(action, movie_id=none, tmdb_id=none, watchlist=true) %}
+{# The actions under a gallery poster: the live star ladder and (by
+   default) the watchlist toggle, posting to the film's movie route —
+   or to the TMDb log route for record-less films, whose first tap
+   creates the record and which 307-forwards afterwards. from_card
+   keeps gallery posts from moving the rating drive's anchor. The
+   ladder renders blank and both toggle faces render Add-first; the
+   /movie_states hydration in base.html paints the real state. The
+   watchlist page passes watchlist=false — it has its own Remove
+   button that clears the tile on reload. #}
+<div class="poster-actions mt-1"{% if movie_id %} data-state-movie="{{ movie_id }}"{% elif tmdb_id %} data-state-tmdb="{{ tmdb_id }}"{% endif %}>
+	<form action="{{ action }}" method="post" class="mb-1 d-flex align-items-center">
+		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+		<input type="hidden" name="from_card" value="1">
+		{{ rating_ladder(compact=true, live=true) }}
+	</form>
+	{% if watchlist %}
+	<form action="{{ action }}" method="post" data-card-watchlist>
+		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+		<input type="hidden" name="from_card" value="1">
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0">Add to Watchlist</button>
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0 d-none">Remove from Watchlist</button>
+	</form>
+	{% endif %}
+</div>
+{% endmacro %}

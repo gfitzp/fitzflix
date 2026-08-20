@@ -309,18 +309,26 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     assert 'text-bg-warning me-1">DVD' in page
     assert 'text-bg-warning me-1">Bluray-2160p Remux' in page
     assert 'text-bg-warning me-1">Bluray-1080p' not in page
-    assert 'text-bg-info me-1">Seen' in page
-    assert "On your watchlist" in page
+
+    # The funnel moved off the tiles (Aug 2026): Seen and the
+    # watchlist answer through the hydrated widgets, might-interest
+    # rides the recommended film's anchor as a card label — never a
+    # seen film's, even one still in the stored recommendations
+
+    assert 'text-bg-info me-1">Seen' not in page
+    assert "On your watchlist" not in page
     assert page.count("Might interest you") == 1
-    assert page.index("Criterion Unowned Disc (1965)") < page.index(
-        "Might interest you"
-    )
+    assert (
+        f'data-card-url="/movie_card?movie_id={unowned_id}" '
+        "data-card-reasons='[\"Might interest you\"]'"
+    ) in page
     assert "Part of the Essential Arthouse collector's set" in page
     # Tiles keep the shopping answer; the synopsis lives in the
     # poster popover now (#45d), fetched via data-card-url
     assert "A settled classic." not in page
     assert f'data-card-url="/movie_card?movie_id={settled_id}"' in page
     assert f'href="/movie/{settled_id}"' in page
+    assert f'data-state-movie="{settled_id}"' in page
 
 
 def _seed_release_cache(app, releases):
@@ -453,20 +461,20 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     )
 
     # The record-backed catalog row opens its movie page directly (the
-    # log page would just redirect there), wears the record's funnel
-    # badge and overview, and shows the Criterion Channel badge with
-    # the mandatory JustWatch credit
+    # log page would just redirect there); its funnel, overview, and
+    # streaming availability all live in the popover now, so the tile
+    # carries the state container instead of badges
 
     with app.app_context():
         record_id = Movie.query.filter_by(tmdb_id=555002).first().id
     assert f'href="/movie/{record_id}"' in page
     assert 'href="/review/tmdb/555002"' not in page
-    assert "On your watchlist" in page
+    assert "On your watchlist" not in page
     # The synopsis moved into the poster popover (#45d)
     assert "A spine the library lacks." not in page
     assert f'data-card-url="/movie_card?movie_id={record_id}"' in page
-    assert 'title="Streaming on The Criterion Channel"' in page
-    assert "Streaming data by JustWatch" in page
+    assert f'data-state-movie="{record_id}"' in page
+    assert 'title="Streaming on The Criterion Channel"' not in page
 
     # The box-set container never shadows its members: the member
     # renders with its set line, the container row doesn't exist

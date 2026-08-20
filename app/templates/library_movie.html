@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_poster_tile.html" import poster_image, movie_poster_src %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
 <div class="mt-n2">
@@ -56,8 +56,9 @@
 {{ pagination_nav() }}
 {{ pagination_nav(compact=true) }}
 {# One gallery for every breakpoint (#45d — the separate mobile list
-   is gone): posters carry the popover, tiles keep the edition and the
-   green/amber shopping answer #}
+   is gone): posters carry the popover, tiles keep the edition and
+   the actions; the green/amber shopping answer moved into the
+   popover's quality badge (Glenn's Aug 2026 revision) #}
 <div class="row">
 	{% for file, movie, quality in movies %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
@@ -66,9 +67,7 @@
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</p>
 			{% if file.edition %}<p class="mb-0 small text-muted">{{ file.edition }}</p>{% endif %}
 		</a>
-		<p class="mb-0 mt-1">
-			<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ quality.quality_title }}</span>
-		</p>
+		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 	</div>
 	{% endfor %}
 </div>

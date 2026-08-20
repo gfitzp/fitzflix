@@ -274,7 +274,10 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Leaving the Criterion Channel" in body
     assert "Shelf Fresh (1956)" in body
     assert "Shelf Wanted (1956)" in body
-    assert "On your watchlist" in body
+    # The watchlist badge lives in the popover since Aug 2026; the
+    # tile carries the hydrated actions instead
+    assert "On your watchlist" not in body
+    assert 'data-state-tmdb="8103"' in body
     assert "Shelf Owned" not in body
     assert "Shelf Dismissed" not in body
     assert "Western" in body
@@ -375,9 +378,13 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
 
     for title in ("Shelf Fresh", "Shelf Owned", "Shelf Wanted", "Shelf Dismissed"):
         assert f"{title} (1956)" in body
-    assert body.count('title="In your Fitzflix library"') == 1
-    assert 'text-bg-info me-1">Seen' in body
-    assert "On your watchlist" in body
+    # The funnel vocabulary moved into the popovers and the hydrated
+    # widgets (Aug 2026): no badges on the tiles, actions instead
+    assert 'title="In your Fitzflix library"' not in body
+    assert 'text-bg-info me-1">Seen' not in body
+    assert "On your watchlist" not in body
+    assert f'data-state-movie="{owned_id}"' in body
+    assert 'data-state-tmdb="8101"' in body
     # The synopsis lives in the poster popover now (#45d)
     assert "A stranger rides into town." not in body
     assert "data-card-url" in body

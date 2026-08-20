@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_search_form.html" import global_search_form %}
-{% from "_poster_tile.html" import poster_image, movie_poster_src %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
 {# The navbar's search box again, pre-filled and right-aligned on the
@@ -20,35 +20,20 @@
 {% if movie_results %}
 <h4>Movies</h4>
 {# Movie matches as a poster gallery (#45d) — the popover carries the
-   synopsis and actions, the tile keeps the shopping answer: quality
-   tier (amber = worth upgrading) and the personal funnel. TV and
-   people below stay rows: season-level quality badges need the
-   width, and people aren't films #}
+   synopsis and badges (the shopping-colored quality tier moved there
+   in Glenn's Aug 2026 revision), the tile keeps the actions: the
+   ladder shows the verdict or estimate, the toggle shows the
+   watchlist answer. TV and people below stay rows: season-level
+   quality badges need the width, and people aren't films #}
 <div class="row mb-2">
 	{% for result in movie_results %}
 	{% set movie = result.movie %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if result.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if movie.tmdb_title and movie.tmdb_release_date else movie.year }})</p>
 		</a>
-		<p class="mb-0 mt-1">
-			<span class="badge text-bg-{{ "warning" if result.upgradable else "success" }}">{{ result.quality }}{% if result.excluded %} &mdash; excluded{% endif %}</span>
-			{# The personal funnel: Seen (their diary), On your
-			   watchlist, Might interest you — seen and might-interest
-			   never show together #}
-			{% if result.rating is not none %}
-			<span class="badge text-bg-info">Seen &mdash; rated {{ result.rating }}</span>
-			{% elif result.seen %}
-			<span class="badge text-bg-info">Seen</span>
-			{% endif %}
-			{% if result.watchlisted %}
-			<span class="badge text-bg-warning">On your watchlist</span>
-			{% endif %}
-			{% if result.might_interest %}
-			<span class="badge text-bg-info">Might interest you</span>
-			{% endif %}
-		</p>
+		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 	</div>
 	{% endfor %}
 </div>

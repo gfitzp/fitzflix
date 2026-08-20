@@ -325,11 +325,13 @@ def test_landing_page_renders_the_rail(app, admin_client):
     assert "Rail Showpiece (1994)" in body
     assert "/review/tmdb/6001" in body
 
-    # The provider renders as the standard logo badge, tooltip and all
+    # The provider badge moved into the popover (Aug 2026); the tile
+    # keeps the actions, and the taste reason rides the anchor as a
+    # card label
 
-    assert 'title="Streaming on Netflix"' in body
-    assert "/w45/netflix.jpg" in body
-    assert "popular on Netflix" in body
+    assert 'title="Streaming on Netflix"' not in body
+    assert 'data-state-tmdb="6001"' in body
+    assert 'data-card-reasons=\'["popular on Netflix", "Comedy"]\'' in body
     assert "Streaming data by JustWatch" in body
     assert "last run 2026-08-12 02:15" in body
     assert "Rail Acquired Since" not in body

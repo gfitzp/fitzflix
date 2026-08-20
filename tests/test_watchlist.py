@@ -49,9 +49,12 @@ def remove_form_fields(page_html, movie_id):
     a browser would: every input the form renders, in DOM order, plus
     the submit button — so template/route field mismatches surface."""
 
+    # Match on the movie_id INPUT, not any value attribute — the tile's
+    # star ladder renders buttons whose values collide with small ids
+
     form_match = re.search(
         r"<form[^>]*>(?:(?!</form>).)*?"
-        rf'value="{movie_id}"(?:(?!</form>).)*?</form>',
+        rf'name="movie_id"[^>]*value="{movie_id}"(?:(?!</form>).)*?</form>',
         page_html,
         re.DOTALL,
     )
@@ -267,7 +270,7 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app):
         )
 
 
-def test_watchlist_page_lists_availability_and_removes(app, admin_client):
+def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkeypatch):
     from app import db
     from app.models import UserWatchlist
 
@@ -308,13 +311,24 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client):
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Watchlist Page Film (1994)" in page
-    assert 'title="Streaming on Netflix"' in page
+    # Availability and ownership badges moved into the popover (Aug
+    # 2026); the tiles carry the hydrated actions instead
+    assert 'title="Streaming on Netflix"' not in page
+    assert 'title="In your Fitzflix library"' not in page
+    assert page.count("data-state-movie=") == 2
     # The synopsis lives in the poster popover now (#45d)
     assert "A film worth waiting for." not in page
     assert "data-card-url" in page
-    assert "Streaming data by JustWatch" in page
     assert "Watchlist Owned Tracker (1995)" in page
-    assert page.count('title="In your Fitzflix library"') == 1
+
+    # The unowned film's card serves the availability from the cache
+    # the page warmed, with the mandatory JustWatch credit (the key
+    # only gates the fetch path — the seeded day cache answers)
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    assert 'title="Streaming on Netflix"' in card
+    assert "Streaming data by JustWatch" in card
 
     # Each tile's poster anchor opens the movie page (#45d — the
     # stretched-link row overlay is gone with the rows), and every
@@ -464,10 +478,11 @@ def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The watchlisted film holds a badged slot alongside the
-    # higher-scoring one (positions vary daily since the shuffle)
+    # The watchlisted film holds a pinned slot alongside the
+    # higher-scoring one (positions vary daily since the shuffle);
+    # the badge itself lives in the popover since Aug 2026
 
-    assert "On your watchlist" in body
+    assert "On your watchlist" not in body
     assert "Rail Wanted (1994)" in body
     assert "Rail Unwanted High (1994)" in body
 
@@ -607,10 +622,11 @@ def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The watchlisted film holds a badged slot regardless of its stored
-    # ranking (positions vary daily since the shuffle)
+    # The watchlisted film holds a pinned slot regardless of its stored
+    # ranking (positions vary daily since the shuffle); the badge
+    # itself lives in the popover since Aug 2026
 
-    assert "On your watchlist" in body
+    assert "On your watchlist" not in body
     assert "Library Wanted (1995)" in body
     assert "Library Unwanted High (1994)" in body
 

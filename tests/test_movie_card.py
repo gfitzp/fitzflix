@@ -1,31 +1,24 @@
 """The poster popover's card (#45c): the /movie_card fragment for
-library records and bare TMDb ids, its live watchlist toggle, and the
-data-card-url wiring on the gallery surfaces."""
+library records and bare TMDb ids, the tile-side actions and their
+batched /movie_states hydration (the Aug 2026 revision moved the
+ladder and watchlist toggle out of the card and the badges in), and
+the data-card-url wiring on the gallery surfaces."""
 
 import json
-import re
 from datetime import datetime, timedelta
 
 from app import db
-from app.models import Movie, UserMovieReview, UserWatchlist
+from app.models import Movie, UserMovieReview, UserMovieStatus, UserWatchlist
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 from tests.test_elicitation import csrf_token_from, make_candidate
 from tests.test_recommendations import admin_id, make_cast, make_person
 
 
-def button_tag(page, name):
-    """The full <button> tag whose name attribute matches."""
-
-    match = re.search(rf'<button[^>]*name="{name}"[^>]*>', page)
-    assert match, f"no {name} button in the card"
-    return match.group(0)
-
-
 def test_movie_card_for_a_library_film(app, admin_client):
     """A library record's card: linked credits, runtime, synopsis, the
-    In-library badge, a live ladder posting to the film's own page with
-    the from_card marker, and the Add face of the watchlist toggle."""
+    In-library badge, and the quality badge in shopping colors — no
+    forms at all, the actions live on the tile."""
 
     with app.app_context():
         director = make_person(888001, "Card Director")
@@ -46,62 +39,80 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "A film about cards." in page
     assert "In library" in page
 
-    # The live ladder posts to the film's own movie route, marked so
-    # the drive's anchor never moves; ✕ is offered (no diary row yet)
+    # The Bluray-1080p copy meets the upgrade threshold, so the badge
+    # is green; the empty slot waits for the tile's own labels
 
-    assert f'action="/movie/{movie_id}"' in page
-    assert 'name="from_card"' in page
-    assert 'data-ladder-live="1"' in page
-    assert 'name="quick_rating" value="0"' in page
+    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in page
+    assert "data-card-reasons" in page
 
-    # Both watchlist faces render, Add showing and Remove hidden
+    # Informational only: no ladder, no watchlist toggle, no forms
 
-    assert "d-none" not in button_tag(page, "add_watchlist_submit")
-    assert "d-none" in button_tag(page, "remove_watchlist_submit")
+    assert "quick_rating" not in page
+    assert "star-row" not in page
+    assert "add_watchlist_submit" not in page
+    assert "<form" not in page
 
 
-def test_movie_card_reflects_verdict_and_watchlist(app, admin_client):
-    """A rated, watchlisted film's card shows the gold verdict (no
-    estimate, no ✕ — seen films can't be waved off) and the Remove face
-    of the toggle."""
+def test_movie_card_badges_watchlist_and_amber_quality(app, admin_client):
+    """A watchlisted film whose best copy lags the threshold badges
+    both facts: the amber quality tier and the watchlist badge."""
 
     with app.app_context():
         user_id = admin_id()
-        movie = make_candidate("Card Verdict", 1970)
-        db.session.add(
-            UserMovieReview(
-                user_id=user_id,
-                movie_id=movie.id,
-                liked=True,
-                date_reviewed=datetime.now(),
-                **star_rating_fields(4.0),
-            )
-        )
+        movie = make_movie("Card Verdict", 1970)
+        make_movie_file(movie, "DVD")
         db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
         db.session.commit()
         movie_id = movie.id
 
     page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert "star filled" in page
-    assert "estimated" not in page
-    assert 'name="quick_rating" value="0"' not in page
-    assert "d-none" in button_tag(page, "add_watchlist_submit")
-    assert "d-none" not in button_tag(page, "remove_watchlist_submit")
+    assert 'text-bg-warning me-1 mb-1">DVD' in page
+    assert "On your watchlist" in page
+
+    # An excluded film's badge goes green even below the threshold —
+    # the shopping answer, not the raw tier
+
+    with app.app_context():
+        db.session.get(Movie, movie_id).shopping_list_exclude = True
+        db.session.commit()
+    page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    assert 'text-bg-success me-1 mb-1">DVD' in page
 
 
-def test_movie_card_previews_the_estimate(app, admin_client):
-    """An unlogged film's card previews the engine's estimate in gray
-    stars, the same recipe as the movie page (#45a)."""
+def test_movie_states_batch_hydration_payload(app, admin_client):
+    """/movie_states answers ladder-and-watchlist state for many films
+    in one fetch: verdicts, flags, stored estimates, watchlist faces —
+    with tmdb ids answered under their own key, mapped through a local
+    record when one exists."""
 
     from app.recommendations import PROFILE_KEY, SCORES_KEY
 
     with app.app_context():
         user_id = admin_id()
-        movie = make_candidate("Card Estimated", 1972)
+        rated = make_candidate("States Rated", 1980)
+        estimated = make_candidate("States Estimated", 1981)
+        flagged = make_candidate("States Flagged", 1982)
+        listed = make_movie("States Listed", 1983, tmdb_id=777001)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=rated.id,
+                liked=True,
+                date_reviewed=datetime.now(),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.add(
+            UserMovieStatus(user_id=user_id, movie_id=flagged.id, kind="not_interested")
+        )
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=listed.id))
         db.session.commit()
-        movie_id = movie.id
+        rated_id, estimated_id, flagged_id = rated.id, estimated.id, flagged.id
+        listed_tmdb = listed.tmdb_id
 
-    app.redis.set(SCORES_KEY.format(user_id=user_id), json.dumps({str(movie_id): 9.0}))
+    app.redis.set(
+        SCORES_KEY.format(user_id=user_id), json.dumps({str(estimated_id): 9.0})
+    )
     app.redis.set(
         PROFILE_KEY.format(user_id=user_id),
         json.dumps(
@@ -116,14 +127,66 @@ def test_movie_card_previews_the_estimate(app, admin_client):
         ),
     )
 
-    page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert "star estimated" in page
-    assert "Estimated 4.5 for you" in page
+    response = admin_client.get(
+        f"/movie_states?movie_ids={rated_id},{estimated_id},{flagged_id}"
+        f"&tmdb_ids={listed_tmdb},999999"
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+
+    assert payload["movies"][str(rated_id)]["rating"] == 4.0
+    assert payload["movies"][str(rated_id)]["has_review"] is True
+    assert payload["movies"][str(estimated_id)]["rating"] is None
+    assert payload["movies"][str(estimated_id)]["estimated"] == 4.5
+    assert payload["movies"][str(flagged_id)]["flagged"] is True
+    assert payload["tmdb"][str(listed_tmdb)]["on_watchlist"] is True
+
+    # An unknown tmdb id answers the empty state instead of erroring
+
+    assert payload["tmdb"]["999999"]["has_review"] is False
+    assert payload["tmdb"]["999999"]["on_watchlist"] is False
+
+
+def test_gallery_tiles_carry_the_actions(app, admin_client):
+    """A landing-rail tile renders the blank ladder and the watchlist
+    toggle under the poster, wired for hydration: the state container
+    names the movie, the forms post to the film's route with the
+    from_card marker, and the badges are gone from the tile."""
+
+    with app.app_context():
+        user_id = admin_id()
+        favorite = make_movie("Popover Shelf Film", 1975)
+        make_movie_file(favorite, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=favorite.id,
+                liked=True,
+                date_watched=datetime.now() - timedelta(days=1500),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        favorite_id = favorite.id
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert f'data-card-url="/movie_card?movie_id={favorite_id}"' in body
+    assert f'data-state-movie="{favorite_id}"' in body
+    assert 'data-ladder-live="1"' in body
+    assert 'name="from_card"' in body
+    assert 'name="add_watchlist_submit"' in body
+
+    # The last-watched label rides the anchor for the card to display;
+    # the badges themselves left the tiles
+
+    assert "data-card-reasons='[\"Last watched" in body
+    assert ">Last watched" not in body
+    assert "On your watchlist" not in body
 
 
 def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
-    """A film with no local record renders from TMDb, and its forms
-    post to the TMDb log route — whose first tap creates the record."""
+    """A film with no local record renders from TMDb — informational
+    only, linking to the TMDb log page."""
 
     import app.main.discover as discover
     from tests.test_reviews import JAWS_2_DETAILS, FakeTMDbDetails
@@ -139,13 +202,11 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
     assert "The shark is back." in page
     assert "Roy Scheider" in page and "credit=4430" in page
     assert 'href="/review/tmdb/579"' in page
-    assert 'action="/review/tmdb/579"' in page
-    assert 'name="from_card"' in page
     assert "In library" not in page
-    assert "estimated" not in page
+    assert "<form" not in page
 
     # Once a record exists for the id, the same request serves the
-    # local card, aimed at the movie route
+    # local card, linking to the movie page
 
     with app.app_context():
         movie = make_movie("Jaws 2", 1978, tmdb_id=579)
@@ -153,7 +214,7 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
         movie_id = movie.id
 
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
-    assert f'action="/movie/{movie_id}"' in page
+    assert f'href="/movie/{movie_id}"' in page
 
 
 def test_movie_card_requires_a_known_film(app, admin_client):
@@ -167,8 +228,8 @@ def test_movie_card_requires_a_known_film(app, admin_client):
     assert admin_client.get("/movie_card?tmdb_id=579").status_code == 404
 
 
-def test_card_watchlist_toggle_round_trips_as_json(app, admin_client):
-    """The card's watchlist toggle posts with the card marker and gets
+def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client):
+    """The tile's watchlist toggle posts with the card marker and gets
     {on_watchlist} back — no redirect, no flash — in both directions."""
 
     with app.app_context():
@@ -177,8 +238,11 @@ def test_card_watchlist_toggle_round_trips_as_json(app, admin_client):
         movie_id = movie.id
         user_id = admin_id()
 
+    # The card is form-less now; the token comes from the tile forms
+    # on any gallery page
+
     token = csrf_token_from(
-        admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+        admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     )
     headers = {"X-Requested-With": "card"}
 
@@ -216,10 +280,10 @@ def test_card_watchlist_toggle_round_trips_as_json(app, admin_client):
         )
 
 
-def test_card_watchlist_add_creates_the_record_for_a_tmdb_film(
+def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
     app, admin_client, monkeypatch
 ):
-    """Banking a record-less rail film from its card posts to the TMDb
+    """Banking a record-less rail film from its tile posts to the TMDb
     log route, which creates the record and answers the same JSON."""
 
     import app.main.discover as discover
@@ -230,9 +294,7 @@ def test_card_watchlist_add_creates_the_record_for_a_tmdb_film(
         discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
     )
 
-    token = csrf_token_from(
-        admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
-    )
+    token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))
     response = admin_client.post(
         "/review/tmdb/579",
         data={
@@ -253,7 +315,7 @@ def test_card_watchlist_add_creates_the_record_for_a_tmdb_film(
         )
         movie_id = movie.id
 
-    # With the record in place, card posts still aimed at the log route
+    # With the record in place, tile posts still aimed at the log route
     # forward — method, body, and headers intact — to the movie route
 
     response = admin_client.post(
@@ -273,27 +335,3 @@ def test_card_watchlist_add_creates_the_record_for_a_tmdb_film(
             UserWatchlist.query.filter_by(user_id=admin_id(), movie_id=movie_id).first()
             is None
         )
-
-
-def test_index_posters_arm_the_popover(app, admin_client):
-    """Landing-page rail posters carry data-card-url, so hovering (or
-    tapping) any of them fetches the film's card."""
-
-    with app.app_context():
-        user_id = admin_id()
-        favorite = make_movie("Popover Shelf Film", 1975)
-        make_movie_file(favorite, "Bluray-1080p")
-        db.session.add(
-            UserMovieReview(
-                user_id=user_id,
-                movie_id=favorite.id,
-                liked=True,
-                date_watched=datetime.now() - timedelta(days=1500),
-                **star_rating_fields(4.0),
-            )
-        )
-        db.session.commit()
-        favorite_id = favorite.id
-
-    body = admin_client.get("/").get_data(as_text=True)
-    assert f'data-card-url="/movie_card?movie_id={favorite_id}"' in body

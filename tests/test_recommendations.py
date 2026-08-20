@@ -440,10 +440,12 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
 
     page = admin_client.get("/library/movie?credit=777001").get_data(as_text=True)
     assert page.count("Might interest you") == 1
-    # The marker sits on the matching unowned film only: the page order
-    # is chronological, so the marked row is between the two known titles
-    assert page.index("Marker Matching Unowned") < page.index("Might interest you")
-    assert page.index("Might interest you") < page.index("Marker Unmatching Unowned")
+    # The marker rides the matching unowned film's anchor as a card
+    # label (Aug 2026) — keyed by its tmdb id, since there's no record
+    assert (
+        'data-card-url="/movie_card?tmdb_id=400" '
+        "data-card-reasons='[\"Might interest you\"]'"
+    ) in page
 
 
 def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
@@ -841,15 +843,22 @@ def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "Watch it again" in body
     assert "Shelf Old Favorite (1975)" in body
-    assert f"Last watched {old_year}" in body
+    # The last-watched labels ride the anchors as card labels (Aug 2026)
+    assert f"data-card-reasons='[\"Last watched {old_year}\"]'" in body
     assert "Shelf Wanted Again (1976)" in body
-    assert "Seen ages ago" in body
+    assert "data-card-reasons='[\"Seen ages ago\"]'" in body
     assert "haven't watched in at least two years" in body
 
-    # The re-watchlisted film holds a badged slot (positions vary
-    # daily since the shuffle)
+    # The re-watchlisted film still holds a pinned slot; its watchlist
+    # answer comes from the hydration endpoint now, not a badge
 
-    assert "On your watchlist" in body
+    from app.models import Movie
+
+    with app.app_context():
+        wanted_id = Movie.query.filter_by(title="Shelf Wanted Again").one().id
+    assert f'data-state-movie="{wanted_id}"' in body
+    states = admin_client.get(f"/movie_states?movie_ids={wanted_id}").get_json()
+    assert states["movies"][str(wanted_id)]["on_watchlist"] is True
 
 
 def test_copref_value_math(app):

@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge, library_badge %}
-{% from "_poster_tile.html" import poster_image %}
+{% from "_poster_tile.html" import poster_image, tile_actions %}
 
 {% block app_content %}
 {# Portrait on the left, lifespan and biography in a column to its
@@ -47,13 +46,15 @@
 <div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
 {% endif %}
 {# The filmography as a poster gallery (#45d): the poster popover
-   carries each film's synopsis, credits, availability, and actions,
-   so the tile keeps only what identifies the film in THIS career —
-   title, this person's roles, and the at-a-glance badges #}
+   carries each film's synopsis, credits, availability, and badges
+   (Glenn's Aug 2026 revision moved the library/funnel/streaming
+   badges there), so the tile keeps what identifies the film in THIS
+   career — title and this person's roles — plus the actions: the
+   ladder shows the verdict or estimate, the toggle the watchlist #}
 <div class="row">
 	{% for row in filmography %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
-		<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="text-decoration-none text-body"{% if row.movie %} data-card-url="{{ url_for('main.movie_card', movie_id=row.movie.id) }}"{% elif row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}>
+		<a href="{% if row.movie %}{{ url_for('main.movie', movie_id=row.movie.id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}{% endif %}" class="text-decoration-none text-body"{% if row.movie %} data-card-url="{{ url_for('main.movie_card', movie_id=row.movie.id) }}"{% elif row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{% if row.movie and row.movie.custom_poster %}
 				{{ poster_image(url_for('static', filename='custom/movie/' + row.movie.id|string + '/w342/' + row.movie.custom_poster), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			{% elif row.poster_path %}
@@ -68,41 +69,15 @@
 			<p class="mb-0 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
 			{% endif %}
 		</a>
-		{% if row.quality or row.seen or row.watchlisted or row.might_interest or row.liked or row.streaming or row.rentals %}
-		<p class="mb-0 mt-1">
-			{# Ownership shows as the Fitzflix library badge, like the
-			   TMDb search page; then the personal funnel — Seen, On your
-			   watchlist, Might interest you (seen and might-interest
-			   never show together) — and the streaming badges #}
-			{% if row.quality %}
-				{{ library_badge() }}
-			{% endif %}
-			{% if row.seen %}
-				<span class="badge text-bg-info me-1">Seen</span>
-			{% endif %}
-			{% if row.watchlisted %}
-				<span class="badge text-bg-warning me-1">On your watchlist</span>
-			{% endif %}
-			{% if row.might_interest %}
-				<span class="badge text-bg-info me-1">Might interest you</span>
-			{% endif %}
-			{% if row.liked %}
-				<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-heart-fill text-danger mt-n1 me-1" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-					<path fill-rule="evenodd" d="M8 1.314C12.438-3.248 23.534 4.735 8 15-7.534 4.736 3.562-3.248 8 1.314z"/>
-				</svg>
-			{% endif %}
-			{% for provider in (row.streaming or []) + (row.rentals or []) %}
-			{{ availability_badge(provider) }}
-			{% endfor %}
-		</p>
+		{% if row.movie %}
+		{{ tile_actions(url_for('main.movie', movie_id=row.movie.id), movie_id=row.movie.id) }}
+		{% elif row.tmdb_id %}
+		{{ tile_actions(url_for('main.review_tmdb', tmdb_id=row.tmdb_id), tmdb_id=row.tmdb_id) }}
 		{% endif %}
 	</div>
 	{% endfor %}
 </div>
 {% if not filmography %}
 <p class="lead">No films found for this person.</p>
-{% endif %}
-{% if streaming_attribution %}
-<p class="small text-muted mt-2">Streaming data by JustWatch</p>
 {% endif %}
 {% endblock %}

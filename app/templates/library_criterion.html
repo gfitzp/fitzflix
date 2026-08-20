@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% from "_availability_badges.html" import availability_badge, library_badge %}
-{% from "_poster_tile.html" import poster_image, movie_poster_src %}
+{% from "_availability_badges.html" import library_badge %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% macro pagination_nav() %}
 {% if page_numbers|length > 1 %}
@@ -24,23 +24,6 @@
 {% endif %}
 {% endmacro %}
 
-{% macro funnel_badges(row) %}
-{# The personal funnel: Seen, On your watchlist, Might interest you —
-   seen and might-interest never show together #}
-{% if row.seen %}
-<span class="badge text-bg-info me-1">Seen</span>
-{% endif %}
-{% if row.watchlisted %}
-<span class="badge text-bg-warning me-1">On your watchlist</span>
-{% endif %}
-{% if row.might_interest %}
-<span class="badge text-bg-info me-1">Might interest you</span>
-{% endif %}
-{% for provider in row.streaming or [] %}
-{{ availability_badge(provider) }}
-{% endfor %}
-{% endmacro %}
-
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
@@ -60,15 +43,17 @@
 {% if rows %}
 {{ pagination_nav() }}
 {# The catalog as a poster wall (#45d) — the way Criterion itself
-   shows spines. The popover carries each film's synopsis and actions;
-   tiles keep the spine number, the settled/amber shopping answer, the
-   funnel badges, and the collector's-set line #}
+   shows spines. The popover carries each film's synopsis and badges
+   (the funnel and streaming badges moved there in Glenn's Aug 2026
+   revision); tiles keep the spine number, the settled/amber shopping
+   answer — Criterion-edition semantics the popover's generic quality
+   badge can't express — the actions, and the collector's-set line #}
 <div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3">
 		{% if row.kind == "library" %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 		</a>
@@ -82,8 +67,8 @@
 			{% else %}
 			<span class="badge text-bg-warning me-1">{{ row.quality.quality_title }}{% if row.file.fullscreen %} &mdash; full screen{% endif %}</span>
 			{% endif %}
-			{{ funnel_badges(row) }}
 		</p>
+		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 		{% elif row.kind == "tmdb" %}
 		{# A release the library lacks: a file-less local record dresses
 		   the tile with its stored poster and opens its movie page
@@ -91,7 +76,7 @@
 		   releases open the log page, so they're watchlistable — and
 		   either way the popover serves the detail on hover #}
 		{% if movie %}
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 		{% elif row.year %}
 		<a href="{{ url_for('main.review_tmdb', tmdb_id=row.tmdb_id) }}" class="text-decoration-none text-body"{% if row.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=row.tmdb_id) }}"{% endif %}>
@@ -102,9 +87,10 @@
 		{% endif %}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 		{% if movie or row.year %}</a>{% else %}</div>{% endif %}
-		{% set badge_line = funnel_badges(row) %}
-		{% if badge_line | trim %}
-		<p class="mb-0 mt-1">{{ badge_line }}</p>
+		{% if movie %}
+		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
+		{% elif row.year and row.tmdb_id %}
+		{{ tile_actions(url_for('main.review_tmdb', tmdb_id=row.tmdb_id), tmdb_id=row.tmdb_id) }}
 		{% endif %}
 		{% else %}
 		{# Wikidata knows this release but not its TMDb id, so there's
@@ -123,8 +109,5 @@
 {{ pagination_nav() }}
 {% else %}
 <h5>There are no Criterion Collection films to show.</h5>
-{% endif %}
-{% if streaming_attribution %}
-<p class="small text-muted">Streaming data by JustWatch</p>
 {% endif %}
 {% endblock %}

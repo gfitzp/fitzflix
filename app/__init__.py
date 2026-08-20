@@ -456,6 +456,14 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.jinja_env.filters["review_html"] = review_html
 
+    # The poster tiles' action forms render their own csrf inputs
+    # without a form object threaded through every gallery route —
+    # the same name CSRFProtect would register, minus its enforcement
+
+    from flask_wtf.csrf import generate_csrf
+
+    app.jinja_env.globals["csrf_token"] = generate_csrf
+
     # The built-in SECRET_KEY fallback lets anyone forge session cookies and
     # password-reset tokens, so it's only acceptable in debug mode
 

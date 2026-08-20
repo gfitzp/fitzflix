@@ -72,14 +72,17 @@ def test_search_requires_login(app):
 
 def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     with app.app_context():
-        build_library(app)
+        dvd_movie, remux_movie, seen_movie, series = build_library(app)
+        dvd_id, remux_id = dvd_movie.id, remux_movie.id
 
-    # Upgradability is conveyed by badge color alone: amber for an
-    # upgrade candidate, green for a topped-out copy
+    # The quality tier moved into the poster popover (Aug 2026): the
+    # tile keeps the actions, the film's card answers the shopping
+    # question — amber for an upgrade candidate, green for topped-out
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
-    assert 'text-bg-warning">DVD' in page
+    assert 'text-bg-warning">DVD' not in page
+    assert f'data-state-movie="{dvd_id}"' in page
 
     # The synopsis lives in the poster popover now (#45d); the tile
     # is armed with data-card-url
@@ -87,12 +90,10 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     assert "A giant shark terrorizes a beach town." not in page
     assert "data-card-url" in page
 
-    page = admin_client.get("/search?q=jurassic").get_data(as_text=True)
-    assert "Jurassic Park (1993)" in page
-    assert 'text-bg-success">Bluray-2160p Remux' in page
-    # The chip-color map in base.html's poll script mentions the
-    # class on every page, so assert on rendered badges only
-    assert 'text-bg-warning">' not in page
+    card = admin_client.get(f"/movie_card?movie_id={dvd_id}").get_data(as_text=True)
+    assert 'text-bg-warning me-1 mb-1">DVD' in card
+    card = admin_client.get(f"/movie_card?movie_id={remux_id}").get_data(as_text=True)
+    assert 'text-bg-success me-1 mb-1">Bluray-2160p Remux' in card
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
@@ -138,6 +139,7 @@ def test_search_badges_recommended_owned_films(app, admin_client):
         db.session.commit()
         user_id = admin.id
         rec_ids = [recommended.id, logged_since.id]
+        recommended_id = recommended.id
 
     app.redis.set(
         RECS_KEY.format(user_id=user_id),
@@ -152,19 +154,22 @@ def test_search_badges_recommended_owned_films(app, admin_client):
         ),
     )
 
+    # The badge rides the recommended film's anchor as a card label
+    # (Aug 2026) — exactly one film carries it, and it's Jaws
+
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert page.count("Might interest you") == 1
     assert (
-        page.index("Jaws (1975)")
-        < page.index("Might interest you")
-        < page.index("Jaws 2 (1978)")
-    )
+        f'data-card-url="/movie_card?movie_id={recommended_id}" '
+        "data-card-reasons='[\"Might interest you\"]'"
+    ) in page
 
 
 def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
-    """The funnel on the library search: watchlist coexists with
-    might-interest while unseen, and with Seen after logging — but a
-    seen film never badges might-interest, even when it's still in the
+    """The funnel on the library search since the Aug 2026 revision:
+    watchlist and verdicts answer through the tile widgets (hydrated
+    client-side, so no badges in the HTML), and might-interest rides
+    the card label — never for a seen film, even one still in the
     stored recommendations."""
 
     import json
@@ -208,10 +213,12 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
     )
 
     page = admin_client.get("/search?q=funnel").get_data(as_text=True)
-    assert page.count("On your watchlist") == 2
+    assert "On your watchlist" not in page
+    assert "Seen &mdash; rated" not in page
     assert page.count("Might interest you") == 1
-    assert "Seen &mdash; rated 9" in page
     assert page.index("Might interest you") < page.index("Funnel Seen Rewatch (1991)")
+    # Both tiles are wired for state hydration instead
+    assert page.count("data-state-movie=") == 2
 
 
 def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
@@ -548,19 +555,21 @@ def test_search_tmdb_without_api_key_explains(app, admin_client):
 
 
 def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
-    """A movie removed from the shopping list is final: green badge with an
-    'excluded' note, even when its best copy is below the quality threshold."""
+    """A movie removed from the shopping list is final: its card's
+    quality badge (where the tier lives since Aug 2026) goes green
+    even when the best copy is below the quality threshold."""
 
     with app.app_context():
         movie = make_movie("Skip It", 2000, shopping_list_exclude=True)
         make_movie_file(movie, "DVD")
         db.session.commit()
+        movie_id = movie.id
 
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
-    assert 'text-bg-success">DVD &mdash; excluded' in page
-    # The chip-color map in base.html's poll script mentions the
-    # class on every page, so assert on rendered badges only
-    assert 'text-bg-warning">' not in page
+    assert f'data-state-movie="{movie_id}"' in page
+    card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    assert 'text-bg-success me-1 mb-1">DVD' in card
+    assert 'text-bg-warning me-1 mb-1">' not in card
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):

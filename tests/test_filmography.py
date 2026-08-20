@@ -4,7 +4,7 @@ films with no local record at all — and the movie library page badges
 each film's quality by upgrade eligibility."""
 
 from app import db
-from app.models import MovieCast, MovieCrew, TMDBCredit, User, UserMovieReview
+from app.models import Movie, MovieCast, MovieCrew, TMDBCredit, User, UserMovieReview
 from app.videos import star_rating_fields
 from tests.factories import make_movie, make_movie_file
 
@@ -41,13 +41,12 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
     # No stored profile path, so the header shows the silhouette placeholder
     assert "bi-person-fill" in page
     assert "Owned Credit Film" in page
-    # Ownership shows as the Fitzflix library badge; quality tiers live
-    # on the local film search instead
-    assert page.count('title="In your Fitzflix library"') == 1
+    # Ownership and quality moved into each poster's popover (Aug
+    # 2026); the tiles carry the actions instead
+    assert 'title="In your Fitzflix library"' not in page
     assert ">DVD<" not in page
+    assert page.count("data-state-movie=") == 2
     assert "Unowned Credit Film" in page
-    # The TMDb-search row grammar dropped the "Not in library" badge:
-    # absence of a quality badge says it
     assert "Not in library" not in page
     assert "only shows films with local records" in page
 
@@ -138,12 +137,13 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "Born January 10, 1920" in page
     assert "Died May 2, 1999 (aged 79)" in page
     assert "Worked steadily for decades." in page
-    # Owned: the Fitzflix library badge, not a quality tier
-    assert 'title="In your Fitzflix library"' in page
+    # Ownership, seen-ness, and the liked heart all moved off the
+    # tiles (Aug 2026): the popover badges ownership, the hydrated
+    # ladder shows the verdict
+    assert 'title="In your Fitzflix library"' not in page
     assert "Bluray-1080p" not in page
-    # Seen but unowned: info badge plus the liked heart
-    assert 'text-bg-info me-1">Seen' in page
-    assert "bi-heart-fill" in page
+    assert 'text-bg-info me-1">Seen' not in page
+    assert "bi-heart-fill" not in page
     # No local record at all: listed from TMDb, linking to the review form
     assert "Career Unknown Film" in page
     assert "/review/tmdb/200" in page
@@ -151,11 +151,14 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
 
     # The synopsis lives in the poster popover now (#45d): tiles are
     # armed with data-card-url — by movie_id for records, tmdb_id
-    # for the record-less TMDb credits
+    # for the record-less TMDb credits — and every tile carries the
+    # actions, keyed the same way
 
     assert "A cameo-laden curiosity from 1999." not in page
     assert 'data-card-url="/movie_card?tmdb_id=200"' in page
     assert page.count('data-card-url="/movie_card') >= 3
+    assert 'data-state-tmdb="200"' in page
+    assert page.count("data-state-movie=") == 2
 
 
 def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypatch):
@@ -228,18 +231,22 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
+    # The badge rides the recommended film's anchor as a card label
+    # (Aug 2026) — one film carries it, and it's the ranked one
+
     page = admin_client.get("/library/movie?credit=636363").get_data(as_text=True)
     assert page.count("Might interest you") == 1
     assert (
-        page.index("Ranked Owned Film (1946)")
-        < page.index("Might interest you")
-        < page.index("Unranked Owned Film (1950)")
-    )
+        f'data-card-url="/movie_card?movie_id={recommended_id}" '
+        "data-card-reasons='[\"Might interest you\"]'"
+    ) in page
 
 
 def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monkeypatch):
-    """Owned rows carry the full funnel: the library badge no longer
-    hides Seen, and a watchlisted owned film badges the watchlist."""
+    """Owned rows answer the funnel through the widgets since the Aug
+    2026 revision: no badges in the tile markup — the hydrated ladder
+    speaks for Seen, the toggle and the popover for the watchlist —
+    and /movie_states supplies both films' answers."""
 
     import app.main.library as library
 
@@ -303,15 +310,19 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
 
     page = admin_client.get("/library/movie?credit=737373").get_data(as_text=True)
-    assert page.count('title="In your Fitzflix library"') == 2
-    assert page.count('text-bg-info me-1">Seen') == 1
-    assert page.count("On your watchlist") == 1
-    assert page.index("Funnel Owned Seen Film (1960)") < page.index(
-        'text-bg-info me-1">Seen'
-    )
-    assert page.index("Funnel Owned Wanted Film (1965)") < page.index(
-        "On your watchlist"
-    )
+    assert 'title="In your Fitzflix library"' not in page
+    assert 'text-bg-info me-1">Seen' not in page
+    assert "On your watchlist" not in page
+    assert page.count("data-state-movie=") == 2
+
+    with app.app_context():
+        seen_id = Movie.query.filter_by(tmdb_id=400).one().id
+        wanted_id = Movie.query.filter_by(tmdb_id=401).one().id
+    states = admin_client.get(
+        f"/movie_states?movie_ids={seen_id},{wanted_id}"
+    ).get_json()
+    assert states["movies"][str(seen_id)]["rating"] == 4.0
+    assert states["movies"][str(wanted_id)]["on_watchlist"] is True
 
 
 def test_filmography_serves_people_without_local_credit_rows(
@@ -469,11 +480,13 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
     page = admin_client.get("/library/movie?credit=838383").get_data(as_text=True)
 
     # The owned film merges its cast and crew credits into one row,
-    # carrying the library badge through the MovieCrew local join
+    # attaching its local record through the MovieCrew join — visible
+    # as the movie-keyed state container (ownership badges live in the
+    # popover since Aug 2026)
 
     assert "Directed Owned Film (1970)" in page
     assert "Director &middot; as The Cameo" in page
-    assert page.count('title="In your Fitzflix library"') == 1
+    assert page.count("data-state-movie=") == 1
 
     # A crew-only film rows up with its role labels in closing-credit
     # order (the payload listed Composer, Writer, Director); non-key
@@ -549,6 +562,9 @@ def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatc
 
 
 def test_library_page_badges_quality_by_upgradability(app, admin_client):
+    """The library wall's tiles carry the actions; the green/amber
+    shopping answer moved into each poster's popover (Aug 2026)."""
+
     with app.app_context():
         upgradable = make_movie("Badge Upgradable Film", 2001)
         make_movie_file(upgradable, "DVD")
@@ -557,12 +573,23 @@ def test_library_page_badges_quality_by_upgradability(app, admin_client):
         excluded = make_movie("Badge Excluded Film", 2003, shopping_list_exclude=True)
         make_movie_file(excluded, "DVD")
         db.session.commit()
+        upgradable_id, final_id, excluded_id = upgradable.id, final.id, excluded.id
 
     page = admin_client.get("/library/movie").get_data(as_text=True)
-    assert 'text-bg-warning">DVD' in page
-    assert 'text-bg-success">Bluray-1080p' in page
+    assert 'text-bg-warning">DVD' not in page
+    assert page.count("data-state-movie=") == 3
+
+    card = admin_client.get(f"/movie_card?movie_id={upgradable_id}").get_data(
+        as_text=True
+    )
+    assert 'text-bg-warning me-1 mb-1">DVD' in card
+    card = admin_client.get(f"/movie_card?movie_id={final_id}").get_data(as_text=True)
+    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in card
     # An excluded movie's copy counts as final even below the threshold
-    assert 'text-bg-success">DVD' in page
+    card = admin_client.get(f"/movie_card?movie_id={excluded_id}").get_data(
+        as_text=True
+    )
+    assert 'text-bg-success me-1 mb-1">DVD' in card
 
 
 def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):
