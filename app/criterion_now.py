@@ -393,10 +393,9 @@ def _ladder_state_for(user, tmdb_id, payload):
     from app.models import Movie, UserMovieStatus
     from app.recommendations import (
         estimated_rating,
-        single_movie_score,
+        resolved_score,
         score_movie,
         stored_profile,
-        stored_scores,
     )
     from app.streaming_rail import _payload_features
 
@@ -425,9 +424,7 @@ def _ladder_state_for(user, tmdb_id, payload):
             is not None
         )
         if row is None and not state["flagged"]:
-            score = stored_scores(current_app.redis, user.id).get(movie.id)
-            if score is None:
-                score = single_movie_score(user.id, movie, profile)
+            score = resolved_score(current_app.redis, user.id, movie, profile)
             if score is not None:
                 state["estimated"] = estimated_rating(profile, score)
     elif profile and payload:

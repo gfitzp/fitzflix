@@ -18,6 +18,7 @@ from flask_login import current_user
 
 from app import db
 from app.models import (
+    Movie,
     RefQuality,
     UserMovieReview,
     UserMovieStatus,
@@ -25,8 +26,8 @@ from app.models import (
 )
 from app.recommendations import (
     estimated_rating,
+    resolved_score,
     stored_profile,
-    stored_scores,
 )
 from app.videos import (
     clear_watchlist,
@@ -163,11 +164,11 @@ def _ladder_state(user_id, movie_id):
     )
     estimated = None
     if row is None and not flagged:
-        score = stored_scores(current_app.redis, int(user_id)).get(int(movie_id))
+        profile = stored_profile(current_app.redis, int(user_id))
+        movie = db.session.get(Movie, int(movie_id))
+        score = resolved_score(current_app.redis, int(user_id), movie, profile)
         if score is not None:
-            estimated = estimated_rating(
-                stored_profile(current_app.redis, int(user_id)), score
-            )
+            estimated = estimated_rating(profile, score)
     return jsonify(
         {
             "rating": (

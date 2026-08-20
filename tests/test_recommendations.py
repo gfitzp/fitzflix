@@ -1204,6 +1204,76 @@ def test_single_movie_score_matches_the_stored_recipe(app):
         assert single_movie_score(user_id, pick, None) is None
 
 
+def test_resolved_score_reads_and_patches_one_shared_source(app):
+    """A film the stored map misses is scored live once and patched
+    back into the map, so every surface — the movie page, the tile
+    batches, the rate drive — reads the identical number; the nightly
+    base wins over a patch, since it was rescored from fresher inputs."""
+
+    import json as jsonlib
+    from datetime import datetime
+
+    from app import db
+    from app.recommendations import (
+        SCORES_KEY,
+        compute_user_recommendations,
+        resolved_score,
+        stored_scores,
+    )
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+        liked = make_movie("Shared Liked", 1990)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, rating=5.0, liked=True)
+        pick = make_movie("Shared Pick", 1992, tmdb_data_as_of=datetime.utcnow())
+        pick.genres.append(comedy)
+        db.session.commit()
+
+        profile, _, _ = compute_user_recommendations(user_id)
+
+        # The first ask scores live and patches; from then on the map
+        # itself answers, for this and every other surface
+
+        first = resolved_score(app.redis, user_id, pick, profile)
+        assert first is not None
+        assert stored_scores(app.redis, user_id)[pick.id] == first
+        assert resolved_score(app.redis, user_id, pick, profile) == first
+
+        # An overnight rebuild that covers the film supersedes the
+        # patch even before the overlay is dropped
+
+        app.redis.set(
+            SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(pick.id): 9.9})
+        )
+        assert stored_scores(app.redis, user_id)[pick.id] == 9.9
+        assert resolved_score(app.redis, user_id, pick, profile) == 9.9
+
+
+def test_recompute_drops_the_patch_overlay(app):
+    """The nightly rebuild rescored every patched film from fresher
+    inputs, so storing the new map deletes the live-score overlay in
+    the same pipeline."""
+
+    from app.recommendations import PATCH_SCORES_KEY, recompute_recommendations
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+        liked = make_movie("Overlay Liked", 1994)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, liked=True)
+        from app import db
+
+        db.session.commit()
+
+    patch_key = PATCH_SCORES_KEY.format(user_id=user_id)
+    app.redis.hset(patch_key, "12345", 4.2)
+    assert recompute_recommendations() is True
+    assert not app.redis.exists(patch_key)
+
+
 def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client):
     """An unowned refreshed record missing from the stored ranking is
     scored live at render, so a LOW guess can warn off a watchlist add;

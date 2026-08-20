@@ -132,6 +132,16 @@ PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
 SCORES_KEY = "fitzflix:recs:scores:{user_id}"
 
+# Films scored live between recomputes — records created after the
+# last nightly run — patch into the map through this overlay hash, so
+# every surface reads one number per film no matter which computed it.
+# The nightly rebuild covers those films properly and drops the
+# overlay; the TTL is garbage collection for a recompute that stops
+# running, since a lost patch just gets recomputed on demand.
+
+PATCH_SCORES_KEY = "fitzflix:recs:scores:patch:{user_id}"
+PATCH_SCORES_TTL = 60 * 60 * 48
+
 # Deep enough that the landing page's no-repeat partition (12 films a
 # day, one per quality tier) cycles the whole set roughly monthly —
 # the library pool measured 2,800+ positive-scoring films, so depth
@@ -980,14 +990,46 @@ def stored_recommendations(redis, user_id):
 
 
 def stored_scores(redis, user_id):
-    """The nightly score map — {movie_id: full-recipe score} over every
-    scoreable unlogged film — or {} before the first compute. JSON keys
-    come back as strings, so they're re-inted here."""
+    """The score map — {movie_id: full-recipe score} over every
+    scoreable unlogged film — or {} before the first compute. The
+    nightly base merges with the live-scored patch overlay, base
+    winning: a film in both was rescored overnight from fresher
+    inputs. JSON keys come back as strings, so they're re-inted
+    here."""
 
+    scores = {}
+    for movie_id, score in redis.hgetall(
+        PATCH_SCORES_KEY.format(user_id=int(user_id))
+    ).items():
+        scores[int(movie_id)] = float(score)
     payload = redis.get(SCORES_KEY.format(user_id=int(user_id)))
-    if not payload:
-        return {}
-    return {int(movie_id): score for movie_id, score in json.loads(payload).items()}
+    if payload:
+        for movie_id, score in json.loads(payload).items():
+            scores[int(movie_id)] = score
+    return scores
+
+
+def resolved_score(redis, user_id, movie, profile, scores=None):
+    """The film's engine score from the one shared source: the stored
+    map when it covers the film, otherwise the same recipe run live —
+    with the result patched back into the map, so the next surface to
+    ask (a tile batch, the movie page, the rate drive) reads the
+    identical number instead of recomputing its own. None for films
+    that can't be scored yet (no profile, or TMDb data still landing).
+    Batch callers pass their already-fetched `scores` map to skip the
+    per-film Redis read."""
+
+    if scores is None:
+        scores = stored_scores(redis, user_id)
+    if movie.id in scores:
+        return scores[movie.id]
+    score = single_movie_score(user_id, movie, profile)
+    if score is not None:
+        score = round(score, 4)
+        key = PATCH_SCORES_KEY.format(user_id=int(user_id))
+        redis.hset(key, str(movie.id), score)
+        redis.expire(key, PATCH_SCORES_TTL)
+    return score
 
 
 def stored_profile(redis, user_id):
@@ -1096,9 +1138,13 @@ def recompute_recommendations():
                 RECS_KEY.format(user_id=user_id),
                 json.dumps({"computed_at": computed_at, "items": ranked}),
             )
-            current_app.redis.set(
-                SCORES_KEY.format(user_id=user_id), json.dumps(scores)
-            )
+            # The fresh map supersedes any live-scored patches — drop
+            # the overlay in the same pipeline so no read sees the new
+            # base with the old patches still layered under it
+            pipeline = current_app.redis.pipeline()
+            pipeline.set(SCORES_KEY.format(user_id=user_id), json.dumps(scores))
+            pipeline.delete(PATCH_SCORES_KEY.format(user_id=user_id))
+            pipeline.execute()
             current_app.logger.info(
                 f"Recommendations: stored {len(ranked)} films "
                 f"({len(scores)} scored) for user {user_id}"

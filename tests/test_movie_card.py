@@ -147,6 +147,47 @@ def test_movie_states_batch_hydration_payload(app, admin_client):
     assert payload["tmdb"]["999999"]["on_watchlist"] is False
 
 
+def test_movie_states_live_scores_films_the_nightly_map_missed(app, admin_client):
+    """A record created after the last recompute — no stored score —
+    still estimates in a tile batch: /movie_states scores it live
+    through the shared resolver and patches the map, so the movie page
+    shows the very same number (the So I Married an Axe Murderer bug:
+    3 stars on the film's page, a blank ladder on the watchlist)."""
+
+    from app.recommendations import PROFILE_KEY, stored_scores
+
+    with app.app_context():
+        user_id = admin_id()
+        fresh = make_movie("States Fresh Add", 1993, tmdb_data_as_of=datetime.now())
+        db.session.commit()
+        fresh_id = fresh.id
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {},
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 1.0, 2.0, 3.0],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+
+    payload = admin_client.get(f"/movie_states?movie_ids={fresh_id}").get_json()
+    estimated = payload["movies"][str(fresh_id)]["estimated"]
+    assert estimated is not None
+
+    # The live score was patched into the shared map, and the movie
+    # page reads the identical estimate from it
+
+    assert fresh_id in stored_scores(app.redis, user_id)
+    page = admin_client.get(f"/movie/{fresh_id}").get_data(as_text=True)
+    assert f"Estimated {estimated} for you" in page
+
+
 def test_gallery_tiles_carry_the_actions(app, admin_client):
     """A landing-rail tile renders the blank ladder and the watchlist
     toggle under the poster, wired for hydration: the state container

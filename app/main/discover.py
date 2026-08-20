@@ -62,6 +62,7 @@ from app.recommendations import (
     TOP_BILLING_CUTOFF,
     estimated_rating,
     not_interested_movie_ids,
+    resolved_score,
     rotate_daily,
     rotate_partition,
     shuffle_daily,
@@ -793,6 +794,14 @@ def movie_card():
 # guards against abuse
 MOVIE_STATES_LIMIT = 300
 
+# How many films one state batch may score live when the nightly map
+# doesn't cover them — misses are only records created since the last
+# recompute, so a page rarely carries more than a handful; the cap
+# bounds the worst case, and anything past it catches up on the next
+# request once the resolver's patches land
+
+MOVIE_STATES_LIVE_SCORES = 20
+
 
 @bp.route("/movie_states")
 @login_required
@@ -803,8 +812,10 @@ def movie_states():
     compute per-film verdicts itself. ?movie_ids= and ?tmdb_ids= are
     comma-separated; tmdb ids are answered under their own key (mapped
     through a local record when one exists, empty state otherwise).
-    Estimates come from the stored nightly scores alone — the same
-    source the live ladder repaints from."""
+    Estimates come from the shared score source: the stored map,
+    live-scoring a bounded number of missing films through the
+    resolver that patches the map — the same source every other
+    estimate surface reads."""
 
     def parse_ids(name):
         return [
@@ -868,6 +879,36 @@ def movie_states():
 
     profile = stored_profile(current_app.redis, current_user.id)
     scores = stored_scores(current_app.redis, current_user.id)
+
+    # Estimate-eligible films the map doesn't cover — records created
+    # since the last nightly recompute — score live through the shared
+    # resolver, whose patch makes the number permanent for every other
+    # surface; request order decides who makes the cap
+
+    if profile:
+        ordered_ids = list(
+            dict.fromkeys(
+                movie_ids
+                + [
+                    tmdb_to_movie[tmdb_id]
+                    for tmdb_id in tmdb_ids
+                    if tmdb_id in tmdb_to_movie
+                ]
+            )
+        )
+        misses = [
+            movie_id
+            for movie_id in ordered_ids
+            if movie_id not in scores
+            and movie_id not in latest
+            and movie_id not in flagged_ids
+        ][:MOVIE_STATES_LIVE_SCORES]
+        for movie in Movie.query.filter(Movie.id.in_(misses or [0])):
+            score = resolved_score(
+                current_app.redis, current_user.id, movie, profile, scores=scores
+            )
+            if score is not None:
+                scores[movie.id] = score
 
     def state_for(movie_id):
         if movie_id is None:
@@ -1195,16 +1236,15 @@ def rate():
 
     # The featured card shows the engine's estimate in the star row
     # (#53/#58 — Glenn chose consistency over the original keep-the-
-    # elicitation-unanchored rule); featured films are candidates, so
-    # the nightly score map covers them
+    # elicitation-unanchored rule), read through the shared resolver
+    # like every other estimate surface
 
     featured_estimated = None
     if featured is not None:
-        score = stored_scores(current_app.redis, current_user.id).get(featured.id)
+        profile = stored_profile(current_app.redis, current_user.id)
+        score = resolved_score(current_app.redis, current_user.id, featured, profile)
         if score is not None:
-            featured_estimated = estimated_rating(
-                stored_profile(current_app.redis, current_user.id), score
-            )
+            featured_estimated = estimated_rating(profile, score)
     directors = []
     top_cast = []
     if featured:

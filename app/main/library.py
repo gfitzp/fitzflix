@@ -91,9 +91,8 @@ from app.recommendations import (
     marker_bar,
     not_interested_movie_ids,
     recommended_movie_ids,
-    single_movie_score,
+    resolved_score,
     stored_profile,
-    stored_scores,
 )
 from app.streaming import (
     batch_title_availability,
@@ -1575,20 +1574,19 @@ def movie(movie_id):
     # coarse scorer against the profile-relative bar, like the TMDb
     # search results
 
-    # The estimated rating (#45a): a film in the stored ranking carries
-    # its engine score; any other unlogged film is scored live with the
-    # same recipe (Glenn's ask — a low guess warns off a watchlist add
-    # as usefully as a high one invites it), and the profile's
-    # calibration curve turns either into "you might rate this around
-    # ★★★★" — never shown once the user has a verdict of their own
+    # The estimated rating (#45a): the shared score source — the stored
+    # map, live-scoring a missing film with the same recipe and patching
+    # the result back so every surface shows one number (Glenn's ask —
+    # a low guess warns off a watchlist add as usefully as a high one
+    # invites it), and the profile's calibration curve turns the score
+    # into "you might rate this around ★★★★" — never shown once the
+    # user has a verdict of their own
 
     estimated = None
     might_interest = False
     if review is None and not refused:
         profile = stored_profile(current_app.redis, current_user.id)
-        score = stored_scores(current_app.redis, current_user.id).get(movie.id)
-        if score is None:
-            score = single_movie_score(current_user.id, movie, profile)
+        score = resolved_score(current_app.redis, current_user.id, movie, profile)
         if score is not None:
             estimated = estimated_rating(profile, score)
 
