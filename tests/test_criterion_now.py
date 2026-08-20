@@ -99,6 +99,32 @@ def test_parse_film_info_reads_the_meta_lines(app):
     }
 
 
+def test_parse_film_info_flattens_nonbreaking_spaces(app):
+    """The Channel writes non-breaking spaces raw, as &nbsp;, and
+    sometimes double-escaped (&amp;nbsp;) — the shelf once showed a
+    literal "&nbsp;Hong Kong". All three must read as plain spaces."""
+
+    from app.criterion_now import parse_film_info
+
+    for nbsp in ("\xa0", "&nbsp;", "&amp;nbsp;"):
+        info = parse_film_info(
+            "<p>Directed by Wong Kar-wai • 2000 •"
+            f"{nbsp}Hong{nbsp}Kong\n"
+            f"<br>Starring Tony{nbsp}Leung, Maggie Cheung</p>"
+        )
+        assert info["country"] == "Hong Kong", repr(nbsp)
+        assert info["starring"] == "Tony Leung, Maggie Cheung", repr(nbsp)
+
+
+def test_parse_whatson_page_flattens_nonbreaking_spaces(app):
+    from app.criterion_now import parse_whatson_page
+
+    title, _, _ = parse_whatson_page(
+        WHATSON_HTML.replace("Shock Corridor", "Shock&amp;nbsp;Corridor")
+    )
+    assert title == "Shock Corridor"
+
+
 def test_poller_stores_film_and_reschedules(app, monkeypatch):
     import app.criterion_now as criterion_now
 

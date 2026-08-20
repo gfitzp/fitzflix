@@ -68,6 +68,18 @@ INFO_META_RE = re.compile(
 INFO_STARRING_RE = re.compile(r"Starring\s+(?P<starring>[^<\r\n]+)")
 
 
+def _clean_text(text, collapse=True):
+    """Unescape, then flatten non-breaking spaces to plain ones. The
+    Channel's pages carry them raw (\xa0), as &nbsp;, and occasionally
+    double-escaped (&amp;nbsp;) — that last form unescapes to the
+    literal text "&nbsp;", which would otherwise be captured into a
+    displayed value like "&nbsp;Hong Kong"."""
+
+    text = html.unescape(text).replace("\xa0", " ").replace("&nbsp;", " ")
+    text = re.sub(r" {2,}", " ", text)
+    return text.strip() if collapse else text
+
+
 def parse_whatson_page(page_html):
     """(title, more_url, minutes-until-next) from the now-playing page;
     (None, None, None) when the title can't be found. A countdown that
@@ -77,7 +89,7 @@ def parse_whatson_page(page_html):
     title_match = TITLE_RE.search(page_html)
     if not title_match:
         return None, None, None
-    title = html.unescape(re.sub(r"<[^>]+>", "", title_match.group(1))).strip()
+    title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
 
     more_match = MORE_RE.search(page_html)
     more_url = more_match.group(1) if more_match else None
@@ -101,7 +113,7 @@ def parse_film_info(page_html):
     leaving tooltips carry, plus the Starring line; values None when
     absent."""
 
-    text = html.unescape(page_html.replace("&nbsp;", " "))
+    text = _clean_text(page_html, collapse=False)
     info = {"director": None, "year": None, "country": None, "starring": None}
     meta = INFO_META_RE.search(text)
     if meta:
