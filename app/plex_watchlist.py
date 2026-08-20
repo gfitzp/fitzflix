@@ -76,7 +76,9 @@ def _plex_put(path, rating_key):
 def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
     """{tmdb_id: {title, year, rating_key}} for the account's whole
     watchlist — paginated (the API silently caps a page at 20), with
-    tmdb ids read from the bulk includeGuids payload.
+    tmdb ids read from the bulk includeGuids payload. Movies only: the
+    account watchlist also holds TV shows, whose tmdb guids are TMDb
+    TV-series ids, not film ids.
 
     An item can carry SEVERAL tmdb guids (The Animatrix exposes the
     compilation plus all nine segments), so each item is represented
@@ -101,6 +103,10 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
         container = payload.get("MediaContainer", {})
         page = container.get("Metadata", []) or []
         for item in page:
+            # A show's tmdb guid is a TV-series id — as a film it
+            # becomes a bare Movie row (The Flight Attendant, Severance)
+            if item.get("type") != "movie":
+                continue
             item_ids = [
                 int(guid["id"][7:])
                 for guid in item.get("Guid", []) or []

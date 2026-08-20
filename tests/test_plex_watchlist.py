@@ -16,7 +16,7 @@ class FakePlex:
     Animatrix), and ids in `phantom` accept an add with 200 but never
     appear on the watchlist — the Buried Loot behavior."""
 
-    def __init__(self, films, unmatched=(), composites=(), phantom=()):
+    def __init__(self, films, unmatched=(), composites=(), phantom=(), shows=()):
         # films: {tmdb_id: (title, year)} currently on the Plex watchlist
         self.items = {
             f"rk{tmdb_id}": {
@@ -24,6 +24,7 @@ class FakePlex:
                 "title": title,
                 "year": year,
                 "listed": True,
+                "type": "movie",
             }
             for tmdb_id, (title, year) in films.items()
         }
@@ -34,6 +35,17 @@ class FakePlex:
                 "title": f"Composite {rating_key}",
                 "year": 2000,
                 "listed": listed,
+                "type": "movie",
+            }
+        # shows: {tmdb_id: (title, year)} — TV items, whose tmdb guids
+        # are TMDb TV-series ids
+        for tmdb_id, (title, year) in dict(shows).items():
+            self.items[f"tv{tmdb_id}"] = {
+                "ids": [tmdb_id],
+                "title": title,
+                "year": year,
+                "listed": True,
+                "type": "show",
             }
         self.unmatched = set(unmatched)
         self.phantom = set(phantom)
@@ -58,6 +70,7 @@ class FakePlex:
             "title": f"Film {tmdb_id}",
             "year": 2000,
             "listed": False,
+            "type": "movie",
         }
         return f"rk{tmdb_id}"
 
@@ -70,6 +83,7 @@ class FakePlex:
                 {
                     "title": item["title"],
                     "year": item["year"],
+                    "type": item["type"],
                     "ratingKey": rating_key,
                     "Guid": [{"id": f"tmdb://{tmdb_id}"} for tmdb_id in item["ids"]],
                 }
@@ -291,6 +305,55 @@ def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fake.adds == [130344]
         assert fitzflix_watchlist_tmdb_ids(user_id) == {130344}
+
+
+def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
+    """A show's tmdb guid is a TMDb TV-series id — it must not become
+    a bare Movie row on the Fitzflix watchlist (The Flight Attendant,
+    Severance)."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+
+        fake = FakePlex(
+            {101: ("Film A", 1999)},
+            shows={95396: ("Severance", 2022)},
+        )
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        # Only the film syncs; the show never grows a record
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {101}
+        assert Movie.query.filter_by(tmdb_id=95396).first() is None
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [101]
+
+
+def test_previously_leaked_shows_drop_off_without_touching_plex(app, monkeypatch):
+    """A show that leaked in before the type filter (a bare Movie row
+    on the watchlist, its id in the snapshot) falls off the Fitzflix
+    watchlist on the next run — while the show itself stays untouched
+    on the Plex side."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        leaked = make_movie("Severance", 2022, tmdb_id=95396)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=leaked.id))
+        db.session.commit()
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps([95396]))
+
+        fake = FakePlex({}, shows={95396: ("Severance", 2022)})
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        # Gone from the Fitzflix watchlist, no removeFromWatchlist sent
+        assert fitzflix_watchlist_tmdb_ids(user_id) == set()
+        assert fake.removes == []
+        assert fake.films == {95396}
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
 
 
 def test_empty_plex_response_never_mass_removes(app, monkeypatch):
