@@ -394,10 +394,9 @@ def _ladder_state_for(user, tmdb_id, payload):
     from app.recommendations import (
         estimated_rating,
         resolved_score,
-        score_movie,
+        resolved_tmdb_score,
         stored_profile,
     )
-    from app.streaming_rail import _payload_features
 
     state = {
         "movie_id": None,
@@ -428,6 +427,10 @@ def _ladder_state_for(user, tmdb_id, payload):
             if score is not None:
                 state["estimated"] = estimated_rating(profile, score)
     elif profile and payload:
-        score, _ = score_movie(_payload_features(payload), profile)
-        state["estimated"] = estimated_rating(profile, score)
+        # The shared source's tmdb lane — the enriched payload is
+        # already cached, so this adds no fetch, and the overlay keeps
+        # the number identical to every other surface's
+        score = resolved_tmdb_score(current_app.redis, user.id, tmdb_id, profile)
+        if score is not None:
+            state["estimated"] = estimated_rating(profile, score)
     return state

@@ -147,6 +147,68 @@ def test_movie_states_batch_hydration_payload(app, admin_client):
     assert payload["tmdb"]["999999"]["on_watchlist"] is False
 
 
+def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client):
+    """A tmdb id with no local record — most of a filmography page —
+    answers with an estimate from the shared source's tmdb lane,
+    scored from the cached enriched payload with nothing persisted to
+    the database; ids TMDb can't supply stay at the empty state."""
+
+    from app.models import Movie
+    from app.recommendations import PROFILE_KEY
+
+    with app.app_context():
+        user_id = admin_id()
+
+    app.redis.set(
+        PROFILE_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "affinities": {
+                    "genre:35": {
+                        "class": "genre",
+                        "label": "Comedy",
+                        "count": 3,
+                        "score": 0.5,
+                    }
+                },
+                "movies": 3,
+                "calibration": {
+                    "scores": [0.0, 0.1, 0.2, 0.3],
+                    "stars": [1.0, 2.0, 4.0, 4.5],
+                },
+            }
+        ),
+    )
+    app.redis.set(
+        "fitzflix:tmdb:movie:888777:enriched",
+        json.dumps(
+            {
+                "tmdb_id": 888777,
+                "title": "Filmography Ghost",
+                "year": "1994",
+                "original_language": "en",
+                "genres": [{"id": 35, "name": "Comedy"}],
+                "keywords": [],
+                "cast": [],
+                "crew": [],
+            }
+        ),
+    )
+
+    payload = admin_client.get("/movie_states?tmdb_ids=888777,999999").get_json()
+    estimated = payload["tmdb"]["888777"]["estimated"]
+    assert estimated is not None
+    assert payload["tmdb"]["999999"]["estimated"] is None
+
+    # Repeats answer from the overlay with the same number, and the
+    # film still has no database record
+
+    again = admin_client.get("/movie_states?tmdb_ids=888777").get_json()
+    assert again["tmdb"]["888777"]["estimated"] == estimated
+    with app.app_context():
+        assert Movie.query.filter_by(tmdb_id=888777).first() is None
+
+
 def test_movie_states_live_scores_films_the_nightly_map_missed(app, admin_client):
     """A record created after the last recompute — no stored score —
     still estimates in a tile batch: /movie_states scores it live

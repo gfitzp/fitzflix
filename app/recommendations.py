@@ -142,6 +142,15 @@ SCORES_KEY = "fitzflix:recs:scores:{user_id}"
 PATCH_SCORES_KEY = "fitzflix:recs:scores:patch:{user_id}"
 PATCH_SCORES_TTL = 60 * 60 * 48
 
+# The shared source's TMDb-keyed lane: scores for films with no local
+# record at all, computed from their cached enriched payloads (the
+# award prior excepted — award rows are local) and held in their own
+# overlay. Nothing ever lands in the database for these films; the
+# nightly recompute drops the overlay so estimates re-derive against
+# the fresh profile, with the TTL as garbage collection.
+
+TMDB_PATCH_SCORES_KEY = "fitzflix:recs:scores:tmdb:{user_id}"
+
 # Deep enough that the landing page's no-repeat partition (12 films a
 # day, one per quality tier) cycles the whole set roughly monthly —
 # the library pool measured 2,800+ positive-scoring films, so depth
@@ -598,6 +607,39 @@ def estimated_rating(profile, score):
     return max(0.5, min(5.0, round(value, 2)))
 
 
+def _tmdb_copref(user_id, tmdb_id):
+    """Co-preference for one film from its own side of the pair table:
+    its stored neighbors intersected with the user's weighted films —
+    the same entries compute_user_recommendations builds anchor-side,
+    without fetching every anchor's full neighbor list. TMDb-keyed
+    throughout, so record-less films carry the signal too."""
+
+    if not tmdb_id:
+        return 0.0
+    neighbor_sims = dict(
+        db.session.query(MovieCopref.tmdb_id_b, MovieCopref.similarity).filter(
+            MovieCopref.tmdb_id_a == int(tmdb_id)
+        )
+    )
+    if not neighbor_sims:
+        return 0.0
+    weights = user_movie_weights(user_id)
+    weights_by_tmdb = {
+        neighbor_id: weights[movie_id]
+        for movie_id, neighbor_id in db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(weights) or [0]))
+        .filter(Movie.tmdb_id.in_(list(neighbor_sims)))
+    }
+    entries = sorted(
+        (
+            (neighbor_sims[neighbor_id], neighbor_id, weight)
+            for neighbor_id, weight in weights_by_tmdb.items()
+        ),
+        key=lambda entry: -entry[0],
+    )
+    return _copref_value(entries)
+
+
 def single_movie_score(user_id, movie, profile):
     """The stored-recommendation recipe scored live for one film —
     taste plus co-preference plus the award prior — so films outside
@@ -611,37 +653,7 @@ def single_movie_score(user_id, movie, profile):
         return None
 
     taste, _ = score_movie(collect_features([movie.id]).get(movie.id, []), profile)
-
-    # Co-preference from the film's own side of the pair table: its
-    # stored neighbors intersected with the user's weighted films —
-    # the same entries compute_user_recommendations builds anchor-side,
-    # without fetching every anchor's full neighbor list
-
-    copref = 0.0
-    if movie.tmdb_id:
-        neighbor_sims = dict(
-            db.session.query(MovieCopref.tmdb_id_b, MovieCopref.similarity).filter(
-                MovieCopref.tmdb_id_a == int(movie.tmdb_id)
-            )
-        )
-        if neighbor_sims:
-            weights = user_movie_weights(user_id)
-            weights_by_tmdb = {
-                tmdb_id: weights[movie_id]
-                for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
-                .filter(Movie.id.in_(list(weights) or [0]))
-                .filter(Movie.tmdb_id.in_(list(neighbor_sims)))
-            }
-            entries = sorted(
-                (
-                    (neighbor_sims[tmdb_id], tmdb_id, weight)
-                    for tmdb_id, weight in weights_by_tmdb.items()
-                ),
-                key=lambda entry: -entry[0],
-            )
-            copref = _copref_value(entries)
-
-    total = taste + copref
+    total = taste + _tmdb_copref(user_id, movie.tmdb_id)
     if taste > 0:
         wins, nominations = 0, 0
         for win, tally in (
@@ -1032,6 +1044,45 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     return score
 
 
+def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
+    """The shared source's TMDb-keyed lane: the score for a film that
+    may not exist locally at all.
+
+    A film with a local record answers through the movie-id lane —
+    the full recipe against the stored map. A record-less film scores
+    from its cached enriched TMDb payload in the same portable feature
+    key space (plus tmdb-keyed co-preference; the award prior needs
+    local rows, so it sits out), held in a TMDb-keyed overlay so every
+    surface reads one number without the database growing. The moment
+    the film gains a record — a watchlist add, a log, an import — the
+    movie-id lane takes over. None when the film can't be scored: no
+    profile, or TMDb unreachable with nothing cached."""
+
+    movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
+    if movie is not None:
+        return resolved_score(redis, user_id, movie, profile, scores=scores)
+    if not profile:
+        return None
+    key = TMDB_PATCH_SCORES_KEY.format(user_id=int(user_id))
+    cached = redis.hget(key, str(int(tmdb_id)))
+    if cached is not None:
+        return float(cached)
+
+    # streaming_rail owns the enriched-payload cache and its feature
+    # extraction; imported lazily since it imports this module
+
+    from app.streaming_rail import _payload_features, enriched_movie
+
+    payload = enriched_movie(tmdb_id)
+    if not payload:
+        return None
+    taste, _ = score_movie(_payload_features(payload), profile)
+    score = round(taste + _tmdb_copref(user_id, int(tmdb_id)), 4)
+    redis.hset(key, str(int(tmdb_id)), score)
+    redis.expire(key, PATCH_SCORES_TTL)
+    return score
+
+
 def stored_profile(redis, user_id):
     """The nightly recompute's stored taste profile for a user, or None."""
 
@@ -1139,11 +1190,14 @@ def recompute_recommendations():
                 json.dumps({"computed_at": computed_at, "items": ranked}),
             )
             # The fresh map supersedes any live-scored patches — drop
-            # the overlay in the same pipeline so no read sees the new
-            # base with the old patches still layered under it
+            # both overlays in the same pipeline so no read sees the
+            # new base with old patches still layered under it, and
+            # tmdb-lane scores re-derive against the fresh profile
+            # (their cached payloads make that cheap)
             pipeline = current_app.redis.pipeline()
             pipeline.set(SCORES_KEY.format(user_id=user_id), json.dumps(scores))
             pipeline.delete(PATCH_SCORES_KEY.format(user_id=user_id))
+            pipeline.delete(TMDB_PATCH_SCORES_KEY.format(user_id=user_id))
             pipeline.execute()
             current_app.logger.info(
                 f"Recommendations: stored {len(ranked)} films "

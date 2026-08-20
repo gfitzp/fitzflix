@@ -291,6 +291,8 @@ def enriched_movie(tmdb_id):
     cached = current_app.redis.get(cache_key)
     if cached:
         return json.loads(cached)
+    if not current_app.config["TMDB_API_KEY"]:
+        return None
     try:
         r = tmdb_get(
             current_app.config["TMDB_API_URL"] + f"/movie/{int(tmdb_id)}",

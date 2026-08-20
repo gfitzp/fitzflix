@@ -1251,12 +1251,88 @@ def test_resolved_score_reads_and_patches_one_shared_source(app):
         assert resolved_score(app.redis, user_id, pick, profile) == 9.9
 
 
+def test_resolved_tmdb_score_covers_record_less_films(app):
+    """The shared source's tmdb lane: a film with no local record at
+    all scores from its cached enriched payload into a tmdb-keyed
+    overlay — nothing lands in the database — and a film that has a
+    record delegates to the movie-id lane's full recipe."""
+
+    import json as jsonlib
+    from datetime import datetime
+
+    from app import db
+    from app.models import Movie
+    from app.recommendations import (
+        TMDB_PATCH_SCORES_KEY,
+        compute_user_recommendations,
+        resolved_score,
+        resolved_tmdb_score,
+    )
+
+    with app.app_context():
+        user_id = admin_id()
+        comedy = genre(35, "Comedy")
+        liked = make_movie("Lane Liked", 1990)
+        liked.genres.append(comedy)
+        log_watch(user_id, liked, rating=5.0, liked=True)
+        db.session.commit()
+
+        profile, _, _ = compute_user_recommendations(user_id)
+
+        # 991001 exists only as a cached enriched payload
+
+        app.redis.set(
+            "fitzflix:tmdb:movie:991001:enriched",
+            jsonlib.dumps(
+                {
+                    "tmdb_id": 991001,
+                    "title": "Lane Ghost",
+                    "year": "1991",
+                    "original_language": "en",
+                    "genres": [{"id": 35, "name": "Comedy"}],
+                    "keywords": [],
+                    "cast": [],
+                    "crew": [],
+                }
+            ),
+        )
+        score = resolved_tmdb_score(app.redis, user_id, 991001, profile)
+        assert score is not None and score > 0
+        assert Movie.query.filter_by(tmdb_id=991001).first() is None
+
+        # The overlay answers repeats even after the payload cache
+        # expires; a film TMDb can't supply at all stays unscored
+
+        app.redis.delete("fitzflix:tmdb:movie:991001:enriched")
+        assert resolved_tmdb_score(app.redis, user_id, 991001, profile) == score
+        assert (
+            app.redis.hget(TMDB_PATCH_SCORES_KEY.format(user_id=user_id), "991001")
+            is not None
+        )
+        assert resolved_tmdb_score(app.redis, user_id, 991999, profile) is None
+
+        # A film with a record answers through the movie-id lane
+
+        pick = make_movie(
+            "Lane Pick", 1992, tmdb_id=991002, tmdb_data_as_of=datetime.utcnow()
+        )
+        pick.genres.append(comedy)
+        db.session.commit()
+        assert resolved_tmdb_score(
+            app.redis, user_id, 991002, profile
+        ) == resolved_score(app.redis, user_id, pick, profile)
+
+
 def test_recompute_drops_the_patch_overlay(app):
     """The nightly rebuild rescored every patched film from fresher
     inputs, so storing the new map deletes the live-score overlay in
     the same pipeline."""
 
-    from app.recommendations import PATCH_SCORES_KEY, recompute_recommendations
+    from app.recommendations import (
+        PATCH_SCORES_KEY,
+        TMDB_PATCH_SCORES_KEY,
+        recompute_recommendations,
+    )
 
     with app.app_context():
         user_id = admin_id()
@@ -1269,9 +1345,12 @@ def test_recompute_drops_the_patch_overlay(app):
         db.session.commit()
 
     patch_key = PATCH_SCORES_KEY.format(user_id=user_id)
+    tmdb_key = TMDB_PATCH_SCORES_KEY.format(user_id=user_id)
     app.redis.hset(patch_key, "12345", 4.2)
+    app.redis.hset(tmdb_key, "991001", 1.7)
     assert recompute_recommendations() is True
     assert not app.redis.exists(patch_key)
+    assert not app.redis.exists(tmdb_key)
 
 
 def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client):

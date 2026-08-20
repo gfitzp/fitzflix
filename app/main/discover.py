@@ -59,10 +59,12 @@ from app.main.helpers import (
     admin_required,
 )
 from app.recommendations import (
+    TMDB_PATCH_SCORES_KEY,
     TOP_BILLING_CUTOFF,
     estimated_rating,
     not_interested_movie_ids,
     resolved_score,
+    resolved_tmdb_score,
     rotate_daily,
     rotate_partition,
     shuffle_daily,
@@ -910,6 +912,31 @@ def movie_states():
             if score is not None:
                 scores[movie.id] = score
 
+    # The tmdb-keyed lane: ids with no record at all — most of a
+    # filmography page — still estimate, from the overlay when it holds
+    # them and otherwise scored live from their cached enriched
+    # payloads, under the same per-request cap on fresh work
+
+    tmdb_estimates = {}
+    unmatched = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id not in tmdb_to_movie]
+    if unmatched and profile:
+        overlay = {
+            int(tmdb_id): float(score)
+            for tmdb_id, score in current_app.redis.hgetall(
+                TMDB_PATCH_SCORES_KEY.format(user_id=int(current_user.id))
+            ).items()
+        }
+        budget = MOVIE_STATES_LIVE_SCORES
+        for tmdb_id in unmatched:
+            score = overlay.get(tmdb_id)
+            if score is None and budget > 0:
+                budget -= 1
+                score = resolved_tmdb_score(
+                    current_app.redis, current_user.id, tmdb_id, profile
+                )
+            if score is not None:
+                tmdb_estimates[tmdb_id] = estimated_rating(profile, score)
+
     def state_for(movie_id):
         if movie_id is None:
             return {
@@ -938,13 +965,16 @@ def movie_states():
             "on_watchlist": movie_id in listed_ids,
         }
 
+    def tmdb_state_for(tmdb_id):
+        state = state_for(tmdb_to_movie.get(tmdb_id))
+        if state["estimated"] is None:
+            state["estimated"] = tmdb_estimates.get(tmdb_id)
+        return state
+
     return jsonify(
         {
             "movies": {str(movie_id): state_for(movie_id) for movie_id in movie_ids},
-            "tmdb": {
-                str(tmdb_id): state_for(tmdb_to_movie.get(tmdb_id))
-                for tmdb_id in tmdb_ids
-            },
+            "tmdb": {str(tmdb_id): tmdb_state_for(tmdb_id) for tmdb_id in tmdb_ids},
         }
     )
 
