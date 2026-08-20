@@ -30,7 +30,7 @@
 			</li>
 			{% if not current_user.is_anonymous %}
 			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.recently_added') }}">Recently Added</a>
+				<a class="nav-link" href="{{ url_for('main.file_activity') }}">File Activity</a>
 			</li>
 			<li class="nav-item dropdown">
 				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
@@ -420,11 +420,98 @@
 				allSignature = signature;
 			}
 
-			// Per-file pipeline trails (#18): one list-group row per
-			// recent file, its journey as stage chips — done green,
-			// running blue, queued gray, retry-wait amber, failed red
+			// Per-file pipeline trails (#18): each recent file's journey
+			// as stage chips — done green, running blue, queued gray,
+			// retry-wait amber, failed red. On the File Activity
+			// dashboard (window.fileActivityCardUrl is set), a trail
+			// whose file already has a landed card paints its chips
+			// inline on that card; the rest render as in-flight rows,
+			// and a trail that finishes cataloging fetches its file's
+			// card so the chips blossom into the full entry in place.
 
 			var filesSignature = null;
+			var pendingCards = {};
+			var chipClass = {
+				done: "text-bg-success",
+				started: "text-bg-primary",
+				queued: "text-bg-secondary",
+				scheduled: "text-bg-warning",
+				failed: "text-bg-danger"
+			};
+			var chipWord = {
+				done: "done",
+				started: "running",
+				queued: "queued",
+				scheduled: "waiting to retry",
+				failed: "failed"
+			};
+
+			function paintChips(target, entries) {
+				target.textContent = "";
+				entries.forEach(function(entry, index) {
+					if (index) {
+						target.appendChild(document.createTextNode(" → "));
+					}
+					var chip = document.createElement("span");
+					chip.className = "badge fw-normal "
+						+ (chipClass[entry.status] || "text-bg-light");
+					chip.textContent = entry.stage
+						+ (entry.status === "done" ? "" : " · " + (chipWord[entry.status] || entry.status));
+					chip.setAttribute("title", entry.stage + " — "
+						+ (chipWord[entry.status] || entry.status) + " at " + entry.at);
+					target.appendChild(chip);
+				});
+			}
+
+			// A trail's basename may be the ORIGINAL import filename
+			// while the card carries the File row's (a container
+			// conversion swaps the extension to .mkv), so cards index
+			// their chip slots under every name they know plus each
+			// name's stem
+
+			function stemOf(name) {
+				var dot = name.lastIndexOf(".");
+				return dot > 0 ? name.slice(0, dot) : name;
+			}
+
+			function cardSlots() {
+				var map = {};
+				document.querySelectorAll("#file-activity-cards [data-file-basenames]").forEach(function(card) {
+					var slot = card.querySelector("[data-trail]");
+					if (!slot) return;
+					card.getAttribute("data-file-basenames").split("|").forEach(function(name) {
+						if (!name) return;
+						map[name] = slot;
+						map[stemOf(name)] = slot;
+					});
+				});
+				return map;
+			}
+
+			// A 404 means the File row isn't visible yet (the trail's
+			// "done" stamp races the database commit) — the pending
+			// marker clears either way, so the next poll retries
+
+			function fetchCard(basename) {
+				if (pendingCards[basename]) return;
+				pendingCards[basename] = true;
+				fetch(window.fileActivityCardUrl + "?basename=" + encodeURIComponent(basename), { credentials: "same-origin" })
+					.then(function(response) { return response.ok ? response.text() : null; })
+					.then(function(html) {
+						if (!html) return;
+						var holder = document.getElementById("file-activity-cards");
+						if (!holder) return;
+						var wrapper = document.createElement("div");
+						wrapper.innerHTML = html;
+						var card = wrapper.querySelector("[data-file-basenames]");
+						if (!card) return;
+						holder.insertBefore(card, holder.firstChild);
+						card.querySelectorAll(".flask-moment").forEach(flask_moment_render);
+						filesSignature = null;
+					})
+					.catch(function() {})
+					.finally(function() { delete pendingCards[basename]; });
+			}
 
 			function renderFiles(files) {
 				var holder = document.getElementById("pipeline-files");
@@ -436,25 +523,26 @@
 				}).join("\n");
 				if (signature === filesSignature) return;
 
-				var empty = document.getElementById("pipeline-empty");
-				if (empty) empty.style.display = files.length ? "none" : "";
-				section.style.display = files.length ? "" : "none";
-				holder.textContent = "";
-				var chipClass = {
-					done: "text-bg-success",
-					started: "text-bg-primary",
-					queued: "text-bg-secondary",
-					scheduled: "text-bg-warning",
-					failed: "text-bg-danger"
-				};
-				var chipWord = {
-					done: "done",
-					started: "running",
-					queued: "queued",
-					scheduled: "waiting to retry",
-					failed: "failed"
-				};
+				var slots = window.fileActivityCardUrl ? cardSlots() : {};
+				var inflight = [];
 				files.forEach(function(file) {
+					var slot = slots[file.basename] || slots[stemOf(file.basename)];
+					if (slot) {
+						paintChips(slot, file.entries);
+						slot.hidden = false;
+					} else {
+						inflight.push(file);
+						if (window.fileActivityCardUrl && file.entries.some(function(entry) {
+							return entry.stage === "Cataloging" && entry.status === "done";
+						})) {
+							fetchCard(file.basename);
+						}
+					}
+				});
+
+				section.style.display = inflight.length ? "" : "none";
+				holder.textContent = "";
+				inflight.forEach(function(file) {
 					var row = document.createElement("div");
 					row.className = "list-group-item";
 
@@ -465,19 +553,7 @@
 
 					var chips = document.createElement("div");
 					chips.className = "mt-1";
-					file.entries.forEach(function(entry, index) {
-						if (index) {
-							chips.appendChild(document.createTextNode(" → "));
-						}
-						var chip = document.createElement("span");
-						chip.className = "badge fw-normal "
-							+ (chipClass[entry.status] || "text-bg-light");
-						chip.textContent = entry.stage
-							+ (entry.status === "done" ? "" : " · " + (chipWord[entry.status] || entry.status));
-						chip.setAttribute("title", entry.stage + " — "
-							+ (chipWord[entry.status] || entry.status) + " at " + entry.at);
-						chips.appendChild(chip);
-					});
+					paintChips(chips, file.entries);
 					row.appendChild(chips);
 
 					var updated = document.createElement("div");

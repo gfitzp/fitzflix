@@ -9,7 +9,7 @@
 <hr>
 <h3>Pipeline activity</h3>
 <p class="small text-muted">Each recent file's journey through import as per-stage status chips &mdash; where a file is right now, which retries are booked, and where anything failed.</p>
-<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.pipeline_activity') }}" role="button">View file trails</a>
+<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>
 <hr>
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}

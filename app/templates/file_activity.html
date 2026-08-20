@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{# The File Activity dashboard: the old Recently Added page and the
+   Pipeline Activity trails merged (Glenn, Aug 2026). Files still
+   working through the pipeline show as stage chips in the in-flight
+   section; landed files show as full cards, each carrying its own
+   trail chips while Redis retains them. The 5-second queue poll in
+   base.html keeps the chips live and promotes an in-flight file to a
+   card once cataloging lands — window.fileActivityCardUrl is what
+   switches renderFiles into that dashboard mode, so it (and the
+   in-flight section) only exist on page 1. #}
+
+{% block app_content %}
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
+</div>
+<hr>
+{% if import_activity.deferred or import_activity.rejects %}
+<div class="card mb-3">
+	<div class="card-body py-2">
+		<h5 class="card-title mb-2">Import activity</h5>
+		{% if import_activity.deferred %}
+		<p class="mb-0"><b>Waiting to retry</b> <span class="small text-muted">(file still copying, or its title is locked)</span>:</p>
+		<ul class="mb-0 small">
+			{% for job in import_activity.deferred %}
+			<li>{{ job.description }} <span class="small text-muted">retries {{ moment(job.next_run).fromNow(refresh=True) }}</span></li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+		{% if import_activity.rejects %}
+		<p class="mb-0"><b>Recently rejected</b> <span class="small text-muted">(in the rejects folder{% if import_activity.reject_count > import_activity.rejects|length %}; showing {{ import_activity.rejects|length }} of {{ import_activity.reject_count }}{% endif %})</span>:</p>
+		<ul class="mb-0 small">
+			{% for reject in import_activity.rejects %}
+			<li>{{ reject.basename }} &mdash; <span class="badge text-bg-warning">{{ reject.reason or 'unspecified' }}</span> <span class="small text-muted">{{ moment(reject.when).fromNow(refresh=True) }}</span></li>
+			{% endfor %}
+		</ul>
+		{% endif %}
+	</div>
+</div>
+{% endif %}
+{% if not pages or pages.page == 1 %}
+<script>
+	window.pipelineTrailLimit = 100;
+	window.fileActivityCardUrl = "{{ url_for('main.file_activity_card') }}";
+</script>
+<div id="pipeline-files-section" style="display: none;">
+	<h5 class="mb-1">In flight</h5>
+	<p class="small text-muted mb-2">Files still moving through the pipeline &mdash; the staging copy, localization, the library copy, cataloging, the S3 archive, and any remuxes, transcodes, or restores &mdash; as per-stage status chips. Amber means a deferred retry is booked; red failures stay visible even after a retry succeeds. A file becomes a full card below once it lands in the library.</p>
+	<div id="pipeline-files" class="list-group mb-3"></div>
+</div>
+{% endif %}
+{% if recently_added %}
+<nav class="d-none d-sm-block" aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages() %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+<nav class="d-block d-sm-none" aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{% endif %}
+
+{# The poll inserts a freshly landed file's card at the top of this
+   holder, so it exists (empty is fine) even when nothing has landed
+   in the last week #}
+<div id="file-activity-cards">
+{% for file in recently_added %}
+{% include "_file_activity_card.html" %}
+{% endfor %}
+</div>
+
+{% if recently_added %}
+<nav class="d-block d-sm-none" aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+<nav class="d-none d-sm-block" aria-label="...">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% if pages %}
+		{% for page in pages.iter_pages() %}
+			{% if page %}
+				{% if page == pages.page %}
+					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% else %}
+					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
+				{% endif %}
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
+			{% endif %}
+		{% endfor %}
+		{% endif %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{% endif %}
+{% endblock %}

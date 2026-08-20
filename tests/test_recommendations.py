@@ -344,14 +344,21 @@ def test_landing_page_onboards_users_without_history(app, user_client):
     assert app.maintenance_queue.jobs == []
 
 
-def test_recently_added_lives_at_its_own_route(app, admin_client):
-    body = admin_client.get("/recently-added").get_data(as_text=True)
-    assert "Recently Added" in body
+def test_file_activity_lives_at_its_own_route(app, admin_client):
+    body = admin_client.get("/file-activity").get_data(as_text=True)
+    assert "File Activity" in body
 
     # And the nav links to it from every page
 
     landing = admin_client.get("/").get_data(as_text=True)
-    assert 'href="/recently-added"' in landing
+    assert 'href="/file-activity"' in landing
+
+    # The page's two old addresses still land there
+
+    for old in ("/recently-added", "/maintenance/pipeline"):
+        response = admin_client.get(old)
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/file-activity")
 
 
 def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypatch):

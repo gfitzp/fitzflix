@@ -273,24 +273,28 @@ def test_queue_details_files_limit_is_adjustable(app, admin_client):
     assert len(nonsense["files"]) == 1
 
 
-def test_pipeline_page_renders_the_files_section(admin_client):
-    """The trails live on their own page (Glenn's call, Aug 2026),
-    linked from Library Maintenance; the queue page no longer carries
-    the section."""
+def test_pipeline_trails_render_on_the_file_activity_dashboard(admin_client):
+    """The trails live on the File Activity dashboard since the pages
+    merged (Glenn's call, Aug 2026), linked from Library Maintenance;
+    the queue page still doesn't carry the section, and the old
+    dedicated page redirects."""
 
-    page = admin_client.get("/maintenance/pipeline").get_data(as_text=True)
+    page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' in page
     assert 'id="pipeline-files"' in page
-    assert 'id="pipeline-empty"' in page
     assert "window.pipelineTrailLimit = 100" in page
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in queue_page
     assert "pipelineTrailLimit = " not in queue_page
 
+    response = admin_client.get("/maintenance/pipeline")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/file-activity")
+
     maintenance = admin_client.get("/maintenance").get_data(as_text=True)
-    assert "/maintenance/pipeline" in maintenance
-    assert "View file trails" in maintenance
+    assert "/file-activity" in maintenance
+    assert "View file activity" in maintenance
 
 
 def test_running_banners_hold_first_run_order(app, admin_client):

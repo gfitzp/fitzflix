@@ -410,10 +410,14 @@ def index():
     )
 
 
-@bp.route("/recently-added")
+@bp.route("/file-activity")
 @login_required
-def recently_added():
-    """Show the ten most recently added files."""
+def file_activity():
+    """The File Activity dashboard: the old Recently Added page and the
+    Pipeline Activity trails merged (Glenn, Aug 2026). Landed files
+    render as full cards here; in-flight files appear as stage chips
+    filled by base.html's queue poll, which promotes them to cards via
+    /file-activity/card once cataloging lands."""
 
     page = request.args.get("page", 1, type=int)
 
@@ -436,12 +440,12 @@ def recently_added():
     )
 
     next_url = (
-        url_for("main.recently_added", page=recently_added.next_num)
+        url_for("main.file_activity", page=recently_added.next_num)
         if recently_added.has_next
         else None
     )
     prev_url = (
-        url_for("main.recently_added", page=recently_added.prev_num)
+        url_for("main.file_activity", page=recently_added.prev_num)
         if recently_added.has_prev
         else None
     )
@@ -529,14 +533,83 @@ def recently_added():
             }
 
     return render_template(
-        "recently_added.html",
-        title="Recently Added",
+        "file_activity.html",
+        title="File Activity",
         recently_added=recently_added.items,
         native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
         import_activity=import_activity,
         next_url=next_url,
         prev_url=prev_url,
         pages=recently_added,
+        upgrade_threshold=_upgrade_threshold(),
+    )
+
+
+@bp.route("/recently-added")
+@login_required
+def recently_added():
+    """The dashboard's old address, from before the pipeline trails
+    moved in and the page became File Activity."""
+
+    return redirect(url_for("main.file_activity", **request.args))
+
+
+def _file_for_trail_basename(basename):
+    """The File row a pipeline trail belongs to, or None.
+
+    A trail's basename can be the original import filename (the
+    localization stages), that name with its extension swapped to .mkv
+    (container conversion), or the File row's own basename (every
+    file_id-keyed stage) — so match exactly against both stored names
+    first, then fall back to the stem, newest file first.
+    """
+
+    recency = db.func.coalesce(File.date_updated, File.date_added).desc()
+    file = (
+        File.query.filter(
+            db.or_(File.basename == basename, File.untouched_basename == basename)
+        )
+        .order_by(recency)
+        .first()
+    )
+    if file is not None:
+        return file
+    stem = basename.rsplit(".", 1)[0]
+    if not stem:
+        return None
+    pattern = stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + ".%"
+    return (
+        File.query.filter(
+            db.or_(
+                File.basename.like(pattern, escape="\\"),
+                File.untouched_basename.like(pattern, escape="\\"),
+            )
+        )
+        .order_by(recency)
+        .first()
+    )
+
+
+@bp.route("/file-activity/card")
+@login_required
+def file_activity_card():
+    """One file's card fragment for the File Activity dashboard,
+    fetched by the queue poll when an in-flight trail finishes
+    cataloging — the chips blossom into the full card (poster, quality
+    badge, tracks, links) without a reload. Keyed by the trail's
+    basename; 404 means the File row isn't visible yet and the poll
+    simply tries again."""
+
+    basename = request.args.get("basename", "", type=str)
+    if not basename:
+        abort(404)
+    file = _file_for_trail_basename(basename)
+    if file is None:
+        abort(404)
+    return render_template(
+        "_file_activity_card.html",
+        file=file,
+        native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
         upgrade_threshold=_upgrade_threshold(),
     )
 

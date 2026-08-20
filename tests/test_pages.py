@@ -271,7 +271,7 @@ def test_manifest_declares_installable_app():
 
 
 def test_recently_added_badges_quality_by_upgradability(app, admin_client):
-    """Recently Added shows quality as badges colored by upgrade
+    """File Activity shows quality as badges colored by upgrade
     eligibility: movie rules match the library page, and physical-media
     TV seasons count as final."""
 
@@ -294,13 +294,80 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
         make_tv_file(sd_show, 1, 2, "SDTV", last_episode=2)
         db.session.commit()
 
-    page = admin_client.get("/recently-added").get_data(as_text=True)
+    page = admin_client.get("/file-activity").get_data(as_text=True)
     # Movie rules: DVD is an upgrade candidate, Blu-ray is final
     assert 'text-bg-warning">DVD' in page
     assert 'text-bg-success">Bluray-1080p' in page
     # TV rules: a physical-media DVD season is final; SDTV is not
     assert 'text-bg-success">DVD' in page
     assert 'text-bg-warning">SDTV' in page
+
+
+def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
+    """Page 1 carries the in-flight section and the card-fetch URL the
+    queue poll's dashboard mode keys on, and each landed card advertises
+    the basenames trails can match; deeper pages are a plain list."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Dashboard Film", 2012)
+        make_movie_file(
+            movie, "Bluray-1080p", untouched_basename="Dashboard.Film.2012.mkv"
+        )
+        db.session.commit()
+
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    assert 'id="pipeline-files-section"' in page
+    assert "window.fileActivityCardUrl = " in page
+    assert (
+        'data-file-basenames="Dashboard Film (2012) - [Bluray-1080p].mkv|Dashboard.Film.2012.mkv"'
+        in page
+    )
+    assert "data-trail" in page
+
+    deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
+    assert 'id="pipeline-files-section"' not in deeper
+    assert "window.fileActivityCardUrl = " not in deeper
+
+
+def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
+    """/file-activity/card serves one landed file's card for the trail
+    basename the poll knows — the File row's own name, the original
+    import filename, or either with a container-converted extension —
+    and 404s while no matching row exists yet."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Fragment Film", 2013)
+        make_movie_file(
+            movie, "Bluray-1080p", untouched_basename="Fragment.Film.2013.avi"
+        )
+        db.session.commit()
+
+    for basename in (
+        "Fragment Film (2013) - [Bluray-1080p].mkv",  # the File row's name
+        "Fragment.Film.2013.avi",  # the original import filename
+        "Fragment.Film.2013.mkv",  # converted to Matroska en route
+    ):
+        response = admin_client.get(
+            "/file-activity/card", query_string={"basename": basename}
+        )
+        assert response.status_code == 200, basename
+        body = response.get_data(as_text=True)
+        assert "data-file-basenames" in body
+        assert "Fragment Film" in body
+
+    assert (
+        admin_client.get(
+            "/file-activity/card", query_string={"basename": "No.Such.File.mkv"}
+        ).status_code
+        == 404
+    )
+    assert admin_client.get("/file-activity/card").status_code == 404
 
 
 def test_genre_links_filter_the_library(app, admin_client):
