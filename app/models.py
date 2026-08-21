@@ -552,9 +552,11 @@ class TMDBMixin(object):
         tmdb_api_url = current_app.config["TMDB_API_URL"]
 
         # Request only the appended blocks tmdb_tv_apply reads (networks,
-        # companies, genres, and seasons arrive in the base payload)
+        # companies, genres, and seasons arrive in the base payload).
+        # aggregate_credits rather than credits: series-wide cast/crew
+        # with per-role episode counts, not just the latest season's
 
-        requested_info = "external_ids,keywords"
+        requested_info = "aggregate_credits,external_ids,keywords"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
             r = tmdb_get(
@@ -602,6 +604,42 @@ class TMDBMixin(object):
                 return None
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
+
+            # Episode payloads (#78): the base payload lists the seasons;
+            # fetch each one's episode block in appended batches (TMDb
+            # caps append_to_response at 20). A failed batch is logged
+            # and skipped — the apply side only touches seasons present
+            # in the payload, so a miss leaves that season's stored
+            # episodes alone instead of deleting them.
+
+            season_numbers = [
+                season.get("season_number")
+                for season in tmdb_info.get("seasons", [])
+                if season.get("season_number") is not None
+            ]
+            for start in range(0, len(season_numbers), 20):
+                batch = season_numbers[start : start + 20]
+                appended = ",".join(f"season/{n}" for n in batch)
+                try:
+                    r = tmdb_get(
+                        tmdb_api_url + "/tv/" + str(tmdb_id),
+                        params={
+                            "api_key": tmdb_api_key,
+                            "append_to_response": appended,
+                        },
+                    )
+                    r.raise_for_status()
+                except requests.exceptions.RequestException:
+                    current_app.logger.warning(
+                        f"{self} Season batch '{appended}' failed, skipping"
+                    )
+                    continue
+
+                season_payload = r.json()
+                for n in batch:
+                    block = season_payload.get(f"season/{n}")
+                    if block:
+                        tmdb_info[f"season/{n}"] = block
 
         return tmdb_info or None
 
@@ -743,23 +781,142 @@ class TMDBMixin(object):
             for season in tmdb_seasons:
                 s = TMDBSeason.query.filter_by(id=season.get("id")).first()
                 if not s:
-                    s = TMDBSeason(
-                        id=season.get("id"),
-                        air_date=(
-                            datetime.strptime(season.get("air_date"), "%Y-%m-%d")
-                            if season.get("air_date")
-                            else None
-                        ),
-                        episode_count=season.get("episode_count"),
-                        name=season.get("name"),
-                        overview=season.get("overview"),
-                        tmdb_poster_path=season.get("poster_path"),
-                        season_number=season.get("season_number"),
-                    )
+                    s = TMDBSeason(id=season.get("id"))
                     db.session.add(s)
+
+                # Fields are set on every refresh, not just at creation:
+                # the create-only original left episode_count frozen at
+                # whatever the season had when first seen (#78's census
+                # found announcement-time counts years stale)
+
+                s.air_date = (
+                    datetime.strptime(season.get("air_date"), "%Y-%m-%d")
+                    if season.get("air_date")
+                    else None
+                )
+                s.episode_count = season.get("episode_count")
+                s.name = season.get("name")
+                s.overview = season.get("overview")
+                s.tmdb_poster_path = season.get("poster_path")
+                s.season_number = season.get("season_number")
 
                 if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
                     self.seasons.append(s)
+
+        # Series cast/crew (#78): replace this series' join rows from the
+        # aggregate credits, mirroring the movie apply — delete-then-readd,
+        # gated on the block's presence so a payload without it can't wipe
+        # stored credits. The seen-sets stand in for the movie path's
+        # per-row existence queries: after the bulk delete only payload
+        # duplicates could collide with the unique constraints.
+
+        if tmdb_info.get("aggregate_credits"):
+            aggregate = tmdb_info.get("aggregate_credits")
+            TVCast.query.filter_by(tv_id=self.id).delete()
+            TVCrew.query.filter_by(tv_id=self.id).delete()
+
+            seen_roles = set()
+            for person in aggregate.get("cast") or []:
+                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
+                if not p:
+                    p = TMDBCredit(
+                        id=person.get("id"),
+                        name=person.get("name"),
+                        gender=person.get("gender"),
+                        tmdb_profile_path=person.get("profile_path"),
+                    )
+                    db.session.add(p)
+
+                for role in person.get("roles") or []:
+                    key = (p.id, role.get("character"))
+                    if key in seen_roles:
+                        continue
+                    seen_roles.add(key)
+                    db.session.add(
+                        TVCast(
+                            tv_id=self.id,
+                            credit_id=p.id,
+                            character=role.get("character"),
+                            billing_order=person.get("order"),
+                            episode_count=role.get("episode_count"),
+                        )
+                    )
+
+            seen_jobs = set()
+            for person in aggregate.get("crew") or []:
+                p = TMDBCredit.query.filter_by(id=person.get("id")).first()
+                if not p:
+                    p = TMDBCredit(
+                        id=person.get("id"),
+                        name=person.get("name"),
+                        gender=person.get("gender"),
+                        tmdb_profile_path=person.get("profile_path"),
+                    )
+                    db.session.add(p)
+
+                for job in person.get("jobs") or []:
+                    key = (p.id, person.get("department"), job.get("job"))
+                    if key in seen_jobs:
+                        continue
+                    seen_jobs.add(key)
+                    db.session.add(
+                        TVCrew(
+                            tv_id=self.id,
+                            credit_id=p.id,
+                            department=person.get("department"),
+                            job=job.get("job"),
+                            episode_count=job.get("episode_count"),
+                        )
+                    )
+
+        # Episode rows (#78): sync tv_episode slots for every season
+        # block the fetch delivered. Only fetched seasons are touched —
+        # a season absent from the payload keeps its stored rows, so a
+        # failed season batch can never mass-delete episodes.
+
+        for key, block in tmdb_info.items():
+            if not key.startswith("season/") or not isinstance(block, dict):
+                continue
+
+            season_number = block.get("season_number")
+            if season_number is None:
+                continue
+
+            existing = {
+                row.episode: row
+                for row in self.episodes.filter_by(season=season_number).all()
+            }
+            fetched_numbers = set()
+            for ep in block.get("episodes") or []:
+                episode_number = ep.get("episode_number")
+                if episode_number is None:
+                    continue
+
+                fetched_numbers.add(episode_number)
+                row = existing.get(episode_number)
+                if row is None:
+                    row = TVEpisode(season=season_number, episode=episode_number)
+                    self.episodes.append(row)
+                name = ep.get("name")
+                row.tmdb_episode_id = ep.get("id")
+                row.title = name[:256] if name else None
+                row.overview = ep.get("overview") or None
+                row.air_date = (
+                    datetime.strptime(ep.get("air_date"), "%Y-%m-%d")
+                    if ep.get("air_date")
+                    else None
+                )
+                row.runtime = ep.get("runtime")
+                row.tmdb_still_path = ep.get("still_path")
+                row.tmdb_data_as_of = datetime.now(timezone.utc)
+
+            # A stored slot TMDb no longer lists in this season was
+            # renumbered or removed upstream — drop it rather than let
+            # it mislabel
+
+            for episode_number, row in existing.items():
+                if episode_number not in fetched_numbers:
+                    db.session.delete(row)
 
         return self
 
@@ -1339,6 +1496,18 @@ class TVSeries(db.Model, TMDBMixin):
     episodes = db.relationship(
         "TVEpisode",
         backref="series",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
+    cast = db.relationship(
+        "TVCast",
+        backref="tv_series",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
+    crew = db.relationship(
+        "TVCrew",
+        backref="tv_series",
         lazy="dynamic",
         cascade="all,delete,delete-orphan",
     )
@@ -2029,6 +2198,12 @@ class TMDBCredit(db.Model, TMDBMixin):
     crewed_on = db.relationship(
         "MovieCrew", backref="crewed", lazy="dynamic", cascade="all,delete"
     )
+    tv_acted_in = db.relationship(
+        "TVCast", backref="starring", lazy="dynamic", cascade="all,delete"
+    )
+    tv_crewed_on = db.relationship(
+        "TVCrew", backref="crewed", lazy="dynamic", cascade="all,delete"
+    )
 
     def __repr__(self):
         return f"<TMDBCredit '{self.name}'>"
@@ -2189,12 +2364,16 @@ class UserFrameScore(db.Model):
 
 
 class TVCast(db.Model):
-    """Join row: a credit's acting role on a TV series."""
+    """Join row: a credit's acting role on a TV series, from TMDb's
+    aggregate credits (#78) — one row per distinct character, with the
+    series-wide billing order and how many episodes the role spans."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
     character = db.Column(db.String(512))
+    billing_order = db.Column(db.Integer)
+    episode_count = db.Column(db.Integer)
 
     __table_args__ = (db.UniqueConstraint("tv_id", "credit_id", "character"),)
 
@@ -2203,13 +2382,15 @@ class TVCast(db.Model):
 
 
 class TVCrew(db.Model):
-    """Join row: a credit's crew role on a TV series."""
+    """Join row: a credit's crew role on a TV series, from TMDb's
+    aggregate credits (#78) — one row per distinct job."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
     credit_id = db.Column(db.Integer, db.ForeignKey("tmdb_credit.id"))
     department = db.Column(db.String(128))
     job = db.Column(db.String(128))
+    episode_count = db.Column(db.Integer)
 
     __table_args__ = (db.UniqueConstraint("tv_id", "credit_id", "department", "job"),)
 

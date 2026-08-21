@@ -61,6 +61,7 @@ from app.models import (
     RefQuality,
     TMDBCredit,
     TMDBGenre,
+    TVCast,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -2111,11 +2112,30 @@ def tv(series_id):
 
         return redirect(url_for("main.tv", series_id=tv_id))
 
+    # The billed cast for the scroller, in aggregate billing order (#78).
+    # Capped: a long-running series' aggregate cast can run to hundreds
+    # of one-episode guest roles that would bloat the page for no gain
+
+    cast = [
+        {
+            "id": role.credit_id,
+            "name": role.starring.name,
+            "profile_path": role.starring.tmdb_profile_path,
+            "character": role.character,
+        }
+        for role in tv.cast.order_by(
+            TVCast.billing_order.asc(), TVCast.episode_count.desc()
+        )
+        .limit(100)
+        .all()
+    ]
+
     return render_template(
         "tv.html",
         title=title,
         tv=tv,
         seasons=seasons,
+        cast=cast,
         transcode_form=transcode_form,
         series_restore_form=series_restore_form,
         series_restore_estimate=series_restore_estimate,

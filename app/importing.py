@@ -1623,6 +1623,31 @@ def finalize_localization(
                     description=f"Refreshing TMDB data for '{tv_series.title}'",
                 )
 
+            # A matched series whose imported slot has no episode row yet
+            # gets a refresh (#78) — a fresh season may have aired since
+            # the last fetch. The membership check keeps a whole-season
+            # batch import to one queued job; slots TMDb simply doesn't
+            # know re-check at most once per import batch.
+
+            elif (
+                file.series_id
+                and file.season is not None
+                and file.episode is not None
+                and tv_series.episodes.filter_by(
+                    season=file.season, episode=file.episode
+                ).count()
+                == 0
+            ):
+                refresh_job_id = safe_job_id(f"tv_episode_refresh_{tv_series.id}")
+                if refresh_job_id not in current_app.request_queue.job_ids:
+                    current_app.request_queue.enqueue(
+                        "app.videos.refresh_tmdb_info",
+                        args=("TV Shows", tv_series.id, tv_series.tmdb_id),
+                        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                        description=f"Refreshing TMDB data for '{tv_series.title}'",
+                        job_id=refresh_job_id,
+                    )
+
             # A TrueHD Atmos track without its E-AC-3 Atmos twin earns
             # the MediaConvert supplement (#55b), queued after the
             # commit so the transcode worker sees the finished records

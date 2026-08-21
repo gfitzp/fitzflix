@@ -205,6 +205,14 @@ def cron_table(config):
             3600,
             "Refreshing the Name that Frame pool",
         ),
+        # Re-fetch episode data for in-production TV series nightly
+        # (#78), clear of the 3:05 frame pool and 3:25 Plex title windows
+        (
+            "45 3 * * *",
+            "app.tmdb_refresh.refresh_in_production_tv",
+            3600,
+            "Refreshing in-production TV series",
+        ),
     ]
 
     # Download files restored from Glacier: poll SQS hourly, offset from

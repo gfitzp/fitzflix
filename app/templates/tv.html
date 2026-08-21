@@ -17,6 +17,7 @@
 			{% if tv.tmdb_data_as_of %}
 			<p>{{ tv.tmdb_overview }}</p>
 			{% endif %}
+			{% include "_cast_scroller.html" %}
 			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>
 		</div>
 	</div>

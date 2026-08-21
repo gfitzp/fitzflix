@@ -559,6 +559,44 @@ def apply_tmdb_refresh(
                 current_app.lock_manager.unlock(held)
 
 
+def refresh_in_production_tv():
+    """Nightly sweep (#78): re-enqueue the standard TMDb refresh for
+    every series still in production, so new episodes and season counts
+    stay current without a manual bulk refresh.
+
+    Ended and canceled series change rarely; they are covered by the
+    refresh-on-import trigger and the maintenance page's bulk refresh.
+    A NULL status counts as in-production — it just means the series
+    hasn't been refreshed since before statuses were stored.
+    """
+
+    with app.app_context():
+        series = (
+            TVSeries.query.filter(TVSeries.tmdb_id != None)
+            .filter(
+                db.or_(
+                    TVSeries.tmdb_in_production == True,
+                    TVSeries.tmdb_status == None,
+                    TVSeries.tmdb_status.notin_(["Ended", "Canceled"]),
+                )
+            )
+            .order_by(TVSeries.title.asc())
+            .all()
+        )
+        for tv in series:
+            current_app.request_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("TV Shows", tv.id, tv.tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Refreshing TMDB data for '{tv.title}'",
+            )
+
+        current_app.logger.info(
+            f"Queued TMDb refreshes for {len(series)} in-production TV series"
+        )
+        return len(series)
+
+
 # This process's app instance, resolved lazily so importing this module from
 # a process that already has an application doesn't build a second one
 
