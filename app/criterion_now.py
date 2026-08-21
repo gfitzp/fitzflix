@@ -349,6 +349,10 @@ def criterion_now_card(user):
     # the heartbeat revived a dead chain mid-film and nobody saw the
     # start. Unknown runtime (or an unmatched film) shows nothing —
     # never a guess. "About", because Criterion pads between films.
+    # Bounded by the runtime: past the predicted end (the card lingers
+    # through STALE_GRACE) the film is over, and "About 110 minutes
+    # in" on a 101-minute film would be the guess this line refuses
+    # to make.
 
     minutes_in = None
     runtime = (payload or {}).get("runtime")
@@ -356,7 +360,7 @@ def criterion_now_card(user):
         elapsed = (
             datetime.now() - (ends_at - timedelta(minutes=runtime))
         ).total_seconds() // 60
-        if elapsed >= 0:
+        if 0 <= elapsed <= runtime:
             minutes_in = int(elapsed)
 
     return {

@@ -629,8 +629,19 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
     assert add_face and "d-none" in add_face.group(0)
     assert f'action="/movie/{movie_id}"' in body
 
+    # Past the predicted end the card lingers through STALE_GRACE,
+    # but the film is over — claiming "About 106 minutes in" on a
+    # 101-minute film would be a guess, so the line disappears
+
+    seed_now(-5)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "On Criterion24/7 now" in body
+    assert "minutes in" not in body
+    assert "Just started" not in body
+
     # No runtime, no claim: an enrichment without one drops the line
 
+    seed_now(45)
     app.redis.delete("fitzflix:tmdb:movie:33667:enriched")
     body = admin_client.get("/").get_data(as_text=True)
     assert "minutes in" not in body
