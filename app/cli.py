@@ -287,6 +287,23 @@ def register(app):
         pass
 
     @tv.command()
+    @click.argument("series_id", type=int)
+    @click.argument("new_title")
+    def rename(series_id, new_title):
+        """Rename a TV series on disk and in the database (#78 follow-on)
+        — the Plex-disambiguation fix. S3 keys deliberately stay put."""
+
+        from flask import current_app
+
+        job = current_app.file_queue.enqueue(
+            "app.series_rename.rename_tv_series_task",
+            args=(series_id, new_title),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"Renaming TV series {series_id} to '{new_title}'",
+        )
+        click.echo(f"Enqueued series rename as {job.id}")
+
+    @tv.command()
     def validate():
         """Re-verify TMDb episode titles against Plex's agent titles now
         instead of waiting for the nightly run."""
