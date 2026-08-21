@@ -24,7 +24,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, TVEpisode
+from app.models import File
 
 app = LocalProxy(get_app)
 
@@ -86,40 +86,14 @@ def sync_plex_episode_titles():
             .filter(File.edition != "")
         }
 
-        # TMDb titles fill BLANK Plex episodes only (#78 step 6): where
-        # the agent titled an episode its title stands, and the fill
-        # writes unlocked so a later agent match can still improve on
-        # it. Edition titles above always win, and numbering-suspect
-        # series never fill. Lazy import: tv_validation imports this
-        # module's Plex client.
+        # No TMDb-title fill here, deliberately (#78 step 6, reverted):
+        # writing TMDb titles into agent-blank episodes would feed them
+        # straight back into tv_validation's comparison corpus, where
+        # they'd count as independent agreement — TMDb validated
+        # against TMDb. Plex's titles stay purely the agent's, so the
+        # validation verdicts stay honest.
 
-        from app.tv_validation import series_is_suspect
-
-        fillable = {}
-        suspect = {}
-        for file_path, series_id, tmdb_title in (
-            db.session.query(File.file_path, File.series_id, TVEpisode.title)
-            .join(
-                TVEpisode,
-                db.and_(
-                    TVEpisode.series_id == File.series_id,
-                    TVEpisode.season == File.season,
-                    TVEpisode.episode == File.episode,
-                ),
-            )
-            .filter(File.season.isnot(None))
-            .filter(db.or_(File.edition.is_(None), File.edition == ""))
-            .filter(TVEpisode.title.isnot(None))
-        ):
-            if series_id not in suspect:
-                suspect[series_id] = series_is_suspect(series_id)
-            if suspect[series_id]:
-                continue
-            name = os.path.basename(file_path)
-            if name not in desired:
-                fillable[name] = tmdb_title
-
-        if not desired and not fillable:
+        if not desired:
             return True
 
         try:
@@ -128,7 +102,7 @@ def sync_plex_episode_titles():
                 current_app.logger.warning("Plex episode titles: no TV section found")
                 return True
 
-            updated = current = matched = filled = 0
+            updated = current = matched = 0
             start = 0
             while True:
                 payload = _plex_get(
@@ -143,51 +117,34 @@ def sync_plex_episode_titles():
                 page = container.get("Metadata", []) or []
                 for episode in page:
                     title = None
-                    fill = None
                     for media in episode.get("Media", []) or []:
                         for part in media.get("Part", []) or []:
                             name = os.path.basename(part.get("file") or "")
                             if name in desired:
                                 title = desired[name]
                                 break
-                            if fill is None and name in fillable:
-                                fill = fillable[name]
                         if title:
                             break
-                    if title is not None:
-                        matched += 1
-                        if (episode.get("title") or "") == title:
-                            current += 1
-                            continue
-                        _plex_put(
-                            f"/library/sections/{section}/all",
-                            {
-                                "type": 4,
-                                "id": episode["ratingKey"],
-                                "title.value": title,
-                                "title.locked": 1,
-                            },
-                        )
-                        current_app.logger.info(
-                            f"Plex episode titles: {episode.get('ratingKey')} "
-                            f"{episode.get('title')!r} -> {title!r}"
-                        )
-                        updated += 1
-                    elif fill is not None and not (episode.get("title") or ""):
-                        _plex_put(
-                            f"/library/sections/{section}/all",
-                            {
-                                "type": 4,
-                                "id": episode["ratingKey"],
-                                "title.value": fill,
-                                "title.locked": 0,
-                            },
-                        )
-                        current_app.logger.info(
-                            f"Plex episode titles: filled blank "
-                            f"{episode.get('ratingKey')} with {fill!r}"
-                        )
-                        filled += 1
+                    if title is None:
+                        continue
+                    matched += 1
+                    if (episode.get("title") or "") == title:
+                        current += 1
+                        continue
+                    _plex_put(
+                        f"/library/sections/{section}/all",
+                        {
+                            "type": 4,
+                            "id": episode["ratingKey"],
+                            "title.value": title,
+                            "title.locked": 1,
+                        },
+                    )
+                    current_app.logger.info(
+                        f"Plex episode titles: {episode.get('ratingKey')} "
+                        f"{episode.get('title')!r} -> {title!r}"
+                    )
+                    updated += 1
                 start += len(page)
                 if not page or start >= container.get("totalSize", 0):
                     break
@@ -195,10 +152,10 @@ def sync_plex_episode_titles():
             current_app.logger.warning(traceback.format_exc())
             return True
 
-        if updated or filled:
+        if updated:
             current_app.logger.info(
                 f"Plex episode titles: {updated} updated, {current} already "
                 f"current, of {len(desired)} titled files ({matched} matched "
-                f"in Plex); {filled} blank episodes filled from TMDb"
+                f"in Plex)"
             )
         return True

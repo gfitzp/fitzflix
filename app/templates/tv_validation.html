@@ -36,6 +36,12 @@
 					{% else %}
 					<span class="badge text-bg-success">Agrees</span>
 					{% endif %}
+					{% if entry.carried %}
+					{# No basename matched in Plex on the last run — the
+					   shape of a just-renamed series awaiting its Plex
+					   rescan — so the older verdict stands #}
+					<span class="badge text-bg-light" title="No files matched in Plex on the last run{% if entry.checked_at %} — verdict from {{ entry.checked_at[:10] }}{% endif %}">Carried forward</span>
+					{% endif %}
 				</td>
 			</tr>
 			{% if entry.suspect and entry.examples %}

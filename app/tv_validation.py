@@ -15,7 +15,12 @@ to compare. Edition-carrying files are excluded as circular —
 Fitzflix writes those titles INTO Plex itself (#68).
 
 Verdicts live in the fitzflix:tv:validation Redis hash, one JSON
-entry per series id, rebuilt wholesale by each run.
+entry per series id, rebuilt by each run. A series that produced no
+comparisons this run keeps its previous verdict (marked carried):
+a series rename changes every basename, so until Plex rescans and
+re-titles the files the series matches nothing — and dropping its
+entry would silently un-flag a numbering-suspect series exactly
+while its Plex titles are in flux (Top Gear, Aug 2026).
 """
 
 import json
@@ -192,6 +197,28 @@ def compute_validation(plex_titles):
     return results
 
 
+def carry_forward(results, previous, known_ids):
+    """Fold stored verdicts into a fresh run's results for series that
+    produced no comparisons this time, marked carried (with their
+    original checked_at). The verdict — suspect or clean — stands until
+    fresh comparisons replace it; verdicts for series ids no longer in
+    the database drop out. Returns how many entries were carried."""
+
+    carried = 0
+    for raw_id, blob in previous.items():
+        series_id = int(raw_id)
+        if series_id in results or series_id not in known_ids:
+            continue
+        try:
+            entry = json.loads(blob)
+        except (TypeError, ValueError):
+            continue
+        entry["carried"] = True
+        results[series_id] = entry
+        carried += 1
+    return carried
+
+
 def validate_tv_titles():
     """Task: rebuild the per-series title verdicts from Plex's current
     titles. No-ops without Plex configuration — leaving any previous
@@ -213,6 +240,12 @@ def validate_tv_titles():
                 return True
 
             results = compute_validation(titles)
+            fresh = len(results)
+            carried = carry_forward(
+                results,
+                current_app.redis.hgetall(VALIDATION_KEY),
+                {series_id for (series_id,) in db.session.query(TVSeries.id)},
+            )
             pipe = current_app.redis.pipeline()
             pipe.delete(VALIDATION_KEY)
             if results:
@@ -227,8 +260,9 @@ def validate_tv_titles():
 
             suspects = [e["name"] for e in results.values() if e["suspect"]]
             current_app.logger.info(
-                f"TV validation: {len(results)} series compared, "
-                f"{len(suspects)} suspect ({', '.join(suspects) or 'none'})"
+                f"TV validation: {fresh} series compared, {carried} carried "
+                f"forward, {len(suspects)} suspect "
+                f"({', '.join(suspects) or 'none'})"
             )
         except Exception:
             current_app.logger.error(traceback.format_exc())
