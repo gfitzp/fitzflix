@@ -333,6 +333,7 @@ def criterion_now_card(user):
     stored = json.loads(payload)
 
     next_at = None
+    ends_at = None
     if stored.get("ends_at"):
         ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%d %H:%M:%S")
         if ends_at < datetime.now() - STALE_GRACE:
@@ -342,6 +343,22 @@ def criterion_now_card(user):
 
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
+
+    # How far into the film we are (#79): derived STATELESSLY as the
+    # predicted end minus the TMDb runtime, so it's right even when
+    # the heartbeat revived a dead chain mid-film and nobody saw the
+    # start. Unknown runtime (or an unmatched film) shows nothing —
+    # never a guess. "About", because Criterion pads between films.
+
+    minutes_in = None
+    runtime = (payload or {}).get("runtime")
+    if ends_at is not None and runtime:
+        elapsed = (
+            datetime.now() - (ends_at - timedelta(minutes=runtime))
+        ).total_seconds() // 60
+        if elapsed >= 0:
+            minutes_in = int(elapsed)
+
     return {
         "title": stored.get("title"),
         "year": stored.get("year"),
@@ -353,6 +370,7 @@ def criterion_now_card(user):
         "more_url": stored.get("more_url"),
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
+        "minutes_in": minutes_in,
         "overview": (payload or {}).get("overview"),
         "ladder": _ladder_state_for(user, tmdb_id, payload),
         **_credited_people(payload),
@@ -390,7 +408,7 @@ def _ladder_state_for(user, tmdb_id, payload):
     # Routes imports this module at startup, so its helpers load lazily
 
     from app.main.helpers import _latest_review_row
-    from app.models import Movie, UserMovieStatus
+    from app.models import Movie, UserMovieStatus, UserWatchlist
     from app.recommendations import (
         estimated_rating,
         resolved_score,
@@ -404,6 +422,8 @@ def _ladder_state_for(user, tmdb_id, payload):
         "has_review": False,
         "flagged": False,
         "estimated": None,
+        # The card's watchlist toggle (#78) reads its face from here
+        "on_watchlist": False,
     }
     if not tmdb_id:
         return state
@@ -412,6 +432,12 @@ def _ladder_state_for(user, tmdb_id, payload):
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie is not None:
         state["movie_id"] = movie.id
+        state["on_watchlist"] = (
+            UserWatchlist.query.filter_by(
+                user_id=int(user.id), movie_id=movie.id
+            ).first()
+            is not None
+        )
         row = _latest_review_row(user.id, movie.id)
         state["has_review"] = row is not None
         if row is not None and row.rating is not None:

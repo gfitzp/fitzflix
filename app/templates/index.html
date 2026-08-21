@@ -171,11 +171,22 @@
 		   estimate in paler gold until there is one. Taps post live to
 		   the movie route once a record exists; before that, to the
 		   TMDb log route, whose first tap creates the record (and which
-		   307-forwards ladder posts once it exists) #}
-		<form action="{{ url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) }}" method="post" class="mb-1 d-flex align-items-center">
-			{{ review_form.csrf_token }}
-			{{ rating_ladder(compact=true, allow_not_interested=not now_playing.ladder.has_review, current=now_playing.ladder.rating, flagged=now_playing.ladder.flagged, live=true, estimated=now_playing.ladder.estimated) }}
-		</form>
+		   307-forwards ladder posts once it exists). The watchlist
+		   toggle (#78) posts the same way; the shared scope lets a
+		   rating that clears the list entry sync the toggle's face #}
+		{% set now_action = url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) %}
+		<div data-watchlist-scope>
+			<form action="{{ now_action }}" method="post" class="mb-1 d-flex align-items-center">
+				{{ review_form.csrf_token }}
+				{{ rating_ladder(compact=true, allow_not_interested=not now_playing.ladder.has_review, current=now_playing.ladder.rating, flagged=now_playing.ladder.flagged, live=true, estimated=now_playing.ladder.estimated) }}
+			</form>
+			<form action="{{ now_action }}" method="post" data-card-watchlist class="mb-1">
+				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+				<input type="hidden" name="from_card" value="1">
+				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
+				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
+			</form>
+		</div>
 		{% endif %}
 		<p class="mb-1">
 			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-primary">&#9654;&nbsp;Watch live</a>
@@ -183,7 +194,7 @@
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-secondary">More</a>
 			{% endif %}
 		</p>
-		<p class="mb-0 small text-muted">{% if now_playing.next_at %}Next film around {{ now_playing.next_at }} &middot; {% endif %}From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>
+		<p class="mb-0 small text-muted">{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }} &middot; {% endif %}From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>
 	</div>
 </div>
 {% endif %}

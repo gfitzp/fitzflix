@@ -700,9 +700,11 @@
 			}).then(function(state) {
 				paintLadder(button.closest(".star-row"), state);
 				// A rating or a ✕ clears the film's watchlist entry
-				// server-side; the toggle under the same poster keeps
-				// up, and the film's cached card is stale either way
-				var actions = form.closest(".poster-actions");
+				// server-side; the toggle sharing this widget's scope
+				// (a poster tile, or the Criterion24/7 card's
+				// data-watchlist-scope) keeps up, and a tile's cached
+				// popover card is stale either way
+				var actions = form.closest(".poster-actions, [data-watchlist-scope]");
 				if (actions && typeof state.on_watchlist !== "undefined") {
 					syncWatchlistForm(
 						actions.querySelector("[data-card-watchlist]"),

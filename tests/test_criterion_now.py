@@ -565,3 +565,73 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
     plant(timedelta(minutes=-30))
     body = admin_client.get("/").get_data(as_text=True)
     assert "On Criterion24/7 now" not in body
+
+
+def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
+    """#78 + #79: the card carries a watchlist toggle whose face
+    follows the record, and 'About N minutes in' derived from the
+    predicted end minus the runtime — never shown without both."""
+
+    import re
+
+    import app.criterion_now as criterion_now
+
+    from app import db
+    from app.models import UserWatchlist
+    from tests.factories import make_movie
+
+    user_id = subscribe_criterion(app)
+    plant_enriched(app)
+
+    def seed_now(minutes_left):
+        app.redis.set(
+            criterion_now.NOW_KEY,
+            json.dumps(
+                {
+                    "title": "Shock Corridor",
+                    "year": 1963,
+                    "tmdb_id": 33667,
+                    "poster_path": "/shock.jpg",
+                    "ends_at": (
+                        datetime.now() + timedelta(minutes=minutes_left)
+                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            ),
+        )
+
+    # 45 of the 101 minutes remain: about 56 minutes in; no record
+    # yet, so the toggle shows Add and posts to the TMDb log route
+
+    seed_now(45)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert re.search(r"About 5[56] minutes in", body)
+    assert "data-watchlist-scope" in body
+    add_face = re.search(r'<button[^>]*name="add_watchlist_submit"[^>]*>', body)
+    assert add_face and "d-none" not in add_face.group(0)
+    assert body.count('action="/review/tmdb/33667"') >= 2  # ladder + toggle
+
+    # A watchlisted local record flips the face and retargets the
+    # movie route; a film that just started says so instead of "0
+    # minutes in"
+
+    with app.app_context():
+        movie = make_movie("Shock Corridor", 1963, tmdb_id=33667)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+
+    seed_now(100)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Just started" in body
+    remove_face = re.search(r'<button[^>]*name="remove_watchlist_submit"[^>]*>', body)
+    assert remove_face and "d-none" not in remove_face.group(0)
+    add_face = re.search(r'<button[^>]*name="add_watchlist_submit"[^>]*>', body)
+    assert add_face and "d-none" in add_face.group(0)
+    assert f'action="/movie/{movie_id}"' in body
+
+    # No runtime, no claim: an enrichment without one drops the line
+
+    app.redis.delete("fitzflix:tmdb:movie:33667:enriched")
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "minutes in" not in body
+    assert "Just started" not in body
