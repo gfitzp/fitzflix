@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from flask import current_app
+from requests.exceptions import HTTPError
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -304,6 +305,20 @@ def enriched_movie(tmdb_id):
         )
         r.raise_for_status()
         payload = r.json() or {}
+    except HTTPError as error:
+        if error.response is not None and error.response.status_code == 404:
+            # TMDb deletes films whose credit rows linger on person
+            # pages, so a filmography can keep offering an id the movie
+            # endpoint no longer answers. Cache the miss as a null
+            # payload — readers treat it as "nothing here" — so each
+            # render doesn't re-ask.
+            current_app.logger.info(f"TMDb movie {int(tmdb_id)} is gone (404)")
+            current_app.redis.set(
+                cache_key, json.dumps(None), ex=ENRICHED_CACHE_SECONDS
+            )
+            return None
+        current_app.logger.warning(traceback.format_exc())
+        return None
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return None

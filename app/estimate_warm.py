@@ -165,9 +165,12 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
         )
         mapping = {}
         for tmdb_id, payload in zip(chunk, payloads):
-            if not payload:
+            # A cached null is a deleted TMDb id — present so it isn't
+            # re-fetched, but nothing to score
+            data = json.loads(payload) if payload else None
+            if not data:
                 continue
-            taste, _ = score_movie(_payload_features(json.loads(payload)), profile)
+            taste, _ = score_movie(_payload_features(data), profile)
             mapping[str(tmdb_id)] = round(taste + _tmdb_copref(user_id, tmdb_id), 4)
         if mapping:
             redis.hset(key, mapping=mapping)

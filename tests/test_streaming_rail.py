@@ -6,6 +6,8 @@ its mandatory JustWatch attribution."""
 
 import json
 
+from requests.exceptions import HTTPError
+
 from tests.factories import make_movie, make_movie_file
 
 NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.jpg"}
@@ -180,6 +182,40 @@ def test_provider_pool_queries_and_caches(app, monkeypatch):
     # Provenance tags name the query that produced each candidate
 
     assert "popular on Netflix" in pool["5001"]["sources"]
+
+
+def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
+    """TMDb deletes films whose credit rows linger on person pages, so a
+    filmography keeps offering an id the movie endpoint 404s. The miss
+    is cached as a null payload: later calls answer None from Redis
+    without re-asking TMDb."""
+
+    from app import streaming_rail
+
+    calls = []
+
+    class Gone:
+        """A TMDb response for a deleted movie id."""
+
+        status_code = 404
+
+        def raise_for_status(self):
+            raise HTTPError("404 Client Error", response=self)
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        calls.append(url)
+        return Gone()
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        assert streaming_rail.enriched_movie(126678) is None
+        assert streaming_rail.enriched_movie(126678) is None
+
+    assert len(calls) == 1
+    cached = app.redis.get(streaming_rail.ENRICHED_KEY.format(tmdb_id=126678))
+    assert json.loads(cached) is None
 
 
 def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
