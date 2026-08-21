@@ -282,6 +282,25 @@ def register(app):
         click.echo(f"Enqueued frame-pool refresh as {job.id}")
 
     @app.cli.group()
+    def tv():
+        """TV metadata tools (#78)."""
+        pass
+
+    @tv.command()
+    def validate():
+        """Re-verify TMDb episode titles against Plex's agent titles now
+        instead of waiting for the nightly run."""
+
+        from flask import current_app
+
+        job = current_app.maintenance_queue.enqueue(
+            "app.tv_validation.validate_tv_titles",
+            job_timeout=1800,
+            description="Validating TV episode titles against Plex",
+        )
+        click.echo(f"Enqueued TV title validation as {job.id}")
+
+    @app.cli.group()
     def catalog():
         """Manage the film catalog's exclusion list."""
         pass

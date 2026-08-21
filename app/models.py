@@ -808,7 +808,14 @@ class TMDBMixin(object):
         # gated on the block's presence so a payload without it can't wipe
         # stored credits. The seen-sets stand in for the movie path's
         # per-row existence queries: after the bulk delete only payload
-        # duplicates could collide with the unique constraints.
+        # duplicates could collide with the unique constraints. Keys are
+        # folded the way utf8mb4_general_ci compares — unaccented,
+        # caseless, trailing-space-blind — because TMDb payloads really
+        # do carry both 'Self - Bee farmer' and 'Self - Bee Farmer' for
+        # one person, distinct to Python but a 1062 duplicate to MySQL.
+
+        def collation_key(*parts):
+            return tuple(unidecode(part or "").casefold().strip() for part in parts)
 
         if tmdb_info.get("aggregate_credits"):
             aggregate = tmdb_info.get("aggregate_credits")
@@ -828,7 +835,7 @@ class TMDBMixin(object):
                     db.session.add(p)
 
                 for role in person.get("roles") or []:
-                    key = (p.id, role.get("character"))
+                    key = (p.id,) + collation_key(role.get("character"))
                     if key in seen_roles:
                         continue
                     seen_roles.add(key)
@@ -855,7 +862,9 @@ class TMDBMixin(object):
                     db.session.add(p)
 
                 for job in person.get("jobs") or []:
-                    key = (p.id, person.get("department"), job.get("job"))
+                    key = (p.id,) + collation_key(
+                        person.get("department"), job.get("job")
+                    )
                     if key in seen_jobs:
                         continue
                     seen_jobs.add(key)

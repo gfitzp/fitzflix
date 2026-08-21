@@ -221,6 +221,51 @@ def test_apply_replaces_cast_and_crew_from_aggregate_credits(app):
         assert series.crew.count() == 0
 
 
+def test_apply_dedupes_credits_the_way_mysql_collates(app):
+    """Real payloads carry role variants distinct to Python but equal
+    under utf8mb4_general_ci — 'Self - Bee farmer' vs 'Self - Bee
+    Farmer', 'Curare' vs 'Curaré' — which 1062'd the first live
+    backfill. One row per collation-equal role must survive."""
+
+    with app.app_context():
+        series = make_tv_series("Clarkson's Farm", tmdb_id=95396)
+        series.tmdb_tv_apply(
+            {
+                "id": 95396,
+                "aggregate_credits": {
+                    "cast": [
+                        {
+                            "id": 4719914,
+                            "name": "A Farmer",
+                            "order": 522,
+                            "roles": [
+                                {"character": "Self - Bee farmer", "episode_count": 1},
+                                {"character": "Self - Bee Farmer", "episode_count": 1},
+                                {"character": "Curare (voice)", "episode_count": 2},
+                                {"character": "Curaré (voice)", "episode_count": 2},
+                            ],
+                        }
+                    ],
+                    "crew": [
+                        {
+                            "id": 555,
+                            "name": "Someone",
+                            "department": "Art",
+                            "jobs": [
+                                {"job": "Storyboard Artist", "episode_count": 5},
+                                {"job": "Storyboard artist", "episode_count": 5},
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+        db.session.commit()
+
+        assert series.cast.count() == 2
+        assert series.crew.count() == 1
+
+
 def test_tv_page_shows_billed_cast(app, admin_client):
     with app.app_context():
         series = make_tv_series("Columbo", tmdb_id=1041)

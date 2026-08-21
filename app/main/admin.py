@@ -482,11 +482,14 @@ def maintenance():
             "details": evaluate_filename(test_filename, log=False),
         }
 
+    from app.tv_validation import validation_report
+
     return render_template(
         "maintenance.html",
         title="Library Maintenance",
         rejected_count=len(_rejected_files()),
         subtitle_triage_count=len(forced_subtitle_candidates()),
+        tv_suspect_count=sum(1 for e in validation_report() if e["suspect"]),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -496,6 +499,24 @@ def maintenance():
         sync_form=sync_form,
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
+    )
+
+
+@bp.route("/maintenance/tv-titles")
+@login_required
+@admin_required
+def tv_title_validation():
+    """Per-series episode-title verdicts (#78 step 5): how well TMDb's
+    titles agree with Plex's for the same files, suspects first."""
+
+    from app.tv_validation import MIN_COMPARED, SUSPECT_BELOW, validation_report
+
+    return render_template(
+        "tv_validation.html",
+        title="TV episode titles",
+        entries=validation_report(),
+        min_compared=MIN_COMPARED,
+        suspect_below=SUSPECT_BELOW,
     )
 
 

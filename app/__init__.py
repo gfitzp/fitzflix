@@ -267,6 +267,18 @@ def cron_table(config):
             )
         )
 
+        # Re-verify TMDb episode titles against Plex's agent titles
+        # nightly (#78), after the 3:45 in-production TV refresh
+
+        table.append(
+            (
+                "5 4 * * *",
+                "app.tv_validation.validate_tv_titles",
+                1800,
+                "Validating TV episode titles against Plex",
+            )
+        )
+
     # Reconcile the Plex and Fitzflix watchlists both ways (#67); the
     # account-level discover API needs only the token, not the server
 
