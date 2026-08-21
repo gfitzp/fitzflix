@@ -1336,6 +1336,12 @@ class TVSeries(db.Model, TMDBMixin):
     files = db.relationship(
         "File", backref="tv_series", lazy="dynamic", cascade="all,delete,delete-orphan"
     )
+    episodes = db.relationship(
+        "TVEpisode",
+        backref="series",
+        lazy="dynamic",
+        cascade="all,delete,delete-orphan",
+    )
     genres = db.relationship(
         "TMDBGenre",
         secondary=tv_genres,
@@ -1374,6 +1380,42 @@ class TVSeries(db.Model, TMDBMixin):
 
     def __repr__(self):
         return f"<TVSeries '{self.title}'>"
+
+
+class TVEpisode(db.Model):
+    """One TMDb episode of a TV series (#78): the season/episode slot's
+    title, overview, air date, runtime, and still.
+
+    Joined from File.season/File.episode at render time; a missing row
+    is normal (year-style seasons, custom-numbered specials, series TMDb
+    doesn't know) and must surface as today's number-only display, never
+    an error. Where File.edition is set, it outranks this title.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    series_id = db.Column(
+        db.Integer,
+        db.ForeignKey("tv_series.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    season = db.Column(db.Integer, nullable=False)
+    episode = db.Column(db.Integer, nullable=False)
+    tmdb_episode_id = db.Column(db.Integer)
+    title = db.Column(db.String(256))
+    overview = db.Column(db.Text)
+    air_date = db.Column(db.DateTime)
+    runtime = db.Column(db.Integer)
+    tmdb_still_path = db.Column(db.String(64))
+    tmdb_data_as_of = db.Column(db.DateTime)
+
+    # The unique constraint doubles as the lookup index: its leftmost
+    # prefixes cover the by-series and by-season queries, so there is no
+    # separate series_id index
+
+    __table_args__ = (db.UniqueConstraint("series_id", "season", "episode"),)
+
+    def __repr__(self):
+        return f"<TVEpisode {self.series_id} S{self.season:02d}E{self.episode:02d}>"
 
 
 class File(db.Model):
