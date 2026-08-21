@@ -1678,3 +1678,98 @@ def test_review_edit_refuses_letterboxd_rows(app, admin_client):
     with app.app_context():
         row = UserMovieReview.query.filter_by(id=row_id).one()
         assert float(row.rating) == 4.0
+
+
+def _result(title, year):
+    return {
+        "title": title,
+        "release_date": f"{year}-01-01" if year else "",
+        "id": hash(title) % 10**6,
+    }
+
+
+def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
+    """ "A Close Shave" (1995) must beat the making-of featurette that
+    TMDb ranks first in the year-filtered results."""
+
+    from app.videos import _pick_tmdb_match
+
+    year_filtered = [
+        _result('The Digital Special Effects in "A Close Shave"', 1995),
+        _result("A Close Shave", 1996),
+    ]
+    picked = _pick_tmdb_match("A Close Shave", 1995, year_filtered, [])
+    assert picked["title"] == "A Close Shave"
+
+
+def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
+    """ "300" (2006): every year-filtered result is a different film, so
+    the exact title from the title-only search wins despite its 2007
+    year — never "My Poetic Works 300 Yen"."""
+
+    from app.videos import _pick_tmdb_match
+
+    year_filtered = [_result("My Poetic Works 300 Yen", 2006)]
+    title_only = [_result("300", 2007), _result("300: Rise of an Empire", 2014)]
+    picked = _pick_tmdb_match("300", 2006, year_filtered, title_only)
+    assert picked["title"] == "300"
+
+
+def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
+    """The Men Who Tread on the Tiger's Tail: Letterboxd says 1945, TMDb
+    says 1952 — a lone exact-title match is accepted at any distance."""
+
+    from app.videos import _pick_tmdb_match
+
+    title = "The Men Who Tread on the Tiger's Tail"
+    title_only = [_result(title, 1952), _result("It Is Wonderful to Create", 2002)]
+    picked = _pick_tmdb_match(title, 1945, [], title_only)
+    assert picked["title"] == title
+
+
+def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
+    """Casino Royale (1967) picks the 1967 spoof over the 2006 film."""
+
+    from app.videos import _pick_tmdb_match
+
+    title_only = [
+        _result("Casino Royale", 2006),
+        _result("Casino Royale", 1967),
+        _result("Casino Royale", 1954),
+    ]
+    picked = _pick_tmdb_match("Casino Royale", 1967, [], title_only)
+    assert picked["release_date"].startswith("1967")
+
+
+def test_pick_tmdb_match_keeps_alternative_title_head(app):
+    """Waking Ned Devine matched TMDb's "Waking Ned" through an
+    alternative title; the year-filtered head remains the fallback."""
+
+    from app.videos import _pick_tmdb_match
+
+    year_filtered = [_result("Waking Ned", 1998)]
+    picked = _pick_tmdb_match("Waking Ned Devine", 1998, year_filtered, [])
+    assert picked["title"] == "Waking Ned"
+
+
+def test_pick_tmdb_match_normalizes_dashes(app):
+    """Letterboxd's en-dash Star Wars titles equal TMDb's hyphens."""
+
+    from app.videos import _normalize_title, _pick_tmdb_match
+
+    lb = "Star Wars: Episode I – The Phantom Menace"
+    tmdb = "Star Wars: Episode I - The Phantom Menace"
+    assert _normalize_title(lb) == _normalize_title(tmdb)
+    picked = _pick_tmdb_match(lb, 1999, [_result(tmdb, 1999)], [])
+    assert picked["title"] == tmdb
+
+
+def test_pick_tmdb_match_skips_when_nothing_plausible(app):
+    """TRIGUN (a TV series) matches nothing and stays unresolved."""
+
+    from app.videos import _pick_tmdb_match
+
+    assert (
+        _pick_tmdb_match("TRIGUN", 1998, [], [_result("Trigun: Badlands Rumble", 2010)])
+        is None
+    )

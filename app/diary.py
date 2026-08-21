@@ -187,6 +187,54 @@ def parse_letterboxd_export(zip_bytes):
     return results
 
 
+def _normalize_title(title):
+    """Casefold a title and iron out the typography that separates
+    Letterboxd's rendering from TMDb's — en/em dashes vs hyphens, curly
+    vs straight quotes — so equality means the same words."""
+
+    text = (title or "").casefold()
+    for dash in ("–", "—", "−"):
+        text = text.replace(dash, "-")
+    text = text.replace("‘", "'").replace("’", "'")
+    text = text.replace("“", '"').replace("”", '"')
+    return " ".join(text.split())
+
+
+def _pick_tmdb_match(title, year, year_filtered, title_only):
+    """Choose the TMDb search result for a Letterboxd film.
+
+    An exact (normalized) title among the year-filtered results wins;
+    otherwise the title-only search's exact match with the nearest year,
+    accepted within two years — or at any distance when it is the only
+    exact match, since TMDb and Letterboxd years can drift far apart
+    (The Men Who Tread on the Tiger's Tail: 1945 vs 1952). Only then
+    the year-filtered head, which matched through an alternative title
+    in the right year (Waking Ned Devine → Waking Ned). Taking that
+    head FIRST is how "300" (2006) once imported as the short film
+    "My Poetic Works 300 Yen".
+    """
+
+    wanted = _normalize_title(title)
+    for candidate in year_filtered:
+        if _normalize_title(candidate.get("title")) == wanted:
+            return candidate
+    exacts = []
+    for candidate in title_only:
+        candidate_year = (candidate.get("release_date") or "")[:4]
+        if (
+            _normalize_title(candidate.get("title")) == wanted
+            and candidate_year.isdigit()
+        ):
+            exacts.append((abs(int(candidate_year) - year), candidate))
+    if exacts:
+        distance, best = min(exacts, key=lambda pair: pair[0])
+        if distance <= 2 or len(exacts) == 1:
+            return best
+    if year_filtered:
+        return year_filtered[0]
+    return None
+
+
 def letterboxd_import_task(user_id, films):
     """Network phase of a Letterboxd import: match each film to the library
     or to TMDb, then hand the resolved list to apply_letterboxd_import on
@@ -216,11 +264,10 @@ def letterboxd_import_task(user_id, films):
                     skipped.append(f"{title} ({year})")
                     continue
 
-                # Search with the year first; Letterboxd and TMDb years can
-                # disagree by one, so fall back to a title-only search and
-                # accept a close match
+                # Search with the year first; the title-only search runs
+                # only when no year-filtered result carries the exact
+                # title, and _pick_tmdb_match arbitrates between the two
 
-                result = None
                 r = tmdb_get(
                     tmdb_api_url + "/search/movie",
                     params={
@@ -230,24 +277,19 @@ def letterboxd_import_task(user_id, films):
                     },
                 )
                 r.raise_for_status()
-                matches = r.json().get("results") or []
-                if matches:
-                    result = matches[0]
-                else:
+                year_filtered = r.json().get("results") or []
+                title_only = []
+                wanted = _normalize_title(title)
+                if not any(
+                    _normalize_title(c.get("title")) == wanted for c in year_filtered
+                ):
                     r = tmdb_get(
                         tmdb_api_url + "/search/movie",
                         params={"api_key": tmdb_api_key, "query": title},
                     )
                     r.raise_for_status()
-                    for candidate in r.json().get("results") or []:
-                        candidate_year = (candidate.get("release_date") or "")[:4]
-                        if (
-                            (candidate.get("title") or "").lower() == title.lower()
-                            and candidate_year.isdigit()
-                            and abs(int(candidate_year) - year) <= 1
-                        ):
-                            result = candidate
-                            break
+                    title_only = r.json().get("results") or []
+                result = _pick_tmdb_match(title, year, year_filtered, title_only)
 
                 if not result:
                     skipped.append(f"{title} ({year})")

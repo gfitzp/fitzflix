@@ -67,6 +67,8 @@ from app.criterion_catalog import (
     wikidata_retry_after_seconds,
 )
 from app.diary import (
+    _normalize_title,
+    _pick_tmdb_match,
     apply_letterboxd_import,
     apply_plex_watch,
     clear_not_interested,
@@ -156,6 +158,8 @@ __all__ = [
     "get_criterion_collection_from_wikidata",
     "refresh_criterion_collection_info",
     "wikidata_retry_after_seconds",
+    "_normalize_title",
+    "_pick_tmdb_match",
     "apply_letterboxd_import",
     "apply_plex_watch",
     "clear_not_interested",
