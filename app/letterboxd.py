@@ -14,7 +14,7 @@ import html
 import re
 import xml.etree.ElementTree as ET
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 import requests
@@ -83,14 +83,15 @@ def parse_letterboxd_feed(xml_text):
         rewatch = item.findtext("letterboxd:rewatch", namespaces=NAMESPACES)
         liked = item.findtext("letterboxd:memberLike", namespaces=NAMESPACES)
 
+        # Local wall clock, matching every other date_reviewed writer —
+        # naive UTC here pushes an evening log onto the next calendar day
+
         logged_at = None
         pub_date = item.findtext("pubDate")
         if pub_date:
             try:
                 logged_at = (
-                    parsedate_to_datetime(pub_date)
-                    .astimezone(timezone.utc)
-                    .replace(tzinfo=None)
+                    parsedate_to_datetime(pub_date).astimezone().replace(tzinfo=None)
                 )
             except (TypeError, ValueError):
                 pass
@@ -213,9 +214,23 @@ def _apply_entry_fields(row, entry):
         if getattr(row, field) != value:
             setattr(row, field, value)
             changed = True
-    if entry["watched_date"] is not None and row.date_watched is None:
-        row.date_watched = entry["watched_date"]
-        changed = True
+    # Letterboxd is authoritative for the diary's calendar date. A
+    # midnight-stamped row carries no clock knowledge, so when its date
+    # disagrees with the feed (the UTC-era day drift, or a date edited
+    # on Letterboxd) it follows the feed; a row with a real clock time
+    # (a Plex scrobble) keeps its timestamp across the near-midnight
+    # straddle instead
+
+    if entry["watched_date"] is not None:
+        if row.date_watched is None:
+            row.date_watched = entry["watched_date"]
+            changed = True
+        elif (
+            row.date_watched.date() != entry["watched_date"].date()
+            and row.date_watched.time() == datetime.min.time()
+        ):
+            row.date_watched = entry["watched_date"]
+            changed = True
     if row.date_reviewed is None and (entry["rating"] is not None or entry["review"]):
         row.date_reviewed = entry["logged_at"] or datetime.now()
         changed = True

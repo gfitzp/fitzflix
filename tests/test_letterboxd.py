@@ -334,3 +334,84 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
             and job.args[1] == movie.id
         ]
         assert len(refreshes) == 1
+
+
+def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user = User.query.first()
+        user.letterboxd_username = "test"
+
+        # A CSV-era row stamped one day late (the UTC drift): midnight,
+        # so it carries no clock knowledge and the feed's date wins
+        drifted_movie = make_movie("Speedy", 1928, tmdb_id=32595)
+        db.session.add(
+            UserMovieReview(
+                user_id=user.id,
+                movie_id=drifted_movie.id,
+                review="",
+                date_watched=datetime(2025, 10, 29),
+                **star_rating_fields(None),
+            )
+        )
+        db.session.commit()
+        drifted_id = drifted_movie.id
+
+        xml = build_feed(
+            feed_item(
+                "letterboxd-watch-40",
+                32595,
+                title="Speedy",
+                year=1928,
+                watched="2025-10-28",
+            )
+        )
+        run_sync(app, xml, monkeypatch)
+
+        # Adopted (not duplicated) and moved onto Letterboxd's date
+        assert UserMovieReview.query.filter_by(movie_id=drifted_id).count() == 1
+        row = UserMovieReview.query.filter_by(movie_id=drifted_id).one()
+        assert row.letterboxd_guid == "letterboxd-watch-40"
+        assert row.date_watched == datetime(2025, 10, 28)
+
+        # A date edited on Letterboxd later flows down to the same row
+        xml = build_feed(
+            feed_item(
+                "letterboxd-watch-40",
+                32595,
+                title="Speedy",
+                year=1928,
+                watched="2025-10-27",
+            )
+        )
+        run_sync(app, xml, monkeypatch)
+        db.session.expire_all()
+        row = UserMovieReview.query.filter_by(movie_id=drifted_id).one()
+        assert row.date_watched == datetime(2025, 10, 27)
+
+
+def test_feed_logged_at_is_local_wall_clock(app):
+    import app.letterboxd as letterboxd
+
+    # 02:55 UTC is the previous local evening in any US timezone; the
+    # stored value must be the local clock, not naive UTC
+    xml = build_feed(
+        feed_item(
+            "letterboxd-review-50",
+            88421,
+            rating="4",
+            body="<p>Good.</p>",
+            pub_date="Fri, 10 Jul 2026 02:55:27 +0000",
+        )
+    )
+    with app.app_context():
+        entries = letterboxd.parse_letterboxd_feed(xml)
+    from datetime import timezone as tz
+
+    expected = (
+        datetime(2026, 7, 10, 2, 55, 27, tzinfo=tz.utc)
+        .astimezone()
+        .replace(tzinfo=None)
+    )
+    assert entries[0]["logged_at"] == expected

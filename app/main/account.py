@@ -388,7 +388,12 @@ def history():
             recipients=[current_user.email],
             text_body=render_template("email/reviews.txt", user=current_user),
             html_body=render_template("email/reviews.html", user=current_user),
-            attachments=[(filename, "text/csv", f.getvalue())],
+            # Attach as UTF-8 bytes: a str payload makes the email
+            # package fall back to raw-unicode-escape, which mangles
+            # curly quotes into literal \\u2019 sequences in the file
+            attachments=[
+                (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
+            ],
         )
 
         # Advance the export bookkeeping: either mode leaves Letterboxd

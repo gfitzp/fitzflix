@@ -261,7 +261,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
             UserMovieReview(
                 user_id=user_id,
                 movie_id=rated.id,
-                review='He said "we need a bigger boat", or similar.',
+                review="He said “we’re gonna need a bigger boat” \U0001f988, or similar.",
                 date_watched=datetime(2024, 6, 1, 20, 30),
                 date_reviewed=datetime(2024, 6, 2),
                 liked=True,
@@ -302,7 +302,11 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     assert sent["attachments"]
 
     filename, mimetype, contents = sent["attachments"][0]
-    rows = list(csv_module.reader(io.StringIO(contents)))
+    # UTF-8 bytes, never str: a str payload would get raw-unicode-escaped
+    # by the email package, mangling curly quotes and emoji
+    assert isinstance(contents, bytes)
+    assert mimetype == "text/csv; charset=utf-8"
+    rows = list(csv_module.reader(io.StringIO(contents.decode("utf-8"))))
     assert rows[0] == [
         "tmdbID",
         "imdbID",
@@ -323,7 +327,7 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     assert jaws[5] == "2024-06-01"
     # Rewatch was recorded on this row, so it exports per the spec
     assert jaws[6] == "Yes"
-    assert 'He said "we need a bigger boat", or similar.' in jaws[7]
+    assert "He said “we’re gonna need a bigger boat” \U0001f988, or similar." in jaws[7]
 
     tall_t = by_title["The Tall T"]
     assert tall_t[4] == "" and tall_t[5] == ""
@@ -362,7 +366,8 @@ def exported_titles(attachments):
     import csv as csv_module
 
     filename, mimetype, contents = attachments[0]
-    return {row[2] for row in list(csv_module.reader(io.StringIO(contents)))[1:]}
+    text = io.StringIO(contents.decode("utf-8"))
+    return {row[2] for row in list(csv_module.reader(text))[1:]}
 
 
 def test_incremental_export_covers_only_entries_since_last_export(
@@ -1441,7 +1446,9 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
         },
     )
     _, _, contents = sent["attachments"][0]
-    titles = [row[2] for row in csv_module.reader(io.StringIO(contents))][1:]
+    titles = [
+        row[2] for row in csv_module.reader(io.StringIO(contents.decode("utf-8")))
+    ][1:]
     assert "Local Verdict" in titles
     assert "Synced From Feed" not in titles
 
