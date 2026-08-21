@@ -141,6 +141,14 @@ CREW_ROLE_LABELS = {
 CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
 
 
+# A TV role that is the person appearing as themselves — "Self",
+# "Self - Host", "Herself (archive footage)" — as TMDb writes them:
+# the self-word leads the line. Word-bounded so genuine characters
+# that merely contain the letters (Harry Selfridge) survive
+
+SELF_ROLE = re.compile(r"(?:him|her|them)?sel(?:f|ves)\b", re.IGNORECASE)
+
+
 def _tmdb_person_details(person_id):
     """The person's name, photo, and biographical fields from TMDb, cached
     for a day; None when there's no API key or TMDb doesn't answer with a
@@ -548,7 +556,7 @@ def movie_library():
                         "cast": [
                             entry
                             for entry in payload.get("cast") or []
-                            if "self" not in (entry.get("character") or "").casefold()
+                            if not SELF_ROLE.match(entry.get("character") or "")
                         ],
                         "crew": [
                             entry

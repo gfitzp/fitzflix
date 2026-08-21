@@ -141,6 +141,85 @@ def test_filmography_shows_television_section(app, admin_client, monkeypatch):
     assert b"Lt. Columbo" in response.data
 
 
+def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeypatch):
+    """The Television section's self-filter matches at word boundaries:
+    talk-show and awards-night rows ("Self", "Self - Host", "Herself")
+    are dropped, but a genuine character that merely contains the
+    letters — Harry Selfridge — is a real acting credit and stays."""
+
+    import app.main.library as library
+
+    with app.app_context():
+        monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+        db.session.add(TMDBCredit(id=287, name="Jeremy Piven"))
+        db.session.commit()
+
+        # Person details and movie credits read cache-first; only the
+        # tv_credits fetch reaches the patched network call
+        app.redis.set(
+            "fitzflix:tmdb:person:287:details", json.dumps({"name": "Jeremy Piven"})
+        )
+        app.redis.set(
+            "fitzflix:tmdb:person:287:credits",
+            json.dumps({"cast": [], "crew": []}),
+        )
+
+        payload = {
+            "cast": [
+                {
+                    "id": 33217,
+                    "name": "Mr Selfridge",
+                    "first_air_date": "2013-01-06",
+                    "character": "Harry Selfridge",
+                    "episode_count": 40,
+                    "poster_path": None,
+                },
+                {
+                    "id": 2,
+                    "name": "Talk Show",
+                    "first_air_date": "2010-01-01",
+                    "character": "Self",
+                    "episode_count": 3,
+                    "poster_path": None,
+                },
+                {
+                    "id": 3,
+                    "name": "Award Night",
+                    "first_air_date": "2011-01-01",
+                    "character": "Self - Host",
+                    "episode_count": 1,
+                    "poster_path": None,
+                },
+                {
+                    "id": 4,
+                    "name": "Retrospective",
+                    "first_air_date": "2012-01-01",
+                    "character": "Himself (archive footage)",
+                    "episode_count": 2,
+                    "poster_path": None,
+                },
+            ],
+            "crew": [],
+        }
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return payload
+
+        monkeypatch.setattr(library, "tmdb_get", lambda *a, **kw: FakeResponse())
+
+    response = admin_client.get("/library/movie?credit=287")
+    assert response.status_code == 200
+    assert b"Mr Selfridge" in response.data
+    assert b"Harry Selfridge" in response.data
+    assert b"Talk Show" not in response.data
+    assert b"Award Night" not in response.data
+    assert b"Retrospective" not in response.data
+
+
 def test_tv_page_meta_line(app, admin_client):
     from datetime import datetime
 
