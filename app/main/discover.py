@@ -1037,6 +1037,13 @@ def watchlist():
     tile's popover — where the badges live since Glenn's Aug 2026
     revision — answers "how can I watch this" from a hot cache."""
 
+    # The availability filter (#80): default ALL, narrowable to films
+    # watchable right now — the removal redirect keeps it in place
+
+    availability_filter = request.args.get("availability", "all")
+    if availability_filter not in ("all", "local", "services", "rent"):
+        availability_filter = "all"
+
     watchlist_form = WatchlistForm()
     if (
         watchlist_form.remove_watchlist_submit.data
@@ -1046,7 +1053,14 @@ def watchlist():
         clear_watchlist(current_user.id, watchlist_form.movie_id.data)
         db.session.commit()
         flash("Removed from your watchlist", "success")
-        return redirect(url_for("main.watchlist"))
+        return redirect(
+            url_for(
+                "main.watchlist",
+                availability=(
+                    availability_filter if availability_filter != "all" else None
+                ),
+            )
+        )
 
     entries = (
         UserWatchlist.query.filter_by(user_id=int(current_user.id))
@@ -1116,14 +1130,52 @@ def watchlist():
                 "owned": movie.id in owned_ids,
                 "streaming": streaming,
                 "rentals": rentals,
+                # Warming state (#80): a film whose availability hasn't
+                # been fetched yet can't be classified for the
+                # streaming/rental filters — it must be reported as
+                # pending, never silently dropped. Films without a
+                # tmdb_id are known-negative, not pending
+                "availability_pending": bool(
+                    not (movie.id in owned_ids)
+                    and provider_ids
+                    and movie.tmdb_id
+                    and availability_by_id.get(movie.tmdb_id) is None
+                ),
                 "in_radarr": movie.tmdb_id in radarr_ids if movie.tmdb_id else False,
             }
         )
+
+    # The filter semantics (#80, Glenn's definitions): LOCAL = owned
+    # library files; ON MY SERVICES = local files plus flat-rate
+    # streaming matches; FOR RENT = rental services only (owning a
+    # film beats renting it, so owned rows stay out of that one)
+
+    def matches(row, chosen):
+        if chosen == "local":
+            return row["owned"]
+        if chosen == "services":
+            return row["owned"] or bool(row["streaming"])
+        if chosen == "rent":
+            return not row["owned"] and bool(row["rentals"])
+        return True
+
+    counts = {
+        chosen: sum(1 for row in rows if matches(row, chosen))
+        for chosen in ("all", "local", "services", "rent")
+    }
+    pending = sum(1 for row in rows if row["availability_pending"])
+    if availability_filter != "all":
+        rows = [row for row in rows if matches(row, availability_filter)]
 
     return render_template(
         "watchlist.html",
         title="My Watchlist",
         rows=rows,
+        availability=availability_filter,
+        counts=counts,
+        # The warming note only matters where unfetched films are
+        # actually hidden — the streaming and rental views
+        pending=pending if availability_filter in ("services", "rent") else 0,
         watchlist_form=watchlist_form,
         radarr_form=RadarrForm(),
         radarr_available=bool(current_user.admin and radarr_configured()),

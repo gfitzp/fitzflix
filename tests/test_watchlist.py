@@ -778,3 +778,92 @@ def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
     response = admin_client.get(f"/movie/{movie_id}")
     assert response.status_code == 200
     assert "TMDB data refreshing" in response.get_data(as_text=True)
+
+
+def test_watchlist_availability_filter(app, admin_client):
+    """#80: default shows everything; local/services/rent narrow to
+    what's watchable now, with counts on the pills, unfetched films
+    reported as pending instead of silently dropped, and the removal
+    redirect keeping the filter."""
+
+    from app import db
+    from app.models import UserStreamingProvider, UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        db.session.add(
+            UserStreamingProvider(
+                user_id=user_id, provider_id=8, name="Netflix", logo_path="/n.jpg"
+            )
+        )
+        owned = make_movie("Filter Owned Film", 1990)
+        make_movie_file(owned, "Bluray-1080p")
+        streaming = make_movie("Filter Streaming Film", 1991, tmdb_id=9401)
+        rentable = make_movie("Filter Rentable Film", 1992, tmdb_id=9402)
+        warming = make_movie("Filter Warming Film", 1993, tmdb_id=9403)
+        for movie in (owned, streaming, rentable, warming):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        owned_id = owned.id
+
+    app.redis.set(
+        "fitzflix:tmdb:watch-providers:movie:9401",
+        json.dumps(
+            {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []}
+        ),
+    )
+    app.redis.set(
+        "fitzflix:tmdb:watch-providers:movie:9402",
+        json.dumps(
+            {"link": None, "flatrate": [], "ads": [], "rent": [NETFLIX], "buy": []}
+        ),
+    )
+    # 9403 stays uncached: availability unknown, warming
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    for title in (
+        "Filter Owned Film",
+        "Filter Streaming Film",
+        "Filter Rentable Film",
+        "Filter Warming Film",
+    ):
+        assert title in page
+    assert "All (4)" in page
+    assert "In library (1)" in page
+    assert "On my services (2)" in page
+    assert "For rent (1)" in page
+    assert "still being fetched" not in page
+
+    local = admin_client.get("/watchlist?availability=local").get_data(as_text=True)
+    assert "Filter Owned Film" in local
+    assert "Filter Streaming Film" not in local
+
+    services = admin_client.get("/watchlist?availability=services").get_data(
+        as_text=True
+    )
+    assert "Filter Owned Film" in services
+    assert "Filter Streaming Film" in services
+    assert "Filter Rentable Film" not in services
+    assert "Filter Warming Film" not in services
+    assert "1 film aren't shown here yet" in services
+
+    rent = admin_client.get("/watchlist?availability=rent").get_data(as_text=True)
+    assert "Filter Rentable Film" in rent
+    assert "Filter Owned Film" not in rent
+    assert "still being fetched" in rent
+
+    # Removal under a filter redirects back INTO the filter
+
+    import re
+
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', local).group(1)
+    response = admin_client.post(
+        "/watchlist?availability=local",
+        data={
+            "csrf_token": token,
+            "movie_id": owned_id,
+            "remove_watchlist_submit": "Remove from Watchlist",
+        },
+    )
+    assert response.status_code == 302
+    assert "availability=local" in response.headers["Location"]

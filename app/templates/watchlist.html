@@ -2,8 +2,27 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
-<h2 class="mt-n2">My Watchlist</h2>
+<div class="row mt-n2 mb-n3 d-flex">
+	<h2 class="col-12 col-sm-auto me-auto mb-n1">My Watchlist</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		{# The availability filter (#80): all films by default, or just
+		   the ones watchable right now — the criterion page's radio
+		   grammar, counts included #}
+		<form class="float-sm-right mb-2" action="{{ url_for('main.watchlist') }}" method="get">
+			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent")] %}
+			<div class="form-check form-check-inline">
+				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
+				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} ({{ counts[value] }})</label>
+			</div>
+			{% endfor %}
+			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
+		</form>
+	</div>
+</div>
 <hr>
+{% if pending %}
+<p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} aren't shown here yet &mdash; their streaming availability is still being fetched. Check back in a few minutes.</p>
+{% endif %}
 {% if rows %}
 {# The watchlist as a poster gallery (#45d): the popover carries each
    film's synopsis, credits, availability, and badges (Glenn's Aug
@@ -64,6 +83,9 @@
 	</div>
 	{% endfor %}
 </div>
+{% elif availability != "all" and counts["all"] %}
+<p class="lead">No watchlisted films match this filter.</p>
+<p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ counts["all"] }} watchlisted film{{ "s" if counts["all"] != 1 }}</a> instead.</p>
 {% else %}
 <p class="lead">Nothing on your watchlist yet.</p>
 <p class="text-muted">Add films from their pages &mdash; search TMDb for anything you want to watch, owned or not. Watching a film clears it from the list automatically.</p>
