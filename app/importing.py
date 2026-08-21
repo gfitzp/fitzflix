@@ -2068,6 +2068,38 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
         media_library = "TV Shows"
         title = tv.group("title")
+
+        # Canonicalize against existing records (#78 follow-on), the
+        # movie branch's convention: Sonarr may name a file with or
+        # without the series' year, and either form must land on the
+        # record that already owns the show rather than splitting it
+        # into a second series. A YEARED name attaches to the
+        # bare-titled record only when the year matches its TMDb
+        # first-air year — "Batman (1992)" never lands on the 1966
+        # series. A BARE name attaches to a year-suffixed record only
+        # when exactly one such record exists.
+
+        if TVSeries.query.filter_by(title=title).first() is None:
+            year_form = re.fullmatch(r"(?P<base>.+) \((?P<year>\d{4})\)", title)
+            if year_form:
+                bare = TVSeries.query.filter_by(title=year_form.group("base")).first()
+                if (
+                    bare is not None
+                    and bare.tmdb_first_air_date is not None
+                    and bare.tmdb_first_air_date.year == int(year_form.group("year"))
+                ):
+                    title = bare.title
+            else:
+                candidates = [
+                    series
+                    for series in TVSeries.query.filter(
+                        TVSeries.title.like(f"{title} (____)")
+                    ).all()
+                    if re.fullmatch(re.escape(title) + r" \(\d{4}\)", series.title)
+                ]
+                if len(candidates) == 1:
+                    title = candidates[0].title
+
         season = int(tv.group("season"))
         episode = int(tv.group("episode"))
         season_episode = (

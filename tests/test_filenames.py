@@ -196,3 +196,47 @@ def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):
     assert quiet and loud and quiet["file_path"] == loud["file_path"]
     assert not quiet_lines
     assert loud_lines
+
+
+def test_yeared_name_attaches_to_bare_series_when_year_matches(app):
+    """Sonarr now names new files "Title (Year)" (#78 follow-on): the
+    yeared form must land on the existing bare-titled record when the
+    year matches its first-air year, not split into a second series."""
+
+    from datetime import datetime
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series("Top Gear", tmdb_first_air_date=datetime(2002, 10, 20))
+        details = evaluate_filename(
+            "Top Gear (2002) - S05E01 - [WEBDL-1080p].mkv", log=False
+        )
+        assert details["title"] == "Top Gear"
+        assert details["file_path"] == (
+            "TV Shows/Top Gear/Season 05/Top Gear - S05E01 - [WEBDL-1080p].mkv"
+        )
+
+        # A different year is a different show and keeps its own name
+        wrong_year = evaluate_filename(
+            "Top Gear (1978) - S01E01 - [DVD].mkv", log=False
+        )
+        assert wrong_year["title"] == "Top Gear (1978)"
+
+
+def test_bare_name_attaches_to_unique_year_suffixed_series(app):
+    """The inverse direction after a series rename: a stray bare-named
+    file lands on the year-suffixed record — but only when exactly one
+    candidate exists."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series("Batman (1966)")
+        details = evaluate_filename("Batman - S01E10 - [Bluray-1080p].mkv", log=False)
+        assert details["title"] == "Batman (1966)"
+
+        make_tv_series("Doctor Who (1963)")
+        make_tv_series("Doctor Who (2005)")
+        ambiguous = evaluate_filename("Doctor Who - S01E01 - [DVD].mkv", log=False)
+        assert ambiguous["title"] == "Doctor Who"
