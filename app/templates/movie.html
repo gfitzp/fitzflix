@@ -33,13 +33,37 @@
 			{# The star row is the page's rating control (#58): it shows
 			   the verdict — or the engine's estimate in paler gold until
 			   there is one — and taps post in the background. A tap
-			   creates a date-less verdict row; dates and review text
-			   live on the history page. The liked heart follows 3+
-			   stars automatically #}
+			   creates a date-less verdict row — a preference signal, not
+			   a diary entry. The liked heart follows 3+ stars
+			   automatically #}
 			<form action="" method="post" class="mb-2 d-flex align-items-center">
 				{{ movie_review_form.csrf_token }}
 				{{ rating_ladder(allow_not_interested=not review, current=(review.rating if review and review.rating is not none else none), flagged=refused, live=true, estimated=estimated_rating) }}
 			</form>
+			{# Letterboxd-first logging: with a linked account, dated
+			   watches and reviews belong on Letterboxd — the feed syncs
+			   them back on its own. The local log form is the demoted
+			   fallback for what the feed can't carry (outages, entries
+			   older than its ~50-item window) #}
+			{% set letterboxd_logging = current_user.letterboxd_username and movie.tmdb_id %}
+			{% if letterboxd_logging %}
+				<a class="btn btn-sm btn-primary mb-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
+			{% endif %}
+			<details class="mb-2">
+				<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Letterboxd unavailable? Log a viewing here" if letterboxd_logging else "Log a viewing" }}</summary>
+				<form action="" method="post" class="mt-1" style="max-width: 25rem;">
+					{{ movie_review_form.csrf_token }}
+					<div class="mb-1">
+						{{ movie_review_form.date_watched.label(class_="form-label small mb-0") }}
+						{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+					</div>
+					<div class="mb-1">
+						{{ movie_review_form.review.label(class_="form-label small mb-0") }}
+						{{ movie_review_form.review(class_="form-control form-control-sm", rows=3) }}
+					</div>
+					{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+				</form>
+			</details>
 			{% if movie.criterion_spine_number and movie.criterion_set_title %}
 				<p>Criterion Collection spine #{{ movie.criterion_spine_number }}, part of the {{ movie.criterion_set_title }} collector's set.</p>
 			{% elif movie.criterion_spine_number %}

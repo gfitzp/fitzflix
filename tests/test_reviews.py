@@ -1233,7 +1233,7 @@ def test_history_hides_update_date_from_the_same_day(app, admin_client):
 def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
     """The history page is chronological by watch date: a fresh unreviewed
     Plex watch outranks older reviewed entries, and dateless rating-only
-    rows trail the dated history."""
+    rows don't appear at all — they're preference signals, not viewings."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1276,8 +1276,8 @@ def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
     page = admin_client.get("/history").get_data(as_text=True)
     fresh = page.index("Fresh Plex Watch Film")
     old = page.index("Old Reviewed Film")
-    dateless_pos = page.index("Dateless Rating Film")
-    assert fresh < old < dateless_pos
+    assert fresh < old
+    assert "Dateless Rating Film" not in page
 
 
 def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
@@ -1558,3 +1558,123 @@ def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
     ).get_json()
     assert state["rating"] is None
     assert state["estimated"] == 4.5
+
+
+def test_movie_page_letterboxd_first_logging(app, admin_client):
+    """With a linked Letterboxd account, the movie page steers dated
+    logging to Letterboxd — the deep-link button appears and the local
+    log form demotes to a fallback; without one, the local form is the
+    plain "Log a viewing" path and no button renders."""
+
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        movie = make_movie("Letterboxd First Film", 1999, tmdb_id=4242)
+        # The session-scoped database may arrive with a username left by
+        # the feed-sync tests; this test owns both states explicitly
+        User.query.first().letterboxd_username = None
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Log it on Letterboxd" not in page
+    assert "Log a viewing" in page
+
+    with app.app_context():
+        User.query.first().letterboxd_username = "glenn"
+        db.session.commit()
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Log it on Letterboxd" in page
+    assert 'href="https://letterboxd.com/tmdb/4242/"' in page
+    assert "Letterboxd unavailable? Log a viewing here" in page
+
+    with app.app_context():
+        User.query.first().letterboxd_username = None
+        db.session.commit()
+
+
+def test_history_letterboxd_rows_edit_on_letterboxd(app, admin_client):
+    """Feed-originated rows show read-only stars and point edits at
+    Letterboxd — the sync would revert local changes — while locally
+    logged rows keep their per-row editors."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        synced = make_movie("Feed Synced Film", 1981, tmdb_id=5151)
+        local = make_movie("Locally Logged Film", 1982)
+        db.session.add_all(
+            [
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=synced.id,
+                    letterboxd_guid="letterboxd-review-111",
+                    review="From the feed.",
+                    date_watched=datetime(2026, 8, 10),
+                    date_reviewed=datetime(2026, 8, 10),
+                    **star_rating_fields(4.0),
+                ),
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=local.id,
+                    review="Logged here.",
+                    date_watched=datetime(2026, 8, 11),
+                    date_reviewed=datetime(2026, 8, 11),
+                    **star_rating_fields(3.0),
+                ),
+            ]
+        )
+        db.session.commit()
+        synced_row_id = UserMovieReview.query.filter_by(movie_id=synced.id).one().id
+        local_row_id = UserMovieReview.query.filter_by(movie_id=local.id).one().id
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert "Synced from Letterboxd" in page
+    assert 'href="https://letterboxd.com/tmdb/5151/"' in page
+    assert f"/review/{synced_row_id}/edit" not in page
+    assert f"/review/{local_row_id}/edit" in page
+
+
+def test_review_edit_refuses_letterboxd_rows(app, admin_client):
+    """The per-viewing editor turns feed-originated rows away — the next
+    poll would re-assert Letterboxd's verdict over any local edit."""
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = User.query.first().id
+        movie = make_movie("Guarded Feed Film", 1984, tmdb_id=6161)
+        row = UserMovieReview(
+            user_id=user_id,
+            movie_id=movie.id,
+            letterboxd_guid="letterboxd-watch-222",
+            review="",
+            date_watched=datetime(2026, 8, 12),
+            date_reviewed=datetime(2026, 8, 12),
+            **star_rating_fields(4.0),
+        )
+        db.session.add(row)
+        db.session.commit()
+        row_id = row.id
+
+    response = admin_client.get(f"/review/{row_id}/edit")
+    assert response.status_code == 302
+    assert "/history" in response.headers["Location"]
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    response = admin_client.post(
+        f"/review/{row_id}/edit",
+        data={"csrf_token": csrf_token_from(page), "quick_rating": "1"},
+    )
+    assert response.status_code == 302
+
+    with app.app_context():
+        row = UserMovieReview.query.filter_by(id=row_id).one()
+        assert float(row.rating) == 4.0

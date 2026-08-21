@@ -79,6 +79,19 @@ def review_edit(review_id):
 
     page = request.args.get("page", None, type=int)
 
+    # Feed-originated rows sync FROM Letterboxd (#61): while the entry
+    # stays in the feed window, every poll re-asserts Letterboxd's
+    # rating, like, and text over local edits — so this editor refuses
+    # guid rows outright rather than accepting changes that revert
+
+    if user_review.letterboxd_guid:
+        flash(
+            f"'{title}' syncs from your Letterboxd account — edit it on "
+            f"Letterboxd instead",
+            "info",
+        )
+        return redirect(url_for("main.history", page=page))
+
     movie_review_form = MovieReviewForm()
     quick_present, quick_rating = _quick_rating()
     if (
@@ -210,13 +223,16 @@ def history():
     page = request.args.get("page", 1, type=int)
 
     # Chronological by watch date, newest first — unreviewed viewings (Plex
-    # watches) sort by recency like everything else. DESC puts NULL watch
-    # dates last in both MySQL and SQLite, so dateless rating-only entries
-    # trail the dated history rather than burying it.
+    # watches) sort by recency like everything else. Dated rows only: this
+    # page is the diary, and a dateless row is a preference signal (a
+    # rating-ladder tap, ratings.csv), not a viewing. Those rows still
+    # drive recommendations and the stats below, and stay editable from
+    # their film's page.
 
     reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .filter(UserMovieReview.user_id == int(current_user.id))
+        .filter(UserMovieReview.date_watched.isnot(None))
         .order_by(
             UserMovieReview.date_watched.desc(),
             UserMovieReview.date_reviewed.desc(),

@@ -39,7 +39,14 @@
 				{{ movie_review_form.csrf_token }}
 				{{ rating_ladder() }}
 			</form>
-			<p class="small text-muted">This film isn't in the library; logging it adds a seen-but-unowned title to your history.</p>
+			{# Letterboxd-first logging, as on the movie page: a linked
+			   account logs dated watches on Letterboxd and lets the feed
+			   sync them back — the first tap here still creates the
+			   local record #}
+			{% if current_user.letterboxd_username %}
+				<a class="btn btn-sm btn-primary mb-2" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
+			{% endif %}
+			<p class="small text-muted">This film isn't in the library; rating it adds it as a seen-but-unowned title.</p>
 			{% include "_cast_scroller.html" %}
 		</div>
 	</div>

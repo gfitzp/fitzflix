@@ -31,10 +31,11 @@
 	</div>
 </div>
 <hr>
-{% if reviews %}
 {% if rated_count %}
 {# Letterboxd-style rating distribution: five whole-star bins rendered
-   locally as CSS bars — no charting library, no external requests #}
+   locally as CSS bars — no charting library, no external requests.
+   Outside the listing gate: dateless ratings count here even though
+   only dated viewings appear in the diary below #}
 <div class="mb-3 col-12 col-sm-6" id="rating-distribution">
 	<div class="d-flex align-items-end" style="height: 90px; gap: 2px;">
 		{% for bucket in rating_distribution %}
@@ -60,6 +61,7 @@
 	</div>
 </div>
 {% endif %}
+{% if reviews %}
 <nav aria-label="...">
 	<ul class="pagination">
 		<li class="page-item{% if not prev_url %} disabled{% endif %}">
@@ -96,11 +98,20 @@
 		   floor is 1 star. The typed text rides along with a star tap
 		   (both fields belong to the same form). An unrated viewing —
 		   a Plex watch, an unrated import — previews the engine's
-		   estimate until real stars land #}
+		   estimate until real stars land. Feed-originated rows (#61)
+		   show their stars read-only: the next poll re-asserts
+		   Letterboxd's verdict over any local edit, so edits happen
+		   there instead #}
+		{% if review.letterboxd_guid %}
+		<div class="d-inline-flex align-items-center" style="pointer-events: none;" title="Synced from Letterboxd">
+			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), estimated=estimates.get(review.movie_id)) }}
+		</div>
+		{% else %}
 		<form action="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}" method="post" class="d-inline-flex align-items-center">
 			{{ review_upload_form.csrf_token }}
 			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), live=true, estimated=estimates.get(review.movie_id)) }}
 		</form>
+		{% endif %}
 		{% if review.rewatch %}
 			<span class="badge text-bg-secondary align-text-bottom" title="Rewatch">
 				<svg width="0.9em" height="0.9em" viewBox="0 0 16 16" class="bi bi-arrow-repeat" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -119,6 +130,12 @@
 		   real formatting and keeps everything else escaped; the textarea
 		   below stays raw markup, since that's what gets edited #}
 		{{ review.review | review_html }}
+		{% if review.letterboxd_guid %}
+		{# No local editors on a feed row — the sync would revert them.
+		   The tmdb redirect lands on the film's Letterboxd page, where
+		   the diary entry lives #}
+		<div class="mt-1 small text-muted">Synced from Letterboxd{% if review.movie.tmdb_id %} — <a href="https://letterboxd.com/tmdb/{{ review.movie.tmdb_id }}/" target="_blank" rel="noreferrer">edit it there</a>{% endif %}</div>
+		{% else %}
 		{# Freeform text lives in its own per-row form (#58c) — separate
 		   from the star form, so a star tap can never silently save
 		   half-edited text. Dates still edit on the full review page #}
@@ -131,6 +148,7 @@
 			</form>
 		</details>
 		<div><a class="small" href="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}">Edit date</a></div>
+		{% endif %}
 	</div>
 </div>
 {% endfor %}
