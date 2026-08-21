@@ -56,7 +56,7 @@ from app.models import (
     User,
     tmdb_get,
 )
-from app.pipeline import record_task_stage
+from app.pipeline import migrate_trail, record_task_stage
 from app.tracks import (
     _extract_media_details,
     flag_possibly_forced_subtitles,
@@ -918,6 +918,14 @@ def localization_task(
                     os.remove(file_path)
                 except OSError:
                     pass
+
+            # The parse may have renamed the file (title canonicalized
+            # against an existing series, container swapped to .mkv);
+            # the trail is keyed by basename, so merge it under the new
+            # name before the move job stamps "queued" against it
+
+            if file_details.get("basename") != basename:
+                migrate_trail(current_app.redis, basename, file_details.get("basename"))
 
             current_app.file_queue.enqueue(
                 "app.videos.move_localized_file",

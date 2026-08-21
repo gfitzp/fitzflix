@@ -212,6 +212,77 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
     ]
 
 
+def test_a_mid_flight_rename_merges_the_trail(app):
+    """The parse can rename a file mid-flight — the title canonicalized
+    against an existing series, or a container conversion — and the
+    trail is keyed by basename, so localization merges it under the new
+    name before enqueueing the move. One file stays ONE trail (the
+    Futurama S11 imports split into two that overwrote each other's
+    chips on the File Activity card, Aug 2026), and the stamps that
+    arrive under the old name after the rename — the localization
+    worker's own "done" — follow the alias onto the merged trail."""
+
+    from app.pipeline import (
+        first_run,
+        migrate_trail,
+        pipeline_trails,
+        record_job_event,
+    )
+
+    old = "Trail Rename (1999) - S01E01 - [WEBDL-1080p].mkv"
+    new = "Trail Rename - S01E01 - [WEBDL-1080p].mkv"
+
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{old}",)
+        )
+        record_job_event(app.redis, localize, "started")
+
+        migrate_trail(app.redis, old, new)
+
+        app.file_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/.{new}", {"basename": new}, None, None),
+        )
+
+    record_job_event(app.redis, localize, "done")
+
+    trails = pipeline_trails(app.redis)
+    assert len(trails) == 1
+    assert trails[0]["basename"] == new
+    assert [(entry["stage"], entry["status"]) for entry in trails[0]["entries"]] == [
+        ("Localizing", "done"),
+        ("Moving into the library", "queued"),
+    ]
+
+    # The running banners' sort anchor — stamped under the old name at
+    # "started" — must survive the rename too
+
+    assert first_run(app.redis, localize) is not None
+
+
+def test_a_rename_with_no_prior_trail_just_redirects(app):
+    """Renaming a file whose trail never materialized (expired, or the
+    hooks failed) leaves only the alias — no empty card — and later
+    writes under the old name land on the new trail."""
+
+    from app.pipeline import migrate_trail, pipeline_trails
+
+    old = "Trail Ghost (1999) - S01E01 - [DVD].mkv"
+    new = "Trail Ghost - S01E01 - [DVD].mkv"
+    migrate_trail(app.redis, old, new)
+    assert pipeline_trails(app.redis) == []
+
+    with app.app_context():
+        app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{old}",)
+        )
+
+    trails = pipeline_trails(app.redis)
+    assert len(trails) == 1
+    assert trails[0]["basename"] == new
+
+
 def test_task_sub_stage_without_a_job_is_a_noop(app):
     """Direct task calls (tests, shells) have no current job; the
     sub-stage emitter must record nothing rather than guess."""

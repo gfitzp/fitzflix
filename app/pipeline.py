@@ -23,6 +23,13 @@ its own failures, and a trail is only ever advisory display state —
 seven days of TTL (matching the File Activity page's SQL window, so a
 landed card keeps its chips as long as it stays on the page), newest
 hundred files kept.
+
+Trails are keyed by basename, and a file can be RENAMED mid-flight
+(the parse canonicalizes titles against existing series; container
+conversion swaps the extension to .mkv). Localization then calls
+migrate_trail to merge the journey under the new name and leave an
+alias, so one file stays one trail instead of two that fight over the
+same File Activity card.
 """
 
 import hashlib
@@ -36,6 +43,7 @@ from datetime import datetime
 from rq import Queue, SimpleWorker
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
+ALIAS_KEY = "fitzflix:pipeline:alias:{digest}"
 ACTIVE_KEY = "fitzflix:pipeline:active"
 TRAIL_TTL_SECONDS = 7 * 86400
 ACTIVE_LIMIT = 100
@@ -141,6 +149,22 @@ def _decode_trail(raw):
     return json.loads(raw) if raw else []
 
 
+def _resolve_basename(connection, basename):
+    """The basename's current identity, following the rename alias
+    migrate_trail leaves behind — bounded, in case renames ever chain
+    (a canonicalized title later container-converted)."""
+
+    for _ in range(4):
+        value = connection.get(ALIAS_KEY.format(digest=_digest(basename)))
+        if not value:
+            break
+        value = value.decode() if isinstance(value, bytes) else value
+        if value == basename:
+            break
+        basename = value
+    return basename
+
+
 def _write_trail_entry(
     connection, basename, stage, status, job_id, before_job=False, sibling=None
 ):
@@ -159,6 +183,7 @@ def _write_trail_entry(
 
     from redis import WatchError
 
+    basename = _resolve_basename(connection, basename)
     digest = _digest(basename)
     key = FILE_KEY.format(digest=digest)
 
@@ -244,6 +269,87 @@ def _write_trail_entry(
                 continue
 
 
+def migrate_trail(connection, old_basename, new_basename):
+    """Merge a file's trail under its new basename when the pipeline
+    renames it mid-flight — the parse canonicalizing a title against
+    an existing series, or a container conversion swapping the
+    extension to .mkv. Without this the journey splits into two trails
+    that both claim the same File Activity card and overwrite each
+    other's chips (the Futurama S11 imports lost their Moved/Cataloged
+    chips this way, Aug 2026).
+
+    Localization calls this before enqueueing the move job, so the
+    move's "queued" stamp already lands on the merged trail; an alias
+    redirects the writes that arrive under the old name AFTER the
+    rename (the localization worker's own "done" stamp fires once the
+    task body returns) onto it too. Advisory like every hook: failures
+    are logged and swallowed, bounded retries."""
+
+    try:
+        if not old_basename or not new_basename or old_basename == new_basename:
+            return
+        from redis import WatchError
+
+        old_digest = _digest(old_basename)
+        new_digest = _digest(new_basename)
+        old_key = FILE_KEY.format(digest=old_digest)
+        new_key = FILE_KEY.format(digest=new_digest)
+        alias_key = ALIAS_KEY.format(digest=old_digest)
+
+        for _ in range(10):
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with connection.pipeline() as pipe:
+                try:
+                    pipe.watch(old_key, new_key)
+                    old_trail = _decode_trail(pipe.hget(old_key, "trail"))
+                    old_first = pipe.hget(old_key, "first_run")
+
+                    # Nothing recorded under the old name (expired, or
+                    # the hooks never fired): just leave the redirect
+
+                    if not old_trail and old_first is None:
+                        pipe.multi()
+                        pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
+                        pipe.execute()
+                        return
+
+                    # A re-import within the TTL finds last run's chips
+                    # already under the new name; the current run's
+                    # entries are newer, so they append after
+
+                    merged = _decode_trail(pipe.hget(new_key, "trail")) + old_trail
+                    del merged[:-40]
+
+                    pipe.multi()
+                    if old_first is not None:
+                        pipe.hsetnx(new_key, "first_run", old_first)
+                    pipe.hset(
+                        new_key,
+                        mapping={
+                            "basename": new_basename,
+                            "trail": json.dumps(merged),
+                            "updated": now,
+                        },
+                    )
+                    pipe.expire(new_key, TRAIL_TTL_SECONDS)
+                    pipe.set(alias_key, new_basename, ex=TRAIL_TTL_SECONDS)
+                    pipe.delete(old_key)
+                    pipe.zrem(ACTIVE_KEY, old_digest)
+                    pipe.zadd(ACTIVE_KEY, {new_digest: time.time()})
+                    pipe.zremrangebyrank(ACTIVE_KEY, 0, -(ACTIVE_LIMIT + 1))
+                    pipe.execute()
+                    return
+                except WatchError:
+                    continue
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
+
+
 def record_job_event(connection, job, event):
     """Append (or update in place) one stage entry on the job's file
     trail. Advisory only — any failure is logged and swallowed, never
@@ -322,7 +428,7 @@ def first_run(connection, job):
         found = _stage_for(job)
         if found is None:
             return None
-        basename, _ = found
+        basename = _resolve_basename(connection, found[0])
         value = connection.hget(FILE_KEY.format(digest=_digest(basename)), "first_run")
         return value.decode() if isinstance(value, bytes) else value
     except Exception:
