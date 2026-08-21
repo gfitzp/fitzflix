@@ -70,6 +70,30 @@
 </div>
 {% endif %}
 
+{% if episode_results %}
+{# TMDb episode titles (#78 step 6): each row lands on its season page.
+   Numbering-suspect series never appear here #}
+<h4>Episodes</h4>
+<div class="list-group mb-4">
+	{% for result in episode_results %}
+	{% set tv = result.series %}
+	{% set episode = result.episode %}
+	<a href="{{ url_for('main.season', series_id=tv.id, season=episode.season) }}" class="list-group-item list-group-item-action">
+		<div class="d-flex">
+			{% if episode.tmdb_still_path %}
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ episode.tmdb_still_path }}" loading="lazy" alt="" class="rounded me-3 align-self-start" style="width: 92px;">
+			{% endif %}
+			<div class="flex-grow-1">
+				<h5 class="mb-1">{{ episode.title }}</h5>
+				<div class="small text-muted">{{ tv.tmdb_name if tv.tmdb_name else tv.title }} &middot; S{{ "%02d"|format(episode.season) }}E{{ "%02d"|format(episode.episode) }}{% if episode.air_date %} &middot; {{ episode.air_date.year }}{% endif %}</div>
+				{% if episode.overview %}<p class="mb-1 mt-1 small text-muted">{{ episode.overview|truncate(200) }}</p>{% endif %}
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
+{% endif %}
+
 {% if people_results %}
 <h4>People</h4>
 <div class="list-group mb-2">
@@ -87,7 +111,7 @@
 			{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ person.name }}</h5>
-				<span class="badge text-bg-light">{% if person.role %}{{ person.role }} &middot; {% endif %}{{ person.film_count }} film{{ "s" if person.film_count != 1 }}</span>
+				<span class="badge text-bg-light">{% if person.role %}{{ person.role }} &middot; {% endif %}{{ person.film_count }} title{{ "s" if person.film_count != 1 }}</span>
 			</div>
 		</div>
 	</a>
@@ -96,7 +120,7 @@
 <p class="mb-4"><a class="small" href="{{ url_for('main.people', q=q) }}">All people matching &ldquo;{{ q }}&rdquo;</a></p>
 {% endif %}
 
-{% if not movie_results and not tv_results and not people_results %}
+{% if not movie_results and not tv_results and not episode_results and not people_results %}
 <p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 {% endif %}
 

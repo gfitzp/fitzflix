@@ -62,7 +62,7 @@ def test_people_page_defaults_to_multi_film_credited_people(app, admin_client):
     page = admin_client.get("/people").get_data(as_text=True)
     assert "Repertory Regular" in page
     assert "credit=801" in page
-    assert "2 films" in page
+    assert "2 titles" in page
 
     # Single-film people are the long tail; they only appear via search
     assert "One Scene Wonder" not in page
@@ -80,7 +80,7 @@ def test_people_search_widens_to_single_film_people(app, admin_client):
 
     page = admin_client.get("/people?q=Scene+Wonder").get_data(as_text=True)
     assert "One Scene Wonder" in page
-    assert "1 film<" in page or "1 film\n" in page or "1 film</span>" in page
+    assert "1 title<" in page or "1 title\n" in page or "1 title</span>" in page
     assert "Repertory Regular" not in page
 
 
@@ -93,7 +93,7 @@ def test_people_ordered_by_film_count(app, admin_client):
 
     page = admin_client.get("/people").get_data(as_text=True)
     assert page.index("Busy Actor") < page.index("Occasional Actor")
-    assert "4 films" in page
+    assert "4 titles" in page
 
 
 def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
@@ -131,9 +131,9 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
 
     page = admin_client.get("/people?role=all").get_data(as_text=True)
     assert "Steady Director" in page
-    assert "Director &middot; 3 films" in page
+    assert "Director &middot; 3 titles" in page
     assert "Hyphenate Auteur" in page
-    assert "Director &middot; 2 films" in page
+    assert "Director &middot; 2 titles" in page
 
     # Non-key crew jobs don't count as credits at all
 
@@ -181,13 +181,13 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
     # The hyphenate's count under Cast is their two acting credits,
     # not their three directing ones
 
-    assert default_page.count("2 films") >= 2
-    assert "3 films" not in default_page
+    assert default_page.count("2 titles") >= 2
+    assert "3 titles" not in default_page
 
     crew_page = admin_client.get("/people?role=crew").get_data(as_text=True)
     assert "Pure Director" in crew_page
     assert "Sometimes Actor" in crew_page
-    assert "3 films" in crew_page
+    assert "3 titles" in crew_page
     assert "Pure Actor" not in crew_page
     assert "Every key crew member credited" in crew_page
 
@@ -215,11 +215,11 @@ def test_search_finds_crew_people_with_roles(app, admin_client):
 
     page = admin_client.get("/search?q=lens+wizard").get_data(as_text=True)
     assert "Lens Wizard" in page
-    assert "Cinematographer &middot; 2 films" in page
+    assert "Cinematographer &middot; 2 titles" in page
 
     payload = admin_client.get("/search.json?q=lens wi").get_json()
     people = [r for r in payload["results"] if r["type"] == "Person"]
-    assert people and people[0]["detail"] == "Cinematographer · 2 films"
+    assert people and people[0]["detail"] == "Cinematographer · 2 titles"
 
 
 def test_people_nav_link_present(admin_client):

@@ -46,7 +46,7 @@
 {% if query_text %}
 <p class="small text-muted">{{ noun|capitalize }}s matching &ldquo;{{ query_text }}&rdquo;{% if pages %} ({{ pages.total }}){% endif %} &mdash; <a href="{{ url_for('main.people', role=role_param) }}">clear search</a></p>
 {% else %}
-<p class="small text-muted">Every {{ noun }} credited in more than one of the library's films{% if pages %} ({{ pages.total }} people){% endif %}, most films first. Search to find anyone, including single-film appearances.</p>
+<p class="small text-muted">Every {{ noun }} credited in more than one of the library's films or series{% if pages %} ({{ pages.total }} people){% endif %}, most titles first. Search to find anyone, including single-title appearances.</p>
 {% endif %}
 {% if people %}
 {{ pagination_nav() }}
@@ -64,7 +64,7 @@
 		</a>
 		<figcaption class="figure-caption" style="width: 92px;">
 			<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="text-muted d-block text-truncate" title="{{ person.name }}">{{ person.name }}</a>
-			<span class="d-block" style="opacity: 0.7;">{% if roles.get(person.id) %}{{ roles[person.id] }} &middot; {% endif %}{{ person.film_count }} film{{ "s" if person.film_count != 1 }}</span>
+			<span class="d-block" style="opacity: 0.7;">{% if roles.get(person.id) %}{{ roles[person.id] }} &middot; {% endif %}{{ person.film_count }} title{{ "s" if person.film_count != 1 }}</span>
 		</figcaption>
 	</figure>
 	{% endfor %}

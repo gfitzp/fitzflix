@@ -62,6 +62,8 @@ from app.models import (
     TMDBCredit,
     TMDBGenre,
     TVCast,
+    TVCrew,
+    TVEpisode,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -518,6 +520,102 @@ def movie_library():
                 if matches or rentals:
                     streaming_attribution = True
 
+        # Television credits (#78 step 6): the person's TMDb TV career,
+        # one row per series, day-cached like the film list. Self
+        # appearances are dropped — talk-show and awards-night rows
+        # would swamp the acting credits (the #27 key-roles spirit).
+        # Owned series link to their pages; TV has no review flow, so
+        # unowned rows render unlinked (#30's rule).
+
+        tv_rows = {}
+        tv_credits = None
+        if current_app.config["TMDB_API_KEY"]:
+            tv_cache_key = f"fitzflix:tmdb:person:{int(credit)}:tv_credits"
+            cached = current_app.redis.get(tv_cache_key)
+            if cached:
+                tv_credits = json.loads(cached)
+            else:
+                try:
+                    r = tmdb_get(
+                        current_app.config["TMDB_API_URL"]
+                        + f"/person/{int(credit)}/tv_credits",
+                        params={"api_key": current_app.config["TMDB_API_KEY"]},
+                        timeout=10,
+                    )
+                    r.raise_for_status()
+                    payload = r.json()
+                    tv_credits = {
+                        "cast": [
+                            entry
+                            for entry in payload.get("cast") or []
+                            if "self" not in (entry.get("character") or "").casefold()
+                        ],
+                        "crew": [
+                            entry
+                            for entry in payload.get("crew") or []
+                            if entry.get("job") in CREW_ROLE_LABELS
+                        ],
+                    }
+                    current_app.redis.set(
+                        tv_cache_key, json.dumps(tv_credits), ex=86400
+                    )
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
+
+        if tv_credits:
+            credited_ids = {
+                entry.get("id")
+                for entry in (tv_credits.get("cast") or [])
+                + (tv_credits.get("crew") or [])
+                if entry.get("id") is not None
+            }
+            local_series = {
+                series.tmdb_id: series
+                for series in TVSeries.query.filter(
+                    TVSeries.tmdb_id.in_(credited_ids or [0])
+                )
+            }
+
+            def tv_credit_row(entry):
+                tmdb_id = entry.get("id")
+                row = tv_rows.get(tmdb_id)
+                if row is None:
+                    first_air = (entry.get("first_air_date") or "")[:4]
+                    series = local_series.get(tmdb_id)
+                    row = tv_rows[tmdb_id] = {
+                        "tmdb_id": tmdb_id,
+                        "name": entry.get("name"),
+                        "year": int(first_air) if first_air.isdigit() else None,
+                        "poster_path": entry.get("poster_path"),
+                        "overview": entry.get("overview"),
+                        "characters": [],
+                        "jobs": [],
+                        "episode_count": entry.get("episode_count"),
+                        "series": series,
+                        "owned": bool(series and series.files.count()),
+                    }
+                return row
+
+            for entry in tv_credits.get("cast") or []:
+                if entry.get("id") is None:
+                    continue
+                row = tv_credit_row(entry)
+                if entry.get("character"):
+                    row["characters"].append(entry["character"])
+            for entry in tv_credits.get("crew") or []:
+                if entry.get("id") is None:
+                    continue
+                row = tv_credit_row(entry)
+                label = CREW_ROLE_LABELS.get(entry.get("job"))
+                if label and label not in row["jobs"]:
+                    row["jobs"].append(label)
+            for row in tv_rows.values():
+                row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+
+        television = sorted(
+            tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
+        )
+
         return render_template(
             "filmography.html",
             title=person_name,
@@ -525,6 +623,7 @@ def movie_library():
             profile_path=person_profile_path,
             bio=bio,
             filmography=filmography,
+            television=television,
             tmdb_unavailable=tmdb_credits is None,
             streaming_attribution=streaming_attribution,
         )
@@ -2130,12 +2229,35 @@ def tv(series_id):
         .all()
     ]
 
+    # The movie page's meta line, in TV terms: run of years, size when
+    # the run is complete (the apply stores counts only for Ended
+    # shows), genres
+
+    meta_bits = []
+    if tv.tmdb_first_air_date:
+        years = f"{tv.tmdb_first_air_date.year}"
+        if (
+            tv.tmdb_last_air_date
+            and tv.tmdb_last_air_date.year != tv.tmdb_first_air_date.year
+        ):
+            years += f"–{tv.tmdb_last_air_date.year}"
+        meta_bits.append(years)
+    if tv.tmdb_number_of_seasons:
+        meta_bits.append(
+            f"{tv.tmdb_number_of_seasons} seasons, "
+            f"{tv.tmdb_number_of_episodes} episodes"
+        )
+    genre_names = ", ".join(genre.name for genre in tv.genres)
+    if genre_names:
+        meta_bits.append(genre_names)
+
     return render_template(
         "tv.html",
         title=title,
         tv=tv,
         seasons=seasons,
         cast=cast,
+        meta_line=" · ".join(meta_bits),
         transcode_form=transcode_form,
         series_restore_form=series_restore_form,
         series_restore_estimate=series_restore_estimate,
@@ -2230,12 +2352,39 @@ def season(series_id, season):
 
         return redirect(url_for("main.season", series_id=series_id, season=season))
 
+    # Episode metadata for the guide and the files table's title column
+    # (#78 step 6) — withheld entirely for numbering-suspect series,
+    # where a title is likelier to mislabel than to inform. File
+    # editions outrank fetched titles in the template.
+
+    from app.tv_validation import series_is_suspect
+
+    episodes = {}
+    episode_guide = []
+    if not series_is_suspect(series_id):
+        episodes = {
+            row.episode: row
+            for row in TVEpisode.query.filter_by(
+                series_id=series_id, season=season
+            ).all()
+        }
+        episode_guide = sorted(episodes.values(), key=lambda row: row.episode)
+
+    owned_episodes = set()
+    for file, _, _, _ in files:
+        owned_episodes.update(
+            range(file.episode, (file.last_episode or file.episode) + 1)
+        )
+
     return render_template(
         "season.html",
         title=title,
         tv=tv,
         season=season,
         files=files,
+        episodes=episodes,
+        episode_guide=episode_guide,
+        owned_episodes=owned_episodes,
         season_restore_form=season_restore_form,
         season_restore_estimate=season_restore_estimate,
     )
@@ -2736,10 +2885,14 @@ ROLE_PRECEDENCE = (
 
 def _credited_film_pairs(role="all"):
     """(credit_id, movie_id) pairs the people surfaces count: credited
-    cast rows, key crew roles, or their deduplicated union.
+    cast rows, key crew roles, or their deduplicated union — movies and
+    TV series both (#78 step 6). A TV series rides the movie_id column
+    as its NEGATED id, keeping the distinct-count space collision-free
+    without a discriminator column; nothing joins these ids back to a
+    table, they are only ever counted.
 
     The search paths always count everything ("all"); the /people page
-    passes its cast/crew filter through so film counts reflect the
+    passes its cast/crew filter through so work counts reflect the
     selected credit type.
     """
 
@@ -2752,24 +2905,62 @@ def _credited_film_pairs(role="all"):
             db.not_(MovieCast.character.like("%(uncredited)%")),
         )
     )
+    tv_cast_pairs = db.session.query(
+        TVCast.credit_id.label("credit_id"),
+        (-TVCast.tv_id).label("movie_id"),
+    ).filter(
+        db.or_(
+            TVCast.character == None,
+            db.not_(TVCast.character.like("%(uncredited)%")),
+        )
+    )
     crew_pairs = db.session.query(
         MovieCrew.credit_id.label("credit_id"),
         MovieCrew.movie_id.label("movie_id"),
     ).filter(MovieCrew.job.in_(list(CREW_ROLE_LABELS)))
+    tv_crew_pairs = db.session.query(
+        TVCrew.credit_id.label("credit_id"),
+        (-TVCrew.tv_id).label("movie_id"),
+    ).filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
     if role == "cast":
-        return cast_pairs.subquery()
+        return cast_pairs.union(tv_cast_pairs).subquery()
     if role == "crew":
-        return crew_pairs.subquery()
-    return cast_pairs.union(crew_pairs).subquery()
+        return crew_pairs.union(tv_crew_pairs).subquery()
+    return cast_pairs.union(tv_cast_pairs, crew_pairs, tv_crew_pairs).subquery()
 
 
 def _dominant_roles(credit_ids):
     """Each person's dominant credited role — the key role covering the
-    most distinct library films, ties broken by ROLE_PRECEDENCE."""
+    most distinct library works (films and series both), ties broken by
+    ROLE_PRECEDENCE."""
 
     if not credit_ids:
         return {}
     counts = {}
+    for credit_id, tally in (
+        db.session.query(TVCast.credit_id, db.func.count(db.distinct(TVCast.tv_id)))
+        .filter(TVCast.credit_id.in_(credit_ids))
+        .filter(
+            db.or_(
+                TVCast.character == None,
+                db.not_(TVCast.character.like("%(uncredited)%")),
+            )
+        )
+        .group_by(TVCast.credit_id)
+    ):
+        role_counts = counts.setdefault(credit_id, {})
+        role_counts["Actor"] = role_counts.get("Actor", 0) + tally
+    for credit_id, job, tally in (
+        db.session.query(
+            TVCrew.credit_id, TVCrew.job, db.func.count(db.distinct(TVCrew.tv_id))
+        )
+        .filter(TVCrew.credit_id.in_(credit_ids))
+        .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .group_by(TVCrew.credit_id, TVCrew.job)
+    ):
+        label = CREW_ROLE_LABELS[job]
+        role_counts = counts.setdefault(credit_id, {})
+        role_counts[label] = role_counts.get(label, 0) + tally
     for credit_id, tally in (
         db.session.query(
             MovieCast.credit_id, db.func.count(db.distinct(MovieCast.movie_id))
@@ -2783,7 +2974,8 @@ def _dominant_roles(credit_ids):
         )
         .group_by(MovieCast.credit_id)
     ):
-        counts.setdefault(credit_id, {})["Actor"] = tally
+        role_counts = counts.setdefault(credit_id, {})
+        role_counts["Actor"] = role_counts.get("Actor", 0) + tally
     for credit_id, job, tally in (
         db.session.query(
             MovieCrew.credit_id,

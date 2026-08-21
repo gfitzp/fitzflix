@@ -80,4 +80,30 @@
 {% if not filmography %}
 <p class="lead">No films found for this person.</p>
 {% endif %}
+{% if television %}
+{# The TV career as the same poster grid (#78 step 6). Owned series
+   link to their pages; TV has no review flow, so unowned tiles stay
+   unlinked (#30's rule), and there are no tile actions — ladders and
+   watchlists are film concepts #}
+{% from "_availability_badges.html" import library_badge %}
+<hr>
+<h4>Television</h4>
+<div class="row">
+	{% for row in television %}
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
+		{% if row.owned %}<a href="{{ url_for('main.tv', series_id=row.series.id) }}" class="text-decoration-none text-body">{% endif %}
+			{% if row.poster_path %}
+				{{ poster_image(config['TMDB_IMAGE_URL'] + '/w342' + row.poster_path, row.name ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
+			{% else %}
+				{{ poster_image(none, row.name) }}
+			{% endif %}
+			<p class="small mb-0">{{ row.name }}{% if row.year %} ({{ row.year }}){% endif %}{% if row.owned %} {{ library_badge() }}{% endif %}</p>
+			{% if row.jobs or row.characters %}
+			<p class="mb-0 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
+			{% endif %}
+		{% if row.owned %}</a>{% endif %}
+	</div>
+	{% endfor %}
+</div>
+{% endif %}
 {% endblock %}

@@ -11,11 +11,17 @@
 	<div class="col-md-auto">
 		{% include "_tv_poster_large.html" %}
 	</div>
-	<div class="col-md">
+	{# min-width: 0 lets this column shrink below the cast strip's
+	   intrinsic width, so the wide scroller can't push the whole
+	   column down beneath the poster — movie.html's pattern #}
+	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h3>
-			{% if tv.tmdb_data_as_of %}
+			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>
+			{% endif %}
+			{% if meta_line %}
+			<p class="text-muted mb-2">{{ meta_line }}</p>
 			{% endif %}
 			{% include "_cast_scroller.html" %}
 			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>

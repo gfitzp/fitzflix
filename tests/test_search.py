@@ -598,7 +598,7 @@ def test_search_finds_people(app, admin_client):
     page = admin_client.get("/search?q=prolific").get_data(as_text=True)
     assert "People" in page
     assert "Prolific Player" in page
-    assert "2 films" in page
+    assert "2 titles" in page
     assert "credit=901" in page
     # Uncredited-only people never surface, matching the People page
     assert "Prolific Extra" not in page
@@ -616,7 +616,7 @@ def test_search_json_includes_people(app, admin_client):
     people = [r for r in data["results"] if r["type"] == "Person"]
     assert len(people) == 1
     assert people[0]["title"] == "Typeahead Thespian"
-    assert people[0]["detail"] == "Actor · 1 film"
+    assert people[0]["detail"] == "Actor · 1 title"
     assert "credit=903" in people[0]["url"]
 
 
