@@ -643,7 +643,7 @@ class TMDBMixin(object):
         if tmdb_info.get("external_ids"):
             external_ids = tmdb_info.get("external_ids")
             self.imdb_id = external_ids.get("imdb_id")
-            self.thetvdb_id = external_ids.get("thetvdb_id")
+            self.tvdb_id = external_ids.get("tvdb_id")
 
         self.tmdb_id = tmdb_info.get("id")
         self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
