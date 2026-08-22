@@ -572,6 +572,13 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.register_blueprint(api_bp, url_prefix="/api")
 
+    # Credentials never reach the log, whichever handler writes it; see
+    # app.redaction. Installed in every mode so tests cover it too
+
+    from app.redaction import install as install_redaction
+
+    install_redaction(app.logger, app.config)
+
     if not app.debug:
         # Configure how to handle logs when running in production mode
 

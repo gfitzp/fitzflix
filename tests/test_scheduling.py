@@ -1057,3 +1057,39 @@ def test_cron_table_refreshes_streaming_availability_nightly(app):
     entry = entries["app.streaming.refresh_availability"]
     assert entry["cron"] == "30 4 * * *"
     assert entry["timeout"] >= 3600
+
+
+def test_apply_tmdb_refresh_saves_the_payload_when_apply_raises(app, monkeypatch):
+    """A payload whose apply raises is written beside the log, gzipped
+    JSON named for the record, so a transient upstream glitch (the
+    2026-08-22 malformed aggregate credits) can be examined after TMDb
+    has gone back to serving clean data."""
+
+    import glob
+    import gzip
+    import zlib
+
+    from app import db
+    from app.models import TVSeries
+    from app.videos import apply_tmdb_refresh
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        tv = make_tv_series("Glitch Show")
+        db.session.commit()
+        tv_id = tv.id
+
+        def explode(self, tmdb_info):
+            raise AttributeError("'list' object has no attribute 'get'")
+
+        monkeypatch.setattr(TVSeries, "tmdb_tv_apply", explode)
+
+        info = {"id": 4242, "aggregate_credits": {"cast": [{"roles": [["bad"]]}]}}
+        payload = zlib.compress(json.dumps(info).encode("utf-8"))
+        assert apply_tmdb_refresh("TV Shows", tv_id, tmdb_payload=payload) is False
+
+        pattern = f"{app.config['LOG_FILE']}.tmdb-payload.tv-{tv_id}.*.json.gz"
+        dumps = glob.glob(pattern)
+        assert len(dumps) == 1
+        with gzip.open(dumps[0], "rb") as saved:
+            assert json.loads(saved.read()) == info

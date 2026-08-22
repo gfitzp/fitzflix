@@ -165,6 +165,28 @@ def tmdb_get(url, **kwargs):
     return requests.get(url, **kwargs)
 
 
+def tmdb_objects(entries, owner, what):
+    """Yield the dict entries of a TMDb credits list, logging and
+    skipping anything else.
+
+    The overnight TV refresh of 2026-08-22 failed on 14 of 25 series
+    because TMDb served a bare list where a cast member's role object
+    belongs — for a few seconds, and clean again by noon. One malformed
+    entry used to abort the whole apply with an AttributeError and no
+    record of the shape; now the entry is logged with its fragment and
+    skipped, so the rest of the payload still lands.
+    """
+
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
+        else:
+            current_app.logger.warning(
+                f"{owner} TMDb {what} entry is not an object, skipping: "
+                f"{repr(entry)[:300]}"
+            )
+
+
 class TMDBMixin(object):
     """TMDb fetch/apply methods shared by the Movie and TVSeries models.
 
@@ -408,7 +430,7 @@ class TMDBMixin(object):
         if tmdb_info.get("credits"):
             invalidate_people_ranking()
             credits = tmdb_info.get("credits")
-            for person in credits.get("cast"):
+            for person in tmdb_objects(credits.get("cast"), self, "cast"):
                 p = TMDBCredit.query.filter_by(id=person.get("id")).first()
                 if not p:
                     p = TMDBCredit(
@@ -435,7 +457,7 @@ class TMDBMixin(object):
                     )
                     db.session.add(mc)
 
-            for person in credits.get("crew"):
+            for person in tmdb_objects(credits.get("crew"), self, "crew"):
                 p = TMDBCredit.query.filter_by(id=person.get("id")).first()
                 if not p:
                     p = TMDBCredit(
@@ -839,7 +861,7 @@ class TMDBMixin(object):
             invalidate_people_ranking()
 
             seen_roles = set()
-            for person in aggregate.get("cast") or []:
+            for person in tmdb_objects(aggregate.get("cast"), self, "cast"):
                 p = TMDBCredit.query.filter_by(id=person.get("id")).first()
                 if not p:
                     p = TMDBCredit(
@@ -850,7 +872,9 @@ class TMDBMixin(object):
                     )
                     db.session.add(p)
 
-                for role in person.get("roles") or []:
+                for role in tmdb_objects(
+                    person.get("roles"), self, f"cast {person.get('id')} role"
+                ):
                     key = (p.id,) + collation_key(role.get("character"))
                     if key in seen_roles:
                         continue
@@ -866,7 +890,7 @@ class TMDBMixin(object):
                     )
 
             seen_jobs = set()
-            for person in aggregate.get("crew") or []:
+            for person in tmdb_objects(aggregate.get("crew"), self, "crew"):
                 p = TMDBCredit.query.filter_by(id=person.get("id")).first()
                 if not p:
                     p = TMDBCredit(
@@ -877,7 +901,9 @@ class TMDBMixin(object):
                     )
                     db.session.add(p)
 
-                for job in person.get("jobs") or []:
+                for job in tmdb_objects(
+                    person.get("jobs"), self, f"crew {person.get('id')} job"
+                ):
                     key = (p.id,) + collation_key(
                         person.get("department"), job.get("job")
                     )

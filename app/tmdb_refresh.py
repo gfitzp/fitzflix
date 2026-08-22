@@ -12,6 +12,7 @@ filename plumbing lives in app.importing and is imported lazily,
 keeping the module import direction one-way.
 """
 
+import gzip
 import json
 import os
 import random
@@ -177,6 +178,37 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
 
         else:
             return True
+
+
+def save_failed_payload(library, id, tmdb_payload):
+    """Write a payload whose apply raised beside the log, so a transient
+    upstream glitch can be examined after the fact.
+
+    The 2026-08-22 overnight TV refresh failed on 14 series because TMDb
+    served malformed aggregate credits for a few seconds; by the time
+    anyone looked, the live payloads were clean again and the bad shape
+    was gone — the apply had logged only the traceback. The dump is
+    named under the log file (LOG_FILE.tmdb-payload.<library>-<id>.
+    <stamp>.json.gz) so rotate_logs' retention glob prunes it with the
+    archives. Returns the path, or None when there was nothing to save.
+    """
+
+    if not tmdb_payload:
+        return None
+
+    slug = "tv" if library == "TV Shows" else "movie"
+    stamp = datetime.now().strftime("%Y-%m-%dT%H%M%S")
+    path = f"{current_app.config['LOG_FILE']}.tmdb-payload.{slug}-{id}.{stamp}.json.gz"
+    try:
+        with gzip.open(path, "wb") as target:
+            target.write(zlib.decompress(tmdb_payload))
+    except Exception:
+        current_app.logger.warning(
+            f"Could not save the failed TMDb payload to {path}: "
+            f"{traceback.format_exc()}"
+        )
+        return None
+    return path
 
 
 def apply_tmdb_refresh(
@@ -548,8 +580,17 @@ def apply_tmdb_refresh(
             db.session.commit()
 
         except Exception:
-            current_app.logger.error(traceback.format_exc())
+            saved = save_failed_payload(library, id, tmdb_payload)
+            current_app.logger.error(
+                traceback.format_exc()
+                + (
+                    f"TMDb payload that failed to apply saved to {saved}"
+                    if saved
+                    else ""
+                )
+            )
             db.session.rollback()
+            return False
 
         else:
             return True

@@ -364,3 +364,55 @@ def test_episodes_cascade_with_their_series(app):
         db.session.delete(series)
         db.session.commit()
         assert TVEpisode.query.count() == 0
+
+
+def test_apply_skips_malformed_credit_entries(app, caplog):
+    """The 2026-08-22 overnight refresh: TMDb briefly served a bare list
+    where a cast member's role object belongs, and one such entry aborted
+    the whole apply. A malformed role, job, or person now logs its
+    fragment and is skipped; everything well-formed still lands."""
+
+    with app.app_context():
+        series = make_tv_series("Futurama", tmdb_id=615)
+        with caplog.at_level("WARNING"):
+            series.tmdb_tv_apply(
+                {
+                    "id": 615,
+                    "aggregate_credits": {
+                        "cast": [
+                            {
+                                "id": 1,
+                                "name": "Billy West",
+                                "order": 0,
+                                "roles": [
+                                    ["Fry", 140],
+                                    {"character": "Fry (voice)", "episode_count": 140},
+                                ],
+                            },
+                            ["not", "a", "person"],
+                        ],
+                        "crew": [
+                            {
+                                "id": 2,
+                                "name": "Matt Groening",
+                                "department": "Writing",
+                                "jobs": [
+                                    {"job": "Creator", "episode_count": 140},
+                                    "Executive Producer",
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+            db.session.commit()
+
+        assert [c.character for c in series.cast] == ["Fry (voice)"]
+        assert [c.job for c in series.crew] == ["Creator"]
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any(
+            "cast 1 role entry is not an object" in w and "['Fry', 140]" in w
+            for w in warnings
+        )
+        assert any("cast entry is not an object" in w for w in warnings)
+        assert any("crew 2 job entry is not an object" in w for w in warnings)
