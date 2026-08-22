@@ -304,9 +304,10 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
 
 
 def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
-    """Page 1 carries the in-flight section and the card-fetch URL the
-    queue poll's dashboard mode keys on, and each landed card advertises
-    the basenames trails can match; deeper pages are a plain list."""
+    """Page 1 carries the card-fetch URL the queue poll's dashboard mode
+    keys on, and each landed card advertises the basenames trails can
+    match; deeper pages are a plain list. The separate in-flight list
+    is gone — those chips paint on the queue page's rows now."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -319,7 +320,7 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
-    assert 'id="pipeline-files-section"' in page
+    assert 'id="pipeline-files-section"' not in page
     assert "window.fileActivityCardUrl = " in page
     assert (
         'data-file-basenames="Dashboard Film (2012) - [Bluray-1080p].mkv|Dashboard.Film.2012.mkv"'
@@ -328,7 +329,6 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
     assert "data-trail" in page
 
     deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
-    assert 'id="pipeline-files-section"' not in deeper
     assert "window.fileActivityCardUrl = " not in deeper
 
 

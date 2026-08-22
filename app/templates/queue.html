@@ -5,6 +5,15 @@
 	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
 </div>
 <hr>
+{# Every job running, waiting, or booked for a deferred retry, each
+   with its file's pipeline trail as stage chips — the 5-second poll
+   in base.html (renderAll) keeps the rows live. The poll is asked for
+   the full retained trail set so a file with no job left to list
+   under still shows as a trailing "no job in queue" row. #}
+<script>
+	window.pipelineTrailLimit = 100;
+</script>
+<p class="small text-muted">Each row is one job, with its file's journey through the pipeline as per-stage chips &mdash; the staging copy, localization, the library copy, cataloging, the S3 archive, and any remuxes, transcodes, or restores. Blue is running, gray is waiting its turn, amber is a deferred retry, and red failures stay visible even after a retry succeeds. A file whose last stage isn't done but has no job left to run trails the list.</p>
 <table class="table table-striped">
 	<thead class="table-light">
 		<tr class="d-flex">

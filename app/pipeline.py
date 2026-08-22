@@ -437,7 +437,11 @@ def first_run(connection, job):
 
 def pipeline_trails(connection, limit=25):
     """The newest file trails for the queue page, most recent first:
-    [{basename, updated, entries: [{stage, status, at}, …]}, …]."""
+    [{basename, updated, entries: [{stage, status, at, job}, …]}, …].
+
+    Each entry carries the rq job id it was stamped by, which is how a
+    queue-page row finds its own file's trail: exact, with no
+    basename-versus-description matching to go stale."""
 
     trails = []
     try:
@@ -459,6 +463,7 @@ def pipeline_trails(connection, limit=25):
                     "stage": entry.get("stage"),
                     "status": entry.get("status"),
                     "at": entry.get("at"),
+                    "job": entry.get("job"),
                 }
                 for entry in json.loads(decoded.get("trail") or "[]")
             ]

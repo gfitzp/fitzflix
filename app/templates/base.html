@@ -373,51 +373,118 @@
 				runningSignature = signature;
 			}
 
-			function renderAll(tasks) {
+			// The queue page's table: one row per running, queued, or
+			// deferred job, each carrying its FILE's pipeline trail as
+			// stage chips beneath the description (the chips used to
+			// live in a separate in-flight list on the File Activity
+			// page; Glenn folded them into the rows here, Aug 2026).
+			// A row finds its trail by job id — every trail entry is
+			// stamped with the job that wrote it — so a file with two
+			// jobs listed (an archive running, a transcode waiting)
+			// shows its journey on both. Trails whose last stage is
+			// not done yet have no job of their own to list under —
+			// a failure nobody retried, or a chip frozen by a lost
+			// write — trail after the jobs as "no job in queue" rows,
+			// so nothing in flight goes unseen.
+
+			function trailCell(task, trail) {
+				var cell = document.createElement("td");
+				cell.className = "col-5 col-sm-5 col-lg-7";
+				var name = document.createElement("div");
+				name.textContent = task ? task.description : trail.basename;
+				if (!task) name.className = "text-muted";
+				cell.appendChild(name);
+				if (trail) {
+					var chips = document.createElement("div");
+					chips.className = "mt-1";
+					paintChips(chips, trail.entries);
+					cell.appendChild(chips);
+				}
+				return cell;
+			}
+
+			function timeCell(stamp, prefix) {
+				var cell = document.createElement("td");
+				cell.className = "col-3 col-sm-3 col-lg-2";
+				if (stamp) {
+					// Tooltips carry the viewer's LOCAL time, not the
+					// raw GMT timestamp the API serves
+					var when = document.createElement("abbr");
+					when.setAttribute("title", moment(stamp).format("LLL"));
+					when.textContent = (prefix || "") + moment(stamp).fromNow();
+					cell.appendChild(when);
+				}
+				return cell;
+			}
+
+			function positionCell(text) {
+				var cell = document.createElement("th");
+				cell.setAttribute("scope", "row");
+				cell.className = "col-1";
+				cell.textContent = text;
+				return cell;
+			}
+
+			function trailSettled(trail) {
+				var last = trail.entries[trail.entries.length - 1];
+				return !last || last.status === "done";
+			}
+
+			function renderAll(tasks, files) {
 				var tbody = document.getElementById("all-tasks");
 				if (!tbody) return;
 
+				var trailByJob = {};
+				files.forEach(function(trail) {
+					trail.entries.forEach(function(entry) {
+						if (entry.job) trailByJob[entry.job] = trail;
+					});
+				});
+
+				var listed = [];
+				tasks.forEach(function(task) {
+					var trail = trailByJob[task.id] || null;
+					if (trail && listed.indexOf(trail) < 0) listed.push(trail);
+				});
+				var orphans = files.filter(function(trail) {
+					return listed.indexOf(trail) < 0 && !trailSettled(trail);
+				});
+
 				var signature = tasks.map(function(task) {
-					return task.position + "|" + task.description + "|" + task.started_at;
-				}).join("\n");
+					var trail = trailByJob[task.id];
+					return task.position + "|" + task.id + "|" + task.description
+						+ "|" + task.started_at + "|" + task.scheduled_for
+						+ "|" + (trail ? trail.updated + "|" + trail.entries.length : "");
+				}).concat(orphans.map(function(trail) {
+					return "orphan|" + trail.basename + "|" + trail.updated
+						+ "|" + trail.entries.length;
+				})).join("\n");
 				if (signature === allSignature) return;
 
 				tbody.textContent = "";
 				tasks.forEach(function(task) {
-					var position = document.createElement("th");
-					position.setAttribute("scope", "row");
-					position.className = "col-1";
-					position.textContent = task.position;
-
-					var description = document.createElement("td");
-					description.className = "col-5 col-sm-5 col-lg-7";
-					description.textContent = task.description;
-
-					// Tooltips carry the viewer's LOCAL time, not the
-					// raw GMT timestamp the API serves
-
-					var enqueuedDate = document.createElement("abbr");
-					enqueuedDate.setAttribute("title", moment(task.enqueued_at).format("LLL"));
-					enqueuedDate.textContent = moment(task.enqueued_at).fromNow();
-					var enqueued = document.createElement("td");
-					enqueued.className = "col-3 col-sm-3 col-lg-2";
-					enqueued.appendChild(enqueuedDate);
-
-					var startedDate = document.createElement("abbr");
-					if (task.started_at) {
-						startedDate.setAttribute("title", moment(task.started_at).format("LLL"));
-						startedDate.textContent = moment(task.started_at).fromNow();
-					}
-					var started = document.createElement("td");
-					started.className = "col-3 col-sm-3 col-lg-2";
-					started.appendChild(startedDate);
-
 					var row = document.createElement("tr");
 					row.className = "d-flex";
-					row.appendChild(position);
-					row.appendChild(description);
-					row.appendChild(enqueued);
-					row.appendChild(started);
+					row.appendChild(positionCell(task.position === null ? "—" : task.position));
+					row.appendChild(trailCell(task, trailByJob[task.id]));
+					row.appendChild(timeCell(task.enqueued_at));
+					// A deferred retry hasn't started; its slot says
+					// when it will be back in line
+					row.appendChild(task.status === "scheduled"
+						? timeCell(task.scheduled_for, "retries ")
+						: timeCell(task.started_at));
+					tbody.appendChild(row);
+				});
+				orphans.forEach(function(trail) {
+					var row = document.createElement("tr");
+					row.className = "d-flex";
+					row.appendChild(positionCell("—"));
+					row.appendChild(trailCell(null, trail));
+					row.appendChild(timeCell(null));
+					var updated = timeCell(null);
+					updated.className += " small text-muted";
+					updated.textContent = "No job in queue; last update " + trail.updated;
+					row.appendChild(updated);
 					tbody.appendChild(row);
 				});
 				allSignature = signature;
@@ -425,12 +492,12 @@
 
 			// Per-file pipeline trails (#18): each recent file's journey
 			// as stage chips — done green, running blue, queued gray,
-			// retry-wait amber, failed red. On the File Activity
-			// dashboard (window.fileActivityCardUrl is set), a trail
-			// whose file already has a landed card paints its chips
-			// inline on that card; the rest render as in-flight rows,
-			// and a trail that finishes cataloging fetches its file's
-			// card so the chips blossom into the full entry in place.
+			// retry-wait amber, failed red. The queue page paints them
+			// on its job rows (renderAll); the File Activity dashboard
+			// (window.fileActivityCardUrl is set) paints a trail whose
+			// file already has a landed card inline on that card, and
+			// a trail that finishes cataloging fetches its file's card
+			// so the chips blossom into the full entry in place.
 
 			var filesSignature = null;
 			var pendingCards = {};
@@ -539,54 +606,24 @@
 			}
 
 			function renderFiles(files) {
-				var holder = document.getElementById("pipeline-files");
-				var section = document.getElementById("pipeline-files-section");
-				if (!holder || !section) return;
+				if (!window.fileActivityCardUrl) return;
 
 				var signature = files.map(function(file) {
 					return file.basename + "|" + file.updated + "|" + file.entries.length;
 				}).join("\n");
 				if (signature === filesSignature) return;
 
-				var slots = window.fileActivityCardUrl ? cardSlots() : {};
-				var inflight = [];
+				var slots = cardSlots();
 				files.forEach(function(file) {
 					var slot = slots[file.basename] || slots[stemOf(file.basename)];
 					if (slot) {
 						paintChips(slot, file.entries);
 						slot.hidden = false;
-					} else {
-						inflight.push(file);
-						if (window.fileActivityCardUrl && file.entries.some(function(entry) {
-							return entry.stage === "Cataloging" && entry.status === "done";
-						})) {
-							fetchCard(file.basename);
-						}
+					} else if (file.entries.some(function(entry) {
+						return entry.stage === "Cataloging" && entry.status === "done";
+					})) {
+						fetchCard(file.basename);
 					}
-				});
-
-				section.style.display = inflight.length ? "" : "none";
-				holder.textContent = "";
-				inflight.forEach(function(file) {
-					var row = document.createElement("div");
-					row.className = "list-group-item";
-
-					var name = document.createElement("div");
-					name.className = "fw-bold small";
-					name.textContent = file.basename;
-					row.appendChild(name);
-
-					var chips = document.createElement("div");
-					chips.className = "mt-1";
-					paintChips(chips, file.entries);
-					row.appendChild(chips);
-
-					var updated = document.createElement("div");
-					updated.className = "small text-muted mt-1";
-					updated.textContent = "Updated " + file.updated;
-					row.appendChild(updated);
-
-					holder.appendChild(row);
 				});
 				filesSignature = signature;
 			}
@@ -607,7 +644,7 @@
 						if (!queue_details || typeof queue_details.count !== "number") return;
 						setQueueCount(queue_details.count);
 						renderRunning(queue_details.running || []);
-						renderAll(queue_details.all || []);
+						renderAll(queue_details.all || [], queue_details.files || []);
 						renderFiles(queue_details.files || []);
 					})
 					.catch(function() {})

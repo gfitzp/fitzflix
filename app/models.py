@@ -7,7 +7,7 @@ from time import sleep, time
 import jwt
 import requests
 
-from rq.registry import StartedJobRegistry
+from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from unidecode import unidecode
 
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -1212,6 +1212,37 @@ class User(UserMixin, db.Model):
                     }
                 )
 
+        # Deferred retries (a file still copying in, or its title
+        # locked) sit in each queue's ScheduledJobRegistry rather than
+        # the queue itself, so they used to be invisible here and only
+        # showed as amber chips on the File Activity page's in-flight
+        # list. Since the trail chips moved onto the queue rows (Glenn,
+        # Aug 2026) the queue page is the one place to see everything
+        # in flight, so they list too — after the live queue, with no
+        # position, since they aren't in line yet.
+
+        scheduled = []
+        for queue in (
+            current_app.import_queue,
+            current_app.transcode_queue,
+            current_app.file_queue,
+        ):
+            registry = ScheduledJobRegistry(queue=queue)
+            for job_id in registry.get_job_ids():
+                job = queue.fetch_job(job_id)
+                if job:
+                    scheduled.append(
+                        {
+                            "id": job.id,
+                            "status": "scheduled",
+                            "enqueued_at": job.enqueued_at,
+                            "started_at": None,
+                            "ended_at": None,
+                            "scheduled_for": registry.get_scheduled_time(job_id),
+                            "description": job.meta.get("description", job.description),
+                        }
+                    )
+
         details["all"] = sorted(
             details["all"],
             key=lambda d: (
@@ -1224,6 +1255,13 @@ class User(UserMixin, db.Model):
 
         for i, task in enumerate(details["all"]):
             details["all"][i]["position"] = i + 1
+
+        scheduled.sort(
+            key=lambda d: (d["scheduled_for"] is None, d["scheduled_for"] or "")
+        )
+        for task in scheduled:
+            task["position"] = None
+        details["all"].extend(scheduled)
 
         return details
 

@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {# The File Activity dashboard: the old Recently Added page and the
-   Pipeline Activity trails merged (Glenn, Aug 2026). Files still
-   working through the pipeline show as stage chips in the in-flight
-   section; landed files show as full cards, each carrying its own
-   trail chips while Redis retains them. The 5-second queue poll in
-   base.html keeps the chips live and promotes an in-flight file to a
-   card once cataloging lands — window.fileActivityCardUrl is what
-   switches renderFiles into that dashboard mode, so it (and the
-   in-flight section) only exist on page 1. #}
+   Pipeline Activity trails merged (Glenn, Aug 2026). Landed files
+   show as full cards, each carrying its own trail chips while Redis
+   retains them; files still working through the pipeline show on the
+   Queue page, as chips on their job rows. The 5-second queue poll in
+   base.html keeps the card chips live and adds a file's card the
+   moment cataloging lands — window.fileActivityCardUrl is what
+   switches renderFiles into that dashboard mode, so it only exists
+   on page 1. #}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -43,11 +43,6 @@
 	window.pipelineTrailLimit = 100;
 	window.fileActivityCardUrl = "{{ url_for('main.file_activity_card') }}";
 </script>
-<div id="pipeline-files-section" style="display: none;">
-	<h5 class="mb-1">In flight</h5>
-	<p class="small text-muted mb-2">Files still moving through the pipeline &mdash; the staging copy, localization, the library copy, cataloging, the S3 archive, and any remuxes, transcodes, or restores &mdash; as per-stage status chips. Amber means a deferred retry is booked; red failures stay visible even after a retry succeeds. A file becomes a full card below once it lands in the library.</p>
-	<div id="pipeline-files" class="list-group mb-3"></div>
-</div>
 {% endif %}
 {% if recently_added %}
 <nav class="d-none d-sm-block" aria-label="...">

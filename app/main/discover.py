@@ -420,8 +420,9 @@ def index():
 def file_activity():
     """The File Activity dashboard: the old Recently Added page and the
     Pipeline Activity trails merged (Glenn, Aug 2026). Landed files
-    render as full cards here; in-flight files appear as stage chips
-    filled by base.html's queue poll, which promotes them to cards via
+    render as full cards here, each with its trail chips filled by
+    base.html's queue poll; files still in flight show as chips on the
+    queue page's job rows, and the poll adds a file's card here via
     /file-activity/card once cataloging lands."""
 
     page = request.args.get("page", 1, type=int)
@@ -594,7 +595,7 @@ def _file_for_trail_basename(basename):
 @login_required
 def file_activity_card():
     """One file's card fragment for the File Activity dashboard,
-    fetched by the queue poll when an in-flight trail finishes
+    fetched by the queue poll when a trail with no card yet finishes
     cataloging — the chips blossom into the full card (poster, quality
     badge, tracks, links) without a reload. Keyed by the trail's
     basename; 404 means the File row isn't visible yet and the poll

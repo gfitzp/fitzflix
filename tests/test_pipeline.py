@@ -322,6 +322,54 @@ def test_queue_details_payload_carries_the_trails(app, admin_client):
     assert payload["files"][0]["entries"][0]["stage"] == "Localizing"
 
 
+def test_trail_entries_carry_their_job_ids(app, admin_client):
+    """Each entry names the rq job that stamped it — the queue page's
+    rows find their file's chips by that id, never by matching the
+    description against a basename."""
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Job Id (2024) - [DVD].mkv",),
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    entry = payload["files"][0]["entries"][0]
+    assert entry["job"] == job.id
+    assert [task["id"] for task in payload["all"]] == [job.id]
+    assert payload["all"][0]["position"] == 1
+
+
+def test_deferred_retries_list_on_the_queue_page(app, admin_client):
+    """A retry booked for later sits in the ScheduledJobRegistry, not
+    the queue; it lists after the live jobs with no position (it isn't
+    in line yet), carrying when it comes back, so a file waiting on a
+    lock is visible where its amber chip now paints."""
+
+    with app.app_context():
+        live = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Live (2024) - [DVD].mkv",),
+        )
+        deferred = app.import_queue.enqueue_in(
+            timedelta(minutes=10),
+            "app.videos.localization_task",
+            args=("/import/Trail Deferred (2024) - [DVD].mkv",),
+            description="Localizing Trail Deferred (2024) - [DVD].mkv",
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    assert [task["id"] for task in payload["all"]] == [live.id, deferred.id]
+    assert payload["count"] == 1
+    booked = payload["all"][1]
+    assert booked["status"] == "scheduled"
+    assert booked["position"] is None
+    assert booked["scheduled_for"]
+    assert booked["description"] == "Localizing Trail Deferred (2024) - [DVD].mkv"
+    assert payload["files"][0]["entries"][0]["job"] == deferred.id
+    assert payload["files"][0]["entries"][0]["status"] == "scheduled"
+
+
 def test_queue_details_files_limit_is_adjustable(app, admin_client):
     """The pipeline page asks the shared poll for more than the queue
     page's newest 25 via ?files=… (#76); the value is clamped so a
@@ -344,20 +392,21 @@ def test_queue_details_files_limit_is_adjustable(app, admin_client):
     assert len(nonsense["files"]) == 1
 
 
-def test_pipeline_trails_render_on_the_file_activity_dashboard(admin_client):
-    """The trails live on the File Activity dashboard since the pages
-    merged (Glenn's call, Aug 2026), linked from Library Maintenance;
-    the queue page still doesn't carry the section, and the old
-    dedicated page is gone."""
-
-    page = admin_client.get("/file-activity").get_data(as_text=True)
-    assert 'id="pipeline-files-section"' in page
-    assert 'id="pipeline-files"' in page
-    assert "window.pipelineTrailLimit = 100" in page
+def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client):
+    """In-flight trails paint on the queue page's job rows (Glenn folded
+    the File Activity page's separate in-flight list into them, Aug
+    2026), so the queue page asks the poll for the full retained set;
+    the File Activity dashboard keeps only its landed cards' chips, and
+    the old dedicated pipeline page is gone."""
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
-    assert 'id="pipeline-files-section"' not in queue_page
-    assert "pipelineTrailLimit = " not in queue_page
+    assert "window.pipelineTrailLimit = 100" in queue_page
+    assert 'id="all-tasks"' in queue_page
+
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    assert 'id="pipeline-files-section"' not in page
+    assert "In flight" not in page
+    assert "window.pipelineTrailLimit = 100" in page
 
     assert admin_client.get("/maintenance/pipeline").status_code == 404
 
