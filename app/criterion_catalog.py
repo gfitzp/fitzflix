@@ -1,4 +1,4 @@
-"""The Criterion Collection spine catalog (#17's strangler split from
+"""The Criterion Collection spine catalog (the videos/routes split's strangler split from
 app.videos).
 
 Wikidata is the source: two SPARQL queries (individual releases and

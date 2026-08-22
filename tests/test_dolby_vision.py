@@ -1,4 +1,4 @@
-"""Dolby Vision profile parsing (#65): the flavor label from
+"""Dolby Vision profile parsing: the flavor label from
 MediaInfo's HDR-format string, and its storage/clearing through the
 track-metadata writer."""
 

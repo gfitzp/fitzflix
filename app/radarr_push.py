@@ -1,4 +1,4 @@
-"""Ad-hoc Radarr requests (#66): a per-film hand-off, never automatic.
+"""Ad-hoc Radarr requests: a per-film hand-off, never automatic.
 
 Glenn's revision of the original always-sync design: pushing every
 watchlist film to Radarr would queue hundreds of downloads and fill

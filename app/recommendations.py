@@ -126,7 +126,7 @@ NOT_INTERESTED_WEIGHT = -0.3
 RECS_KEY = "fitzflix:recs:{user_id}"
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
-# The complete score map (#58): every scoreable unlogged film's full-
+# The complete score map: every scoreable unlogged film's full-
 # recipe engine score, so any surface can show an estimated rating
 # with one Redis read — the ranking above keeps only the positive cut
 
@@ -709,7 +709,7 @@ def local_candidates(user_id):
 def scoreable_records(user_id):
     """File-less movie records with refreshed TMDb data the user hasn't
     logged or waved off — catalog and watchlist records whose pages can
-    show an estimated rating from the nightly score map (#58)."""
+    show an estimated rating from the nightly score map."""
 
     seen = db.session.query(UserMovieReview.movie_id).filter(
         UserMovieReview.user_id == int(user_id),
@@ -737,7 +737,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     The score map covers every scoreable unlogged film — owned
     candidates AND file-less records with TMDb data — with the full
     recipe, before the ranking's positives-only cut, so estimated
-    ratings can render anywhere (#58)."""
+    ratings can render anywhere."""
 
     weights = user_movie_weights(user_id)
     if not weights:

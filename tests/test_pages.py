@@ -372,7 +372,7 @@ def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
 
 def test_genre_links_filter_the_library(app, admin_client):
     """Genre names on the movie page link to the library filtered to
-    that TMDb genre (#56); the filter composes with the quality
+    that TMDb genre; the filter composes with the quality
     dropdown and an unknown genre 404s."""
 
     from app import db

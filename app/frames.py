@@ -1,4 +1,4 @@
-"""Name that Frame (#21, GitHub #52): the pre-extracted frame pool.
+"""Name that Frame (GitHub #52): the pre-extracted frame pool.
 
 The game never runs ffmpeg at play time. A nightly task keeps a pool
 of single frames — one per pooled movie — extracted from each film's

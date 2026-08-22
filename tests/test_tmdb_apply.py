@@ -1,6 +1,6 @@
 """TMDb apply methods: payload fields must land on mapped columns.
 
-Regression home for the #78 step-1 bug where tmdb_tv_apply wrote the
+Regression home for the tvdb_id persist bug where tmdb_tv_apply wrote the
 TheTVDB cross-reference to an unmapped attribute and it never persisted.
 """
 

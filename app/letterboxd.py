@@ -1,4 +1,4 @@
-"""Letterboxd RSS sync (#61): each user's public feed polls into their
+"""Letterboxd RSS sync: each user's public feed polls into their
 diary, hands-free.
 
 The feed is Letterboxd's advertised account surface (their real API is
@@ -165,7 +165,7 @@ def fetch_letterboxd_feed(username):
 
 
 def _find_merge_target(user_id, movie_id, watched_date):
-    """The guid-less diary row a feed item should claim (#61's merge
+    """The guid-less diary row a feed item should claim (the feed sync's merge
     rule, two tiers). First: a row for the same film on the SAME
     calendar day, whatever it holds — the CSV-imported twin of this
     very entry, which must be adopted rather than duplicated (the

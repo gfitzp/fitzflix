@@ -1,4 +1,4 @@
-"""TV episode titles into Plex from Fitzflix (#68).
+"""TV episode titles into Plex from Fitzflix.
 
 Some episode filenames carry a title segment — "Series - SxxEyy -
 Title [Quality]" — which the filename parse stores in file.edition;
@@ -86,7 +86,7 @@ def sync_plex_episode_titles():
             .filter(File.edition != "")
         }
 
-        # No TMDb-title fill here, deliberately (#78 step 6, reverted):
+        # No TMDb-title fill here, deliberately (reverted):
         # writing TMDb titles into agent-blank episodes would feed them
         # straight back into tv_validation's comparison corpus, where
         # they'd count as independent agreement — TMDb validated

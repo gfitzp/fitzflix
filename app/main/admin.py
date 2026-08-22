@@ -1,4 +1,4 @@
-"""Operations pages (#17's slice f): system health, scheduled
+"""Operations pages (the routes.py split): system health, scheduled
 tasks, library maintenance, triage surfaces, the queue, and the
 pipeline trails."""
 
@@ -116,7 +116,7 @@ def system():
             if job is None:
                 continue
 
-            # rq 2's stored Result carries the structured error (#23);
+            # rq 2's stored Result carries the structured error;
             # exc_info remains as the fallback for older failures
 
             error = ""
@@ -202,7 +202,7 @@ def _scheduled_tasks():
                 }
             )
 
-    # Most-frequent first (#22, Glenn's ordering): every-X-minutes by X,
+    # Most-frequent first (Glenn's ordering): every-X-minutes by X,
     # hourly by minute, daily by time, weekly by day and time, monthly by
     # day-of-month and time
 
@@ -506,7 +506,7 @@ def maintenance():
 @login_required
 @admin_required
 def tv_title_validation():
-    """Per-series episode-title verdicts (#78 step 5): how well TMDb's
+    """Per-series episode-title verdicts: how well TMDb's
     titles agree with Plex's for the same files, suspects first."""
 
     from app.tv_validation import MIN_COMPARED, SUSPECT_BELOW, validation_report
@@ -533,7 +533,7 @@ def subtitle_triage(file_id):
     marks the whole file's subtitles as reviewed. Either action retires
     the file's inspection aids.
 
-    With a file_id the page shows ONE file's candidates (#72) — the
+    With a file_id the page shows ONE file's candidates — the
     all-files page loads every pending file's snapshots at once, so
     the per-file view is the fast path from a file's own page. An
     `origin` query param carries where the visitor came from; actions
@@ -645,7 +645,7 @@ def subtitle_triage(file_id):
     candidates = forced_subtitle_candidates(file_id=file_id)
 
     # The inspection aids (cue timelines, burned-in snapshots) are the
-    # expensive part, and only the per-file view renders them (#75) —
+    # expensive part, and only the per-file view renders them —
     # the all-files page is just the worklist of links
 
     if focus_file:
@@ -724,7 +724,7 @@ def _rejected_files():
                     # and copy2 PRESERVE the file's own (possibly
                     # years-old) mtime — and the SMB share refuses
                     # utime, so stamping at reject time isn't an
-                    # option (#71, the Army of Darkness report)
+                    # option (the Army of Darkness report)
                     "rejected_at": datetime.fromtimestamp(stats.st_ctime, timezone.utc),
                 }
             )

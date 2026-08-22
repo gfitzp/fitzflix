@@ -27,10 +27,10 @@ def queue_details():
     if current_user.is_authenticated:
         details = current_user.get_queue_details()
 
-        # The per-file pipeline trails (#18): where each recent file
+        # The per-file pipeline trails: where each recent file
         # sits in its journey through the import pipeline. The queue
         # page's poll takes the default 25; the dedicated pipeline
-        # page asks for the full retained set with ?files=… (#76),
+        # page asks for the full retained set with ?files=…,
         # clamped to what Redis actually keeps
 
         from app.pipeline import ACTIVE_LIMIT, pipeline_trails

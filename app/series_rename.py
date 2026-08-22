@@ -1,4 +1,4 @@
-"""TV series rename (#78 follow-on): retitle a series on disk and in
+"""TV series rename: retitle a series on disk and in
 the database — the Plex-disambiguation fix (Batman → Batman (1966)).
 
 Deliberately does NOT touch S3: a series rename changes display

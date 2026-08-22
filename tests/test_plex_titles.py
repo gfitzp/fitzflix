@@ -1,4 +1,4 @@
-"""Episode titles into Plex (#68): files carrying an edition title
+"""Episode titles into Plex: files carrying an edition title
 their Plex episodes by basename match, locked; everything else is left
 alone."""
 

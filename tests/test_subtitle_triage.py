@@ -87,7 +87,7 @@ def test_heuristic_flags_small_unforced_same_language_tracks(app, admin_client):
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert "Forced Suspect" in page
-    # The worklist links each file to its own triage page (#75); the
+    # The worklist links each file to its own triage page; the
     # track detail lives there
     assert "60 of 1500" not in page
     detail = admin_client.get(f"/maintenance/subtitles/{suspect_id}").get_data(
@@ -140,7 +140,7 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
 
 
 def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
-    """The per-file triage view (#72): only the requested file's
+    """The per-file triage view: only the requested file's
     candidates render, the file page links to it while candidates are
     pending, and actions bounce back to the origin page."""
 
@@ -462,7 +462,7 @@ def test_deleting_the_local_file_removes_triage_aids(app):
 
 
 def test_suspicious_first_track_is_a_candidate(app):
-    """A forced-looking track FIRST in the file (#74, Baby Driver's
+    """A forced-looking track FIRST in the file (Baby Driver's
     [49, 3110, 4334]) is still a candidate: the query baselines on the
     largest same-language sibling, not the first track — so the
     import hook, now gated on this query, generates its aids."""
@@ -484,7 +484,7 @@ def test_suspicious_first_track_is_a_candidate(app):
 
 def test_reset_triage_state_clears_verdict_and_aids(app):
     """A replaced file's earlier dismissal applied to tracks that no
-    longer exist (#74, the Wanda case): reset clears the reviewed mark
+    longer exist (the Wanda case): reset clears the reviewed mark
     and the stale inspection aids so the new content re-earns its way
     off the triage page."""
 

@@ -1,4 +1,4 @@
-"""Plex ↔ Fitzflix watchlist sync (#67): one account-level watchlist,
+"""Plex ↔ Fitzflix watchlist sync: one account-level watchlist,
 kept converged from both ends.
 
 Plex watchlists live on the plex.tv ACCOUNT (the discover API), not

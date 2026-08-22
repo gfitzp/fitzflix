@@ -1,4 +1,4 @@
-"""Name that Frame (#21): the nightly frame pool — pruning, top-up,
+"""Name that Frame: the nightly frame pool — pruning, top-up,
 rotation, and extraction — and the game's three difficulties, the
 fuzzy Siracusa matcher, and the authenticated frame route."""
 

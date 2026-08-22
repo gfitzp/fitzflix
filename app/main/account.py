@@ -1,4 +1,4 @@
-"""The user's own pages (#17's slice f): the viewing history with
+"""The user's own pages (the routes.py split): the viewing history with
 its per-row editors, review editing, and the profile."""
 
 import csv
@@ -83,7 +83,7 @@ def review_edit(review_id):
 
     page = request.args.get("page", None, type=int)
 
-    # Feed-originated rows sync FROM Letterboxd (#61): while the entry
+    # Feed-originated rows sync FROM Letterboxd: while the entry
     # stays in the feed window, every poll re-asserts Letterboxd's
     # rating, like, and text over local edits — so this editor refuses
     # guid rows outright rather than accepting changes that revert
@@ -104,7 +104,7 @@ def review_edit(review_id):
         if quick_present and quick_rating is None:
             flash("That rating didn't make sense", "warning")
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
-        # A logged viewing can't be "not interested" (#51) — the ladder
+        # A logged viewing can't be "not interested" — the ladder
         # hides its ✕ here, and a stray 0 is refused rather than stored
 
         if quick_rating == 0:
@@ -117,7 +117,7 @@ def review_edit(review_id):
         # Only a ladder tap changes the stars (and the liked flag that
         # follows them) — saving a text or date edit must never wipe
         # the viewing's existing rating. Tapping the CURRENT rating
-        # clears the stars instead (#54): the viewing itself stays, an
+        # clears the stars instead: the viewing itself stays, an
         # explicit diary entry being edited is never deleted here
 
         if quick_rating is not None:
@@ -133,7 +133,7 @@ def review_edit(review_id):
                 user_review.liked = quick_rating >= 3
 
         # The date and text only change when their fields actually
-        # RODE IN THE POST — the history page's per-row forms (#58) and
+        # RODE IN THE POST — the history page's per-row forms and
         # star-only ladder taps carry no date field, and an absent
         # field must never read as "clear the watch date"
 
@@ -168,7 +168,7 @@ def review_edit(review_id):
             # This page edits ONE viewing, so the row's state comes from
             # that row — not the latest-viewing lookup the movie page
             # uses. Clearing the stars repaints the row back to the
-            # engine's estimate (#58's rule, extended to bare watches)
+            # engine's estimate (the universal-star-row rule, extended to bare watches)
             estimated = None
             if user_review.rating is None:
                 profile = stored_profile(current_app.redis, current_user.id)
@@ -327,7 +327,7 @@ def history():
                 Movie, (Movie.id == UserMovieReview.movie_id)
             ).filter(UserMovieReview.user_id == int(current_user.id))
             # Rows that came FROM the Letterboxd feed never export back
-            # to Letterboxd (#61) — they are already there, and the
+            # to Letterboxd — they are already there, and the
             # round-trip would duplicate them
             .filter(UserMovieReview.letterboxd_guid.is_(None))
         )

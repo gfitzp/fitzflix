@@ -41,14 +41,14 @@ LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
 LAST_TTL_SECONDS = 3600
 
-# "No Opinion" wears off (#52), mirroring the Watch Again shelf's
+# "No Opinion" wears off, mirroring the Watch Again shelf's
 # staleness bar: after this many years the mark stops excluding the
 # film from the drive, in case the user has seen it (or remembered a
 # verdict) since and can now rate it. Re-marking resets the clock;
 # the drive's information-value ranking decides when a resurfaced
 # film actually reappears. Only "unseen" expires — "not interested"
 # is permanent. (The stored kind stays "unseen" from the button's
-# "Haven't Seen It" era, #62 — 241 rows predate the rename.)
+# "Haven't Seen It" era — 241 rows predate the rename.)
 
 UNSEEN_RESURFACE_YEARS = 2
 
@@ -70,7 +70,7 @@ SUGGESTION_COUNT = 3
 
 def mark_unseen(user_id, movie_id):
     """Record that the user has no opinion on this film — never saw
-    it, or no memory of a verdict (#62) — putting it out of the drive
+    it, or no memory of a verdict — putting it out of the drive
     for UNSEEN_RESURFACE_YEARS (they can always rate it from its movie
     page). Re-marking always resets the clock, so answering a
     resurfaced film with "still no opinion" rests it for another term
@@ -114,7 +114,7 @@ def elicitation_candidates(user_id):
     """Movie ids eligible for the drive: local full-feature films the
     user hasn't logged, minus watchlisted films (declared unseen-but-
     wanted) and films marked "No Opinion" within the resurface bar
-    (older marks expire, #52) — not-interested films are already out
+    (older marks expire) — not-interested films are already out
     of local_candidates."""
 
     watchlisted = {

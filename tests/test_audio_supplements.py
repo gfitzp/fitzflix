@@ -277,7 +277,7 @@ def test_mediaconvert_settings_match_the_validated_job(app):
 
 def test_trailing_flac_is_never_counted_as_a_twin(app):
     """A FLAC AFTER a lossless track could be anything — a commentary,
-    say — so it never satisfies the twin rule (#69, the Father Goose
+    say — so it never satisfies the twin rule (the Father Goose
     case): the lossless track gets a fresh twin ahead of it and the
     unknown FLAC keeps its place, its identity unjudged."""
 

@@ -75,7 +75,7 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
 
 
 def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
-    """The leftover-directory pass (#66 follow-up): week-undisturbed
+    """The leftover-directory pass: week-undisturbed
     directories fall when empty OR holding only junk — @eaDir trees,
     macOS metadata, a few aged stray images (an orphaned custom
     poster) — while anything fresh, real, or picture-collection-sized
@@ -190,7 +190,7 @@ def test_scratch_db_drop_is_skipped_off_mysql(app):
 def test_shared_untouched_key_is_never_deleted(app):
     """Two file records can claim the same untouched S3 key — a
     repointed key after a rename, or a re-import landing on the same
-    basename (#64, the Bambi II incident). The purge guard reports a
+    basename (the Bambi II incident). The purge guard reports a
     key as claimed until no surviving record holds it."""
 
     from datetime import datetime
@@ -226,7 +226,7 @@ def test_shared_untouched_key_is_never_deleted(app):
 
 def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
     """The archive key only ever changes when a real object sits at the
-    new key (#64): STANDARD objects copy-verify-delete; Deep Archive
+    new key: STANDARD objects copy-verify-delete; Deep Archive
     and missing objects can't be copied, so the LOCAL library file
     force-uploads under the new key instead (Glenn's call — close the
     invariant now rather than hope a future re-upload heals it)."""

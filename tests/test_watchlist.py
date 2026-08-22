@@ -781,7 +781,7 @@ def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
 
 
 def test_watchlist_availability_filter(app, admin_client):
-    """#80 (Aug 2026 revision): default shows everything; the other
+    """The Aug 2026 revision: default shows everything; the other
     pills are exclusive buckets — owned beats streaming beats renting,
     and UNAVAILABLE catches films with a known-empty availability —
     with counts on the pills, unfetched films reported as pending

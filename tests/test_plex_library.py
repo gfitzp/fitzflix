@@ -1,4 +1,4 @@
-"""The Plex library refresh (#68 sibling): scan + emptyTrash per
+"""The Plex library refresh: scan + emptyTrash per
 section, refused entirely while any of the section's declared
 locations is missing — the guard that keeps a dropped SMB mount from
 wiping the library."""

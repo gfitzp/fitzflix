@@ -145,7 +145,7 @@ def test_download_with_already_web_quality_skips_rename(app, client, tmp_path):
 def test_incomplete_download_is_refused_and_marked_failed(
     app, client, tmp_path, monkeypatch
 ):
-    """A provably truncated download never reaches the pipeline (#73):
+    """A provably truncated download never reaches the pipeline:
     the grab is marked failed — blocklist + replacement search — the
     junk file is deleted, and nothing is enqueued."""
 

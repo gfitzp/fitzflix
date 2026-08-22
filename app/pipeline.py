@@ -1,4 +1,4 @@
-"""Per-file pipeline trails (#18).
+"""Per-file pipeline trails.
 
 Every file moving through the import pipeline leaves one ordered trail
 in Redis — Localizing → Moving into the library → Cataloging →
@@ -174,7 +174,7 @@ def _write_trail_entry(
     starts the instant the localization task enqueues it, so the
     file-operation worker's "started" stamp races the import worker's
     "done" stamp for the stage before it. A plain read-modify-write
-    lets whichever lands second erase the other's update (#76 froze
+    lets whichever lands second erase the other's update (the trails revisit froze
     two files at "Localizing · running" forever), so the write WATCHes
     the trail key and retries from a fresh read when it changed
     underneath. Bounded retries: the trail is advisory, never worth
@@ -246,7 +246,7 @@ def _write_trail_entry(
                 pipe.multi()
 
                 # The file's FIRST start is the running banners' sort
-                # anchor (Glenn's original #18 ask): it never moves once
+                # anchor (Glenn's original banner-ordering ask): it never moves once
                 # set, so a file hopping queues keeps its place
 
                 if status == "started":

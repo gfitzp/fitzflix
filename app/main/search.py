@@ -1,4 +1,4 @@
-"""Local search (#17's slice f): the library search page, the
+"""Local search (the routes.py split): the library search page, the
 navbar type-ahead JSON, and the TMDb lookup page."""
 
 import traceback
@@ -117,7 +117,7 @@ def _movie_search_results(wildcard, limit=50):
 def _episode_search_results(wildcard, limit=12):
     """Episodes whose TMDb titles match, each linking into its season
     page. Numbering-suspect series are excluded — a matched title on a
-    misnumbered series would send the user to the wrong slot (#78)."""
+    misnumbered series would send the user to the wrong slot."""
 
     from app.tv_validation import series_is_suspect
 

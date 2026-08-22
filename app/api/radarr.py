@@ -25,7 +25,7 @@ def radarr_add(payload):
         payload["movieFile"].get("relativePath"),
     )
 
-    # A provably truncated download never reaches the pipeline (#73):
+    # A provably truncated download never reaches the pipeline:
     # mark the grab failed so Radarr blocklists it and searches again
 
     if import_source_incomplete(downloaded_file_path):

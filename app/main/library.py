@@ -1,4 +1,4 @@
-"""The library pages (#17's slice f): movie and TV browsing,
+"""The library pages (the routes.py split): movie and TV browsing,
 filmographies, the Criterion spine catalog, people, and the per-title
 movie/tv/season/file detail pages."""
 
@@ -538,12 +538,12 @@ def movie_library():
                 if matches or rentals:
                     streaming_attribution = True
 
-        # Television credits (#78 step 6): the person's TMDb TV career,
+        # Television credits: the person's TMDb TV career,
         # one row per series, day-cached like the film list. Self
         # appearances are dropped — talk-show and awards-night rows
-        # would swamp the acting credits (the #27 key-roles spirit).
+        # would swamp the acting credits (the key-roles-only spirit).
         # Owned series link to their pages; TV has no review flow, so
-        # unowned rows render unlinked (#30's rule).
+        # unowned rows render unlinked (the TMDb-row rule).
 
         tv_rows = {}
         tv_credits = None
@@ -678,7 +678,7 @@ def movie_library():
         )
 
     elif genre:
-        # Genre links on the movie pages land here (#56): the library
+        # Genre links on the movie pages land here: the library
         # filtered to films carrying the TMDb genre, composable with
         # the quality dropdown
 
@@ -1320,9 +1320,9 @@ def movie(movie_id):
                 target = db.session.get(Movie, int(form_movie_id)) or movie
 
         # ✕ is "not interested, never saw it" — a status flag, never a
-        # review (#51). The film leaves every recommendation surface, a
+        # review. The film leaves every recommendation surface, a
         # seen film can't be flagged (its floor is 1 star), and tapping
-        # a lit ✕ undoes the flag (#54)
+        # a lit ✕ undoes the flag
 
         if rating == 0:
             target_title = (
@@ -1363,7 +1363,7 @@ def movie(movie_id):
                 return _ladder_state(current_user.id, target.id)
             return redirect(url_for("main.movie", movie_id=movie.id))
 
-        # Tapping your current rating removes it (#54): a bare drive-
+        # Tapping your current rating removes it: a bare drive-
         # style row (no watch date, no text) disappears entirely, while
         # a viewing with real history only loses its stars
 
@@ -1747,7 +1747,7 @@ def movie(movie_id):
             )
             might_interest = coarse > marker_bar(profile)
 
-    # The ad-hoc Radarr hand-off (#66): admins can request an unowned
+    # The ad-hoc Radarr hand-off: admins can request an unowned
     # film for download; the badge reads from the hour-cached id set
 
     in_radarr = bool(
@@ -1815,7 +1815,7 @@ def movie_play(movie_id):
 def people():
     """Browse every credited person across the library's films.
 
-    Cast and key crew roles both count (Glenn's #27 call: only key
+    Cast and key crew roles both count (Glenn's call: only key
     roles join the film-count ordering, so day players still register
     but grips don't outrank directors). Defaults to people appearing in
     multiple films, since the long tail is one-appearance day players;
@@ -2260,7 +2260,7 @@ def tv(series_id):
 
         return redirect(url_for("main.tv", series_id=tv_id))
 
-    # The billed cast for the scroller, in aggregate billing order (#78).
+    # The billed cast for the scroller, in aggregate billing order.
     # Capped: a long-running series' aggregate cast can run to hundreds
     # of one-episode guest roles that would bloat the page for no gain
 
@@ -2402,7 +2402,7 @@ def season(series_id, season):
         return redirect(url_for("main.season", series_id=series_id, season=season))
 
     # Episode metadata for the guide and the files table's title column
-    # (#78 step 6) — withheld entirely for numbering-suspect series,
+    # — withheld entirely for numbering-suspect series,
     # where a title is likelier to mislabel than to inform. File
     # editions outrank fetched titles in the template.
 
@@ -2839,7 +2839,7 @@ def file(file_id):
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
         aws_untouched_key = file.aws_untouched_key
 
-        # The file's transcoded copies go with it (#19): paths noted
+        # The file's transcoded copies go with it: paths noted
         # before the delete (the rows cascade away with the File),
         # removed only after the commit — same posture as the AWS key
 
@@ -2882,7 +2882,7 @@ def file(file_id):
         else:
             return redirect(url_for("main.index"))
 
-    # The per-file triage link (#72) only exists while this file has
+    # The per-file triage link only exists while this file has
     # pending possibly-forced tracks (and only admins can act on them)
 
     pending_subtitle_triage = bool(
@@ -3014,7 +3014,7 @@ class ListPagination(Pagination):
 def _credited_film_pairs(role="all"):
     """(credit_id, movie_id) pairs the people surfaces count: credited
     cast rows, key crew roles, or their deduplicated union — movies and
-    TV series both (#78 step 6). A TV series rides the movie_id column
+    TV series both. A TV series rides the movie_id column
     as its NEGATED id, keeping the distinct-count space collision-free
     without a discriminator column; nothing joins these ids back to a
     table, they are only ever counted.

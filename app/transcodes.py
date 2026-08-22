@@ -1,4 +1,4 @@
-"""Derived files (#19): the transcoded copies, tracked and source-linked.
+"""Derived files: the transcoded copies, tracked and source-linked.
 
 Every Handbrake output gets a DerivedFile row pointing at the library
 original it came from — created by finalize_transcoding for new

@@ -1,11 +1,11 @@
-"""Track surgery (#17's strangler split from app.videos): everything
+"""Track surgery (the strangler split from app.videos): everything
 that reads or rewrites the streams inside a media file.
 
 MediaInfo scanning and the stored track metadata (including Dolby
-Vision profile parsing, #65), the mkvpropedit flag editor and the
+Vision profile parsing), the mkvpropedit flag editor and the
 mkvmerge remuxer with their lock-holding task wrappers, subtitle
 inspection (possibly-forced flagging, empty-track dropping), and the
-lossless-audio supplement planner and remuxers (#55/#69).
+lossless-audio supplement planner and remuxers.
 
 app.videos re-exports every name here, so stored rq job strings
 ("app.videos.mkvmerge_task") and import sites keep resolving; the
@@ -1180,7 +1180,7 @@ def plan_audio_supplements(audio_tracks):
     before a lossless track in the same language — the exact shape
     the rip profile produces. A FLAC anywhere else could be anything
     (a commentary, say), so it is never counted as a twin, never
-    moved, and never given the default slot (#69, Glenn's rule); its
+    moved, and never given the default slot (Glenn's rule); its
     neighbor earns a freshly converted twin instead. Channel counts
     deliberately do NOT have to match: MediaInfo labels DTS-ES Matrix
     sources "6.0" while their discrete content — and therefore any
@@ -1374,7 +1374,7 @@ def remux_audio_plan_task(file_id, plan):
     """Task: rebuild one LIBRARY file's audio to an explicit supplement
     plan — (action, source index) pairs in plan_audio_supplements'
     format, except hand-built, so a track can be replaced or dropped
-    (what the automatic planner never does). Born for #69's imperfect
+    (what the automatic planner never does). Born for the DTS-ES discs' imperfect
     DTS-ES twins: [["flac", 1], ["copy", 1], ["copy", 2]] decodes the
     MA into a fresh 6.0 twin and drops the old 5.1 one.
 

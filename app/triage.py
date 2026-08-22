@@ -121,7 +121,7 @@ def reset_triage_state(file):
     """A replaced file's subtitle content is new evidence: any earlier
     reviewed verdict applied to the OLD tracks, and stale inspection
     aids picture streams that no longer exist. Both reset on import so
-    the file re-earns its way off the triage page (#74, Glenn's rule:
+    the file re-earns its way off the triage page (Glenn's rule:
     a replacement may carry a forced track the original didn't — the
     A Fish Called Wanda case, where an Aug 12 dismissal silently gated
     the file re-imported Aug 18)."""
@@ -221,7 +221,7 @@ def _render_snapshot(file_path, streamorder, at, out_path):
     target frame.
 
     The input seek must land at or before the cue's start so its packet
-    demuxes — a bare direct seek to the target (Glenn's #38 sketch)
+    demuxes — a bare direct seek to the target (Glenn's direct-seek sketch)
     silently drops the subtitle whenever a keyframe falls between the
     cue and the target, measured live on Speed's trivia track — and
     -copyts keeps original timestamps so the output trim can name the

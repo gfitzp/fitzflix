@@ -83,7 +83,7 @@ def enqueue_import_scan(
 
 
 def cron_table(config):
-    """The recurring-jobs table (#22): every scheduled task as a plain
+    """The recurring-jobs table: every scheduled task as a plain
     row, config-dependent entries included only when configured. The
     scheduler.py process registers these with rq's native CronScheduler;
     nothing else registers cron jobs, so the table is authoritative on
@@ -138,7 +138,7 @@ def cron_table(config):
             "Cleaning up orphaned partial files",
         ),
         ("*/10 * * * *", "app.maintenance.health_probe", 600, "Probing system health"),
-        # Sync Letterboxd diaries from each user's RSS feed (#61); the
+        # Sync Letterboxd diaries from each user's RSS feed; the
         # task no-ops for users without a configured username
         (
             "20,50 * * * *",
@@ -154,7 +154,7 @@ def cron_table(config):
             3600,
             "Recomputing film recommendations",
         ),
-        # Criterion24/7 now-playing heartbeat (#63): the poller is
+        # Criterion24/7 now-playing heartbeat: the poller is
         # self-scheduling (it re-enqueues at each film's end under a
         # deterministic job id), so the cron checks the chain's pulse
         # and scrapes only when the chain has died — never rescanning
@@ -196,7 +196,7 @@ def cron_table(config):
             3600,
             "Pre-warming estimate payloads",
         ),
-        # Top up and rotate the Name that Frame pool (#21) nightly;
+        # Top up and rotate the Name that Frame pool nightly;
         # the coordinator queues per-film extractions on the serial
         # transcode lane, so a big backfill can't crowd anything out
         (
@@ -205,8 +205,8 @@ def cron_table(config):
             3600,
             "Refreshing the Name that Frame pool",
         ),
-        # Re-fetch episode data for in-production TV series nightly
-        # (#78), clear of the 3:05 frame pool and 3:25 Plex title windows
+        # Re-fetch episode data for in-production TV series nightly,
+        # clear of the 3:05 frame pool and 3:25 Plex title windows
         (
             "45 3 * * *",
             "app.tmdb_refresh.refresh_in_production_tv",
@@ -251,7 +251,7 @@ def cron_table(config):
             )
         )
 
-        # Title Plex episodes from filename-carried titles (#68) —
+        # Title Plex episodes from filename-carried titles —
         # replaces the external write-Plex's-SQLite-directly cron
 
         table.append(
@@ -278,7 +278,7 @@ def cron_table(config):
         )
 
         # Re-verify TMDb episode titles against Plex's agent titles
-        # nightly (#78), after the 3:45 in-production TV refresh
+        # nightly, after the 3:45 in-production TV refresh
 
         table.append(
             (
@@ -289,7 +289,7 @@ def cron_table(config):
             )
         )
 
-    # Reconcile the Plex and Fitzflix watchlists both ways (#67); the
+    # Reconcile the Plex and Fitzflix watchlists both ways; the
     # account-level discover API needs only the token, not the server
 
     if config.get("PLEX_TOKEN"):
@@ -523,7 +523,7 @@ def create_app(config_class=Config, watch_import_dir=False):
         )
 
     # Configure the Redis connection and queues. TrackedQueue leaves
-    # per-file trail entries at enqueue time (#18); jobs that aren't
+    # per-file trail entries at enqueue time; jobs that aren't
     # pipeline stages record nothing
 
     from app.pipeline import TrackedQueue
@@ -659,7 +659,7 @@ def create_app(config_class=Config, watch_import_dir=False):
         def start_observer():
             observer = PollingObserver()
             # Only created/moved file events matter to the handler, so
-            # the emitter filters everything else before dispatch (#24)
+            # the emitter filters everything else before dispatch
             observer.schedule(
                 event_handler,
                 path=app.config["IMPORT_DIR"],

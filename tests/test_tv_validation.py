@@ -1,4 +1,4 @@
-"""Episode-title validation (#78 step 5): fuzzy agreement, per-series
+"""Episode-title validation: fuzzy agreement, per-series
 verdicts against Plex's titles, and the maintenance report."""
 
 import json

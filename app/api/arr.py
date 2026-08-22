@@ -100,7 +100,7 @@ def downgrade_quality_title(original_quality, custom_format_score):
 
 def import_source_incomplete(file_path):
     """Whether a webhook's source file is structurally incomplete —
-    provably truncated per its own container (#73). Only a definite
+    provably truncated per its own container. Only a definite
     truncation verdict counts: an unprobeable file proceeds normally
     and the import pipeline's own retries deal with it."""
 
@@ -167,7 +167,7 @@ def mark_grab_failed(service, base_url, api_key, download_id):
 
 
 def reject_incomplete_download(service, payload, file_path, refresh_command):
-    """The webhook's incomplete-file path (#73): a structurally
+    """The webhook's incomplete-file path: a structurally
     incomplete download never reaches the import pipeline. The grab is
     marked failed in the sending app — which blocklists the release
     and searches for a replacement — and only when that mark took does

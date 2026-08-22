@@ -93,12 +93,12 @@
 	</a>
 	<div class="flex-grow-1">
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">{{ review.movie.tmdb_title if review.movie.tmdb_title else review.movie.title }} ({{ review.movie.tmdb_release_date.strftime("%Y") if (review.movie.tmdb_title and review.movie.tmdb_release_date) else review.movie.year }})</a></h5>
-		{# Each viewing carries its own live star row (#58/#57), posting
+		{# Each viewing carries its own live star row, posting
 		   to review_edit — stars only, never the ✕: a logged film's
 		   floor is 1 star. The typed text rides along with a star tap
 		   (both fields belong to the same form). An unrated viewing —
 		   a Plex watch, an unrated import — previews the engine's
-		   estimate until real stars land. Feed-originated rows (#61)
+		   estimate until real stars land. Feed-originated rows
 		   show their stars read-only: the next poll re-asserts
 		   Letterboxd's verdict over any local edit, so edits happen
 		   there instead #}

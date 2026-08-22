@@ -1089,7 +1089,7 @@ def test_compute_stores_calibration_curve(app, monkeypatch):
 
 def test_movie_page_shows_estimated_rating(app, admin_client):
     """An unlogged film with a stored score shows the engine's guess as
-    paler "estimated" stars in the widget (#58); logging it replaces
+    paler "estimated" stars in the widget; logging it replaces
     the estimate with the real filled verdict."""
 
     import json as jsonlib

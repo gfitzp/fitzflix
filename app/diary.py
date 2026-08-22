@@ -1,4 +1,4 @@
-"""Diary writers (#17's strangler split from app.videos): every task
+"""Diary writers (the strangler split from app.videos): every task
 that turns an outside signal into UserMovieReview rows and watchlist
 state.
 
@@ -50,7 +50,7 @@ def clear_watchlist(user_id, movie_id):
 
 def clear_not_interested(user_id, movie_id):
     """Drop a film's not-interested flag, if present — a watch, however
-    it arrives, contradicts "never saw it, don't want it" (#51).
+    it arrives, contradicts "never saw it, don't want it".
     Callers commit."""
 
     UserMovieStatus.query.filter_by(

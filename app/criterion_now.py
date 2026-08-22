@@ -1,4 +1,4 @@
-"""The landing page's "On Criterion24/7 now" card (#63).
+"""The landing page's "On Criterion24/7 now" card.
 
 whatsonnow.criterionchannel.com is the Channel's own public now-playing
 page for its 24/7 feed: the current film's title, a More link to the
@@ -323,7 +323,7 @@ def heartbeat_criterion_now():
 def is_criterion_subscriber(user):
     """True when the user lists the Criterion Channel among their
     streaming services — the gate for the card and for the home page's
-    live-refresh container (#80), which must render even while no
+    live-refresh container, which must render even while no
     film is showing so a card can appear when the poller stores one."""
 
     return CRITERION_PROVIDER_ID in {
@@ -354,7 +354,7 @@ def criterion_now_card(user):
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
 
-    # How far into the film we are (#79): derived STATELESSLY as the
+    # How far into the film we are: derived STATELESSLY as the
     # predicted end minus the TMDb runtime, so it's right even when
     # the heartbeat revived a dead chain mid-film and nobody saw the
     # start. Unknown runtime (or an unmatched film) shows nothing —
@@ -385,7 +385,7 @@ def criterion_now_card(user):
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
         "minutes_in": minutes_in,
-        # The home page's live refresh (#80) compares this fingerprint
+        # The home page's live refresh compares this fingerprint
         # between fetches: a changed film swaps the whole card, an
         # unchanged one repaints only the status line
         "signature": f"{stored.get('title')}|{tmdb_id}|{stored.get('ends_at')}",
@@ -440,7 +440,7 @@ def _ladder_state_for(user, tmdb_id, payload):
         "has_review": False,
         "flagged": False,
         "estimated": None,
-        # The card's watchlist toggle (#78) reads its face from here
+        # The card's watchlist toggle reads its face from here
         "on_watchlist": False,
     }
     if not tmdb_id:

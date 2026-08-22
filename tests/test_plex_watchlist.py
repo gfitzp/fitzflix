@@ -1,4 +1,4 @@
-"""The Plex ↔ Fitzflix watchlist sync (#67): the union bootstrap, the
+"""The Plex ↔ Fitzflix watchlist sync: the union bootstrap, the
 two-way incremental reconcile, push-failure retry semantics, and the
 anomaly guard that keeps an API hiccup from reading as a mass removal."""
 

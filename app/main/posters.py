@@ -1,4 +1,4 @@
-"""Poster management (#17's slice f): the per-movie and per-file
+"""Poster management (the routes.py split): the per-movie and per-file
 picker pages, custom artwork uploads, TMDb gallery picks, and the
 library-folder copies Plex reads."""
 

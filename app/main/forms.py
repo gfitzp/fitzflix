@@ -64,7 +64,7 @@ class PlexUsernameForm(FlaskForm):
 
 class LetterboxdUsernameForm(FlaskForm):
     """Name the Letterboxd account whose RSS feed syncs into this
-    user's diary (#61); blank disables the sync."""
+    user's diary; blank disables the sync."""
 
     letterboxd_username = StringField("Letterboxd Username", validators=[Optional()])
     letterboxd_submit = SubmitField("Update Letterboxd Sync")
@@ -219,7 +219,7 @@ class WatchlistForm(FlaskForm):
 
 
 class RadarrForm(FlaskForm):
-    """The ad-hoc Radarr hand-off (#66): request an unowned film for
+    """The ad-hoc Radarr hand-off: request an unowned film for
     download, or withdraw a request — one film at a time, by a human,
     never automatically."""
 
@@ -241,7 +241,7 @@ class RateFilmForm(FlaskForm):
     """The rating drive's response card: the quick-answer ladder plus
     want it, or no opinion (never saw it, or no memory of a verdict —
     the field keeps its unseen_submit name from the "Haven't Seen It"
-    era, #62)."""
+    era)."""
 
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
     watchlist_submit = SubmitField("Add to Watchlist")
@@ -416,7 +416,7 @@ class FilenameTestForm(FlaskForm):
 
 
 class GuessFrameForm(FlaskForm):
-    """Name that Frame guesses (#21): the hidden token names the
+    """Name that Frame guesses: the hidden token names the
     round, and either a chosen movie id or free text arrives,
     depending on the difficulty."""
 

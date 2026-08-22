@@ -1,4 +1,4 @@
-"""Plex library refresh + trash emptying, safely (#68 sibling).
+"""Plex library refresh + trash emptying, safely.
 
 Replaces the external cron that curl'd refresh and emptyTrash for
 hardcoded section ids, guarded by checking one mount per section. The

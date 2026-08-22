@@ -290,7 +290,7 @@ def observer_health(connection):
 def scheduler_health(connection):
     """Report whether the recurring-jobs process is registered and alive.
 
-    rq's CronScheduler heartbeats its hash with a short TTL (#22), so a
+    rq's CronScheduler heartbeats its hash with a short TTL, so a
     live key means a live scheduler.py process.
     """
 
@@ -1071,7 +1071,7 @@ def cleanup_orphaned_files():
                     current_app.logger.info(f"'{path}' Deleted orphaned partial file")
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
-        # Empty-directory pass (#66 follow-up): Radarr/Sonarr import
+        # Empty-directory pass: Radarr/Sonarr import
         # leftovers and hand-emptied folders. A directory falls when
         # its entire remaining contents are LEFTOVER JUNK — Synology
         # @eaDir trees, macOS metadata, and a handful of stray image

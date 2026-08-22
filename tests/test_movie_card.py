@@ -310,7 +310,7 @@ def test_gallery_tiles_carry_the_actions(app, admin_client):
     assert 'name="from_card"' in body
     assert 'name="add_watchlist_submit"' in body
 
-    # Variant-4 tiles (#77): the cell pins its actions to the bottom
+    # Variant-4 tiles: the cell pins its actions to the bottom
     # (poster-cell flex column; spacing is pt-1 — a Bootstrap mt-*
     # would defeat the margin-top:auto pin)
 

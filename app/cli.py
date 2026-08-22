@@ -245,7 +245,7 @@ def register(app):
 
     @app.cli.group()
     def transcodes():
-        """Manage the derived transcoded copies (#19)."""
+        """Manage the derived transcoded copies."""
         pass
 
     @transcodes.command()
@@ -264,7 +264,7 @@ def register(app):
 
     @app.cli.group()
     def frames():
-        """Manage the Name that Frame pool (#21)."""
+        """Manage the Name that Frame pool."""
         pass
 
     @frames.command()
@@ -283,14 +283,14 @@ def register(app):
 
     @app.cli.group()
     def tv():
-        """TV metadata tools (#78)."""
+        """TV metadata tools."""
         pass
 
     @tv.command()
     @click.argument("series_id", type=int)
     @click.argument("new_title")
     def rename(series_id, new_title):
-        """Rename a TV series on disk and in the database (#78 follow-on)
+        """Rename a TV series on disk and in the database
         — the Plex-disambiguation fix. S3 keys deliberately stay put."""
 
         from flask import current_app

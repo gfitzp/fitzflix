@@ -1,4 +1,4 @@
-"""TVEpisode rows (#78): slot identity, uniqueness, series cascade, and
+"""TVEpisode rows: slot identity, uniqueness, series cascade, and
 the fetch/apply refresh legs that populate them."""
 
 import pytest
@@ -84,7 +84,7 @@ def test_fetch_batches_season_appends_in_twenties(app, monkeypatch):
 
         info = series.tmdb_tv_fetch(121)
 
-        # The base call asks for the series-wide credit aggregate (#78
+        # The base call asks for the series-wide credit aggregate (TV-overhaul
         # step 4) alongside the original appended blocks
         assert fake.appends[0] == "aggregate_credits,external_ids,keywords"
 

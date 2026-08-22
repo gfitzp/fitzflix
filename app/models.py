@@ -642,7 +642,7 @@ class TMDBMixin(object):
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
 
-            # Episode payloads (#78): the base payload lists the seasons;
+            # Episode payloads: the base payload lists the seasons;
             # fetch each one's episode block in appended batches (TMDb
             # caps append_to_response at 20). A failed batch is logged
             # and skipped — the apply side only touches seasons present
@@ -823,7 +823,7 @@ class TMDBMixin(object):
 
                 # Fields are set on every refresh, not just at creation:
                 # the create-only original left episode_count frozen at
-                # whatever the season had when first seen (#78's census
+                # whatever the season had when first seen (the TV overhaul's census
                 # found announcement-time counts years stale)
 
                 s.air_date = (
@@ -840,7 +840,7 @@ class TMDBMixin(object):
                 if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
                     self.seasons.append(s)
 
-        # Series cast/crew (#78): replace this series' join rows from the
+        # Series cast/crew: replace this series' join rows from the
         # aggregate credits, mirroring the movie apply — delete-then-readd,
         # gated on the block's presence so a payload without it can't wipe
         # stored credits. The seen-sets stand in for the movie path's
@@ -920,7 +920,7 @@ class TMDBMixin(object):
                         )
                     )
 
-        # Episode rows (#78): sync tv_episode slots for every season
+        # Episode rows: sync tv_episode slots for every season
         # block the fetch delivered. Only fetched seasons are touched —
         # a season absent from the payload keeps its stored rows, so a
         # failed season batch can never mass-delete episodes.
@@ -995,8 +995,8 @@ class User(UserMixin, db.Model):
     date_reviews_exported = db.Column(db.DateTime)
     last_export_review_id = db.Column(db.Integer)
 
-    # The Letterboxd account whose RSS feed syncs into this user's diary
-    # (#61); empty disables the poll for this user
+    # The Letterboxd account whose RSS feed syncs into this user's diary;
+    # empty disables the poll for this user
 
     letterboxd_username = db.Column(db.String(64))
 
@@ -1087,7 +1087,7 @@ class User(UserMixin, db.Model):
         file_operations_running = file_operations.get_job_ids()
 
         # The running banners hold their relative order by when each
-        # FILE first began running (Glenn's original #18 ask): a file's
+        # FILE first began running (Glenn's original banner-ordering ask): a file's
         # work hops queues as it progresses — localization on import,
         # the library copy on file-operation — and each hop is a new
         # job with a new started_at, which used to bounce the banner to
@@ -1404,7 +1404,7 @@ class UserMovieReview(db.Model):
     rewatch = db.Column(db.Boolean)
 
     # The Letterboxd feed item this row came from or was matched by
-    # (#61): the dedup/edit key, and rows carrying one never re-export
+    #: the dedup/edit key, and rows carrying one never re-export
     # to Letterboxd — they are already there
 
     letterboxd_guid = db.Column(db.String(64), unique=True)
@@ -1656,7 +1656,7 @@ class TVSeries(db.Model, TMDBMixin):
 
 
 class TVEpisode(db.Model):
-    """One TMDb episode of a TV series (#78): the season/episode slot's
+    """One TMDb episode of a TV series: the season/episode slot's
     title, overview, air date, runtime, and still.
 
     Joined from File.season/File.episode at render time; a missing row
@@ -1718,9 +1718,9 @@ class File(db.Model):
     codec = db.Column(db.String(64))
     hdr_format = db.Column(db.String(255))
 
-    # The Dolby Vision flavor parsed from hdr_format (#65): "5", "7",
+    # The Dolby Vision flavor parsed from hdr_format: "5", "7",
     # "8.1", "8.4", … — profile 8's suffix is the cross-compatibility
-    # target. Feeds the eventual P7→8.1 conversion targeting (#19)
+    # target. Feeds the eventual P7→8.1 conversion targeting
 
     dolby_vision_profile = db.Column(db.String(8))
     video_bitrate_kbps = db.Column(db.Integer)
@@ -1750,7 +1750,7 @@ class File(db.Model):
         "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
 
-    # Derived copies (#19): the Handbrake transcodes made FROM this
+    # Derived copies: the Handbrake transcodes made FROM this
     # file. Rows cascade away with their source; the physical purge is
     # the delete sites' job (see app.transcodes)
 
@@ -2013,7 +2013,7 @@ class File(db.Model):
         elif self.media_library == "TV Shows":
             # A TV episode's identity is series + season + episode span —
             # NEVER the edition: for TV files the edition holds the
-            # filename's episode-title segment (#68), and two releases of
+            # filename's episode-title segment, and two releases of
             # the same episode can title it differently (Glenn's Seeds of
             # Doom case: a Blu-ray special failed to replace its DVD
             # predecessor because the discs named the extra differently).
@@ -2117,7 +2117,7 @@ class File(db.Model):
             )
 
         elif self.media_library == "TV Shows":
-            # Edition deliberately absent (#68 follow-up): for TV files it
+            # Edition deliberately absent: for TV files it
             # holds the filename's episode-title segment, and two releases
             # of the same episode can title it differently — the episode
             # span is the identity, so a retitled upgrade still prunes its
@@ -2147,7 +2147,7 @@ class File(db.Model):
 
 
 class DerivedFile(db.Model):
-    """A file derived from a library original (#19) — today the
+    """A file derived from a library original — today the
     Handbrake transcodes under TRANSCODES_DIR, eventually the 4K→SDR
     and Dolby Vision conversions.
 
@@ -2447,7 +2447,7 @@ class UserMovieStatus(db.Model):
 
 
 class UserFrameScore(db.Model):
-    """Name that Frame standings (#21), one row per (user, difficulty):
+    """Name that Frame standings, one row per (user, difficulty):
     the running streak and the personal best — persisted here so a
     restart, another device, or a new session can't erase a high
     score the way the original session-cookie streaks could."""
@@ -2469,7 +2469,7 @@ class UserFrameScore(db.Model):
 
 class TVCast(db.Model):
     """Join row: a credit's acting role on a TV series, from TMDb's
-    aggregate credits (#78) — one row per distinct character, with the
+    aggregate credits — one row per distinct character, with the
     series-wide billing order and how many episodes the role spans."""
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2487,7 +2487,7 @@ class TVCast(db.Model):
 
 class TVCrew(db.Model):
     """Join row: a credit's crew role on a TV series, from TMDb's
-    aggregate credits (#78) — one row per distinct job."""
+    aggregate credits — one row per distinct job."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))

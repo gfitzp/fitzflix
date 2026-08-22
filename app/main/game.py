@@ -1,4 +1,4 @@
-"""Name that Frame (#21, GitHub #52): the guessing game itself.
+"""Name that Frame (GitHub #52): the guessing game itself.
 
 Rounds draw from the pre-extracted pool (app/frames.py) — the page
 never touches ffmpeg. Three difficulties, per Glenn's issue: Easy

@@ -1,4 +1,4 @@
-"""Derived files (#19): recording transcode outputs, the adoption
+"""Derived files: recording transcode outputs, the adoption
 sweep, linked delete (rows cascade, physical purge enqueued), and the
 structural exclusion from ranking surfaces."""
 

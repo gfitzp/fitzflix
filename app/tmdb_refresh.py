@@ -1,4 +1,4 @@
-"""The TMDb refresh pair (#17's strangler split from app.videos).
+"""The TMDb refresh pair (the strangler split from app.videos).
 
 refresh_tmdb_info fetches a record's canonical TMDb payload on the
 network queue; apply_tmdb_refresh applies it on the single-worker sql
@@ -364,7 +364,7 @@ def apply_tmdb_refresh(
                     ):
                         # Moves the S3 object (or deliberately declines,
                         # for Deep Archive) — the field only changes when
-                        # the object really moved (#64)
+                        # the object really moved
                         try:
                             rename_untouched_object(f, aws_untouched_key)
                         except Exception:
@@ -399,7 +399,7 @@ def apply_tmdb_refresh(
                     )
 
                     # A merge can land this rename on a path the target
-                    # movie already owns (#64, the 25 Cats incident:
+                    # movie already owns (the 25 Cats incident:
                     # os.rename silently overwrote the sibling's file,
                     # then the path UPDATE died on the unique index).
                     # Refuse loudly and leave both records untouched —
@@ -458,7 +458,7 @@ def apply_tmdb_refresh(
                         exist_ok=True,
                     )
 
-                    # Database first, disk second (#64): the path update
+                    # Database first, disk second: the path update
                     # flushes inside a savepoint so a unique-index
                     # conflict surfaces BEFORE the file moves, and a
                     # failed move rolls the record straight back
@@ -601,7 +601,7 @@ def apply_tmdb_refresh(
 
 
 def refresh_in_production_tv():
-    """Nightly sweep (#78): re-enqueue the standard TMDb refresh for
+    """Nightly sweep: re-enqueue the standard TMDb refresh for
     every series still in production, so new episodes and season counts
     stay current without a manual bulk refresh.
 

@@ -1,4 +1,4 @@
-"""Series rename (#78 follow-on): disk moves, row rewrites, resume
+"""Series rename: disk moves, row rewrites, resume
 semantics, and the refusal guards. S3 keys must never change."""
 
 import os

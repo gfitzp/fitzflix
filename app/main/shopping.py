@@ -1,4 +1,4 @@
-"""The shopping lists (#17's slice f): upgrade-worthy movies and
+"""The shopping lists (the routes.py split): upgrade-worthy movies and
 TV seasons, with exclusions and store links."""
 
 import re

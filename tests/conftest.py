@@ -319,7 +319,7 @@ def fake_tmdb(monkeypatch):
             pass
 
     # tmdb_get's requests lives in app.models; app.videos stopped
-    # importing requests when its network-facing slices moved out (#17)
+    # importing requests when its network-facing slices moved out
 
     import app.models
 

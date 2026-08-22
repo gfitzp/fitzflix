@@ -43,7 +43,7 @@
    watchlist page passes watchlist=false — it has its own Remove
    button that clears the tile on reload. Spacing is pt-1, never
    mt-* — inside a .poster-cell the block pins to the cell bottom
-   via margin-top: auto (#77's variant 4), which a !important
+   via margin-top: auto (Glenn's variant 4), which a !important
    Bootstrap margin would defeat. #}
 <div class="poster-actions pt-1"{% if movie_id %} data-state-movie="{{ movie_id }}"{% elif tmdb_id %} data-state-tmdb="{{ tmdb_id }}"{% endif %}>
 	<form action="{{ action }}" method="post" class="mb-1 d-flex align-items-center">

@@ -11,7 +11,7 @@
     <meta name="color-scheme" content="light dark">
     {%- endblock metas %}
 
-	{# Dark mode via Bootstrap 5.3's color modes (#20): follow the
+	{# Dark mode via Bootstrap 5.3's color modes: follow the
 	   system preference, applied before first paint so there's no
 	   flash, and live-updated if the preference changes #}
 	<script>
@@ -29,13 +29,13 @@
     <!-- Bootstrap CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     <style>
-		/* The installed PWA owns pull-to-refresh itself (#20), so the
+		/* The installed PWA owns pull-to-refresh itself, so the
 		   browser's native overscroll can't fight the gesture */
 		@media (display-mode: standalone) {
 			body { overscroll-behavior-y: none; }
 		}
 
-		/* Bootstrap 5 dropped .form-inline; this is OUR class now (#20),
+		/* Bootstrap 5 dropped .form-inline; this is OUR class now,
 		   replicating the BS4 behavior the templates were written for:
 		   controls flow inline at their natural width */
 		.form-inline { display: flex; flex-flow: row wrap; align-items: center; }
@@ -97,7 +97,7 @@
 			100% {background-color:none;}
 		}
 
-		/* The one-tap star row (#54): glyph buttons without button
+		/* The one-tap star row: glyph buttons without button
 		   chrome. The DOM holds the stars REVERSED under row-reverse
 		   flex, so a star's DOM-following siblings are the stars
 		   visually before it — the hover preview fills the hovered
@@ -112,7 +112,7 @@
 		.star-btn:focus { outline: 0; }
 		.star-row.star-row-sm .star-btn { font-size: 1.15rem; }
 		/* Each star is an outlined ☆ (the button's own text) under a
-		   solid ★ overlay clipped to the filled percentage (#70): a
+		   solid ★ overlay clipped to the filled percentage: a
 		   verdict paints the overlay gold — ★★★☆☆ — and the engine's
 		   estimate paints it gray, never mistakable for a verdict; the
 		   unfilled remainder shows the outline underneath. The overlay
@@ -166,7 +166,7 @@
 		{% set cut = '%.1f' % (100 - (15.1 + pct * 0.693)) -%}
 		.star-row .star.fill-{{ pct }}::before { -webkit-clip-path: inset(-20% {{ cut }}% -20% 0); clip-path: inset(-20% {{ cut }}% -20% 0); }
 		{% endfor -%}
-		/* Hover previews exist only where hover does (#62 follow-up):
+		/* Hover previews exist only where hover does:
 		   iOS keeps a tapped element in :hover until the next tap
 		   elsewhere, so on touch these rules repainted the row as a
 		   preview and masked the toggle-off's real repaint — a removed
@@ -199,7 +199,7 @@
 		   of stretching it — the fix for labels that used to overflow
 		   the gallery cells (Glenn's Aug 2026 revision) */
 		.movie-card .badge { white-space: normal; text-align: start; line-height: 1.35; }
-		/* Gallery tiles (#77, Glenn's variant 4): each cell is a flex
+		/* Gallery tiles (Glenn's variant 4): each cell is a flex
 		   column with its actions pinned to the bottom — Bootstrap's
 		   row already stretches cells in a row to equal height, so
 		   every ladder and watchlist button lands on one shared
@@ -212,7 +212,7 @@
 		.poster-cell { display: flex; flex-direction: column; text-align: center; }
 		.poster-cell > .poster-actions, .poster-cell > .poster-bottom { margin-top: auto; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
-		/* Name that Frame (#21): the frame sits in a fixed-size
+		/* Name that Frame: the frame sits in a fixed-size
 		   letterbox, so a scope frame and a 4:3 frame occupy identical
 		   space and the page never resizes between rounds; the black
 		   ground reads as cinema bars in both themes. Phones swap the
@@ -259,7 +259,7 @@
     <!-- Bootstrap 5 bundle (includes Popper); jQuery is gone with Bootstrap 4 -->
 	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 
-	{# Pull-to-refresh for the installed PWA (#20): armed only when the
+	{# Pull-to-refresh for the installed PWA: armed only when the
 	   page is scrolled to the very top, ~70px threshold with a live
 	   indicator, and a plain reload — the service worker is
 	   network-first for pages, so the reload is genuinely fresh. Only

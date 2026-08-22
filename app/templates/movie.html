@@ -30,7 +30,7 @@
 			{% if directors %}
 				<p class="text-muted mb-2">Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 			{% endif %}
-			{# The star row is the page's rating control (#58): it shows
+			{# The star row is the page's rating control: it shows
 			   the verdict — or the engine's estimate in paler gold until
 			   there is one — and taps post in the background. A tap
 			   creates a date-less verdict row — a preference signal, not
@@ -119,7 +119,7 @@
 </div>
 {% endif %}
 <hr>
-{# Radarr request eligibility for the Find menu (#66): admin, Radarr
+{# Radarr request eligibility for the Find menu: admin, Radarr
    configured, unowned, and TMDb-known #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
@@ -232,7 +232,7 @@
 		<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
 	</form>
 	{% endif %}
-	{# The ad-hoc Radarr hand-off (#66) lives on the Find menu now; the
+	{# The ad-hoc Radarr hand-off lives on the Find menu now; the
 	   badge stays behind so a standing request reads at a glance #}
 	{% if radarr_requestable and in_radarr %}
 	<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>

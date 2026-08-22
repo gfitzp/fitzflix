@@ -1,4 +1,4 @@
-"""#78 step 6 surfaces: season-page episode guide, episode search,
+"""Episode-title surfaces: season-page episode guide, episode search,
 people-page TV credits, the filmography Television section, and the
 tv-page meta line."""
 

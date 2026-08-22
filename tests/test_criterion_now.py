@@ -1,4 +1,4 @@
-"""The Criterion24/7 now-playing card (#63): parsing the whatsonnow
+"""The Criterion24/7 now-playing card: parsing the whatsonnow
 page (countdown typo included), the film info page, the self-scheduling
 poller, and the landing-page card's gating, staleness, star row, and
 filmography-linked credits."""
@@ -576,7 +576,7 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
 
 
 def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
-    """#78 + #79: the card carries a watchlist toggle whose face
+    """the card carries a watchlist toggle whose face
     follows the record, and 'About N minutes in' derived from the
     predicted end minus the runtime — never shown without both."""
 
@@ -657,7 +657,7 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
 
 
 def test_card_fragment_follows_the_feed(app, admin_client):
-    """#80: the home page re-fetches the card from /criterion-now so an
+    """the home page re-fetches the card from /criterion-now so an
     open tab follows the feed. The fragment carries the film's
     fingerprint and a status line for the page's swap-or-repaint
     choice, and comes back empty (not 404, not a page) whenever the

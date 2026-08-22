@@ -123,7 +123,7 @@ class Config(object):
 
     TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "app", "static", "triage")
 
-    # Name that Frame (#21): the nightly pre-extracted frame pool —
+    # Name that Frame: the nightly pre-extracted frame pool —
     # served through an authenticated route, never the public static
     # path, since a frame's filename must not hint at its answer
 

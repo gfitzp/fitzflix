@@ -1,5 +1,5 @@
 """The recurring-jobs process: rq's native cron plus the scheduled-job
-mover, replacing rq-scheduler (#22).
+mover, replacing rq-scheduler.
 
 One process does both halves of what rq-scheduler did: a CronScheduler
 holds the cron_table registrations and enqueues them on schedule, and an

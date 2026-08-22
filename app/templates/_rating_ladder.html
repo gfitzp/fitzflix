@@ -1,9 +1,9 @@
 {% macro rating_ladder(compact=false, allow_not_interested=true, current=none, flagged=false, live=false, estimated=none) %}
-{# One row, one tap per verdict (#54): ✕ + ★1–5 glyphs. The row shows
+{# One row, one tap per verdict: ✕ + ★1–5 glyphs. The row shows
    the CURRENT verdict — filled stars, a lit ✕ — and tapping the
    current value removes it (the server detects the match). Each
    button submits the surrounding form with its value in quick_rating;
-   0 is the not-interested FLAG, never a rating (#51), so callers pass
+   0 is the not-interested FLAG, never a rating, so callers pass
    allow_not_interested=false on films the user has logged. live=true
    marks the form for the background-fetch script in base.html, which
    repaints the row in place; without JS the buttons submit normally
@@ -14,8 +14,7 @@
    the row renders the fraction the same way estimates do, while taps
    still submit whole values only. #}
 {% set cur = (current | float) if current is not none else 0 %}
-{# When the user has no rating, the row previews the ENGINE'S estimate
-   (#58) in solid GRAY stars that a real gold rating replaces (#70) —
+{# When the user has no rating, the row previews the ENGINE'S estimate in solid GRAY stars that a real gold rating replaces —
    never mistakable for a verdict. Estimates carry fractions: a 3.75
    estimate fills the fourth star three-quarters (a text-clipped
    gradient, --est-fill), while taps only ever submit whole values. #}
@@ -32,7 +31,7 @@
 	{# The boundary star's fraction rides as a QUANTIZED fill-N class
 	   (5% steps, matching bootstrap.html's fixed clip rules) — never
 	   an inline custom property, which iOS Safari mis-resolves inside
-	   a pseudo-element (#70's WebKit lesson) #}
+	   a pseudo-element (the star-widget WebKit lesson) #}
 	{% set frac = cur_pct if 0 < cur_pct < 100 else (est_pct if 0 < est_pct < 100 else 0) %}
 	<button type="submit" name="quick_rating" value="{{ n }}" class="star-btn star{% if cur_pct == 100 %} filled{% elif cur_pct > 0 %} filled fill-partial{% endif %}{% if est_pct == 100 %} estimated{% elif est_pct > 0 %} estimated est-partial{% endif %}{% if frac %} fill-{{ [5, [95, ((frac / 5) | round | int) * 5] | min] | max }}{% endif %}" title="{{ 'Tap again to remove your rating' if current is not none and (current | float) == n else labels[n] }}" aria-label="{{ labels[n] }}">&#9734;</button>
 	{% endfor %}

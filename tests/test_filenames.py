@@ -199,7 +199,7 @@ def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):
 
 
 def test_yeared_name_attaches_to_bare_series_when_year_matches(app):
-    """Sonarr now names new files "Title (Year)" (#78 follow-on): the
+    """Sonarr now names new files "Title (Year)": the
     yeared form must land on the existing bare-titled record when the
     year matches its first-air year, not split into a second series."""
 

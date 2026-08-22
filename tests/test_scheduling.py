@@ -1,7 +1,6 @@
 """Deferred-retry scheduling: deterministic job ids that replace rather than
 stack, scheduled jobs that actually bind to their target functions (the
-enqueue_in kwarg-leak bug class), the native ScheduledJobRegistry defers
-(#22), the cron table, and the import-directory watchdog.
+enqueue_in kwarg-leak bug class), the native ScheduledJobRegistry defers, the cron table, and the import-directory watchdog.
 """
 
 import inspect
@@ -24,7 +23,7 @@ from app.videos import (
 
 
 def scheduled_ids(queue):
-    """Job ids in the queue's native ScheduledJobRegistry (#22)."""
+    """Job ids in the queue's native ScheduledJobRegistry."""
 
     from rq.registry import ScheduledJobRegistry
 
@@ -244,7 +243,7 @@ def test_sync_defers_while_queues_are_busy(app):
 def test_cron_table_entries_are_well_formed(app):
     """Every cron-table row names a resolvable function, a five-field
     cron string, the maintenance queue, and a description — the
-    scheduler process trusts the table blindly (#22)."""
+    scheduler process trusts the table blindly."""
 
     import importlib
 
@@ -262,7 +261,7 @@ def test_cron_table_entries_are_well_formed(app):
 
 
 def test_cron_frequency_sort_orders_by_class_then_parameter():
-    """The System page's ordering (#22): every-X-minutes by X, hourly by
+    """The System page's ordering: every-X-minutes by X, hourly by
     minute, daily by time, weekly by day and time, monthly by
     day-of-month and time."""
 

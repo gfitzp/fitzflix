@@ -1,4 +1,4 @@
-"""The shared task plumbing — and the compatibility shim (#17).
+"""The shared task plumbing — and the compatibility shim.
 
 What physically remains here: the cross-cutting machinery every
 pipeline module leans on — file-copy with progress and transient-error
@@ -27,7 +27,7 @@ from werkzeug.local import LocalProxy
 from app import get_app, safe_job_id
 from app.maintenance import volume_alive
 
-# The AWS storage layer moved to app.aws_storage (#17); these re-exports
+# The AWS storage layer moved to app.aws_storage; these re-exports
 # keep every stored rq job string and import site resolving through
 # app.videos, and keep this module's own callers working unchanged
 
@@ -54,7 +54,7 @@ from app.aws_storage import (
 )
 
 # The Criterion spine catalog moved to app.criterion_catalog and the
-# diary writers to app.diary (#17); same re-export contract as above
+# diary writers to app.diary; same re-export contract as above
 
 from app.criterion_catalog import (
     CRITERION_CACHE_KEY,
@@ -322,7 +322,7 @@ def acquire_lock_or_defer(
     """Take the redlock for a title, or schedule the task to retry later.
 
     Returns the lock on success, or None after scheduling the retry.
-    The retry lands in the queue's native ScheduledJobRegistry (#22);
+    The retry lands in the queue's native ScheduledJobRegistry;
     scheduler.py's mover enqueues it when due.
     """
 

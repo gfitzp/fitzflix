@@ -1,4 +1,4 @@
-"""Per-file pipeline trails (#18): the stage registry and extractors,
+"""Per-file pipeline trails: the stage registry and extractors,
 the queue-side hooks, in-place lifecycle updates, and the queue page's
 payload and markup."""
 
@@ -117,7 +117,7 @@ def test_a_retry_after_failure_appends_a_fresh_entry(app):
 
 
 def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
-    """#76: the move job starts the instant localization enqueues it,
+    """the move job starts the instant localization enqueues it,
     so the file-operation worker's "started" stamp races the import
     worker's "done" stamp on the same trail. The loser of the old
     read-modify-write erased the winner (two files froze at
@@ -372,7 +372,7 @@ def test_deferred_retries_list_on_the_queue_page(app, admin_client):
 
 def test_queue_details_files_limit_is_adjustable(app, admin_client):
     """The pipeline page asks the shared poll for more than the queue
-    page's newest 25 via ?files=… (#76); the value is clamped so a
+    page's newest 25 via ?files=…; the value is clamped so a
     hand-typed query can't ask Redis for the moon."""
 
     with app.app_context():
@@ -420,7 +420,7 @@ def test_running_banners_hold_first_run_order(app, admin_client):
     not by the current job's own start — a file whose work hops from
     the import queue to the file-operation queue (iterated last) keeps
     its place ahead of a file that started after it (Glenn's original
-    #18 ask)."""
+    banner-ordering ask)."""
 
     import time
 

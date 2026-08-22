@@ -44,7 +44,7 @@
 			{% if match_url %}</a>{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
-				{# The live star ladder, like the history rows (#58): a
+				{# The live star ladder, like the history rows: a
 				   record's ladder posts to its movie route, a bare TMDb
 				   result's to the log route whose first tap creates the
 				   record; the /movie_states hydration paints the verdict

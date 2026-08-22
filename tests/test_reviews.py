@@ -1394,7 +1394,7 @@ def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_
 def test_feed_created_rows_never_export_back_to_letterboxd(
     app, admin_client, monkeypatch
 ):
-    """A row carrying a letterboxd_guid came FROM the feed (#61) — it is
+    """A row carrying a letterboxd_guid came FROM the feed — it is
     already on Letterboxd, and exporting it back would round-trip a
     duplicate."""
 
@@ -1512,7 +1512,7 @@ def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
 def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
     """Tapping the current rating on a history row clears the stars,
     and the live repaint answers with the engine's estimate — the row
-    falls back to the guess instead of going blank (#58's rule,
+    falls back to the guess instead of going blank (the universal-star-row rule,
     extended to logged-but-unrated viewings)."""
 
     import json

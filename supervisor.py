@@ -21,7 +21,7 @@ db.configure_mappers()
 
 # rq 2 removed the Connection context manager, so the worker takes its
 # connection explicitly. PipelineWorker is a SimpleWorker that also
-# stamps per-file trail entries around execution (#18).
+# stamps per-file trail entries around execution.
 
 w = PipelineWorker(qs, connection=Redis.from_url(Config.REDIS_URL))
 w.work()

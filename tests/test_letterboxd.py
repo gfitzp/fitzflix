@@ -1,4 +1,4 @@
-"""The Letterboxd RSS sync (#61): feed parsing, and the merge rules
+"""The Letterboxd RSS sync: feed parsing, and the merge rules
 that keep one viewing one row — guid idempotence, CSV-twin adoption,
 and Plex bare-watch completion."""
 

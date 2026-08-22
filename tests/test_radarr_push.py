@@ -1,4 +1,4 @@
-"""The ad-hoc Radarr hand-off (#66): per-film request and withdrawal
+"""The ad-hoc Radarr hand-off: per-film request and withdrawal
 with the house settings, the Find-menu entries on the watchlist and
 movie page, and the badge cache."""
 

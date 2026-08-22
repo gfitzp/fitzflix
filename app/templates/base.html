@@ -9,7 +9,7 @@
 {% block navbar %}
 {# The navigation progress hairline (see bootstrap.html's stylesheet) #}
 <div id="nav-progress" role="presentation"></div>
-{# bg-body-tertiary adapts to the active color mode (#20) — the old
+{# bg-body-tertiary adapts to the active color mode — the old
    navbar-light bg-light stayed light in dark mode #}
 <nav class="navbar navbar-expand-lg bg-body-tertiary fixed-top">
 	<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="me-1" alt="Fitzflix logo"></a>
@@ -536,7 +536,7 @@
 				allSignature = signature;
 			}
 
-			// Per-file pipeline trails (#18): each recent file's journey
+			// Per-file pipeline trails: each recent file's journey
 			// as stage chips — done green, running blue, queued gray,
 			// retry-wait amber, failed red. The queue page paints them
 			// on its job rows (renderAll); the File Activity dashboard
@@ -705,7 +705,7 @@
 			poll();
 		})();
 
-		// The one-tap star row (#54): forms marked data-ladder-live post
+		// The one-tap star row: forms marked data-ladder-live post
 		// in the background and the row repaints in place — no reload.
 		// Any failure falls back to a normal form submission. The
 		// painting is shared with the gallery hydration below, which
@@ -735,7 +735,7 @@
 				// The fraction rides as a quantized fill-N class
 				// (5% steps, fixed CSS rules) — never a custom
 				// property, which iOS Safari mis-resolves inside
-				// a pseudo-element (#70's WebKit lesson)
+				// a pseudo-element (the star-widget WebKit lesson)
 				Array.prototype.slice.call(star.classList).forEach(function (cls) {
 					if (/^fill-\d+$/.test(cls)) star.classList.remove(cls);
 				});

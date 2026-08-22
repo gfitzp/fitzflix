@@ -1,4 +1,4 @@
-"""The discovery surfaces (#17's slice f): the landing rails, the
+"""The discovery surfaces (the routes.py split): the landing rails, the
 rating drive, the TMDb log page, the poster popover card, the
 watchlist, and the Radarr hand-off."""
 
@@ -420,7 +420,7 @@ def index():
 @bp.route("/criterion-now")
 @login_required
 def criterion_now():
-    """The Criterion24/7 card fragment (#80), re-fetched by the home
+    """The Criterion24/7 card fragment, re-fetched by the home
     page once a minute while it's visible so an open tab follows the
     feed — the film swaps when the poller stores the next one, and the
     "minutes in" / "next film" line keeps time in between. Empty (200)
@@ -1057,7 +1057,7 @@ def watchlist():
     tile's popover — where the badges live since Glenn's Aug 2026
     revision — answers "how can I watch this" from a hot cache."""
 
-    # The availability filter (#80): default ALL, narrowable to one
+    # The availability filter: default ALL, narrowable to one
     # exclusive bucket of the list — the removal redirect keeps it in
     # place
 
@@ -1132,7 +1132,7 @@ def watchlist():
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
     }
 
-    # The ad-hoc Radarr hand-off (#66): admins get request/withdraw
+    # The ad-hoc Radarr hand-off: admins get request/withdraw
     # entries on unowned tiles' Find menus, from the hour-cached id set
 
     radarr_ids = (
@@ -1160,7 +1160,7 @@ def watchlist():
                 "owned": movie.id in owned_ids,
                 "streaming": streaming,
                 "rentals": rentals,
-                # Warming state (#80): a film whose availability hasn't
+                # Warming state: a film whose availability hasn't
                 # been fetched yet can't be classified for the
                 # streaming/rental filters — it must be reported as
                 # pending, never silently dropped. Films without a
@@ -1175,7 +1175,7 @@ def watchlist():
             }
         )
 
-    # The filter semantics (#80, Glenn's Aug 2026 revision): the four
+    # The filter semantics (Glenn's Aug 2026 revision): the four
     # buckets are exclusive — every film lands in exactly one, by the
     # best way to watch it. LOCAL = owned library files, whatever else
     # carries the film; ON MY SERVICES = unowned, on a subscribed
@@ -1219,7 +1219,7 @@ def watchlist():
 @login_required
 @admin_required
 def radarr_request():
-    """The ad-hoc Radarr hand-off (#66): request one unowned film for
+    """The ad-hoc Radarr hand-off: request one unowned film for
     download — a deliberate per-film action from the Find menu on the
     movie page or a watchlist tile, never automatic (an auto-sync of
     the whole watchlist would fill the volume). The withdraw branch
@@ -1281,7 +1281,7 @@ def radarr_request():
 @login_required
 def rate():
     """The rating drive: library films offered one at a time to deepen
-    the taste profile — rate it, want it, or no opinion (#62), and
+    the taste profile — rate it, want it, or no opinion, and
     every answer steers what's offered next."""
 
     form = RateFilmForm()
@@ -1292,7 +1292,7 @@ def rate():
             f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
         )
         # The quick-answer ladder maps one tap onto whole stars — the ✕
-        # is the not-interested flag (#51), never a review: the film
+        # is the not-interested flag, never a review: the film
         # leaves the drive and every recommendation surface, and steers
         # the next picks away like "no opinion" does. 3+ stars
         # auto-flag liked (Glenn's rule: liked means a positive verdict)
@@ -1385,7 +1385,7 @@ def rate():
     anchor = movies.get(anchor_id)
 
     # The featured card shows the engine's estimate in the star row
-    # (#53/#58 — Glenn chose consistency over the original keep-the-
+    # (Glenn chose consistency over the original keep-the-
     # elicitation-unanchored rule), read through the shared resolver
     # like every other estimate surface
 
@@ -1594,7 +1594,7 @@ def review_tmdb(tmdb_id):
             tmdb_id, film_title, year, details=details
         )
 
-        # The ladder's ✕ is the not-interested flag (#51), never a
+        # The ladder's ✕ is the not-interested flag, never a
         # review — same flow as the dedicated button below
 
         if quick_present and quick_rating == 0:

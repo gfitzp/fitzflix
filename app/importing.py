@@ -1,4 +1,4 @@
-"""The import pipeline (#17's strangler split from app.videos): the
+"""The import pipeline (the strangler split from app.videos): the
 chain a file walks from the import directory to the library.
 
 evaluate_filename parses and prices the name; localization_task
@@ -1421,7 +1421,7 @@ def finalize_localization(
             # needs triage is decided later by the candidates query.
             # Imported content is NEW evidence: a re-imported file
             # wipes any earlier reviewed verdict and stale aids first
-            # (#74 — a replacement may carry a forced track the
+            # (a replacement may carry a forced track the
             # original didn't)
 
             from app.triage import reset_triage_state
@@ -1493,7 +1493,7 @@ def finalize_localization(
                         worse_aws_keys.append(worse.aws_untouched_key)
 
                     # The replaced file's transcoded copies go with it
-                    # (#19) — paths noted now, removed after the commit,
+                    # — paths noted now, removed after the commit,
                     # same posture as the AWS keys; the rows themselves
                     # cascade away with the delete
 
@@ -1632,7 +1632,7 @@ def finalize_localization(
                 )
 
             # A matched series whose imported slot has no episode row yet
-            # gets a refresh (#78) — a fresh season may have aired since
+            # gets a refresh — a fresh season may have aired since
             # the last fetch. The membership check keeps a whole-season
             # batch import to one queued job; slots TMDb simply doesn't
             # know re-check at most once per import batch.
@@ -1688,7 +1688,7 @@ def finalize_localization(
             # while the file is fresh and certainly local — gated on the
             # SAME candidates query the triage page uses, not the
             # first-track-baseline heuristic, which misses files whose
-            # suspicious track comes FIRST (#74: Baby Driver's tracks
+            # suspicious track comes FIRST (Baby Driver's tracks
             # read [49, 3110, 4334] elements and nothing was flagged)
 
             from app.triage import maybe_enqueue_triage_snapshots
@@ -1775,7 +1775,7 @@ def finalize_transcoding(file_id, lock, transient_retries=0):
             # Update the file record with the date it was transcoded
             file.date_transcoded = datetime.now(timezone.utc)
 
-            # Track the output as a derived file (#19): source-linked,
+            # Track the output as a derived file: source-linked,
             # structurally outside ranking/shopping, and purged with
             # its original
 
@@ -2077,7 +2077,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
         media_library = "TV Shows"
         title = tv.group("title")
 
-        # Canonicalize against existing records (#78 follow-on), the
+        # Canonicalize against existing records, the
         # movie branch's convention: Sonarr may name a file with or
         # without the series' year, and either form must land on the
         # record that already owns the show rather than splitting it

@@ -1,4 +1,4 @@
-"""TMDb episode-title validation (#78 step 5).
+"""TMDb episode-title validation.
 
 TMDb's TV numbering usually mirrors the TVDB aired order Sonarr used
 to number the library's files, but diverges on some shows — and a
@@ -12,7 +12,7 @@ surfaces can render it plain.
 Plex is the only independent corpus: the import rename strips any
 title segment from filenames, so the files themselves carry nothing
 to compare. Edition-carrying files are excluded as circular —
-Fitzflix writes those titles INTO Plex itself (#68).
+Fitzflix writes those titles INTO Plex itself.
 
 Verdicts live in the fitzflix:tv:validation Redis hash, one JSON
 entry per series id, rebuilt by each run. A series that produced no
@@ -290,7 +290,7 @@ def validation_report():
 
 def series_is_suspect(series_id):
     """True when the series' stored verdict is numbering-suspect —
-    the render-time gate for episode-title surfaces (#78 step 6).
+    the render-time gate for episode-title surfaces.
     Unverified series are trusted: absence of evidence isn't a verdict."""
 
     blob = current_app.redis.hget(VALIDATION_KEY, str(series_id))

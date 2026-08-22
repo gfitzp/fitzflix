@@ -5,7 +5,7 @@
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">My Watchlist</h2>
 	<div class="col-12 col-sm-auto mt-2">
-		{# The availability filter (#80): all films by default, or one
+		{# The availability filter: all films by default, or one
 		   exclusive bucket — owned, streaming, rent-only, or nowhere
 		   at all — the criterion page's radio grammar, counts included #}
 		<form class="float-sm-right mb-2" action="{{ url_for('main.watchlist') }}" method="get">
@@ -47,7 +47,7 @@
 			   and WTForms reads the first one submitted #}
 			<div class="d-flex justify-content-center mt-1" style="gap: .25rem;">
 				{# The movie page's Find split button replaced the bare
-				   Request button (#66 revision): the face opens the best
+				   Request button: the face opens the best
 				   shop for the film, the menu fans out to the rest — the
 				   Radarr request and withdrawal now live on the menu #}
 				{% if not row.owned %}

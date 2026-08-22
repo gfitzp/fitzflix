@@ -27,7 +27,7 @@ def sonarr_add(payload):
         payload["episodeFile"].get("relativePath"),
     )
 
-    # A provably truncated download never reaches the pipeline (#73):
+    # A provably truncated download never reaches the pipeline:
     # mark the grab failed so Sonarr blocklists it and searches again
 
     if import_source_incomplete(downloaded_file_path):

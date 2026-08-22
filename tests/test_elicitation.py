@@ -65,7 +65,7 @@ def test_candidates_exclude_declared_states(app):
 
 
 def test_unseen_mark_expires_after_two_years(app):
-    """ "Haven't seen it" wears off (#52): a mark older than the
+    """ "Haven't seen it" wears off: a mark older than the
     resurface bar stops excluding the film from the drive, and
     re-marking a resurfaced film resets the clock on the same row for
     another term."""
@@ -170,7 +170,7 @@ def test_adjacency_steers_toward_the_rated_films_neighborhood(app):
 
 
 def test_rate_page_actions_flow(app, admin_client):
-    """The three answers (#62 removed Skip): a rating writes a
+    """The three answers (Skip was removed): a rating writes a
     date-less diary row and the film leaves the pool; watchlist and
     No Opinion both retire the film from the drive."""
 
@@ -240,7 +240,7 @@ def test_rate_page_actions_flow(app, admin_client):
 def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     """The one-tap ladder writes ordinary date-less diary rows — Loved
     it = 5 (positive, steers), Didn't like it = 2 (not positive) —
-    while ✕ (0) writes the not-interested FLAG, never a review (#51),
+    while ✕ (0) writes the not-interested FLAG, never a review,
     and nonsense values write nothing."""
 
     from app.elicitation import elicitation_candidates, last_response
@@ -267,7 +267,7 @@ def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
     ):
         assert label in page
 
-    # The 1–5 buttons are single outline-star glyphs (#70: the gold
+    # The 1–5 buttons are single outline-star glyphs (the gold
     # fill is a CSS overlay) in one row, labels in titles
 
     assert page.count("&#9734;") == 5
@@ -714,7 +714,7 @@ def test_positive_rating_earns_suggestions(app, admin_client):
 def test_movie_page_x_flags_and_never_reviews(app, admin_client):
     """The movie page ladder's ✕ writes the not-interested flag — no
     diary row — and clears a contradicting watchlist entry; logging the
-    film later clears the flag again (#51)."""
+    film later clears the flag again."""
 
     from app.models import UserMovieStatus, UserWatchlist
 
@@ -769,7 +769,7 @@ def test_movie_page_x_flags_and_never_reviews(app, admin_client):
 
 def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
     """A film with a diary row refuses the ✕ server-side — its floor is
-    1 star — and the ladder stops offering the button (#51)."""
+    1 star — and the ladder stops offering the button."""
 
     from app.models import UserMovieStatus
     from app.videos import star_rating_fields
@@ -879,7 +879,7 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
 
 
 def test_same_star_tap_removes_the_rating(app, admin_client):
-    """Tapping your current rating removes it (#54): a bare date-less
+    """Tapping your current rating removes it: a bare date-less
     row disappears entirely, a dated viewing only loses its stars."""
 
     from app.videos import star_rating_fields
@@ -946,7 +946,7 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
 
 
 def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
-    """The star row's background posts get JSON state back (#54): set,
+    """The star row's background posts get JSON state back: set,
     remove, flag, and unflag all round-trip without a redirect."""
 
     with app.app_context():
@@ -1015,7 +1015,7 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
 
 def test_rate_featured_card_shows_the_estimate(app, admin_client):
     """The featured card's star row previews the engine's estimate from
-    the nightly score map (#53 — Glenn chose consistency over keeping
+    the nightly score map (Glenn chose consistency over keeping
     the elicitation unanchored)."""
 
     import json as jsonlib

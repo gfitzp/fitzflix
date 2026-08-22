@@ -1,4 +1,4 @@
-"""The AWS storage layer (#17's first strangler slice out of videos.py).
+"""The AWS storage layer (the first strangler slice out of videos.py).
 
 Everything that talks to S3 and SQS: the untouched-original archive
 uploads, restores and downloads, the weekly storage audit, the SQS
@@ -390,7 +390,7 @@ def sync_aws_s3_storage_task():
                 ).all()
             }
 
-            # The rename-skew tripwire (#64): an ACTIVE claim with no
+            # The rename-skew tripwire: an ACTIVE claim with no
             # matching object means a restore would 404 — the class of
             # silent damage the Aug 17 audit found 1,184 deep. Report
             # it loudly here every week so it can never accumulate
@@ -742,7 +742,7 @@ def upload_task(
 def untouched_key_still_claimed(key):
     """Whether any surviving file record still claims this untouched
     S3 key. Distinct records can share a key — a replaced file whose
-    key was repointed after a rename (#64), or a re-import landing on
+    key was repointed after a rename, or a re-import landing on
     the same basename — and deleting a claimed key would strand the
     survivor's archive behind a delete marker (the Bambi II incident,
     Aug 2026). Callers check AFTER their own deletes commit, so the
@@ -762,7 +762,7 @@ def untouched_key_still_claimed(key):
 def rename_untouched_object(file, new_key):
     """Move a file's untouched S3 archive when its derived key changes,
     keeping the invariant that aws_untouched_key only ever names a REAL
-    object (#64 — the old flow rewrote the database field without
+    object (the old flow rewrote the database field without
     moving anything, stranding 1,184 keys found by the Aug 17 audit).
 
     STANDARD (or restored) objects are copied server-side

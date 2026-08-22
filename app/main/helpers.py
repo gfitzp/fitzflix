@@ -1,4 +1,4 @@
-"""Shared helpers for the main blueprint's route modules (#17's
+"""Shared helpers for the main blueprint's route modules (the routes.py split's
 slice f): the verdict/ladder plumbing every rating surface uses, the
 admin gate, and the quality-threshold read."""
 
@@ -59,7 +59,7 @@ def _quick_rating():
     (False, None) when no ladder button was pressed, (True, None) when
     the value is nonsense, (True, 0.0–5.0) otherwise. A 0 is the ✕ —
     "not interested, never saw it" — which handlers route to the
-    status-flag path, never to a review (#51): the star scale itself
+    status-flag path, never to a review: the star scale itself
     starts at 1 ("Hated it") and belongs to seen films only.
     """
 
@@ -75,7 +75,7 @@ def _mark_not_interested(user_id, movie_id):
     """Flag a film not-interested and clear any contradicting watchlist
     entry; commits. Returns False without writing when the user has a
     diary row for the film — ✕ means "never saw it", and a seen film's
-    harshest verdict is 1 star (#51)."""
+    harshest verdict is 1 star."""
 
     if (
         db.session.query(UserMovieReview.id)
@@ -100,7 +100,7 @@ def _mark_not_interested(user_id, movie_id):
 
 def _ladder_fetch():
     """True when the quick-rating post came from the star row's
-    background fetch (#54) — it wants JSON state back instead of a
+    background fetch — it wants JSON state back instead of a
     redirect, and flash messages would only queue up unseen for some
     later page load."""
 
@@ -155,7 +155,7 @@ def _ladder_state(user_id, movie_id):
     whether the not-interested flag is set, and — until the user's own
     STARS exist (unlogged films and bare unrated watches alike) — the
     engine's estimated rating, so removing a verdict repaints the row
-    back to its estimate (#58)."""
+    back to its estimate."""
 
     row = _latest_review_row(user_id, movie_id)
     flagged = (
