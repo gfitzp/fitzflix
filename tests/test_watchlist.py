@@ -781,10 +781,12 @@ def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
 
 
 def test_watchlist_availability_filter(app, admin_client):
-    """#80: default shows everything; local/services/rent narrow to
-    what's watchable now, with counts on the pills, unfetched films
-    reported as pending instead of silently dropped, and the removal
-    redirect keeping the filter."""
+    """#80 (Aug 2026 revision): default shows everything; the other
+    pills are exclusive buckets — owned beats streaming beats renting,
+    and UNAVAILABLE catches films with a known-empty availability —
+    with counts on the pills, unfetched films reported as pending
+    instead of filed as unavailable, and the removal redirect keeping
+    the filter."""
 
     from app import db
     from app.models import UserStreamingProvider, UserWatchlist
@@ -798,59 +800,107 @@ def test_watchlist_availability_filter(app, admin_client):
         )
         owned = make_movie("Filter Owned Film", 1990)
         make_movie_file(owned, "Bluray-1080p")
+        # Owned AND streaming: owning wins, so it files under local only
+        owned_streaming = make_movie("Filter Owned Streaming Film", 1989, tmdb_id=9400)
+        make_movie_file(owned_streaming, "Bluray-1080p")
         streaming = make_movie("Filter Streaming Film", 1991, tmdb_id=9401)
         rentable = make_movie("Filter Rentable Film", 1992, tmdb_id=9402)
         warming = make_movie("Filter Warming Film", 1993, tmdb_id=9403)
-        for movie in (owned, streaming, rentable, warming):
+        # Streaming AND rentable: the subscription wins over the rental
+        both = make_movie("Filter Both Film", 1994, tmdb_id=9404)
+        # Fetched, and carried by nobody the user subscribes to
+        nowhere = make_movie("Filter Nowhere Film", 1995, tmdb_id=9405)
+        # No TMDb id at all: known-negative, never pending
+        untracked = make_movie("Filter Untracked Film", 1996)
+        for movie in (
+            owned,
+            owned_streaming,
+            streaming,
+            rentable,
+            warming,
+            both,
+            nowhere,
+            untracked,
+        ):
             db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
         db.session.commit()
         owned_id = owned.id
 
-    app.redis.set(
-        "fitzflix:tmdb:watch-providers:movie:9401",
-        json.dumps(
-            {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []}
-        ),
-    )
-    app.redis.set(
-        "fitzflix:tmdb:watch-providers:movie:9402",
-        json.dumps(
-            {"link": None, "flatrate": [], "ads": [], "rent": [NETFLIX], "buy": []}
-        ),
-    )
+    def cache(tmdb_id, flatrate=(), rent=()):
+        app.redis.set(
+            f"fitzflix:tmdb:watch-providers:movie:{tmdb_id}",
+            json.dumps(
+                {
+                    "link": None,
+                    "flatrate": list(flatrate),
+                    "ads": [],
+                    "rent": list(rent),
+                    "buy": [],
+                }
+            ),
+        )
+
+    cache(9400, flatrate=[NETFLIX])
+    cache(9401, flatrate=[NETFLIX])
+    cache(9402, rent=[NETFLIX])
+    cache(9404, flatrate=[NETFLIX], rent=[NETFLIX])
+    cache(9405)
     # 9403 stays uncached: availability unknown, warming
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
     for title in (
         "Filter Owned Film",
+        "Filter Owned Streaming Film",
         "Filter Streaming Film",
         "Filter Rentable Film",
         "Filter Warming Film",
+        "Filter Both Film",
+        "Filter Nowhere Film",
+        "Filter Untracked Film",
     ):
         assert title in page
-    assert "All (4)" in page
-    assert "In library (1)" in page
+    # The buckets partition the list: 2 + 2 + 1 + 2 = 7, plus the one
+    # film still warming
+    assert "All (8)" in page
+    assert "In library (2)" in page
     assert "On my services (2)" in page
     assert "For rent (1)" in page
+    assert "Unavailable (2)" in page
     assert "still being fetched" not in page
 
     local = admin_client.get("/watchlist?availability=local").get_data(as_text=True)
     assert "Filter Owned Film" in local
+    assert "Filter Owned Streaming Film" in local
     assert "Filter Streaming Film" not in local
+    assert "still being fetched" not in local
 
     services = admin_client.get("/watchlist?availability=services").get_data(
         as_text=True
     )
-    assert "Filter Owned Film" in services
     assert "Filter Streaming Film" in services
+    assert "Filter Both Film" in services
+    assert "Filter Owned Film" not in services
+    assert "Filter Owned Streaming Film" not in services
     assert "Filter Rentable Film" not in services
     assert "Filter Warming Film" not in services
     assert "1 film aren't shown here yet" in services
 
     rent = admin_client.get("/watchlist?availability=rent").get_data(as_text=True)
     assert "Filter Rentable Film" in rent
+    assert "Filter Both Film" not in rent
     assert "Filter Owned Film" not in rent
+    assert "Filter Nowhere Film" not in rent
     assert "still being fetched" in rent
+
+    unavailable = admin_client.get("/watchlist?availability=unavailable").get_data(
+        as_text=True
+    )
+    assert "Filter Nowhere Film" in unavailable
+    assert "Filter Untracked Film" in unavailable
+    assert "Filter Warming Film" not in unavailable
+    assert "Filter Rentable Film" not in unavailable
+    assert "Filter Owned Film" not in unavailable
+    assert "still being fetched" in unavailable
 
     # Removal under a filter redirects back INTO the filter
 

@@ -1068,6 +1068,25 @@ def leaving():
     )
 
 
+WATCHLIST_BUCKETS = ("all", "local", "services", "rent", "unavailable")
+
+
+def watchlist_bucket(row):
+    """The one exclusive availability bucket a watchlist row files
+    under — owned beats streaming beats renting — or None while the
+    film's availability is still being fetched."""
+
+    if row["owned"]:
+        return "local"
+    if row["streaming"]:
+        return "services"
+    if row["rentals"]:
+        return "rent"
+    if row["availability_pending"]:
+        return None
+    return "unavailable"
+
+
 @bp.route("/watchlist", methods=["GET", "POST"])
 @login_required
 def watchlist():
@@ -1076,11 +1095,12 @@ def watchlist():
     tile's popover — where the badges live since Glenn's Aug 2026
     revision — answers "how can I watch this" from a hot cache."""
 
-    # The availability filter (#80): default ALL, narrowable to films
-    # watchable right now — the removal redirect keeps it in place
+    # The availability filter (#80): default ALL, narrowable to one
+    # exclusive bucket of the list — the removal redirect keeps it in
+    # place
 
     availability_filter = request.args.get("availability", "all")
-    if availability_filter not in ("all", "local", "services", "rent"):
+    if availability_filter not in WATCHLIST_BUCKETS:
         availability_filter = "all"
 
     watchlist_form = WatchlistForm()
@@ -1191,27 +1211,26 @@ def watchlist():
             }
         )
 
-    # The filter semantics (#80, Glenn's definitions): LOCAL = owned
-    # library files; ON MY SERVICES = local files plus flat-rate
-    # streaming matches; FOR RENT = rental services only (owning a
-    # film beats renting it, so owned rows stay out of that one)
+    # The filter semantics (#80, Glenn's Aug 2026 revision): the four
+    # buckets are exclusive — every film lands in exactly one, by the
+    # best way to watch it. LOCAL = owned library files, whatever else
+    # carries the film; ON MY SERVICES = unowned, on a subscribed
+    # streaming service (a rental listing too doesn't move it); FOR
+    # RENT = unowned, rentable, and on no subscribed service;
+    # UNAVAILABLE = none of the above with the availability actually
+    # known. A film still warming has no bucket: it's reported as
+    # pending rather than filed as unavailable
 
-    def matches(row, chosen):
-        if chosen == "local":
-            return row["owned"]
-        if chosen == "services":
-            return row["owned"] or bool(row["streaming"])
-        if chosen == "rent":
-            return not row["owned"] and bool(row["rentals"])
-        return True
+    for row in rows:
+        row["bucket"] = watchlist_bucket(row)
 
     counts = {
-        chosen: sum(1 for row in rows if matches(row, chosen))
-        for chosen in ("all", "local", "services", "rent")
+        chosen: sum(1 for row in rows if chosen == "all" or row["bucket"] == chosen)
+        for chosen in WATCHLIST_BUCKETS
     }
     pending = sum(1 for row in rows if row["availability_pending"])
     if availability_filter != "all":
-        rows = [row for row in rows if matches(row, availability_filter)]
+        rows = [row for row in rows if row["bucket"] == availability_filter]
 
     return render_template(
         "watchlist.html",
@@ -1220,8 +1239,10 @@ def watchlist():
         availability=availability_filter,
         counts=counts,
         # The warming note only matters where unfetched films are
-        # actually hidden — the streaming and rental views
-        pending=pending if availability_filter in ("services", "rent") else 0,
+        # actually hidden — every view but ALL and IN LIBRARY
+        pending=(
+            pending if availability_filter in ("services", "rent", "unavailable") else 0
+        ),
         watchlist_form=watchlist_form,
         radarr_form=RadarrForm(),
         radarr_available=bool(current_user.admin and radarr_configured()),
