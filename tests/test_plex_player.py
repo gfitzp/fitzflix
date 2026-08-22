@@ -1,21 +1,33 @@
-"""Remote playback on the Apple TV (Plex Companion): ratingKey
-resolution by TMDb guid with a verified title-search fallback, the
-empty-play-queue guard, the exact hand-off the player was validated
-with, and the admin-only play route."""
+"""Remote playback on each user's own device (Plex Companion):
+ratingKey resolution by TMDb guid with a verified title-search
+fallback, the empty-play-queue guard, the exact hand-off the player
+was validated with, per-user targeting, the play route, the popover
+card's button, and the Profile page's probe-and-save device flow."""
 
 import json
+import re
+
+from types import SimpleNamespace
 
 import pytest
 
 from tests.factories import make_movie
 
-PLAYER_CONFIG = {
+SERVER_CONFIG = {
     "PLEX_URL": "http://plex.test",
     "PLEX_TOKEN": "token",
-    "PLEX_PLAYER_ADDRESS": "192.168.1.247:32500",
-    "PLEX_PLAYER_ID": "ATV-MACHINE-ID",
     "PLEX_PLAYER_SERVER_URI": "https://plex-direct.test:32400",
 }
+
+
+def device_user(address="192.168.1.247:32500", machine_id="ATV-MACHINE-ID"):
+    """A stand-in user carrying a playback device."""
+
+    return SimpleNamespace(
+        plex_player_address=address,
+        plex_player_id=machine_id,
+        plex_player_configured=bool(address and machine_id),
+    )
 
 
 class FakePlex:
@@ -77,9 +89,31 @@ class FakeResponse:
 
 
 @pytest.fixture
-def player_config(app, monkeypatch):
-    for key, value in PLAYER_CONFIG.items():
+def server_config(app, monkeypatch):
+    for key, value in SERVER_CONFIG.items():
         monkeypatch.setitem(app.config, key, value)
+
+
+@pytest.fixture
+def member_device(app):
+    """Give the member user a playback device for the duration of one
+    test — the user table survives clean_state, so this must restore."""
+
+    from app import db
+    from app.models import User
+    from tests.conftest import MEMBER_EMAIL
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        user.plex_player_address = "192.168.1.63:32500"
+        user.plex_player_id = "MEMBER-ATV-ID"
+        db.session.commit()
+    yield
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        user.plex_player_address = None
+        user.plex_player_id = None
+        db.session.commit()
 
 
 def _wire(monkeypatch, fake):
@@ -91,13 +125,13 @@ def _wire(monkeypatch, fake):
     return plex_player
 
 
-def test_plays_via_guid_lookup(app, monkeypatch, player_config):
+def test_plays_via_guid_lookup(app, monkeypatch, server_config):
     fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        ok, message = plex_player.play_movie(movie)
+        ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is True
 
@@ -108,8 +142,8 @@ def test_plays_via_guid_lookup(app, monkeypatch, player_config):
         "server://SERVER-ID/com.plexapp.plugins.library/library/metadata/189344"
     )
 
-    # The player hand-off: Companion address, target header, and the
-    # plex.direct server coordinates the Apple TV can actually reach
+    # The player hand-off: the USER'S device address and machine id,
+    # plus the server coordinates the player can actually reach
     [command] = fake.player_gets
     assert command["url"] == ("http://192.168.1.247:32500/player/playback/playMedia")
     assert command["headers"]["X-Plex-Target-Client-Identifier"] == "ATV-MACHINE-ID"
@@ -121,7 +155,23 @@ def test_plays_via_guid_lookup(app, monkeypatch, player_config):
     assert command["params"]["token"] == "token"
 
 
-def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, player_config):
+def test_each_user_plays_on_their_own_device(app, monkeypatch, server_config):
+    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    plex_player = _wire(monkeypatch, fake)
+
+    with app.app_context():
+        movie = make_movie("Jaws", 1975, tmdb_id=578)
+        plex_player.play_movie(movie, device_user("10.0.0.5:32500", "ATV-A"))
+        plex_player.play_movie(movie, device_user("100.101.0.9:32500", "ATV-B"))
+
+    first, second = fake.player_gets
+    assert first["url"].startswith("http://10.0.0.5:32500/")
+    assert first["headers"]["X-Plex-Target-Client-Identifier"] == "ATV-A"
+    assert second["url"].startswith("http://100.101.0.9:32500/")
+    assert second["headers"]["X-Plex-Target-Client-Identifier"] == "ATV-B"
+
+
+def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, server_config):
     """When the guid filter misses, the title search only accepts a
     candidate whose metadata carries the movie's own TMDb guid."""
 
@@ -136,21 +186,21 @@ def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, player_con
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        ok, _ = plex_player.play_movie(movie)
+        ok, _ = plex_player.play_movie(movie, device_user())
 
     assert ok is True
     assert "metadata/222" in fake.queue_posts[0]["uri"]
 
 
 def test_missing_movie_reports_without_touching_the_player(
-    app, monkeypatch, player_config
+    app, monkeypatch, server_config
 ):
     fake = FakePlex()
     plex_player = _wire(monkeypatch, fake)
 
     with app.app_context():
         movie = make_movie("Nowhere Film", 1999, tmdb_id=42)
-        ok, message = plex_player.play_movie(movie)
+        ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
     assert "doesn't have" in message
@@ -158,7 +208,7 @@ def test_missing_movie_reports_without_touching_the_player(
     assert fake.player_gets == []
 
 
-def test_empty_play_queue_is_refused(app, monkeypatch, player_config):
+def test_empty_play_queue_is_refused(app, monkeypatch, server_config):
     """The validation trap: a queue can be created with zero items and
     still return a playQueueID — the player must never be handed one."""
 
@@ -167,14 +217,14 @@ def test_empty_play_queue_is_refused(app, monkeypatch, player_config):
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        ok, message = plex_player.play_movie(movie)
+        ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
     assert "empty play queue" in message
     assert fake.player_gets == []
 
 
-def test_unreachable_player_blames_the_closed_app(app, monkeypatch, player_config):
+def test_unreachable_player_blames_the_closed_app(app, monkeypatch, server_config):
     import requests
 
     fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
@@ -187,55 +237,117 @@ def test_unreachable_player_blames_the_closed_app(app, monkeypatch, player_confi
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        ok, message = plex_player.play_movie(movie)
+        ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
     assert "Plex app open" in message
 
 
-def test_unconfigured_player_short_circuits(app, monkeypatch):
+def test_unconfigured_server_short_circuits(app, monkeypatch):
     import app.plex_player as plex_player
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        ok, message = plex_player.play_movie(movie)
+        ok, message = plex_player.play_movie(movie, device_user())
 
     assert ok is False
     assert "configured" in message
 
 
-def test_play_route_is_admin_only(app, monkeypatch, user_client, player_config):
+def test_user_without_device_is_pointed_at_their_profile(
+    app, monkeypatch, server_config
+):
+    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    plex_player = _wire(monkeypatch, fake)
+
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
+        ok, message = plex_player.play_movie(movie, device_user(address=None))
+
+    assert ok is False
+    assert "Profile" in message
+    assert fake.queue_posts == []
+
+
+def test_probe_player_reads_the_machine_id(app, monkeypatch):
+    import app.plex_player as plex_player
+
+    def resources(url, headers=None, timeout=None):
+        assert url == "http://192.168.1.63:32500/resources"
+        response = FakeResponse({})
+        response.content = (
+            b'<?xml version="1.0" encoding="utf-8"?><MediaContainer size="1">'
+            b'<Player machineIdentifier="MEMBER-ATV-ID" product="Plex for Apple TV"'
+            b' title="Den Apple TV" protocol="plex"/></MediaContainer>'
+        )
+        return response
+
+    monkeypatch.setattr(plex_player.requests, "get", resources)
+    with app.app_context():
+        player = plex_player.probe_player("192.168.1.63:32500")
+
+    assert player == {"machine_id": "MEMBER-ATV-ID", "name": "Den Apple TV"}
+
+
+def test_probe_player_answers_none_when_nothing_listens(app, monkeypatch):
+    import requests
+
+    import app.plex_player as plex_player
+
+    def refuse(url, headers=None, timeout=None):
+        raise requests.ConnectionError("no route")
+
+    monkeypatch.setattr(plex_player.requests, "get", refuse)
+    with app.app_context():
+        assert plex_player.probe_player("192.168.1.63:32500") is None
+
+
+# --- The play route ---
+
+
+def _committed_movie(app, **kwargs):
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Jaws", 1975, tmdb_id=578, **kwargs)
         movie_id = movie.id
-        from app import db
-
         db.session.commit()
-
-    r = user_client.post(
-        f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
-    )
-    assert r.status_code == 403
+    return movie_id
 
 
-def test_play_route_returns_json_state(app, monkeypatch, admin_client, player_config):
+def test_play_route_uses_the_users_device(
+    app, monkeypatch, user_client, server_config, member_device
+):
     fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
     _wire(monkeypatch, fake)
+    movie_id = _committed_movie(app)
 
-    with app.app_context():
-        movie = make_movie("Jaws", 1975, tmdb_id=578)
-        movie_id = movie.id
-        from app import db
-
-        db.session.commit()
-
-    r = admin_client.post(
+    r = user_client.post(
         f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
     )
     assert r.status_code == 200
     state = json.loads(r.data)
     assert state["ok"] is True
-    assert "Playing" in state["message"]
+    [command] = fake.player_gets
+    assert command["url"].startswith("http://192.168.1.63:32500/")
+    assert command["headers"]["X-Plex-Target-Client-Identifier"] == "MEMBER-ATV-ID"
+
+
+def test_play_route_without_a_device_reports_kindly(
+    app, monkeypatch, user_client, server_config
+):
+    movie_id = _committed_movie(app)
+
+    r = user_client.post(
+        f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
+    )
+    assert r.status_code == 502
+    state = json.loads(r.data)
+    assert state["ok"] is False
+    assert "Profile" in state["message"]
+
+
+# --- The popover card's button ---
 
 
 def _owned_movie(app):
@@ -252,27 +364,33 @@ def _owned_movie(app):
     return movie_id
 
 
-def test_popover_card_carries_the_play_button(app, admin_client, player_config):
+def test_popover_card_carries_the_play_button(
+    app, user_client, server_config, member_device
+):
     movie_id = _owned_movie(app)
-    card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    card = user_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
     assert f'action="/movie/{movie_id}/play"' in card
     assert "Play on Apple TV" in card
 
 
-def test_popover_card_hides_the_button_from_members(app, user_client, player_config):
+def test_popover_card_hides_the_button_without_a_device(
+    app, user_client, server_config
+):
     movie_id = _owned_movie(app)
     card = user_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
     assert "Play on Apple TV" not in card
 
 
-def test_popover_card_hides_the_button_when_unconfigured(app, admin_client):
+def test_popover_card_hides_the_button_when_server_unconfigured(
+    app, user_client, member_device
+):
     movie_id = _owned_movie(app)
-    card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    card = user_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
     assert "Play on Apple TV" not in card
 
 
 def test_popover_card_hides_the_button_on_unowned_films(
-    app, admin_client, player_config
+    app, user_client, server_config, member_device
 ):
     from app import db
 
@@ -281,5 +399,100 @@ def test_popover_card_hides_the_button_on_unowned_films(
         movie_id = movie.id
         db.session.commit()
 
-    card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
+    card = user_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
     assert "Play on Apple TV" not in card
+
+
+# --- The Profile page's device flow ---
+
+
+def _profile_post(client, address):
+    """POST the playback-device form with a scraped csrf token."""
+
+    page = client.get("/profile").get_data(as_text=True)
+    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page)
+    assert match, "no csrf token found on the profile page"
+    return client.post(
+        "/profile",
+        data={
+            "csrf_token": match.group(1),
+            "plex_player_address": address,
+            "plex_player_submit": "1",
+        },
+        follow_redirects=True,
+    )
+
+
+def test_profile_probe_saves_a_verified_device(
+    app, monkeypatch, user_client, server_config
+):
+    import app.main.account as account
+
+    monkeypatch.setattr(
+        account,
+        "probe_player",
+        lambda address: {"machine_id": "PROBED-ID", "name": "Den Apple TV"},
+    )
+
+    r = _profile_post(user_client, "192.168.1.63")
+    assert "Den Apple TV" in r.get_data(as_text=True)
+
+    from app.models import User
+    from tests.conftest import MEMBER_EMAIL
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        # The bare IP was completed with Companion's port
+        assert user.plex_player_address == "192.168.1.63:32500"
+        assert user.plex_player_id == "PROBED-ID"
+        user.plex_player_address = None
+        user.plex_player_id = None
+        from app import db
+
+        db.session.commit()
+
+
+def test_profile_probe_failure_saves_nothing(
+    app, monkeypatch, user_client, server_config
+):
+    import app.main.account as account
+
+    monkeypatch.setattr(account, "probe_player", lambda address: None)
+
+    r = _profile_post(user_client, "192.168.1.63:32500")
+    assert "No Plex player answered" in r.get_data(as_text=True)
+
+    from app.models import User
+    from tests.conftest import MEMBER_EMAIL
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        assert user.plex_player_address is None
+        assert user.plex_player_id is None
+
+
+def test_profile_blank_clears_the_device(
+    app, user_client, server_config, member_device
+):
+    _profile_post(user_client, "")
+
+    from app.models import User
+    from tests.conftest import MEMBER_EMAIL
+
+    with app.app_context():
+        user = User.query.filter_by(email=MEMBER_EMAIL).one()
+        assert user.plex_player_address is None
+        assert user.plex_player_id is None
+
+
+def test_profile_rejects_a_malformed_address(
+    app, monkeypatch, user_client, server_config
+):
+    import app.main.account as account
+
+    probed = []
+    monkeypatch.setattr(account, "probe_player", lambda address: probed.append(address))
+
+    r = _profile_post(user_client, "192.168.1.63/evil?x=1")
+    assert "ip:port or hostname:port" in r.get_data(as_text=True)
+    assert probed == []

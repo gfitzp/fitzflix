@@ -1756,7 +1756,9 @@ def movie(movie_id):
         suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
         plex_playable=(
-            current_user.admin and bool(films) and remote_playback_configured()
+            bool(films)
+            and current_user.plex_player_configured
+            and remote_playback_configured()
         ),
     )
 
@@ -1764,18 +1766,13 @@ def movie(movie_id):
 @bp.route("/movie/<int:movie_id>/play", methods=["POST"])
 @login_required
 def movie_play(movie_id):
-    """Start this movie on the living-room Apple TV via Plex Companion.
-
-    Admin-only: the button commands physical hardware in the house.
-    Background posts (the movie page's play button) get JSON; a plain
-    form post falls back to flash-and-redirect.
-    """
+    """Start this movie on the current user's own playback device
+    (their Profile-page setting) via Plex Companion. Background posts
+    (the play buttons) get JSON; a plain form post falls back to
+    flash-and-redirect."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    if not current_user.admin:
-        abort(403)
-
-    ok, message = play_movie(movie)
+    ok, message = play_movie(movie, current_user)
     if request.headers.get("X-Requested-With") == "play":
         return jsonify({"ok": ok, "message": message}), 200 if ok else 502
     flash(message)

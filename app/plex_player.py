@@ -2,9 +2,14 @@
 
 GDM discovery is dead in this network — the Plex server lives on the
 DMZ VLAN and never hears the players' broadcasts, so /clients is
-permanently empty and there is no discovery step. The player's address
-and machine id are configuration instead (the Apple TV holds a static
-IP for exactly this reason).
+permanently empty and there is no discovery step. Each USER carries
+their own player instead (User.plex_player_address / _id, set on the
+Profile page, which probes the address and reads the machine id off
+the player itself): user A's play buttons target their Apple TV,
+user B's target theirs. A remote household's device works the same
+way once it's network-reachable (a VPN address like Tailscale's);
+the server side is already reachable from anywhere because
+PLEX_PLAYER_SERVER_URI is a public HTTPS address.
 
 The command flow is the one validated by hand on 2026-08-21: resolve
 the movie's ratingKey in the local library, build a play queue on the
@@ -26,6 +31,7 @@ open?" rather than as an error.
 
 import time
 from urllib.parse import urlsplit
+from xml.etree import ElementTree
 
 import requests
 
@@ -39,18 +45,40 @@ CLIENT_IDENTIFIER = "fitzflix"
 
 
 def remote_playback_configured():
-    """Whether every setting the playback hand-off needs is present."""
+    """Whether the SERVER side of remote playback is configured; the
+    player side lives on each user's row (plex_player_configured)."""
 
     return all(
         current_app.config.get(key)
-        for key in (
-            "PLEX_URL",
-            "PLEX_TOKEN",
-            "PLEX_PLAYER_ADDRESS",
-            "PLEX_PLAYER_ID",
-            "PLEX_PLAYER_SERVER_URI",
-        )
+        for key in ("PLEX_URL", "PLEX_TOKEN", "PLEX_PLAYER_SERVER_URI")
     )
+
+
+def probe_player(address):
+    """Ask the Companion player at ip:port to identify itself:
+    {"machine_id", "name"}, or None if nothing answered. This is how
+    the Profile page verifies an entered address and discovers the
+    machine id — nobody should have to curl their own Apple TV. A
+    player only answers while the Plex app is OPEN on it with
+    Advertise as Player enabled."""
+
+    try:
+        r = requests.get(
+            f"http://{address}/resources",
+            headers={"X-Plex-Client-Identifier": CLIENT_IDENTIFIER},
+            timeout=5,
+        )
+        r.raise_for_status()
+        root = ElementTree.fromstring(r.content)
+    except (requests.RequestException, ElementTree.ParseError):
+        return None
+    player = root.find("Player")
+    if player is None or not player.get("machineIdentifier"):
+        return None
+    return {
+        "machine_id": player.get("machineIdentifier"),
+        "name": player.get("title") or player.get("product") or "Plex player",
+    }
 
 
 def _server_machine_id():
@@ -124,12 +152,14 @@ def _create_play_queue(server_id, rating_key):
     return container["playQueueID"]
 
 
-def play_movie(movie):
-    """Start the movie on the configured player. Returns (ok, message);
+def play_movie(movie, user):
+    """Start the movie on the user's own player. Returns (ok, message);
     every failure mode gets a message fit to show on the movie page."""
 
     if not remote_playback_configured():
         return False, "Remote playback isn't configured."
+    if not user.plex_player_configured:
+        return False, "Set your playback device on your Profile page first."
 
     try:
         rating_key = _movie_rating_key(movie)
@@ -147,8 +177,7 @@ def play_movie(movie):
     server = urlsplit(current_app.config["PLEX_PLAYER_SERVER_URI"])
     try:
         r = requests.get(
-            f"http://{current_app.config['PLEX_PLAYER_ADDRESS']}"
-            "/player/playback/playMedia",
+            f"http://{user.plex_player_address}/player/playback/playMedia",
             params={
                 "commandID": int(time.time()),
                 "providerIdentifier": "com.plexapp.plugins.library",
@@ -163,14 +192,14 @@ def play_movie(movie):
             },
             headers={
                 "X-Plex-Client-Identifier": CLIENT_IDENTIFIER,
-                "X-Plex-Target-Client-Identifier": current_app.config["PLEX_PLAYER_ID"],
+                "X-Plex-Target-Client-Identifier": user.plex_player_id,
             },
             timeout=15,
         )
         r.raise_for_status()
     except (requests.ConnectionError, requests.Timeout):
-        return False, "Couldn't reach the Apple TV — is the Plex app open on it?"
+        return False, "Couldn't reach your player — is the Plex app open on it?"
     except requests.RequestException:
-        return False, "The Apple TV refused the play command."
+        return False, "Your player refused the play command."
 
-    return True, "Playing on the Apple TV."
+    return True, "Playing on your device."

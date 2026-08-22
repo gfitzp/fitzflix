@@ -4,6 +4,7 @@ its per-row editors, review editing, and the profile."""
 import csv
 import io
 import json
+import re
 import secrets
 
 
@@ -29,10 +30,12 @@ from app.main.forms import (
     ReviewExportForm,
     ReviewUploadForm,
     LetterboxdUsernameForm,
+    PlexPlayerForm,
     PlexUsernameForm,
     StreamingProvidersForm,
     UpdateAPIKeyForm,
 )
+from app.plex_player import probe_player, remote_playback_configured
 from app.models import (
     Movie,
     User,
@@ -591,6 +594,48 @@ def profile():
                 flash("Removed your Plex username mapping.", "success")
         return redirect(url_for("main.profile"))
 
+    # This user's playback device: the Plex player their play buttons
+    # send films to. The user enters just an address (ip or hostname,
+    # port optional — Companion's 32500 is assumed); Fitzflix probes it
+    # and reads the machine id off the player itself, so a device is
+    # only ever saved verified-reachable. Blank removes the device
+
+    plex_player_form = PlexPlayerForm()
+    if (
+        plex_player_form.plex_player_submit.data
+        and plex_player_form.validate_on_submit()
+    ):
+        address = (plex_player_form.plex_player_address.data or "").strip() or None
+        if address is None:
+            current_user.plex_player_address = None
+            current_user.plex_player_id = None
+            db.session.commit()
+            flash("Removed your playback device.", "success")
+        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
+            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+        else:
+            if ":" not in address.strip("[]"):
+                address = f"{address}:32500"
+            player = probe_player(address)
+            if player is None:
+                flash(
+                    f"No Plex player answered at {address}. Make sure the "
+                    "Plex app is open on the device with 'Advertise as "
+                    "Player' enabled, and that this address is reachable "
+                    "from the Fitzflix server.",
+                    "danger",
+                )
+            else:
+                current_user.plex_player_address = address
+                current_user.plex_player_id = player["machine_id"]
+                db.session.commit()
+                flash(
+                    f"Play buttons now send films to '{player['name']}' "
+                    f"at {address}.",
+                    "success",
+                )
+        return redirect(url_for("main.profile"))
+
     # Form to pick the streaming services availability displays are
     # customized to — a per-user setting, never site-wide. The picker
     # offers every registry provider, alphabetically
@@ -631,6 +676,8 @@ def profile():
         api_refresh_form=api_refresh_form,
         plex_form=plex_form,
         letterboxd_form=letterboxd_form,
+        plex_player_form=plex_player_form,
+        remote_playback=remote_playback_configured(),
         streaming_form=streaming_form,
         provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )

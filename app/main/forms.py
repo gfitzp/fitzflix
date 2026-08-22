@@ -70,6 +70,18 @@ class LetterboxdUsernameForm(FlaskForm):
     letterboxd_submit = SubmitField("Update Letterboxd Sync")
 
 
+class PlexPlayerForm(FlaskForm):
+    """This user's playback device: the address of the Plex player
+    their play buttons target. The profile route probes the address
+    and reads the machine id off the player itself; blank removes the
+    device (and the play buttons with it)."""
+
+    plex_player_address = StringField(
+        "Playback Device Address", validators=[Optional()]
+    )
+    plex_player_submit = SubmitField("Update Playback Device")
+
+
 class ImportForm(FlaskForm):
     """Manually trigger an import-directory scan."""
 

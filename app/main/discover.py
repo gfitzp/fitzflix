@@ -729,7 +729,9 @@ def movie_card():
             quality_badge=quality_badge,
             play_url=(
                 url_for("main.movie_play", movie_id=movie.id)
-                if current_user.admin and in_library and remote_playback_configured()
+                if in_library
+                and current_user.plex_player_configured
+                and remote_playback_configured()
                 else None
             ),
             streaming=(

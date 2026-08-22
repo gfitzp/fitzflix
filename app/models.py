@@ -958,6 +958,21 @@ class User(UserMixin, db.Model):
 
     letterboxd_username = db.Column(db.String(64))
 
+    # This user's Plex playback device: the Companion address (ip:port)
+    # and machine id of the player their play buttons target. Per-user —
+    # each household member sends films to their own screen; empty hides
+    # the play buttons for this user. Set from the Profile page, which
+    # probes the address and fills the machine id itself
+
+    plex_player_address = db.Column(db.String(64))
+    plex_player_id = db.Column(db.String(64))
+
+    @property
+    def plex_player_configured(self):
+        """Whether this user has a playback device to send films to."""
+
+        return bool(self.plex_player_address and self.plex_player_id)
+
     # The streaming services this user subscribes to — availability
     # displays are customized per user, never site-wide
 

@@ -50,6 +50,20 @@
     	</form>
     	<p class="small text-muted mt-1">Diary entries and reviews from this Letterboxd account's public RSS feed sync into your history twice an hour. Leave blank to disable.</p>
     </div>
+    {% if remote_playback %}
+    <div class="col-md-4">
+    	<p>Playback device:{% if current_user.plex_player_configured %} {{ current_user.plex_player_address }}{% else %} <span class="text-muted">not set</span>{% endif %}</p>
+    	<form action="" method="post">
+    		{{ plex_player_form.hidden_tag() }}
+    		<div class="mb-3">
+    			{{ plex_player_form.plex_player_address.label }}
+    			{{ plex_player_form.plex_player_address(size=32, class_="form-control", value=current_user.plex_player_address or "", placeholder="192.168.1.x") }}
+    		</div>
+    		{{ plex_player_form.plex_player_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">The Plex player (e.g. an Apple TV) your ▶&#xFE0E; Play buttons send films to — enter its IP address or hostname (port optional). Open the Plex app on it with "Advertise as Player" enabled before saving, so it can be verified. A device in another household works too if it's reachable over a VPN (enter its VPN address). Leave blank to remove.</p>
+    </div>
+    {% endif %}
 </div>
 <hr>
 <h5>Streaming Services</h5>
