@@ -239,10 +239,12 @@ def movie_shopping():
         .subquery()
     )
 
-    # Subquery to get the current user's average ratings for each movie
-    # The math on modified_rating, whole_stars, and half_stars is done when creating
-    # the review, but we have to do it dynamically here because we need it to be
-    # translated for drawing the *average* review stars on the shopping page.
+    # Subquery to get the current user's average ratings for each movie.
+    # The math on modified_rating, whole_stars, and half_stars mirrors what
+    # is done when creating a review, computed here over the *average*. The
+    # page no longer draws these columns — each row carries the live star
+    # ladder, painted from /movie_states with the latest verdict — but they
+    # still ride the row tuple the template unpacks.
 
     rating = (
         db.session.query(

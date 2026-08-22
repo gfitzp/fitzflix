@@ -212,3 +212,25 @@ def test_not_in_library_pin_gets_descriptive_heading(app, admin_client):
         "Movies to upgrade that have been liked but aren&#39;t in the library" in page
         or ("Movies to upgrade that have been liked but aren't in the library" in page)
     )
+
+
+def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
+    """Each row wears the gallery grammar: the poster link is armed for
+    the popover, the details column is a /movie_states scope holding a
+    blank live ladder, and the old averaged star glyphs are gone."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        wanted = make_movie("Ladder Row Film", 1977)
+        make_liked_review(user_id, wanted, rating=4)
+        db.session.commit()
+        movie_id = wanted.id
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    assert f'data-card-url="/movie_card?movie_id={movie_id}"' in page
+    # Both responsive layouts render the scope, painted from one entry
+    assert page.count(f'data-state-movie="{movie_id}"') == 2
+    assert 'data-ladder-live="1"' in page
+    assert f'action="/movie/{movie_id}"' in page
+    assert "bi-star-fill" not in page
+    assert "bi-star-half" not in page
