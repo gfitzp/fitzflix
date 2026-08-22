@@ -88,6 +88,145 @@ def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
     assert calls[0]["primary_release_year"] == 1956
 
 
+def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
+    """A generic title's popular first result loses to the candidate
+    whose credits name the scraped director — Bas Devos's "Here"
+    (2023), not "Right Here, Right Now" (the Aug 2026 shelf mistake).
+    A candidate with no director credited passes on an exact title
+    and year; a director TMDb can't corroborate leaves the film
+    unmatched; and the director-aware cache key is its own."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    credits = {
+        1083055: [{"name": "Jak Hutchcraft", "job": "Director"}],
+        1463730: [{"name": "Bas Devos", "job": "Director"}],
+        162480: [{"name": "Hal Hartley", "job": "Director"}],
+        555: [],
+    }
+    calls = []
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        calls.append(url)
+        if "/search/movie" in url:
+            if params.get("query") == "Here":
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 1083055,
+                                "title": "Right Here, Right Now",
+                                "release_date": "2023-02-04",
+                            },
+                            {
+                                "id": 1463730,
+                                "title": "here",
+                                "release_date": "2023-10-24",
+                            },
+                        ]
+                    }
+                )
+            if params.get("query") == "Kid":
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 1885,
+                                "title": "The Karate Kid",
+                                "release_date": "1984-06-22",
+                            }
+                        ]
+                    }
+                )
+            if params.get("query") == "Ambition" and not params.get(
+                "primary_release_year"
+            ):
+                if params.get("page", 1) == 1:
+                    return FakeResponse(
+                        payload={
+                            "results": [
+                                {
+                                    "id": 9000 + n,
+                                    "title": f"Stranger {n}",
+                                    "release_date": "2010-01-01",
+                                }
+                                for n in range(20)
+                            ]
+                        }
+                    )
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 162480,
+                                "title": "Ambition",
+                                "release_date": "1992-01-31",
+                            }
+                        ]
+                    }
+                )
+            if params.get("query") == "Opera No. 1":
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 555,
+                                "title": "Opera No. 1",
+                                "release_date": "1994-01-01",
+                            }
+                        ]
+                    }
+                )
+            return FakeResponse(payload={"results": []})
+        for tmdb_id, crew in credits.items():
+            if url.endswith(f"/movie/{tmdb_id}/credits"):
+                return FakeResponse(payload={"crew": crew})
+        return FakeResponse(payload={})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        # Exact-title candidate first, so only one credits call
+        assert leaving_criterion.match_tmdb_id("Here", 2023, "Bas Devos") == 1463730
+        assert [c for c in calls if "/credits" in c] == [
+            app.config["TMDB_API_URL"] + "/movie/1463730/credits"
+        ]
+
+        # Hal Hartley's "Kid" is not The Karate Kid: unmatched, and the
+        # verdict is cached so the next lookup costs nothing
+        calls.clear()
+        assert leaving_criterion.match_tmdb_id("Kid", 1984, "Hal Hartley") is None
+        assert leaving_criterion.match_tmdb_id("Kid", 1984, "Hal Hartley") is None
+        assert (
+            len([c for c in calls if "/search/movie" in c]) == 2
+        )  # with year, then without
+
+        # No director credited on TMDb: the exact title and year carry it
+        assert leaving_criterion.match_tmdb_id("Opera No. 1", 1994, "Jane Doe") == 555
+
+        # Criterion dates Hal Hartley's "Ambition" 1991, TMDb 1992: the
+        # year search finds nothing, the year-less fallback reads a
+        # second page, and only the exact-title candidate there costs
+        # a credits call — none of the twenty strangers on page one
+        calls.clear()
+        assert (
+            leaving_criterion.match_tmdb_id("Ambition", 1991, "Hal Hartley") == 162480
+        )
+        assert [c for c in calls if "/credits" in c] == [
+            app.config["TMDB_API_URL"] + "/movie/162480/credits"
+        ]
+
+        # Without a director the exact-title candidate still beats the
+        # popular first result, and the lookup keeps its own cache
+        # entry — a title-only verdict never answers a director-aware
+        # query
+        assert leaving_criterion.match_tmdb_id("Here", 2023) == 1463730
+        assert (
+            len(list(app.redis.scan_iter("fitzflix:criterion:match:here-2023*"))) == 2
+        )
+
+
 def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     import app.leaving_criterion as leaving_criterion
 
@@ -101,8 +240,23 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
             # Only The Searchers matches: Love & Mercy exercises the
             # unmatched-films path
             if params.get("query") == "The Searchers":
-                return FakeResponse(payload={"results": [{"id": 3110}]})
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 3110,
+                                "title": "The Searchers",
+                                "release_date": "1956-05-16",
+                            }
+                        ]
+                    }
+                )
             return FakeResponse(payload={"results": []})
+        if url.endswith("/movie/3110/credits"):
+            # The scraped director, verified against the credits
+            return FakeResponse(
+                payload={"crew": [{"name": "John Ford", "job": "Director"}]}
+            )
         if url.endswith("/movie/3110"):
             return FakeResponse(
                 payload={

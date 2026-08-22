@@ -138,7 +138,9 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
-    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 33667)
+    monkeypatch.setattr(
+        criterion_now, "match_tmdb_id", lambda title, year, director=None: 33667
+    )
     monkeypatch.setattr(
         criterion_now,
         "enriched_movie",
@@ -252,7 +254,9 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
 
     import app.criterion_now as criterion_now
 
-    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 99999)
+    monkeypatch.setattr(
+        criterion_now, "match_tmdb_id", lambda title, year, director=None: 99999
+    )
     monkeypatch.setattr(
         criterion_now,
         "enriched_movie",
@@ -280,7 +284,9 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
 
     import app.criterion_now as criterion_now
 
-    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 64015)
+    monkeypatch.setattr(
+        criterion_now, "match_tmdb_id", lambda title, year, director=None: 64015
+    )
     monkeypatch.setattr(
         criterion_now,
         "enriched_movie",
@@ -320,7 +326,9 @@ def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
             {"id": 2, "name": "Cherie Chung Cho-Hung"},
         ],
     }
-    monkeypatch.setattr(criterion_now, "match_tmdb_id", lambda title, year: 64015)
+    monkeypatch.setattr(
+        criterion_now, "match_tmdb_id", lambda title, year, director=None: 64015
+    )
     monkeypatch.setattr(criterion_now, "enriched_movie", lambda tmdb_id: payload)
 
     info = {

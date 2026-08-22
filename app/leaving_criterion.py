@@ -23,6 +23,7 @@ import html
 import json
 import re
 import traceback
+import unicodedata
 
 from datetime import date, datetime
 
@@ -50,6 +51,7 @@ CRITERION_PROVIDER_ID = 258
 LEAVING_KEY = "fitzflix:criterion:leaving"
 MATCH_KEY = "fitzflix:criterion:match:{slug}"
 MATCH_CACHE_SECONDS = 60 * 86400
+MATCH_CANDIDATES = 5
 PAGE_CAP = 10
 
 # One film per tooltip: the title heading, then an optional
@@ -142,38 +144,135 @@ def fetch_leaving_films():
     return None, None, []
 
 
-def match_tmdb_id(title, year):
-    """The TMDb id for a leaving film, by title-and-year search, cached
-    for two months; None when TMDb has no match."""
+def _normalize(text):
+    """A comparison key for titles and names: accents folded, case
+    and punctuation dropped, apostrophes (straight or curly) removed
+    outright so "Muriel’s Wedding" meets "Muriel's Wedding" and
+    "P. J. Hogan" meets "P.J. Hogan"."""
 
-    slug = re.sub(r"[^a-z0-9]+", "-", f"{title}-{year}".lower()).strip("-")
+    text = re.sub(r"[\'’`]", "", text or "")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _tmdb_json(path, params):
+    """One TMDb GET's JSON body, or None on any failure (logged)."""
+
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + path,
+            params={"api_key": current_app.config["TMDB_API_KEY"], **params},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None
+
+
+def match_tmdb_id(title, year, director=None):
+    """The TMDb id for a leaving film, by title-and-year search, cached
+    for two months; None when TMDb has no match.
+
+    TMDb's search ranks by popularity, so a generic short-film title
+    like "Here", "Kid", or "Ambition" comes back with a popular
+    feature first — the Aug 2026 set put "Right Here, Right Now" and
+    "The Karate Kid" on the shelf in place of Bas Devos's and Hal
+    Hartley's films. So a scraped director is verified against each
+    candidate's credits, exact-title candidates are tried first, and
+    a film whose director matches nothing TMDb offers stays unmatched
+    (a plain "Also leaving" row) rather than becoming the wrong film.
+    A candidate with no director credited at all passes on an exact
+    title-and-year match — shorts often have no crew on TMDb. Without
+    a scraped director, the exact-title candidate wins, else the
+    first result (the pre-Aug 2026 behaviour). The cache key carries
+    the director, so a director-aware lookup never reads an entry the
+    older title-only matcher wrote.
+    """
+
+    slug = re.sub(r"[^a-z0-9]+", "-", f"{title}-{year}-{director or ''}".lower()).strip(
+        "-"
+    )
     cache_key = MATCH_KEY.format(slug=slug)
     cached = current_app.redis.get(cache_key)
     if cached:
         stored = json.loads(cached)
         return stored or None
 
-    def search(params):
-        """First search-result id for the given params, or None."""
+    wanted_title = _normalize(title)
+    wanted_director = _normalize(director) if director else None
 
-        try:
-            r = tmdb_get(
-                current_app.config["TMDB_API_URL"] + "/search/movie",
-                params={"api_key": current_app.config["TMDB_API_KEY"], **params},
-                timeout=10,
+    def candidates(params, pages):
+        """Search results worth a look, exact-title matches first, then
+        releases within a year of the scraped date (Criterion and TMDb
+        often disagree by one — festival year versus release year),
+        capped at the handful worth a credits lookup. With a director
+        to verify, only those two kinds are candidates at all: the
+        year-less fallback reads two pages, and a popular stranger
+        shouldn't cost a credits call."""
+
+        results = []
+        for page in range(1, pages + 1):
+            body = _tmdb_json("/search/movie", {"query": title, "page": page, **params})
+            page_results = (body or {}).get("results") or []
+            results.extend(page_results)
+            if len(page_results) < 20:
+                break
+
+        def rank(result):
+            exact = _normalize(result.get("title")) == wanted_title
+            released = (result.get("release_date") or "")[:4]
+            near = (
+                bool(year)
+                and released.isdigit()
+                and abs(int(released) - int(year)) <= 1
             )
-            r.raise_for_status()
-            results = r.json().get("results") or []
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+            return (not exact, not near)
+
+        ordered = sorted(results, key=rank)
+        if wanted_director:
+            ordered = [result for result in ordered if rank(result) != (True, True)]
+        return ordered[:MATCH_CANDIDATES]
+
+    def directed_by(result):
+        """True when the candidate's credited directors include the
+        scraped one — or when nothing is credited and the title and
+        year agree exactly."""
+
+        body = _tmdb_json(f"/movie/{result['id']}/credits", {})
+        if body is None:
+            return False
+        directors = [
+            _normalize(person.get("name"))
+            for person in body.get("crew") or []
+            if person.get("job") == "Director"
+        ]
+        if not directors:
+            return _normalize(result.get("title")) == wanted_title and (
+                result.get("release_date") or ""
+            )[:4] == str(year)
+        return any(
+            name and (name in wanted_director or wanted_director in name)
+            for name in directors
+        )
+
+    def pick(params):
+        """The chosen candidate id for one search, or None."""
+
+        found = candidates(params, pages=1 if params else 2)
+        if wanted_director:
+            for result in found:
+                if directed_by(result):
+                    return result.get("id")
             return None
-        return results[0].get("id") if results else None
+        return found[0].get("id") if found else None
 
     tmdb_id = None
     if year:
-        tmdb_id = search({"query": title, "primary_release_year": year})
+        tmdb_id = pick({"primary_release_year": year})
     if tmdb_id is None:
-        tmdb_id = search({"query": title})
+        tmdb_id = pick({})
     current_app.redis.set(cache_key, json.dumps(tmdb_id), ex=MATCH_CACHE_SECONDS)
     return tmdb_id
 
@@ -200,7 +299,7 @@ def refresh_leaving_criterion():
 
         items = []
         for film in films:
-            tmdb_id = match_tmdb_id(film["title"], film["year"])
+            tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
             payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
             if payload:
                 items.append({**payload, "tmdb_id": tmdb_id})
