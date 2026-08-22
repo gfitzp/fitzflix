@@ -867,6 +867,44 @@
 			if (event.key === "Escape") cardHide();
 		});
 
+		// Plex remote playback: any [data-plex-play] form — the movie
+		// page's button or the poster popover card's — posts in the
+		// background and reports into its own [data-plex-play-status]
+		// line, so a film can be sent to the Apple TV from anywhere a
+		// poster shows. Delegated because popover cards are injected
+		// long after page load
+		document.addEventListener("click", function(event) {
+			var button = event.target.closest("[data-plex-play] button");
+			if (!button) return;
+			event.preventDefault();
+			var form = button.closest("[data-plex-play]");
+			var status = form.querySelector("[data-plex-play-status]");
+			var label = button.innerHTML;
+			button.disabled = true;
+			button.innerHTML = "Starting…";
+			if (status) status.textContent = "";
+			fetch(form.getAttribute("action"), {
+				method: "POST",
+				body: new FormData(form),
+				credentials: "same-origin",
+				headers: {"X-Requested-With": "play"}
+			}).then(function(response) {
+				return response.json();
+			}).then(function(state) {
+				if (!status) return;
+				status.classList.toggle("text-danger", !state.ok);
+				status.classList.toggle("text-muted", state.ok);
+				status.textContent = state.message;
+			}).catch(function() {
+				if (!status) return;
+				status.classList.add("text-danger");
+				status.textContent = "Couldn't reach Fitzflix.";
+			}).finally(function() {
+				button.disabled = false;
+				button.innerHTML = label;
+			});
+		});
+
 		// The tile's watchlist toggle posts in the background and swaps
 		// its two faces on the JSON state; any failure falls back to a
 		// normal form submission

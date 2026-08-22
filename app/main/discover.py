@@ -47,6 +47,7 @@ from app.models import (
     tmdb_get,
 )
 from app.main import bp
+from app.plex_player import remote_playback_configured
 from app.main.helpers import (
     _card_fetch,
     _enqueue_profile_recompute,
@@ -726,6 +727,11 @@ def movie_card():
             on_watchlist=on_watchlist,
             in_library=in_library,
             quality_badge=quality_badge,
+            play_url=(
+                url_for("main.movie_play", movie_id=movie.id)
+                if current_user.admin and in_library and remote_playback_configured()
+                else None
+            ),
             streaming=(
                 user_streaming(
                     movie.tmdb_id,

@@ -9,7 +9,10 @@
    colors, the watchlist badge, streaming availability, and any
    page-specific labels the tile hands over through data-card-reasons
    (filled into the slot below by the card script; long labels wrap
-   inside the popover's fixed width instead of stretching it). #}
+   inside the popover's fixed width instead of stretching it). The one
+   action here is the Apple TV play button (Glenn's ask, Aug 2026):
+   owned films can be sent to the living-room player from any poster,
+   through the shared data-plex-play handler in base.html. #}
 {% from "_availability_badges.html" import library_badge %}
 <div class="movie-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
@@ -42,4 +45,11 @@
 		{% endif %}
 		<span data-card-reasons></span>
 	</p>
+	{% if play_url %}
+	<form data-plex-play action="{{ play_url }}" method="post" class="mt-1 mb-0">
+		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+		<button class="btn btn-sm btn-success py-0" type="submit">&#9654;&#xFE0E; Play on Apple TV</button>
+		<div class="small" data-plex-play-status></div>
+	</form>
+	{% endif %}
 </div>

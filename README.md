@@ -177,6 +177,35 @@ Each Fitzflix user can enter their **Plex username** on their Profile page. Watc
 
 If Tautulli has been calling `/api/add-to-cart`, disable that notifier once direct tracking is confirmed working — the endpoint still works, but Tautulli and the direct sources would each count the same watch.
 
+## Playing films on an Apple TV
+
+With a Plex player configured, admins get a **▶ Play on Apple TV** button on every owned film — on the film's own page and inside the poster popover card, so a film can be sent to the TV from any poster gallery. Fitzflix builds a play queue on the Plex server and hands it to the player over the [Plex Companion protocol](https://support.plex.tv/articles/202485658-plex-companion-getting-started/); the Plex app must be **open on the Apple TV** (tvOS can't wake a backgrounded app — if the TV isn't on Plex, the button reports "is the Plex app open?" rather than playing).
+
+Three `.env` settings describe the player, and each can be discovered with a couple of commands. `PLEX_URL` and `PLEX_TOKEN` (above) must also be set.
+
+1. **`PLEX_PLAYER_ADDRESS`** — the Apple TV's IP address and Companion port, e.g. `192.168.1.247:32500`. Find the IP on the Apple TV under **Settings → Network** (or in your router's client list), and give the Apple TV a DHCP reservation or static IP so the address doesn't drift. Plex's own player discovery (GDM) is not used — it relies on UDP broadcasts that die at any VLAN or subnet boundary, while a direct address works everywhere.
+
+2. **`PLEX_PLAYER_ID`** — the Plex app's machine identifier. On the Apple TV, open the Plex app and enable **Settings → Advertise as Player**; then, with the app open, this command both verifies the address and prints the identifier:
+
+   ```
+   curl -s "http://<appletv ip>:32500/resources" -H "X-Plex-Client-Identifier: fitzflix"
+   ```
+
+   The `machineIdentifier` attribute in the response is the value. An empty reply or connection failure means the app isn't open, Advertise as Player is off, or a firewall is blocking TCP 32500.
+
+3. **`PLEX_PLAYER_SERVER_URI`** — an **HTTPS** URL at which the *Apple TV* can reach the Plex server, e.g. `https://plex.example.com:443`. This is not `PLEX_URL` (which is how Fitzflix reaches the server, often loopback): the player fetches the play queue and streams from this address itself, so it must be resolvable and reachable from the Apple TV's own network position, and tvOS expects TLS — a raw `http://<lan ip>:32400` will generally be refused. Either of these works:
+
+   - A custom domain you've published the server at (**Plex Settings → Network → Custom server access URLs**), or
+   - the server's `plex.direct` address, which the Apple TV can already reach (it's how the Plex app normally streams). List it with:
+
+     ```
+     curl -s "https://plex.tv/api/resources?includeHttps=1&X-Plex-Token=<PLEX_TOKEN>" | grep -o 'uri="[^"]*"' | sort -u
+     ```
+
+     and use the `https://…plex.direct:32400` entry whose embedded IP is the server's.
+
+Restart Fitzflix after setting them. The button appears for admin users on films with a library file; the film is matched to the Plex library by its TMDb guid (with a guid-verified title search as fallback), so no Plex-side configuration is needed beyond the settings above. If playback fails with a message about an empty play queue or an unretrievable container, the usual cause is a `PLEX_PLAYER_SERVER_URI` the Apple TV can't actually reach — re-test it from a device on the same network as the Apple TV.
+
 ## System requirements
 
 Fitzflix is developed and run on macOS with [Homebrew](https://brew.sh), and the default binary paths point at `/opt/homebrew/bin`; every path below can be overridden in the `.env` file, so any platform that provides these tools should work.
@@ -237,6 +266,7 @@ TMDB_API_KEY=<your TMDb API key>
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | Credentials for the archival bucket; all three are required for uploads |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | SMTP server for error notifications and password-reset emails, sent from `SERVER_EMAIL` to `ADMIN_EMAIL` (both default to `MAIL_USERNAME`) |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking: URL and token enable the 15-minute history poller, and the webhook token gates the `/api/plex/webhook/<token>` endpoint (see [Tracking Plex watches](#tracking-plex-watches)) |
+| `PLEX_PLAYER_ADDRESS`, `PLEX_PLAYER_ID`, `PLEX_PLAYER_SERVER_URI` | Remote playback on an Apple TV: the player's `ip:port`, its machine identifier, and an HTTPS server address the player itself can reach (see [Playing films on an Apple TV](#playing-films-on-an-apple-tv)) |
 | `HANDBRAKE_PRESET`, `HANDBRAKE_PRESET_FILE`, `HANDBRAKE_EXTENSION` | Transcoding preset name, an optional exported preset file it lives in, and the output container |
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | Application log location (default `logs/fitzflix.log`) and how many days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | Per-queue job timeouts in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |

@@ -123,6 +123,20 @@
    configured, unowned, and TMDb-known #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
+	{% if plex_playable %}
+	{# Plex Companion hand-off (admin + owned + player configured): the
+	   background post — base.html's shared data-plex-play handler —
+	   starts the film on the Apple TV; failures — most commonly the
+	   Plex app not being open on it — land as the small status line
+	   under the button #}
+	<div class="col-sm-3 col-md-2 my-1">
+		<form data-plex-play action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+			<button class="btn btn-success btn-sm container" type="submit">&#9654;&#xFE0E; Play on Apple TV</button>
+			<div class="small" data-plex-play-status></div>
+		</form>
+	</div>
+	{% endif %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>

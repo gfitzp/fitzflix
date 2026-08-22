@@ -167,6 +167,15 @@ class Config(object):
     PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
 
+    # Remote playback on the Apple TV via Plex Companion. GDM discovery
+    # can't cross the DMZ VLAN so the player is configuration, not
+    # discovery: its ip:port and machineIdentifier, plus the server
+    # address AS THE PLAYER REACHES IT — the plex.direct https URI the
+    # tvOS app already streams over (not PLEX_URL, which is loopback)
+    PLEX_PLAYER_ADDRESS                 = os.environ.get("PLEX_PLAYER_ADDRESS") or None
+    PLEX_PLAYER_ID                      = os.environ.get("PLEX_PLAYER_ID") or None
+    PLEX_PLAYER_SERVER_URI              = os.environ.get("PLEX_PLAYER_SERVER_URI") or None
+
     # Radarr configuration
     RADARR_API_KEY                      = os.environ.get("RADARR_API_KEY") or None
     RADARR_URL                          = os.environ.get("RADARR_URL") or None
