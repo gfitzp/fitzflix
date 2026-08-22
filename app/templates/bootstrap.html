@@ -140,6 +140,16 @@
 		   container and clears it the moment the tile paints (or the
 		   passes finish), so the shimmer IS the "estimating…" spinner */
 		.state-loading .star-btn { animation: state-pulse 1.2s ease-in-out infinite; }
+		/* The navigation bar (Aug 2026): a hairline across the top of the
+		   viewport that starts growing the moment a link or form commits
+		   to a new page, so a tap reads as registered while the server
+		   renders — Safari paints nothing of its own until the first
+		   bytes arrive, and a second-long wait looked like a missed tap.
+		   base.html's handler sets nav-progress-active; the width eases
+		   toward 90% and stays there until the next page replaces it */
+		#nav-progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--bs-primary); z-index: 2000; opacity: 0; pointer-events: none; transition: none; }
+		#nav-progress.nav-progress-active { opacity: 1; width: 90%; transition: width 4s cubic-bezier(.1, .7, .3, 1), opacity .1s linear; }
+		@media (prefers-reduced-motion: reduce) { #nav-progress.nav-progress-active { width: 90%; transition: none; } }
 		@keyframes state-pulse { 0%, 100% { opacity: .35; } 50% { opacity: .9; } }
 		@media (prefers-reduced-motion: reduce) { .state-loading .star-btn { animation: none; opacity: .5; } }
 		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }

@@ -213,6 +213,16 @@ def cron_table(config):
             3600,
             "Refreshing in-production TV series",
         ),
+        # Refresh every film's streaming availability nightly, last in
+        # the TMDb-heavy window: the watchlist, Criterion catalog, and
+        # filmography pages render from this cache and never fetch
+        # inline, so it has to be full before the day starts
+        (
+            "30 4 * * *",
+            "app.streaming.refresh_availability",
+            3600,
+            "Refreshing streaming availability",
+        ),
     ]
 
     # Download files restored from Glacier: poll SQS hourly, offset from

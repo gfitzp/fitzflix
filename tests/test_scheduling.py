@@ -1044,3 +1044,16 @@ def test_tmdb_apply_releases_locks_when_done(app):
         lock = app.lock_manager.lock(identifier, 1000)
         assert lock, "apply did not release the title lock"
         app.lock_manager.unlock(lock)
+
+
+def test_cron_table_refreshes_streaming_availability_nightly(app):
+    """The availability refresh runs nightly (Aug 2026): the watchlist,
+    Criterion, and filmography pages read the cache it fills and never
+    fetch inline."""
+
+    with app.app_context():
+        entries = {entry["func"]: entry for entry in cron_table(app.config)}
+
+    entry = entries["app.streaming.refresh_availability"]
+    assert entry["cron"] == "30 4 * * *"
+    assert entry["timeout"] >= 3600

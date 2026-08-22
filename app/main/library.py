@@ -10,6 +10,7 @@ import traceback
 
 
 from datetime import date, datetime
+from types import SimpleNamespace
 
 from flask import (
     abort,
@@ -25,6 +26,7 @@ from flask import (
 # flask.Markup was removed in Flask 2.4; import from its actual home
 from markupsafe import Markup
 from flask_login import current_user, login_required
+from flask_sqlalchemy.pagination import Pagination
 
 from app import db, safe_job_id
 from app.main.forms import (
@@ -60,6 +62,7 @@ from app.models import (
     RefFeatureType,
     RefQuality,
     TMDBCredit,
+    PEOPLE_RANKING_KEY,
     TMDBGenre,
     TVCast,
     TVCrew,
@@ -489,10 +492,13 @@ def movie_library():
             row["might_interest"] = unowned_marker or owned_marker
 
         # Streaming badges on films without a local file, filtered to
-        # this user's services. Availability is batch-fetched cache-first,
-        # but a career can span hundreds of films and every fetch shares
-        # the app-wide TMDb rate limiter, so a render fetches at most 50
-        # and a background task warms the rest for the next visit
+        # this user's services. Availability is read from the cache the
+        # nightly refresh keeps full and never fetched inline (Aug
+        # 2026): a career can span hundreds of films and every fetch
+        # shares the app-wide TMDb rate limiter, so a prolific actor's
+        # page stalled four to six seconds behind fifty fetches — the
+        # record-less films the refresh can't cover warm in the
+        # background for the next visit
 
         streaming_attribution = False
         provider_ids = user_provider_ids(current_user)
@@ -503,7 +509,7 @@ def movie_library():
                     for row in filmography
                     if row["tmdb_id"] and not row["quality"]
                 ),
-                fetch_limit=50,
+                fetch_limit=0,
             )
             if deferred and current_app.redis.set(
                 f"fitzflix:streaming:warm:{int(credit)}", "1", nx=True, ex=900
@@ -827,6 +833,10 @@ CRITERION_CHANNEL_PROVIDER_ID = 258
 
 CRITERION_CATALOG_PER_PAGE = 120
 
+# The /people ranking's cache life — a backstop; the credit writers
+# invalidate it directly
+PEOPLE_RANKING_SECONDS = 7 * 86400
+
 
 def _page_window(current, last):
     """Page numbers for a pagination bar, with None marking a gap.
@@ -1069,6 +1079,18 @@ def criterion_collection():
     profile = stored_profile(current_app.redis, current_user.id)
     bar = marker_bar(profile) if profile else None
 
+    # The catalog scorer reads every record's genres: one query for the
+    # lot, not a lazy load per film (956 queries a visit before Aug 2026)
+
+    genre_ids_by_movie = {}
+    if profile is not None and records:
+        for movie_id, genre_id in db.session.query(
+            movie_genres.c.movie_id, movie_genres.c.genre_id
+        ).filter(
+            movie_genres.c.movie_id.in_([record.id for record in records.values()])
+        ):
+            genre_ids_by_movie.setdefault(movie_id, []).append(genre_id)
+
     for row in library_rows:
         movie_id = row["movie"].id
         row["seen"] = movie_id in seen_ids
@@ -1086,7 +1108,7 @@ def criterion_collection():
         if record is not None and record.id in refused_ids:
             continue
         if record is not None and profile is not None and not row["seen"]:
-            genre_ids = [genre.id for genre in record.genres]
+            genre_ids = genre_ids_by_movie.get(record.id, [])
             if genre_ids:
                 score = coarse_interest_score(profile, genre_ids, row["year"])
                 row["might_interest"] = score > bar
@@ -1135,14 +1157,15 @@ def criterion_collection():
     rows = filtered[start : start + CRITERION_CATALOG_PER_PAGE]
 
     # The Criterion Channel badge (provider 258), for the rows on this
-    # page only: availability is day-cached per title and fetches are
-    # bounded like the filmography pages — at most 50 synchronous
-    # misses, the rest warmed in the background for the next visit
+    # page only: availability comes from the cache the nightly refresh
+    # keeps full, never fetched inline (Aug 2026 — a page of misses
+    # cost four seconds behind the rate limiter); catalog films without
+    # a record warm in the background for the next visit
 
     streaming_attribution = False
     availability_by_id, deferred = batch_title_availability(
         (row["tmdb_id"] for row in rows if row["tmdb_id"]),
-        fetch_limit=50,
+        fetch_limit=0,
     )
     if deferred and current_app.redis.set(
         f"fitzflix:streaming:warm:criterion:{filter_status}:{page}",
@@ -1806,33 +1829,21 @@ def people():
     if role not in ("cast", "crew", "all"):
         role = "cast"
 
-    pairs = _credited_film_pairs(role)
-    film_count = db.func.count(db.distinct(pairs.c.movie_id)).label("film_count")
-    people_query = (
-        db.session.query(
-            TMDBCredit.id,
-            TMDBCredit.name,
-            TMDBCredit.tmdb_profile_path,
-            film_count,
-        )
-        .join(pairs, pairs.c.credit_id == TMDBCredit.id)
-        .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
-    )
-    if query_text:
-        people_query = people_query.filter(TMDBCredit.name.ilike(f"%{query_text}%"))
-    # Ties break on surname: TMDb has no structured sort name, so the last
-    # whitespace-separated token stands in for it (wrong for "Jr." suffixes
-    # and multi-word surnames, fine as a tie-break)
+    # The browse path (no search) pages through the cached ranking —
+    # the full aggregation over the cast and crew tables ran twice a
+    # visit before Aug 2026 (once for the page, once for paginate's
+    # count) at half a second each. A search still queries live: the
+    # name filter narrows it, and the single-title people it admits
+    # aren't in the ranking
 
-    people_page = (
-        people_query.having(film_count >= minimum_films)
-        .order_by(
-            film_count.desc(),
-            db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
-            TMDBCredit.name.asc(),
+    if query_text:
+        people_page = _ranked_people_query(role, query_text, minimum_films).paginate(
+            page=page, per_page=120, error_out=False
         )
-        .paginate(page=page, per_page=120, error_out=False)
-    )
+    else:
+        people_page = ListPagination(
+            _ranked_people(role), page=page, per_page=120, error_out=False
+        )
 
     role_param = role if role != "cast" else None
     return render_template(
@@ -2911,6 +2922,85 @@ ROLE_PRECEDENCE = (
     "Writer",
     "Editor",
 )
+
+
+def _ranked_people_query(role, query_text, minimum_films):
+    """People with their work counts under the role filter, optionally
+    narrowed by a name search, most works first. Ties break on surname:
+    TMDb has no structured sort name, so the last whitespace-separated
+    token stands in for it (wrong for "Jr." suffixes and multi-word
+    surnames, fine as a tie-break)."""
+
+    pairs = _credited_film_pairs(role)
+    film_count = db.func.count(db.distinct(pairs.c.movie_id)).label("film_count")
+    people_query = (
+        db.session.query(
+            TMDBCredit.id,
+            TMDBCredit.name,
+            TMDBCredit.tmdb_profile_path,
+            film_count,
+        )
+        .join(pairs, pairs.c.credit_id == TMDBCredit.id)
+        .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
+    )
+    if query_text:
+        people_query = people_query.filter(TMDBCredit.name.ilike(f"%{query_text}%"))
+    return people_query.having(film_count >= minimum_films).order_by(
+        film_count.desc(),
+        db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
+        TMDBCredit.name.asc(),
+    )
+
+
+def _ranked_people(role):
+    """Every person credited on more than one work under the role
+    filter, in page order, as [id, name, profile path, count] rows —
+    cached in Redis until the next credit write (see
+    invalidate_people_ranking) or PEOPLE_RANKING_SECONDS."""
+
+    key = PEOPLE_RANKING_KEY.format(role=role)
+    cached = current_app.redis.get(key)
+    if cached:
+        return json.loads(cached)
+    ranked = [
+        [credit_id, name, profile_path, count]
+        for credit_id, name, profile_path, count in _ranked_people_query(role, None, 2)
+    ]
+    current_app.redis.set(key, json.dumps(ranked), ex=PEOPLE_RANKING_SECONDS)
+    return ranked
+
+
+class ListPagination(Pagination):
+    """Flask-SQLAlchemy's Pagination over an in-memory ranking: the
+    people template reads .items, .page, .total, and iter_pages() the
+    same way it did off the query."""
+
+    def __init__(self, rows, **kwargs):
+        self._rows = rows
+        # Query.paginate's default, not the base class's 100-row cap
+        kwargs.setdefault("max_per_page", None)
+        super().__init__(**kwargs)
+
+    def _query_items(self):
+        """This page's rows, as the attribute bags the template reads."""
+
+        offset = self._query_offset
+        return [
+            SimpleNamespace(
+                id=credit_id,
+                name=name,
+                tmdb_profile_path=profile_path,
+                film_count=count,
+            )
+            for credit_id, name, profile_path, count in self._rows[
+                offset : offset + self.per_page
+            ]
+        ]
+
+    def _query_count(self):
+        """The whole ranking's length."""
+
+        return len(self._rows)
 
 
 def _credited_film_pairs(role="all"):

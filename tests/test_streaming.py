@@ -755,3 +755,146 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([921],)
+
+
+def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
+    """Cache hits come back through a single MGET — a 400-film list
+    paid 400 round trips before Aug 2026 — and refresh re-fetches
+    every id, live entries included."""
+
+    import app.streaming as streaming
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+    for tmdb_id in (930, 931, 932):
+        plant_availability(
+            app,
+            tmdb_id,
+            {"link": None, "flatrate": [MAX], "ads": [], "rent": [], "buy": []},
+        )
+
+    gets = []
+    real_get = app.redis.get
+    monkeypatch.setattr(
+        app.redis, "get", lambda key, *a, **k: gets.append(key) or real_get(key)
+    )
+
+    with app.app_context():
+        results, deferred = streaming.batch_title_availability([930, 931, 932])
+
+    assert deferred == [] and calls == []
+    assert {tmdb_id: payload["flatrate"] for tmdb_id, payload in results.items()} == {
+        930: [MAX],
+        931: [MAX],
+        932: [MAX],
+    }
+    assert gets == []
+
+    with app.app_context():
+        results, deferred = streaming.batch_title_availability([930, 931], refresh=True)
+
+    assert sorted(calls) == [
+        app.config["TMDB_API_URL"] + "/movie/930/watch/providers",
+        app.config["TMDB_API_URL"] + "/movie/931/watch/providers",
+    ]
+    assert results[930]["flatrate"] == [NETFLIX]
+    assert json.loads(app.redis.get(streaming.AVAILABILITY_KEY.format(tmdb_id=931)))[
+        "flatrate"
+    ] == [NETFLIX]
+
+
+def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch):
+    """The nightly task re-fetches every film's availability, cached or
+    not, and restarts each entry's two-day life — the pages read this
+    cache and never fetch inline, so it has to be full every morning."""
+
+    import app.streaming as streaming
+
+    from app import db
+
+    with app.app_context():
+        make_movie("Refresh Cached", 1970, tmdb_id=940)
+        make_movie("Refresh Missing", 1971, tmdb_id=941)
+        make_movie("Refresh Local Only", 1972)
+        db.session.commit()
+    plant_availability(
+        app, 940, {"link": None, "flatrate": [MAX], "ads": [], "rent": [], "buy": []}
+    )
+    app.redis.expire(streaming.AVAILABILITY_KEY.format(tmdb_id=940), 600)
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
+
+    assert streaming.refresh_availability() is True
+    assert sorted(calls) == [
+        app.config["TMDB_API_URL"] + "/movie/940/watch/providers",
+        app.config["TMDB_API_URL"] + "/movie/941/watch/providers",
+    ]
+    for tmdb_id in (940, 941):
+        key = streaming.AVAILABILITY_KEY.format(tmdb_id=tmdb_id)
+        assert json.loads(app.redis.get(key))["flatrate"] == [NETFLIX]
+        assert app.redis.ttl(key) > 86400
+
+
+def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypatch):
+    """The watchlist and the Criterion catalog answer from the cache
+    alone: an uncached film costs no TMDb call during the render (fifty
+    of them stalled the page four seconds before Aug 2026) — it's
+    handed to one background warm job instead."""
+
+    import app.main.discover as discover
+    import app.main.library as library
+    import app.streaming as streaming
+
+    from app import db
+    from app.models import UserWatchlist
+
+    with app.app_context():
+        cached = make_movie("Inline Cached", 1980, tmdb_id=950)
+        uncached = make_movie("Inline Uncached", 1981, tmdb_id=951)
+        db.session.flush()
+        for movie in (cached, uncached):
+            db.session.add(UserWatchlist(user_id=1, movie_id=movie.id))
+        db.session.commit()
+    plant_availability(
+        app,
+        950,
+        {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []},
+    )
+    subscribe(app, 8, "Netflix")
+
+    calls = []
+
+    def fake_tmdb_get(url, **kwargs):
+        calls.append(url)
+        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    for module in (streaming, discover, library):
+        monkeypatch.setattr(module, "tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/watchlist?availability=services").get_data(as_text=True)
+    assert "Inline Cached" in page
+    assert "Inline Uncached" not in page
+    assert "1 film isn&#39;t shown here yet" in page or "1 film aren" in page
+    assert calls == []
+
+    warm_jobs = [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.streaming.warm_title_availability"
+    ]
+    assert len(warm_jobs) == 1
+    assert warm_jobs[0].args == ([951],)

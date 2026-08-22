@@ -127,6 +127,20 @@ class Utilities(object):
         return string
 
 
+PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
+
+
+def invalidate_people_ranking():
+    """Drop the /people page's cached rankings (Aug 2026): the ranked
+    list of every credited person is a full aggregation over the cast
+    and crew tables, so it's held in Redis and rebuilt only after a
+    credit write — the TMDb apply methods call this."""
+
+    redis = current_app.redis
+    keys = [PEOPLE_RANKING_KEY.format(role=role) for role in ("cast", "crew", "all")]
+    redis.delete(*keys)
+
+
 def tmdb_get(url, **kwargs):
     """GET a TMDb API resource through a shared rate limiter.
 
@@ -392,6 +406,7 @@ class TMDBMixin(object):
                 self.collections.append(movie_collection)
 
         if tmdb_info.get("credits"):
+            invalidate_people_ranking()
             credits = tmdb_info.get("credits")
             for person in credits.get("cast"):
                 p = TMDBCredit.query.filter_by(id=person.get("id")).first()
@@ -821,6 +836,7 @@ class TMDBMixin(object):
             aggregate = tmdb_info.get("aggregate_credits")
             TVCast.query.filter_by(tv_id=self.id).delete()
             TVCrew.query.filter_by(tv_id=self.id).delete()
+            invalidate_people_ranking()
 
             seen_roles = set()
             for person in aggregate.get("cast") or []:

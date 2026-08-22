@@ -22,6 +22,7 @@ from flask import (
 
 # flask.Markup was removed in Flask 2.4; import from its actual home
 from flask_login import current_user, login_required
+from sqlalchemy.orm import contains_eager
 
 from app import db
 from app.main.forms import (
@@ -234,6 +235,7 @@ def history():
 
     reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
+        .options(contains_eager(UserMovieReview.movie))
         .filter(UserMovieReview.user_id == int(current_user.id))
         .filter(UserMovieReview.date_watched.isnot(None))
         .order_by(

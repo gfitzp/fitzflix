@@ -23,6 +23,7 @@ from flask import (
 
 # flask.Markup was removed in Flask 2.4; import from its actual home
 from flask_login import current_user, login_required
+from sqlalchemy.orm import contains_eager, selectinload
 
 from app import db
 from app.main.forms import (
@@ -455,11 +456,21 @@ def file_activity():
     # against the bucket Aug 2026 — so files here are usually already
     # frozen after their first day.)
 
+    # The cards read each file's tracks, film, and series: selectin
+    # loads fetch those per page instead of per file (291 queries for
+    # 100 cards before Aug 2026)
+
     recently_added = (
         File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
         .distinct()  # need .distinct() in order to get the result numbers per page correct
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .options(
+            selectinload(File.audiotrack),
+            selectinload(File.subtrack),
+            selectinload(File.movie),
+            selectinload(File.tv_series),
+        )
         .filter(
             db.func.coalesce(File.date_updated, File.date_added)
             >= db.func.adddate(db.func.current_date(), -7)
@@ -1090,22 +1101,29 @@ def watchlist():
             )
         )
 
+    # contains_eager rides the join: without it every entry.movie below
+    # lazy-loads its own row — 400 queries on a 400-film list
+
     entries = (
         UserWatchlist.query.filter_by(user_id=int(current_user.id))
         .join(Movie, Movie.id == UserWatchlist.movie_id)
+        .options(contains_eager(UserWatchlist.movie))
         .order_by(UserWatchlist.date_added.desc())
         .all()
     )
 
-    # Availability like the other list surfaces: batch cache-first with
-    # at most 50 fetches per render, the rest warmed in the background
+    # Availability like the other list surfaces: cache-only, from the
+    # store the nightly refresh keeps full; anything uncached (a film
+    # added since last night) is warmed in the background, never
+    # fetched inline — fifty fetches under the rate limiter cost this
+    # page four seconds before Aug 2026
 
     provider_ids = user_provider_ids(current_user)
     availability_by_id = {}
     if provider_ids:
         availability_by_id, deferred = batch_title_availability(
             (entry.movie.tmdb_id for entry in entries if entry.movie.tmdb_id),
-            fetch_limit=50,
+            fetch_limit=0,
         )
         if deferred and current_app.redis.set(
             f"fitzflix:streaming:warm:watchlist:{int(current_user.id)}",

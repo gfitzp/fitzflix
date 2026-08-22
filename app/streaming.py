@@ -3,8 +3,12 @@
 The underlying data is licensed from JustWatch, and TMDb's terms make
 attribution mandatory: every surface that shows it must carry a
 "Streaming data by JustWatch" credit, or API access can be revoked.
-Availability is cached per title for a day (the poster-gallery
-pattern), and displays are customized to each user's chosen services —
+Availability is cached per title, refreshed nightly by the
+refresh_availability cron and held for two days so a missed night
+doesn't go cold (before Aug 2026 the day-cached entries expired in a
+cluster and the first page view of the day stalled behind 50 inline
+fetches under the rate limiter), and displays are customized to each
+user's chosen services —
 a per-user Profile setting, never site-wide. The payload carries no
 deep links; the only outbound link is the film's TMDb watch page.
 """
@@ -19,8 +23,8 @@ import requests
 from flask import current_app
 from werkzeug.local import LocalProxy
 
-from app import get_app
-from app.models import tmdb_get
+from app import db, get_app
+from app.models import Movie, tmdb_get
 
 # This process's app instance, resolved lazily so the warm task can run
 # on a worker without building a second application
@@ -28,7 +32,8 @@ from app.models import tmdb_get
 app = LocalProxy(get_app)
 
 WATCH_REGION = "US"
-CACHE_SECONDS = 86400
+CACHE_SECONDS = 2 * 86400
+REFRESH_WORKERS = 20
 REGISTRY_KEY = "fitzflix:tmdb:watch-providers:registry"
 AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
@@ -75,9 +80,11 @@ def provider_registry():
     return providers
 
 
-def title_availability(tmdb_id):
+def title_availability(tmdb_id, refresh=False):
     """The film's US watch-provider payload {link, flatrate, ads, rent,
-    buy}, cached for a day; None while unknown (no key, TMDb down).
+    buy}, cached for CACHE_SECONDS; None while unknown (no key, TMDb
+    down). refresh skips the cache read — the nightly task's way of
+    re-fetching a title whose entry is still live.
 
     A film with no US providers caches an empty payload, so absence
     doesn't re-query TMDb on every page view.
@@ -86,7 +93,7 @@ def title_availability(tmdb_id):
     if tmdb_id is None or not current_app.config["TMDB_API_KEY"]:
         return None
     cache_key = AVAILABILITY_KEY.format(tmdb_id=int(tmdb_id))
-    cached = current_app.redis.get(cache_key)
+    cached = None if refresh else current_app.redis.get(cache_key)
     if cached:
         return json.loads(cached)
     try:
@@ -126,31 +133,45 @@ def title_availability(tmdb_id):
     return payload
 
 
-def batch_title_availability(tmdb_ids, max_workers=20, fetch_limit=None):
+def batch_title_availability(
+    tmdb_ids, max_workers=REFRESH_WORKERS, fetch_limit=None, refresh=False
+):
     """(payloads, deferred): availability for many titles at once, as
     {tmdb_id: payload-or-None} plus the ids that weren't fetched.
 
-    Cache hits are read directly; misses fetch concurrently, each
+    Cache hits are read in one MGET; misses fetch concurrently, each
     through title_availability so caching and 404 handling match the
     single-title path. All fetches share tmdb_get's app-wide rate
     limiter, so fetch_limit bounds how long a render can stall behind
     it — leftover ids come back for the caller to warm in the
-    background instead."""
+    background instead. The page renders pass fetch_limit=0 (Aug 2026):
+    they answer from the cache the nightly refresh keeps full and never
+    fetch inline. refresh re-fetches every id, cached or not."""
 
     results = {}
-    misses = []
-    for tmdb_id in {int(t) for t in tmdb_ids if t is not None}:
-        cached = current_app.redis.get(AVAILABILITY_KEY.format(tmdb_id=tmdb_id))
-        if cached:
-            results[tmdb_id] = json.loads(cached)
-        else:
-            misses.append(tmdb_id)
+    ids = sorted({int(t) for t in tmdb_ids if t is not None})
+    if not ids:
+        return results, []
+    if refresh:
+        misses = ids
+    else:
+        misses = []
+        cached = current_app.redis.mget(
+            [AVAILABILITY_KEY.format(tmdb_id=tmdb_id) for tmdb_id in ids]
+        )
+        for tmdb_id, payload in zip(ids, cached):
+            if payload:
+                results[tmdb_id] = json.loads(payload)
+            else:
+                misses.append(tmdb_id)
     if not misses or not current_app.config["TMDB_API_KEY"]:
         return results, []
 
     deferred = []
     if fetch_limit is not None:
         misses, deferred = misses[:fetch_limit], misses[fetch_limit:]
+    if not misses:
+        return results, deferred
 
     flask_app = current_app._get_current_object()
 
@@ -158,7 +179,7 @@ def batch_title_availability(tmdb_ids, max_workers=20, fetch_limit=None):
         """One title's availability under its own app context."""
 
         with flask_app.app_context():
-            return tmdb_id, title_availability(tmdb_id)
+            return tmdb_id, title_availability(tmdb_id, refresh=refresh)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for tmdb_id, payload in pool.map(fetch, misses):
@@ -168,11 +189,36 @@ def batch_title_availability(tmdb_ids, max_workers=20, fetch_limit=None):
 
 def warm_title_availability(tmdb_ids):
     """Background task: fill the availability cache for the given
-    titles — the remainder a bounded filmography render deferred — so
-    the next visit has every badge without waiting."""
+    titles — the ids a page render found uncached — so the next visit
+    has every badge and count without waiting."""
 
     with app.app_context():
         batch_title_availability(tmdb_ids)
+        return True
+
+
+def refresh_availability():
+    """Nightly task (Aug 2026): re-fetch availability for every film
+    with a TMDb id, so the pages that read it — the watchlist, the
+    Criterion catalog, filmographies — always answer from a full cache
+    and never block on TMDb. Whole-library cost is a few thousand
+    requests, minutes under the rate limiter, and each entry's two-day
+    TTL restarts, so one missed night still serves yesterday's data."""
+
+    with app.app_context():
+        if not current_app.config["TMDB_API_KEY"]:
+            return True
+        tmdb_ids = [
+            tmdb_id
+            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+            .filter(Movie.tmdb_id.isnot(None))
+            .distinct()
+        ]
+        results, _ = batch_title_availability(tmdb_ids, refresh=True)
+        fetched = sum(1 for payload in results.values() if payload is not None)
+        current_app.logger.info(
+            f"Streaming availability refresh: {fetched} of {len(tmdb_ids)} films fetched"
+        )
         return True
 
 

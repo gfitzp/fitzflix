@@ -240,3 +240,88 @@ def test_film_count_ties_break_on_last_name(app, admin_client):
 
     page = admin_client.get("/people").get_data(as_text=True)
     assert page.index("Zoe Abbott") < page.index("Alan Zed")
+
+
+def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
+    """The browse page reads a Redis-held ranking — the full cast and
+    crew aggregation ran twice a visit before Aug 2026 — and a TMDb
+    credit apply drops it, so a newly imported film's people surface
+    on the next view."""
+
+    from app.models import PEOPLE_RANKING_KEY, invalidate_people_ranking
+
+    with app.app_context():
+        build_population(app)
+
+    page = admin_client.get("/people").get_data(as_text=True)
+    assert "Repertory Regular" in page
+    assert app.redis.get(PEOPLE_RANKING_KEY.format(role="cast"))
+
+    with app.app_context():
+        movies = [make_movie(f"Late Film {n}", 1990 + n) for n in range(3)]
+        make_person(821, "Late Arrival", movies)
+        db.session.commit()
+
+    # Served from the ranking: the new person isn't in it yet
+    page = admin_client.get("/people").get_data(as_text=True)
+    assert "Late Arrival" not in page
+
+    with app.app_context():
+        invalidate_people_ranking()
+    page = admin_client.get("/people").get_data(as_text=True)
+    assert "Late Arrival" in page
+    assert page.index("Late Arrival") < page.index("Repertory Regular")
+
+    # The role filters rank separately
+    assert "Late Arrival" in admin_client.get("/people?role=all").get_data(as_text=True)
+    assert not app.redis.get(PEOPLE_RANKING_KEY.format(role="crew"))
+
+
+def test_tmdb_apply_invalidates_the_people_ranking(app):
+    """A credit write through the TMDb apply path clears the cached
+    rankings for every role."""
+
+    from app.models import PEOPLE_RANKING_KEY
+
+    with app.app_context():
+        movie = make_movie("Apply Film", 1999, tmdb_id=960)
+        db.session.commit()
+        for role in ("cast", "crew", "all"):
+            app.redis.set(PEOPLE_RANKING_KEY.format(role=role), "[]")
+        movie.tmdb_movie_apply(
+            {
+                "credits": {
+                    "cast": [
+                        {
+                            "id": 831,
+                            "name": "Applied Actor",
+                            "character": "Lead",
+                            "order": 0,
+                        }
+                    ],
+                    "crew": [],
+                }
+            }
+        )
+        db.session.commit()
+
+    for role in ("cast", "crew", "all"):
+        assert app.redis.get(PEOPLE_RANKING_KEY.format(role=role)) is None
+
+
+def test_people_ranking_pages_past_the_default_cap(app, admin_client):
+    """The in-memory pagination keeps the page's 120-person size —
+    Flask-SQLAlchemy's base class caps per_page at 100 unless told
+    otherwise."""
+
+    with app.app_context():
+        movies = [make_movie("Cap Film One", 1980), make_movie("Cap Film Two", 1981)]
+        for n in range(125):
+            make_person(9000 + n, f"Cap Person {n:03d}", movies)
+        db.session.commit()
+
+    first = admin_client.get("/people").get_data(as_text=True)
+    second = admin_client.get("/people?page=2").get_data(as_text=True)
+    assert "Cap Person 119" in first and "Cap Person 120" not in first
+    assert "Cap Person 120" in second and "Cap Person 124" in second
+    assert "Cap Person 119" not in second
