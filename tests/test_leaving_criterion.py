@@ -102,6 +102,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
         1083055: [{"name": "Jak Hutchcraft", "job": "Director"}],
         1463730: [{"name": "Bas Devos", "job": "Director"}],
         162480: [{"name": "Hal Hartley", "job": "Director"}],
+        366144: [{"name": "Richard Sylvarnes", "job": "Director"}],
         555: [],
     }
     calls = []
@@ -165,6 +166,18 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
                         ]
                     }
                 )
+            if params.get("query") == "Regarding Soon":
+                return FakeResponse(
+                    payload={
+                        "results": [
+                            {
+                                "id": 366144,
+                                "title": "Regarding Soon",
+                                "release_date": "2004-01-01",
+                            }
+                        ]
+                    }
+                )
             if params.get("query") == "Opera No. 1":
                 return FakeResponse(
                     payload={
@@ -201,6 +214,14 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
         assert (
             len([c for c in calls if "/search/movie" in c]) == 2
         )  # with year, then without
+
+        # TMDb credits "Regarding Soon" to Richard Sylvarnes where
+        # Criterion says Hal Hartley: the one exact title-and-year
+        # result still passes, director disagreement notwithstanding
+        assert (
+            leaving_criterion.match_tmdb_id("Regarding Soon", 2004, "Hal Hartley")
+            == 366144
+        )
 
         # No director credited on TMDb: the exact title and year carry it
         assert leaving_criterion.match_tmdb_id("Opera No. 1", 1994, "Jane Doe") == 555

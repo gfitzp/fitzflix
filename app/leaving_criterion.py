@@ -258,13 +258,32 @@ def match_tmdb_id(title, year, director=None):
         )
 
     def pick(params):
-        """The chosen candidate id for one search, or None."""
+        """The chosen candidate id for one search, or None. When no
+        candidate's director corroborates, the one result TMDb knows
+        by exactly this title and year still passes — Criterion and
+        TMDb can credit a film differently (Criterion files "Regarding
+        Soon" under Hal Hartley, its subject; TMDb under Richard
+        Sylvarnes, who shot and cut it) — but only when it's unique,
+        so a same-title stranger from the same year can't slip in."""
 
         found = candidates(params, pages=1 if params else 2)
         if wanted_director:
             for result in found:
                 if directed_by(result):
                     return result.get("id")
+            exact = [
+                result
+                for result in found
+                if _normalize(result.get("title")) == wanted_title
+                and (result.get("release_date") or "")[:4] == str(year)
+            ]
+            if len(exact) == 1:
+                current_app.logger.info(
+                    f"Leaving-Criterion: '{title}' ({year}) matched TMDb "
+                    f"{exact[0].get('id')} by exact title and year; TMDb "
+                    f"credits a director other than {director}"
+                )
+                return exact[0].get("id")
             return None
         return found[0].get("id") if found else None
 
