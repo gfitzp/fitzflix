@@ -320,12 +320,22 @@ def heartbeat_criterion_now():
         return poll_criterion_now()
 
 
+def is_criterion_subscriber(user):
+    """True when the user lists the Criterion Channel among their
+    streaming services — the gate for the card and for the home page's
+    live-refresh container (#80), which must render even while no
+    film is showing so a card can appear when the poller stores one."""
+
+    return CRITERION_PROVIDER_ID in {
+        row.provider_id for row in user.streaming_providers
+    }
+
+
 def criterion_now_card(user):
     """The now-playing card for one user, or None: Criterion
     subscribers only, and only while the stored film is fresh."""
 
-    subscribed = {row.provider_id for row in user.streaming_providers}
-    if CRITERION_PROVIDER_ID not in subscribed:
+    if not is_criterion_subscriber(user):
         return None
     payload = current_app.redis.get(NOW_KEY)
     if not payload:
@@ -375,6 +385,10 @@ def criterion_now_card(user):
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
         "minutes_in": minutes_in,
+        # The home page's live refresh (#80) compares this fingerprint
+        # between fetches: a changed film swaps the whole card, an
+        # unchanged one repaints only the status line
+        "signature": f"{stored.get('title')}|{tmdb_id}|{stored.get('ends_at')}",
         "overview": (payload or {}).get("overview"),
         "ladder": _ladder_state_for(user, tmdb_id, payload),
         **_credited_people(payload),

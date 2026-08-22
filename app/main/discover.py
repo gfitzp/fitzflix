@@ -88,7 +88,7 @@ from app.elicitation import (
     set_last_response,
     suggestions_after_rating,
 )
-from app.criterion_now import criterion_now_card
+from app.criterion_now import criterion_now_card, is_criterion_subscriber
 from app.radarr_push import (
     RadarrError,
     radarr_configured,
@@ -410,8 +410,27 @@ def index():
         shelf_departs=shelf_departs,
         shelf_url=shelf_url,
         now_playing=criterion_now_card(current_user),
+        criterion_subscriber=is_criterion_subscriber(current_user),
         review_form=MovieReviewForm(),
         minutes=minutes,
+    )
+
+
+@bp.route("/criterion-now")
+@login_required
+def criterion_now():
+    """The Criterion24/7 card fragment (#80), re-fetched by the home
+    page once a minute while it's visible so an open tab follows the
+    feed — the film swaps when the poller stores the next one, and the
+    "minutes in" / "next film" line keeps time in between. Empty (200)
+    when there's nothing to show: not a subscriber, no stored film, or
+    one gone stale — the page's container empties and the card
+    disappears just as a reload would drop it."""
+
+    return render_template(
+        "_criterion_now_card.html",
+        now_playing=criterion_now_card(current_user),
+        review_form=MovieReviewForm(),
     )
 
 

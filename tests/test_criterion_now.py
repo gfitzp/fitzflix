@@ -646,3 +646,70 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "minutes in" not in body
     assert "Just started" not in body
+
+
+def test_card_fragment_follows_the_feed(app, admin_client):
+    """#80: the home page re-fetches the card from /criterion-now so an
+    open tab follows the feed. The fragment carries the film's
+    fingerprint and a status line for the page's swap-or-repaint
+    choice, and comes back empty (not 404, not a page) whenever the
+    card would hide — so the container empties rather than freezing."""
+
+    import app.criterion_now as criterion_now
+
+    def plant(title, tmdb_id, minutes_left):
+        app.redis.set(
+            criterion_now.NOW_KEY,
+            json.dumps(
+                {
+                    "title": title,
+                    "year": 1963,
+                    "tmdb_id": tmdb_id,
+                    "poster_path": "/shock.jpg",
+                    "ends_at": (
+                        datetime.now() + timedelta(minutes=minutes_left)
+                    ).strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            ),
+        )
+
+    # Not a subscriber: no container on the page, an empty fragment
+
+    plant("Shock Corridor", 33667, 45)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'id="criterion-now"' not in body
+    response = admin_client.get("/criterion-now")
+    assert response.status_code == 200
+    assert response.get_data(as_text=True).strip() == ""
+
+    # A subscriber's page wraps the card in the polling container, and
+    # the fragment is the same card: fingerprint, status line, ladder
+
+    subscribe_criterion(app)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'id="criterion-now"' in body
+    assert 'data-now-url="/criterion-now"' in body
+    assert "Shock Corridor (1963)" in body
+    fragment = admin_client.get("/criterion-now").get_data(as_text=True)
+    assert "Shock Corridor (1963)" in fragment
+    assert "data-watchlist-scope" in fragment
+    fingerprint = re.search(r'data-now-film="([^"]+)"', fragment)
+    assert fingerprint and fingerprint.group(1).startswith("Shock Corridor|33667|")
+    assert re.search(r"data-now-status>.*Next film around", fragment)
+    assert "<html" not in fragment
+
+    # The next film changes the fingerprint — the page swaps the card
+
+    plant("The Naked Kiss", 33669, 90)
+    fragment = admin_client.get("/criterion-now").get_data(as_text=True)
+    assert "The Naked Kiss (1963)" in fragment
+    assert 'data-now-film="The Naked Kiss|33669|' in fragment
+
+    # Subscriber, stale film: the container still renders (a card can
+    # appear once the poller stores one) but the fragment is empty
+
+    plant("The Naked Kiss", 33669, -30)
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'id="criterion-now"' in body
+    assert "On Criterion24/7 now" not in body
+    assert admin_client.get("/criterion-now").get_data(as_text=True).strip() == ""

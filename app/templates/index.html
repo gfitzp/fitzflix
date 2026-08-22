@@ -122,81 +122,72 @@
 </div>
 <p class="small text-muted">Films on your streaming services, picked by the same taste profile as your library recommendations{% if rail_computed_at %}; last run {{ rail_computed_at }}{% endif %}. Streaming data by JustWatch.</p>
 {% endif %}
-{% if now_playing %}
-<hr>
-{# The Criterion24/7 now-playing card (#63): one film, scraped from
-   whatsonnow.criterionchannel.com by the self-scheduling poller. The
-   poster is a direct TMDb link when the film matched; the card links
-   into the log page on a match and out to criterionchannel.com
-   otherwise #}
-<h4>On Criterion24/7 now</h4>
-<div class="d-flex mt-3 mb-2" style="gap: 1rem; max-width: 40rem;">
-	<div style="flex: 0 0 7rem;">
-		{% set card_href = url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) if now_playing.tmdb_id else (now_playing.more_url or now_playing.watch_url) %}
-		<a href="{{ card_href }}" class="text-decoration-none text-body">
-			{% if now_playing.poster_path %}
-				<img src="{{ config['TMDB_IMAGE_URL'] }}/w342{{ now_playing.poster_path }}" loading="lazy" class="img-fluid border rounded w-100" alt="{{ now_playing.title }}{% if now_playing.year %} ({{ now_playing.year }}){% endif %}">
-			{% else %}
-				<div class="border rounded d-flex justify-content-center align-items-center text-secondary" style="aspect-ratio: 2 / 3;">
-					<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-						<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
-					</svg>
-				</div>
-			{% endif %}
-		</a>
-	</div>
-	<div>
-		<h5 class="mb-1"><a href="{{ card_href }}" class="text-decoration-none text-body">{{ now_playing.title }}{% if now_playing.year %} ({{ now_playing.year }}){% endif %}</a></h5>
-		{# Credit ids from the verified TMDb match are person ids, so
-		   director and billed cast link to their filmography pages;
-		   an unmatched film falls back to the Channel's plain text #}
-		{% if now_playing.directors %}
-		<p class="mb-1 small">Directed by {% for person in now_playing.directors %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if now_playing.country %} &middot; {{ now_playing.country }}{% endif %}</p>
-		{% elif now_playing.director %}
-		<p class="mb-1 small">Directed by {{ now_playing.director }}{% if now_playing.country %} &middot; {{ now_playing.country }}{% endif %}</p>
-		{% endif %}
-		{% if now_playing.cast %}
-		<p class="mb-1 small text-muted">Starring {% for person in now_playing.cast %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
-		{% elif now_playing.starring %}
-		<p class="mb-1 small text-muted">Starring {{ now_playing.starring }}</p>
-		{% endif %}
-		{% if now_playing.overview %}
-		{# The TMDb synopsis, clamped to four lines — enough to know
-		   what the film is about at a glance without swallowing the
-		   card (the More link carries the full description) #}
-		<p class="mb-1 small" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ now_playing.overview }}</p>
-		{% endif %}
-		{% if now_playing.tmdb_id %}
-		{# The star row (#58): the viewer's own verdict, or the engine's
-		   estimate in paler gold until there is one. Taps post live to
-		   the movie route once a record exists; before that, to the
-		   TMDb log route, whose first tap creates the record (and which
-		   307-forwards ladder posts once it exists). The watchlist
-		   toggle (#78) posts the same way; the shared scope lets a
-		   rating that clears the list entry sync the toggle's face #}
-		{% set now_action = url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) %}
-		<div data-watchlist-scope>
-			<form action="{{ now_action }}" method="post" class="mb-1 d-flex align-items-center">
-				{{ review_form.csrf_token }}
-				{{ rating_ladder(compact=true, allow_not_interested=not now_playing.ladder.has_review, current=now_playing.ladder.rating, flagged=now_playing.ladder.flagged, live=true, estimated=now_playing.ladder.estimated) }}
-			</form>
-			<form action="{{ now_action }}" method="post" data-card-watchlist class="mb-1">
-				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-				<input type="hidden" name="from_card" value="1">
-				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
-				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
-			</form>
-		</div>
-		{% endif %}
-		<p class="mb-1">
-			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-primary">&#9654;&nbsp;Watch live</a>
-			{% if now_playing.more_url %}
-			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-secondary">More</a>
-			{% endif %}
-		</p>
-		<p class="mb-0 small text-muted">{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }} &middot; {% endif %}From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>
-	</div>
+{% if criterion_subscriber %}
+{# The Criterion24/7 card lives in its own container so it can follow
+   the feed without a reload (#80): the fragment is re-fetched once a
+   minute while the tab is visible, and immediately when a hidden tab
+   comes back — Glenn's "it still said the film ends at 7:38 an hour
+   later" report, Aug 2026. The container renders for every Criterion
+   subscriber even when no film is showing, so a card can appear once
+   the poller stores one #}
+<div id="criterion-now" data-now-url="{{ url_for('main.criterion_now') }}">
+{% include "_criterion_now_card.html" %}
 </div>
+<script>
+	(function() {
+		var holder = document.getElementById("criterion-now");
+		if (!holder) return;
+		var NOW_URL = holder.getAttribute("data-now-url");
+		var POLL_MS = 60000;
+		var timer = null;
+
+		function filmOf(root) {
+			var card = root.querySelector("[data-now-film]");
+			return card ? card.getAttribute("data-now-film") : "";
+		}
+
+		// setTimeout chaining, never setInterval: a slow answer must
+		// not stack requests. Hidden tabs stop polling outright; the
+		// visibilitychange handler polls at once on return
+		function schedule() {
+			window.clearTimeout(timer);
+			if (document.hidden) return;
+			timer = window.setTimeout(poll, POLL_MS);
+		}
+
+		function poll() {
+			if (document.hidden) return;
+			fetch(NOW_URL, {credentials: "same-origin", cache: "no-store"})
+				.then(function(response) {
+					// A redirect is the login page, not a card
+					if (!response.ok || response.redirected) {
+						throw new Error(response.status);
+					}
+					return response.text();
+				})
+				.then(function(html) {
+					var fresh = document.createElement("div");
+					fresh.innerHTML = html;
+					if (filmOf(fresh) !== filmOf(holder)) {
+						// A different film (or none): swap the card whole
+						holder.innerHTML = html;
+						return;
+					}
+					var status = holder.querySelector("[data-now-status]");
+					var latest = fresh.querySelector("[data-now-status]");
+					if (status && latest) status.innerHTML = latest.innerHTML;
+				})
+				.catch(function() {})
+				.finally(schedule);
+		}
+
+		document.addEventListener("visibilitychange", function() {
+			window.clearTimeout(timer);
+			if (!document.hidden) poll();
+		});
+		schedule();
+	})();
+</script>
 {% endif %}
 {% if shelf %}
 <hr>
