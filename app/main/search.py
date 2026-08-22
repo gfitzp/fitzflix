@@ -577,7 +577,9 @@ def search_tmdb():
                 if match["library_id"] is not None or match["tmdb_id"] is None:
                     continue
                 availability = title_availability(match["tmdb_id"])
-                matches = streaming_matches(availability, provider_ids)
+                matches = streaming_matches(
+                    availability, provider_ids, tmdb_id=match["tmdb_id"]
+                )
                 rentals = rental_matches(availability, provider_ids)
                 if matches:
                     match["streaming"] = matches

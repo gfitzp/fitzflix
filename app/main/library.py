@@ -88,6 +88,7 @@ from app.main.helpers import (
     _quick_rating,
     _same_day_rerate,
     _upgrade_threshold,
+    library_upgradable,
     _watched_timestamp,
 )
 from app.recommendations import (
@@ -526,7 +527,9 @@ def movie_library():
                 if row["quality"] or not row["tmdb_id"]:
                     continue
                 availability = availability_by_id.get(row["tmdb_id"])
-                matches = streaming_matches(availability, provider_ids)
+                matches = streaming_matches(
+                    availability, provider_ids, tmdb_id=row["tmdb_id"]
+                )
                 rentals = rental_matches(availability, provider_ids)
                 if matches:
                     row["streaming"] = matches
@@ -1185,6 +1188,7 @@ def criterion_collection():
         matches = streaming_matches(
             availability_by_id.get(row["tmdb_id"]),
             {CRITERION_CHANNEL_PROVIDER_ID},
+            tmdb_id=row["tmdb_id"],
         )
         if matches:
             row["streaming"] = matches
@@ -1676,7 +1680,11 @@ def movie(movie_id):
 
     streaming = (
         user_streaming(
-            movie.tmdb_id, current_user, negative=not films, local=bool(films)
+            movie.tmdb_id,
+            current_user,
+            negative=not films,
+            local=bool(films),
+            upgradable=library_upgradable(movie),
         )
         if movie.tmdb_id
         else None

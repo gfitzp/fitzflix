@@ -228,10 +228,14 @@ def user_provider_ids(user):
     return {row.provider_id for row in user.streaming_providers}
 
 
-def streaming_matches(availability, provider_ids):
+def streaming_matches(availability, provider_ids, tmdb_id=None):
     """Providers carrying the film that the user subscribes to —
     streaming kinds only (flatrate, then free-with-ads); rent and buy
-    aren't subscriptions."""
+    aren't subscriptions. Given the film's tmdb_id, a Criterion
+    Channel match also learns whether the film is on the month's
+    leaving set: its "leaving" key carries the departure date ("August
+    31") so the badge can light up wherever it renders (Glenn's ask,
+    Aug 2026 — watch it before it goes)."""
 
     if not availability or not provider_ids:
         return []
@@ -243,6 +247,16 @@ def streaming_matches(availability, provider_ids):
                 if provider["provider_id"] not in seen:
                     seen.add(provider["provider_id"])
                     matches.append({**provider, "kind": kind})
+    if tmdb_id is not None:
+        # Imported here: leaving_criterion reaches this module through
+        # streaming_rail, so a top-level import would be circular
+        from app.leaving_criterion import CRITERION_PROVIDER_ID, leaving_departure
+
+        for match in matches:
+            if match["provider_id"] == CRITERION_PROVIDER_ID:
+                departs = leaving_departure(tmdb_id)
+                if departs:
+                    match["leaving"] = departs
     return matches
 
 
@@ -266,7 +280,7 @@ def rental_matches(availability, provider_ids):
     return matches
 
 
-def user_streaming(tmdb_id, user, negative=False, local=False):
+def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
     """The template payload for one film: the user's matches and the
     TMDb watch-page link, or None when the user picked no services (the
     surfaces stay quiet for them). negative=True keeps the payload when
@@ -278,13 +292,16 @@ def user_streaming(tmdb_id, user, negative=False, local=False):
     rental never counts as a subscription match. local=True marks an
     owned film: the strip leads with "In your library" so a streaming
     badge never upstages the copy on the shelf, and the payload survives
-    an empty match list to say so."""
+    an empty match list to say so. upgradable colors that library
+    badge (Glenn's Aug 2026 revision): True paints it amber — the
+    copy is worth upgrading — False green, None leaves it neutral for
+    surfaces that never looked."""
 
     provider_ids = user_provider_ids(user)
     if not provider_ids:
         return None
     availability = title_availability(tmdb_id)
-    matches = streaming_matches(availability, provider_ids)
+    matches = streaming_matches(availability, provider_ids, tmdb_id=tmdb_id)
     if not matches and not negative and not local:
         return None
 
@@ -296,4 +313,5 @@ def user_streaming(tmdb_id, user, negative=False, local=False):
         "known": availability is not None,
         "rentals": rentals,
         "local": local,
+        "upgradable": upgradable,
     }

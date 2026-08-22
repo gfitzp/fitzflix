@@ -18,6 +18,7 @@ from flask_login import current_user
 
 from app import db
 from app.models import (
+    File,
     Movie,
     RefQuality,
     UserMovieReview,
@@ -231,3 +232,46 @@ def _upgrade_threshold():
         .scalar()
         or 0
     )
+
+
+def library_upgradable(movie, criterion=False):
+    """Whether the film's best owned copy is worth upgrading — the
+    shopping list's answer, which colors the In-library badge (amber
+    = upgradable, green = settled) on the movie page and the poster
+    popover; None when no main-feature file exists.
+
+    The generic rule: a full-screen copy, or one below the app-wide
+    threshold, is upgradable unless the film is excluded from the
+    shopping list. criterion=True swaps in the Criterion catalog's
+    settled rule (#77a, mirroring criterion_collection): the disc
+    must be owned AND the copy must meet the release's own format,
+    capped at the threshold — an owned disc with a Bluray-1080p file
+    is settled even if Criterion re-released in 2160p.
+    """
+
+    best = (
+        db.session.query(File, RefQuality)
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(File.movie_id == movie.id)
+        .filter(File.feature_type_id == None)
+        .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
+        .first()
+    )
+    if best is None:
+        return None
+    file, quality = best
+    threshold = _upgrade_threshold()
+    if criterion:
+        criterion_pref = (
+            db.session.query(RefQuality.preference)
+            .filter(RefQuality.id == movie.criterion_quality_id)
+            .scalar()
+            if movie.criterion_quality_id
+            else None
+        )
+        target = min(criterion_pref or threshold, threshold)
+        upgradable = bool(file.fullscreen) or quality.preference < target
+        return not (bool(movie.criterion_disc_owned) and not upgradable)
+    if movie.shopping_list_exclude:
+        return False
+    return bool(file.fullscreen) or quality.preference < threshold

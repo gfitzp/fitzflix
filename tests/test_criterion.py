@@ -348,10 +348,25 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
             f"/movie_card?movie_id={movie_id}&context=criterion"
         ).get_data(as_text=True)
 
-    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in criterion_card(settled_id)
-    assert 'text-bg-warning me-1 mb-1">DVD' in criterion_card(ripless_id)
-    assert 'text-bg-warning me-1 mb-1">Bluray-2160p Remux' in criterion_card(unowned_id)
-    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in criterion_card(good_enough_id)
+    # The rule colors the In-library badge itself since Aug 2026 — the
+    # tier badge left the card
+
+    assert (
+        'text-bg-success align-middle me-1" title="In your Fitzflix library'
+        in criterion_card(settled_id)
+    )
+    assert (
+        'text-bg-warning align-middle me-1" title="In your Fitzflix library'
+        in criterion_card(ripless_id)
+    )
+    assert (
+        'text-bg-warning align-middle me-1" title="In your Fitzflix library'
+        in criterion_card(unowned_id)
+    )
+    assert (
+        'text-bg-success align-middle me-1" title="In your Fitzflix library'
+        in criterion_card(good_enough_id)
+    )
 
     # Without the context, the same unowned remux is green — the
     # generic shopping answer — so the recolor is context-scoped
@@ -359,7 +374,9 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     generic = admin_client.get(f"/movie_card?movie_id={unowned_id}").get_data(
         as_text=True
     )
-    assert 'text-bg-success me-1 mb-1">Bluray-2160p Remux' in generic
+    assert (
+        'text-bg-success align-middle me-1" title="In your Fitzflix library' in generic
+    )
 
 
 def _seed_release_cache(app, releases):

@@ -91,9 +91,9 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
     assert "data-card-url" in page
 
     card = admin_client.get(f"/movie_card?movie_id={dvd_id}").get_data(as_text=True)
-    assert 'text-bg-warning me-1 mb-1">DVD' in card
+    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in card
     card = admin_client.get(f"/movie_card?movie_id={remux_id}").get_data(as_text=True)
-    assert 'text-bg-success me-1 mb-1">Bluray-2160p Remux' in card
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in card
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
@@ -556,8 +556,9 @@ def test_search_tmdb_without_api_key_explains(app, admin_client):
 
 def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
     """A movie removed from the shopping list is final: its card's
-    quality badge (where the tier lives since Aug 2026) goes green
-    even when the best copy is below the quality threshold."""
+    In-library badge (which wears the shopping answer since Aug 2026)
+    goes green even when the best copy is below the quality
+    threshold."""
 
     with app.app_context():
         movie = make_movie("Skip It", 2000, shopping_list_exclude=True)
@@ -568,8 +569,8 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
     page = admin_client.get("/search?q=skip+it").get_data(as_text=True)
     assert f'data-state-movie="{movie_id}"' in page
     card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert 'text-bg-success me-1 mb-1">DVD' in card
-    assert 'text-bg-warning me-1 mb-1">' not in card
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in card
+    assert "text-bg-warning" not in card
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):

@@ -271,7 +271,7 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     )
 
     body = admin_client.get("/").get_data(as_text=True)
-    assert "Leaving the Criterion Channel" in body
+    assert 'id="leaving-shelf"' in body
     assert "Shelf Fresh (1956)" in body
     assert "Shelf Wanted (1956)" in body
     # The watchlist badge lives in the popover since Aug 2026; the
@@ -410,7 +410,11 @@ def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):
     # No Criterion subscription: no shelf, even with a stored set
 
     body = admin_client.get("/").get_data(as_text=True)
-    assert "Leaving the Criterion Channel" not in body
+    assert 'id="leaving-shelf"' not in body
+
+    # The standing nav link to the departure inventory stays either way
+
+    assert 'href="/leaving"' in body
 
     # Subscribed, but the departure date has passed: also no shelf
 
@@ -421,4 +425,69 @@ def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):
         departs=date.today() - timedelta(days=1),
     )
     body = admin_client.get("/").get_data(as_text=True)
-    assert "Leaving the Criterion Channel" not in body
+    assert 'id="leaving-shelf"' not in body
+
+
+def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch):
+    """Wherever a film's Criterion Channel availability badge renders,
+    it lights up red with the departure date while the film is on the
+    month's leaving set — the movie page's strip and the poster
+    popover here; search results and filmography rows share the
+    macro. Other Criterion films keep the plain badge, and the
+    highlight clears once the departure date has passed."""
+
+    from app import db
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from tests.test_streaming import plant_availability
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    subscribe_criterion(app)
+    criterion = {
+        "provider_id": CRITERION_PROVIDER_ID,
+        "provider_name": "Criterion Channel",
+        "logo_path": "/criterion.jpg",
+    }
+    with app.app_context():
+        leaving = make_movie("Leaving Soon", 1956, tmdb_id=8401)
+        make_movie_file(leaving, "Bluray-1080p")
+        staying = make_movie("Staying Put", 1957, tmdb_id=8402)
+        make_movie_file(staying, "Bluray-1080p")
+        db.session.commit()
+        leaving_id, staying_id = leaving.id, staying.id
+    for tmdb_id in (8401, 8402):
+        plant_availability(
+            app,
+            tmdb_id,
+            {"link": None, "flatrate": [criterion], "ads": [], "rent": [], "buy": []},
+        )
+    departs = date.today() + timedelta(days=10)
+    plant_shelf(app, [shelf_item(8401, "Leaving Soon")], departs=departs)
+    label = departs.strftime("%B %-d")
+
+    page = admin_client.get(f"/movie/{leaving_id}").get_data(as_text=True)
+    assert f'title="Leaving Criterion Channel {label}"' in page
+    assert f"Criterion Channel &middot; leaving {label}" in page
+    assert "badge text-bg-danger" in page
+
+    card = admin_client.get(f"/movie_card?movie_id={leaving_id}").get_data(as_text=True)
+    assert f"Criterion Channel &middot; leaving {label}" in card
+
+    # A Criterion film that isn't departing keeps the plain badge
+
+    page = admin_client.get(f"/movie/{staying_id}").get_data(as_text=True)
+    assert 'title="Streaming on Criterion Channel"' in page
+    assert (
+        "leaving"
+        not in page.split("Streaming data by JustWatch")[0].split("In library")[1]
+    )
+
+    # Once the departure date passes, the highlight clears
+
+    plant_shelf(
+        app,
+        [shelf_item(8401, "Leaving Soon")],
+        departs=date.today() - timedelta(days=1),
+    )
+    page = admin_client.get(f"/movie/{leaving_id}").get_data(as_text=True)
+    assert 'title="Streaming on Criterion Channel"' in page
+    assert "badge text-bg-danger" not in page

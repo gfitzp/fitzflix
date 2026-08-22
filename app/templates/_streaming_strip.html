@@ -12,7 +12,7 @@
 {% if streaming %}
 <div class="mt-1">
 	{% if streaming.local %}
-	{{ library_badge() }}
+	{{ library_badge(streaming.upgradable) }}
 	{% endif %}
 	{% for provider in streaming.matches + streaming.rentals %}
 	{{ availability_badge(provider) }}

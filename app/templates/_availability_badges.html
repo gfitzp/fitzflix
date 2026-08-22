@@ -2,13 +2,27 @@
    derived from the match kind (flatrate/ads/rent) and the full
    phrasing in the tooltip. Used by the movie-page strip, TMDb search
    results, and filmography rows so every surface renders providers
-   identically. #}
-{% macro library_badge() -%}
+   identically. A match flagged "leaving" (the Criterion Channel's
+   month-end departures, from the leaving set) lights up red with
+   the date — watch it before it goes. The library badge takes the
+   shopping list's answer where a route computed it (the movie page
+   and the poster popover, Glenn's Aug 2026 revision): amber when
+   the copy is worth upgrading, green when it's settled, and the
+   neutral light badge on surfaces that never looked. #}
+{% macro library_badge(upgradable=none) -%}
+{%- if upgradable is defined and upgradable is not none -%}
+<span class="badge text-bg-{{ "warning" if upgradable else "success" }} align-middle me-1" title="In your Fitzflix library &mdash; {{ "worth upgrading" if upgradable else "settled" }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="me-1">In library</span>
+{%- else -%}
 <span class="badge text-bg-light border align-middle me-1" title="In your Fitzflix library"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="me-1">In library</span>
+{%- endif -%}
 {%- endmacro %}
 
 {% macro availability_badge(provider) -%}
 {%- set action = {"rent": "Rent from"}.get(provider.kind, "Streaming on") -%}
 {%- set suffix = {"ads": " (with ads)", "rent": " (rent)"}.get(provider.kind, "") -%}
+{%- if provider.leaving -%}
+<span class="badge text-bg-danger align-middle me-1" title="Leaving {{ provider.provider_name }} {{ provider.leaving }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; leaving {{ provider.leaving }}</span>
+{%- else -%}
 <span class="badge text-bg-light border align-middle me-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
+{%- endif -%}
 {%- endmacro %}

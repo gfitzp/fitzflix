@@ -5,8 +5,10 @@
    records and bare TMDb ids alike. The card is informational only
    (Glenn's revision, Aug 2026): the star ladder and the watchlist
    toggle live under the poster on the gallery tile itself, so the
-   card carries the film's FACTS — the quality tier in its shopping
-   colors, the watchlist badge, streaming availability, and any
+   card carries the film's FACTS — the In-library badge in its
+   shopping colors (amber = worth upgrading, green = settled; the
+   quality-tier badge it replaced is the movie page's business), the
+   watchlist badge, streaming availability, and any
    page-specific labels the tile hands over through data-card-reasons
    (filled into the slot below by the card script; long labels wrap
    inside the popover's fixed width instead of stretching it). The one
@@ -31,15 +33,10 @@
 	{% if streaming %}
 		{% include "_streaming_strip.html" %}
 	{% elif in_library %}
-		<div class="mt-1">{{ library_badge() }}</div>
+		<div class="mt-1">{{ library_badge(library_upgradable) }}</div>
 	{% endif %}
-	{# The badge line: the owned copy's quality tier in the library
-	   page's shopping colors (green = settled, amber = worth
-	   upgrading), the watchlist badge, and the tile's own labels #}
+	{# The badge line: the watchlist badge and the tile's own labels #}
 	<p class="mb-0 mt-1">
-		{% if quality_badge %}
-		<span class="badge text-bg-{{ quality_badge.color }} me-1 mb-1">{{ quality_badge.label }}</span>
-		{% endif %}
 		{% if on_watchlist %}
 		<span class="badge text-bg-warning fw-normal me-1 mb-1" title="On your watchlist">On your watchlist</span>
 		{% endif %}

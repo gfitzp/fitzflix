@@ -16,9 +16,9 @@ from tests.test_recommendations import admin_id, make_cast, make_person
 
 
 def test_movie_card_for_a_library_film(app, admin_client):
-    """A library record's card: linked credits, runtime, synopsis, the
-    In-library badge, and the quality badge in shopping colors — no
-    forms at all, the actions live on the tile."""
+    """A library record's card: linked credits, runtime, synopsis, and
+    the In-library badge in shopping colors — no forms at all, the
+    actions live on the tile."""
 
     with app.app_context():
         director = make_person(888001, "Card Director")
@@ -39,10 +39,12 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "A film about cards." in page
     assert "In library" in page
 
-    # The Bluray-1080p copy meets the upgrade threshold, so the badge
-    # is green; the empty slot waits for the tile's own labels
+    # The Bluray-1080p copy meets the upgrade threshold, so the
+    # In-library badge is green (the quality tier itself left the card
+    # in Aug 2026); the empty slot waits for the tile's own labels
 
-    assert 'text-bg-success me-1 mb-1">Bluray-1080p' in page
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert "Bluray-1080p" not in page
     assert "data-card-reasons" in page
 
     # Informational only: no ladder, no watchlist toggle, no forms
@@ -53,9 +55,9 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "<form" not in page
 
 
-def test_movie_card_badges_watchlist_and_amber_quality(app, admin_client):
+def test_movie_card_badges_watchlist_and_amber_library(app, admin_client):
     """A watchlisted film whose best copy lags the threshold badges
-    both facts: the amber quality tier and the watchlist badge."""
+    both facts: the amber In-library badge and the watchlist badge."""
 
     with app.app_context():
         user_id = admin_id()
@@ -66,7 +68,7 @@ def test_movie_card_badges_watchlist_and_amber_quality(app, admin_client):
         movie_id = movie.id
 
     page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert 'text-bg-warning me-1 mb-1">DVD' in page
+    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
     assert "On your watchlist" in page
 
     # An excluded film's badge goes green even below the threshold —
@@ -76,7 +78,36 @@ def test_movie_card_badges_watchlist_and_amber_quality(app, admin_client):
         db.session.get(Movie, movie_id).shopping_list_exclude = True
         db.session.commit()
     page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert 'text-bg-success me-1 mb-1">DVD' in page
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+
+
+def test_movie_page_library_badge_wears_shopping_colors(app, admin_client):
+    """The movie page's In-library badge takes the same shopping
+    colors as the popover's (Glenn's Aug 2026 revision): amber for a
+    copy worth upgrading, green once it's settled — including an
+    excluded film's sub-threshold copy."""
+
+    from tests.test_streaming import subscribe
+
+    subscribe(app, 8, "Netflix")
+    with app.app_context():
+        lagging = make_movie("Page Lagging", 1971, tmdb_id=7101)
+        make_movie_file(lagging, "DVD")
+        settled = make_movie("Page Settled", 1972, tmdb_id=7102)
+        make_movie_file(settled, "Bluray-1080p")
+        excluded = make_movie(
+            "Page Excluded", 1973, tmdb_id=7103, shopping_list_exclude=True
+        )
+        make_movie_file(excluded, "DVD")
+        db.session.commit()
+        lagging_id, settled_id, excluded_id = lagging.id, settled.id, excluded.id
+
+    page = admin_client.get(f"/movie/{lagging_id}").get_data(as_text=True)
+    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
+    page = admin_client.get(f"/movie/{settled_id}").get_data(as_text=True)
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    page = admin_client.get(f"/movie/{excluded_id}").get_data(as_text=True)
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
 
 
 def test_movie_states_batch_hydration_payload(app, admin_client):

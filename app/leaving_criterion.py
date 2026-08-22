@@ -28,7 +28,7 @@ from datetime import date, datetime
 
 import requests
 
-from flask import current_app
+from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -311,6 +311,34 @@ def leaving_shelf(user):
 
     items.sort(key=lambda item: (item["watchlisted"], item["score"]), reverse=True)
     return {"departs": departs, "url": _source_url(stored, departs), "items": items}
+
+
+def leaving_departure(tmdb_id):
+    """The departure date, as "August 31", when the film is in the
+    stored leaving set and that date hasn't passed; None otherwise.
+    Every Criterion Channel availability badge asks this (#45c's
+    popover, the movie page, search results, filmography rows, the
+    watchlist), so the set is parsed once per app context and kept
+    on flask.g — one Redis read per page, not one per film."""
+
+    if tmdb_id is None:
+        return None
+    index = getattr(g, "_leaving_criterion_index", None)
+    if index is None:
+        index = {}
+        payload = current_app.redis.get(LEAVING_KEY)
+        if payload:
+            stored = json.loads(payload)
+            departs = date.fromisoformat(stored["departs"])
+            if departs >= date.today():
+                label = departs.strftime("%B %-d")
+                index = {
+                    item["tmdb_id"]: label
+                    for item in stored.get("items", [])
+                    if item.get("tmdb_id")
+                }
+        g._leaving_criterion_index = index
+    return index.get(tmdb_id)
 
 
 def _source_url(stored, departs):

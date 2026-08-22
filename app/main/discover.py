@@ -39,7 +39,6 @@ from app.models import (
     Movie,
     MovieCast,
     MovieCrew,
-    RefQuality,
     TMDBCredit,
     TVSeries,
     UserMovieReview,
@@ -58,6 +57,7 @@ from app.main.helpers import (
     _quick_rating,
     _same_day_rerate,
     _upgrade_threshold,
+    library_upgradable,
     _watched_timestamp,
     admin_required,
 )
@@ -654,13 +654,13 @@ def movie_card():
     local row (the streaming rail and the leaving shelf). Purely
     informational since Glenn's Aug 2026 revision: the star ladder
     and watchlist toggle live on the gallery tiles, so the card
-    carries the quality badge in its shopping colors and the
-    watchlist badge instead. ?context=criterion (#77a) recolors the
-    quality badge with the Criterion page's settled rule — green
-    only when the disc is owned AND the copy matches the release's
-    format — instead of the generic shopping answer. Fetched only
-    when a poster is hovered or tapped, so gallery pages stay
-    light."""
+    carries the In-library badge in its shopping colors (amber =
+    worth upgrading, green = settled) and the watchlist badge
+    instead. ?context=criterion (#77a) recolors that badge with the
+    Criterion page's settled rule — green only when the disc is owned
+    AND the copy matches the release's format — instead of the
+    generic shopping answer. Fetched only when a poster is hovered or
+    tapped, so gallery pages stay light."""
 
     movie_id = request.args.get("movie_id", type=int)
     tmdb_id = request.args.get("tmdb_id", type=int)
@@ -696,54 +696,15 @@ def movie_card():
             is not None
         )
 
-        # The owned copy's quality tier, badged with the library page's
-        # shopping answer: green when the copy is settled (or the film
-        # is excluded from the shopping list), amber when it's worth
-        # upgrading — the tile-level badge this replaces (Aug 2026)
+        # The In-library badge wears the shopping list's answer (Glenn's
+        # Aug 2026 revision, replacing the quality-tier badge): amber
+        # when the copy is worth upgrading, green when it's settled.
+        # ?context=criterion swaps in the Criterion catalog's rule
 
-        best = (
-            db.session.query(File, RefQuality)
-            .join(RefQuality, RefQuality.id == File.quality_id)
-            .filter(File.movie_id == movie.id)
-            .filter(File.feature_type_id == None)
-            .order_by(File.fullscreen.asc(), RefQuality.preference.desc())
-            .first()
+        upgradable = library_upgradable(
+            movie, criterion=request.args.get("context") == "criterion"
         )
-        quality_badge = None
-        if best is not None:
-            file, quality = best
-            if request.args.get("context") == "criterion":
-                # The Criterion catalog's settled rule (#77a), mirroring
-                # criterion_collection: disc owned AND the copy meets the
-                # release's own format, capped at the app-wide threshold
-                # (an owned disc with a Bluray-1080p file is settled even
-                # if Criterion re-released in 2160p — chasing that upgrade
-                # is the shopping list's job)
-
-                threshold = _upgrade_threshold()
-                criterion_pref = (
-                    db.session.query(RefQuality.preference)
-                    .filter(RefQuality.id == movie.criterion_quality_id)
-                    .scalar()
-                    if movie.criterion_quality_id
-                    else None
-                )
-                target = min(criterion_pref or threshold, threshold)
-                upgradable = bool(file.fullscreen) or quality.preference < target
-                settled = bool(movie.criterion_disc_owned) and not upgradable
-            else:
-                settled = movie.shopping_list_exclude or (
-                    not file.fullscreen and quality.preference >= _upgrade_threshold()
-                )
-            quality_badge = {
-                "label": (
-                    f"Full Screen {quality.quality_title}"
-                    if file.fullscreen
-                    else quality.quality_title
-                ),
-                "color": "success" if settled else "warning",
-            }
-        in_library = best is not None
+        in_library = upgradable is not None
         return render_template(
             "_movie_card.html",
             display_title=(
@@ -757,7 +718,7 @@ def movie_card():
             top_cast=top_cast,
             on_watchlist=on_watchlist,
             in_library=in_library,
-            quality_badge=quality_badge,
+            library_upgradable=upgradable,
             play_url=(
                 url_for("main.movie_play", movie_id=movie.id)
                 if in_library
@@ -771,6 +732,7 @@ def movie_card():
                     current_user,
                     negative=not in_library,
                     local=in_library,
+                    upgradable=upgradable,
                 )
                 if movie.tmdb_id
                 else None
@@ -826,7 +788,7 @@ def movie_card():
         top_cast=top_cast,
         on_watchlist=False,
         in_library=False,
-        quality_badge=None,
+        library_upgradable=None,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
     )
 
@@ -1185,7 +1147,9 @@ def watchlist():
         rentals = []
         if provider_ids and movie.tmdb_id:
             availability = availability_by_id.get(movie.tmdb_id)
-            streaming = streaming_matches(availability, provider_ids)
+            streaming = streaming_matches(
+                availability, provider_ids, tmdb_id=movie.tmdb_id
+            )
             rentals = rental_matches(availability, provider_ids)
             if streaming or rentals:
                 streaming_attribution = True
