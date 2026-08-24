@@ -62,7 +62,7 @@
 {# The rail is computed, the runtime filter just emptied it (#198):
    say so, instead of claiming the recommendations aren't ready yet #}
 <p class="lead">No recommended films fit in {{ minutes }} minutes.</p>
-<p class="text-muted">Try a longer evening, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the whole list. Films with unknown runtimes stay hidden while a limit is set.</p>
+<p class="text-muted">Try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the whole list. Films with unknown runtimes stay hidden while a limit is set.</p>
 {% elif recs_stored %}
 <p class="lead">Nothing left on tonight's list.</p>
 <p class="text-muted">You've logged or waved off every film it picked &mdash; the nightly rebuild will choose a fresh set from your diary.</p>
@@ -177,7 +177,7 @@
 <hr>
 <h4>Streaming on your services</h4>
 {% if rail_filtered_out %}
-<p class="text-muted mt-3">Nothing streaming on your services fits in {{ minutes }} minutes &mdash; try a longer evening, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing streaming on your services fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in rail %}
@@ -211,7 +211,7 @@
    logged films #}
 <h4>Watch it again</h4>
 {% if again_filtered_out %}
-<p class="text-muted mt-3">Nothing you'd rewatch fits in {{ minutes }} minutes &mdash; try a longer evening, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing you'd rewatch fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in again %}
