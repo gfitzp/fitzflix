@@ -46,6 +46,7 @@ from app.main.forms import (
     S3UploadForm,
     SeriesDeleteForm,
     TMDBLookupForm,
+    TMDBRemoveForm,
     TrackMetadataScanForm,
     TranscodeForm,
     WatchlistForm,
@@ -1581,10 +1582,42 @@ def movie(movie_id):
 
     transcode_form = TranscodeForm()
 
+    # Form to detach a movie from TMDb altogether, for a film TMDb has no
+    # entry for (#207)
+
+    tmdb_remove_form = TMDBRemoveForm()
+    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        movie.tmdb_movie_clear()
+        db.session.commit()
+        flash(
+            f"Removed the TMDb ID from '{title}'; it won't be looked up again "
+            f"until you enter one by hand",
+            "success",
+        )
+        return redirect(url_for("main.movie", movie_id=movie.id))
+
     # Form to update a movie's information with the latest TMDb data
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
+        # A blank id asks TMDb to search by title and takes the first hit,
+        # which on an already-matched film silently re-points it at some
+        # other movie. Only offer that for a film with nothing to lose.
+
+        if tmdb_lookup_form.tmdb_id.data is None and movie.tmdb_id is not None:
+            flash(
+                "Enter a TMDb ID to refresh this movie, or use "
+                "'Remove TMDB ID' to detach it from TMDb",
+                "warning",
+            )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        # An id entered by hand is a deliberate re-match: it undoes a
+        # previous removal
+
+        movie.tmdb_ignored = False
+        db.session.commit()
+
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
@@ -1776,6 +1809,7 @@ def movie(movie_id):
         movie_review_form=movie_review_form,
         transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
+        tmdb_remove_form=tmdb_remove_form,
         criterion_form=criterion_form,
         streaming=streaming,
         watchlist_form=watchlist_form,
@@ -2210,10 +2244,42 @@ def tv(series_id):
         )
         return redirect(url_for("main.tv_library"))
 
+    # Form to detach a series from TMDb altogether, for a series TMDb has
+    # no entry for — or an id TMDb has since deleted (#207)
+
+    tmdb_remove_form = TMDBRemoveForm()
+    if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        tv.tmdb_tv_clear()
+        db.session.commit()
+        flash(
+            f"Removed the TMDb ID from '{tv.title}'; it won't be looked up "
+            f"again until you enter one by hand",
+            "success",
+        )
+        return redirect(url_for("main.tv", series_id=tv.id))
+
     # Form to update a TV series' information with the latest TMDb data
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
+        # A blank id asks TMDb to search by title and takes the first hit,
+        # which on an already-matched series silently re-points it at some
+        # other show — the merge reported in #207
+
+        if tmdb_lookup_form.tmdb_id.data is None and tv.tmdb_id is not None:
+            flash(
+                "Enter a TMDb ID to refresh this series, or use "
+                "'Remove TMDB ID' to detach it from TMDb",
+                "warning",
+            )
+            return redirect(url_for("main.tv", series_id=tv.id))
+
+        # An id entered by hand is a deliberate re-match: it undoes a
+        # previous removal
+
+        tv.tmdb_ignored = False
+        db.session.commit()
+
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
@@ -2311,6 +2377,7 @@ def tv(series_id):
         series_restore_form=series_restore_form,
         series_restore_estimate=series_restore_estimate,
         tmdb_lookup_form=tmdb_lookup_form,
+        tmdb_remove_form=tmdb_remove_form,
         series_delete_form=series_delete_form,
     )
 

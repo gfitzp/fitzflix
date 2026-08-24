@@ -83,7 +83,14 @@
 			</div>
 			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning") }}
 		</form>
+		{% if tv.tmdb_id %}
+		<form action="" method="post" class="mt-2">
+			{{ tmdb_remove_form.hidden_tag() }}
+			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDb ID from this series? Its TMDb details, cast, crew and episode list will be deleted, and the series will not be looked up again.');") }}
+		</form>
+		{% endif %}
 		{% if tv.tmdb_id and tv.tmdb_data_as_of %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}
+		{% if tv.tmdb_ignored %}<em class="small text-muted">Detached from TMDb — enter an ID above to match it again</em>{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">

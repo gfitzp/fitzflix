@@ -108,10 +108,25 @@ class MovieReviewForm(FlaskForm):
 
 
 class TMDBLookupForm(FlaskForm):
-    """Movie page: refresh or re-point a title's TMDb data."""
+    """Movie page: refresh or re-point a title's TMDb data.
+
+    A blank id means "search TMDb by title" — useful for a record that
+    has never been matched, destructive for one that has, so the routes
+    refuse a blank submit when an id is already stored (#207).
+    """
 
     tmdb_id = IntegerField("TMDB ID", validators=[Optional()])
     lookup_submit = SubmitField("Refresh TMDB Data")
+
+
+class TMDBRemoveForm(FlaskForm):
+    """Movie and TV pages: detach a record from TMDb for good.
+
+    For titles TMDb has no entry for — home movies, and ids TMDb has
+    deleted out from under a record.
+    """
+
+    remove_submit = SubmitField("Remove TMDB ID")
 
 
 class TMDBRefreshForm(FlaskForm):

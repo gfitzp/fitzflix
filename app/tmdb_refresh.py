@@ -124,6 +124,14 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                         f"Movie id {id} no longer exists, skipping TMDb refresh"
                     )
                     return False
+                if movie.tmdb_ignored:
+                    # Deliberately detached from TMDb; a fetch here would
+                    # search by title and re-attach a wrong id
+                    current_app.logger.info(
+                        f"{movie} is marked as having no TMDb match, "
+                        f"skipping TMDb refresh"
+                    )
+                    return False
                 description = f"Updating '{movie.title} ({movie.year})' with TMDb data"
                 current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 tmdb_info = movie.tmdb_movie_fetch(tmdb_id)
@@ -133,6 +141,13 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 if tv_show is None:
                     current_app.logger.warning(
                         f"TV series id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
+
+                if tv_show.tmdb_ignored:
+                    current_app.logger.info(
+                        f"{tv_show} is marked as having no TMDb match, "
+                        f"skipping TMDb refresh"
                     )
                     return False
 
@@ -244,6 +259,14 @@ def apply_tmdb_refresh(
                 if movie is None:
                     current_app.logger.warning(
                         f"Movie id {id} no longer exists, skipping TMDb refresh"
+                    )
+                    return False
+
+                if movie.tmdb_ignored:
+                    # Detached from TMDb after this payload was fetched
+                    current_app.logger.info(
+                        f"{movie} is marked as having no TMDb match, "
+                        f"discarding the fetched TMDb payload"
                     )
                     return False
 
@@ -564,6 +587,13 @@ def apply_tmdb_refresh(
                     )
                     return False
 
+                if tv_show.tmdb_ignored:
+                    current_app.logger.info(
+                        f"{tv_show} is marked as having no TMDb match, "
+                        f"discarding the fetched TMDb payload"
+                    )
+                    return False
+
                 # See if the requested tmdb_id already exists in the TVSeries table.
                 # If so, we'll use that existing TVSeries record.
 
@@ -614,6 +644,7 @@ def refresh_in_production_tv():
     with app.app_context():
         series = (
             TVSeries.query.filter(TVSeries.tmdb_id != None)
+            .filter(TVSeries.tmdb_ignored == False)
             .filter(
                 db.or_(
                     TVSeries.tmdb_in_production == True,

@@ -579,6 +579,57 @@ class TMDBMixin(object):
 
         return self.tmdb_movie_apply(self.tmdb_movie_fetch(tmdb_id))
 
+    def tmdb_movie_clear(self):
+        """Detach this film from TMDb: drop the id, every fetched field,
+        and every association tmdb_movie_apply creates, then mark the
+        record ignored so no refresh path guesses a new id from the title.
+
+        For films TMDb has no record of and never will — a home movie, or
+        an id TMDb has since deleted. Title and year are the film's own
+        library identity, not TMDb's, and stay untouched.
+        """
+
+        MovieCast.query.filter_by(movie_id=self.id).delete()
+        MovieCrew.query.filter_by(movie_id=self.id).delete()
+        invalidate_people_ranking()
+
+        for related in (
+            self.collections,
+            self.genres,
+            self.keywords,
+            self.production_companies,
+            self.production_countries,
+            self.spoken_languages,
+            self.certifications,
+        ):
+            for row in related.all():
+                related.remove(row)
+
+        self.imdb_id = None
+        self.tmdb_id = None
+        self.tmdb_adult = None
+        self.tmdb_backdrop_path = None
+        self.tmdb_budget = None
+        self.tmdb_homepage = None
+        self.tmdb_original_language = None
+        self.tmdb_original_title = None
+        self.tmdb_overview = None
+        self.tmdb_popularity = None
+        self.tmdb_poster_path = None
+        self.tmdb_release_date = None
+        self.tmdb_revenue = None
+        self.tmdb_runtime = None
+        self.tmdb_status = None
+        self.tmdb_tagline = None
+        self.tmdb_title = None
+        self.tmdb_video = None
+        self.tmdb_vote_average = None
+        self.tmdb_vote_count = None
+        self.tmdb_data_as_of = None
+        self.tmdb_ignored = True
+
+        return self
+
     def tmdb_tv_fetch(self, tmdb_id=None):
         """Network half of a TMDb TV refresh; see tmdb_movie_fetch."""
 
@@ -968,6 +1019,55 @@ class TMDBMixin(object):
             for episode_number, row in existing.items():
                 if episode_number not in fetched_numbers:
                     db.session.delete(row)
+
+        return self
+
+    def tmdb_tv_clear(self):
+        """Detach this series from TMDb; see tmdb_movie_clear.
+
+        Also drops the stored episode rows: without an id there is
+        nothing to refresh them from, and a season list left behind from
+        a deleted TMDb entry would go stale forever (#207).
+        """
+
+        TVCast.query.filter_by(tv_id=self.id).delete()
+        TVCrew.query.filter_by(tv_id=self.id).delete()
+
+        for episode in self.episodes.all():
+            db.session.delete(episode)
+
+        for related in (
+            self.genres,
+            self.keywords,
+            self.networks,
+            self.production_companies,
+            self.seasons,
+        ):
+            for row in related.all():
+                related.remove(row)
+
+        self.imdb_id = None
+        self.tvdb_id = None
+        self.tmdb_id = None
+        self.tmdb_backdrop_path = None
+        self.tmdb_first_air_date = None
+        self.tmdb_homepage = None
+        self.tmdb_poster_path = None
+        self.tmdb_in_production = None
+        self.tmdb_last_air_date = None
+        self.tmdb_name = None
+        self.tmdb_number_of_seasons = None
+        self.tmdb_number_of_episodes = None
+        self.tmdb_original_language = None
+        self.tmdb_original_name = None
+        self.tmdb_overview = None
+        self.tmdb_popularity = None
+        self.tmdb_status = None
+        self.tmdb_type = None
+        self.tmdb_vote_average = None
+        self.tmdb_vote_count = None
+        self.tmdb_data_as_of = None
+        self.tmdb_ignored = True
 
         return self
 
@@ -1456,6 +1556,16 @@ class Movie(db.Model, TMDBMixin, Utilities):
     tmdb_vote_count = db.Column(db.Integer)
     tmdb_data_as_of = db.Column(db.DateTime)
 
+    # "TMDb has no record of this film, and never will" — a home movie, or
+    # an id TMDb has since deleted. Distinct from a plain NULL tmdb_id,
+    # which only means "not matched yet" and invites a title search on the
+    # next refresh; this flag tells every refresh path to leave the record
+    # alone. Cleared by supplying an id by hand.
+
+    tmdb_ignored = db.Column(
+        db.Boolean, nullable=False, default=False, server_default="0"
+    )
+
     criterion_spine_number = db.Column(db.Integer)
     criterion_film_id = db.Column(db.String(255))
     criterion_set_title = db.Column(db.String(512))
@@ -1591,6 +1701,12 @@ class TVSeries(db.Model, TMDBMixin):
     tmdb_vote_average = db.Column(db.Float)
     tmdb_vote_count = db.Column(db.Integer)
     tmdb_data_as_of = db.Column(db.DateTime)
+
+    # See Movie.tmdb_ignored
+
+    tmdb_ignored = db.Column(
+        db.Boolean, nullable=False, default=False, server_default="0"
+    )
 
     tvdb_id = db.Column(db.Integer)
 

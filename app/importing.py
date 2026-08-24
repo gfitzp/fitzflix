@@ -1613,7 +1613,7 @@ def finalize_localization(
             # can't be matched. The fetch runs on the request queue and
             # hands its payload to the sql queue for the database writes.
 
-            if file.movie_id and movie.tmdb_id == None:
+            if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
                 current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=("Movies", movie.id, None),
@@ -1623,7 +1623,11 @@ def finalize_localization(
                         f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
                     ),
                 )
-            elif file.series_id and tv_series.tmdb_id == None:
+            elif (
+                file.series_id
+                and tv_series.tmdb_id == None
+                and not tv_series.tmdb_ignored
+            ):
                 current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
                     args=("TV Shows", tv_series.id, None),
@@ -1639,6 +1643,7 @@ def finalize_localization(
 
             elif (
                 file.series_id
+                and not tv_series.tmdb_ignored
                 and file.season is not None
                 and file.episode is not None
                 and tv_series.episodes.filter_by(

@@ -362,8 +362,20 @@ def maintenance():
 
     tmdb_refresh_form = TMDBRefreshForm()
     if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
-        movies = Movie.query.order_by(Movie.title.asc(), Movie.year.asc()).all()
-        tv_shows = TVSeries.query.order_by(TVSeries.title.asc()).all()
+        # Records detached from TMDb (#207) are left out: refresh_tmdb_info
+        # would decline them anyway, and a title search is exactly what
+        # detaching them was meant to prevent
+
+        movies = (
+            Movie.query.filter(Movie.tmdb_ignored == False)
+            .order_by(Movie.title.asc(), Movie.year.asc())
+            .all()
+        )
+        tv_shows = (
+            TVSeries.query.filter(TVSeries.tmdb_ignored == False)
+            .order_by(TVSeries.title.asc())
+            .all()
+        )
 
         # On the user-request queue: each job is a TMDb API call plus
         # artwork downloads, and thousands of them would starve the single
