@@ -28,7 +28,7 @@ from flask_login import current_user, login_required
 from unidecode import unidecode
 
 from app import db
-from app.frames import POOL_KEY, pool_entries
+from app.frames import DEALT_TTL, POOL_KEY, dealt_key, pool_entries
 from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.models import Movie, UserFrameScore, UserMovieReview
@@ -205,30 +205,39 @@ def _score_row(difficulty):
 
 def _deal_token(tokens):
     """Pick this round's frame without repeats (Glenn's Finding Nemo
-    report, Aug 20 2026): every dealt frame lands in a per-user seen
-    set in Redis, and deals exclude seen frames until the difficulty's
-    whole pool has been served — then the lap resets and the frames
-    come around again, still never twice in a row (the last-dealt
+    report, Aug 20 2026): every dealt frame is stamped with its turn
+    number in a per-user sorted set, and deals prefer frames that set
+    has never held. When a difficulty runs out of those the frames do
+    come around again, but least-recently-seen first rather than at
+    random (#200) — and never twice in a row, since the last-dealt
     frame is remembered server-side, so a plain page visit can't echo
-    it either). The set is shared across difficulties (a frame seen
-    on Easy is spoiled for Difficult too) and tokens that rotate out
-    of the pool age out with the keys' TTL."""
+    it either. The record is shared across difficulties (a frame seen
+    on Easy is spoiled for Difficult too); the nightly pass reads it to
+    retire spent frames first, and forgets a token once it leaves the
+    pool."""
 
     if not tokens:
         return None
     user_id = int(current_user.id)
-    seen_key = f"fitzflix:frames:seen:{user_id}"
+    key = dealt_key(user_id)
     last_key = f"fitzflix:frames:last:{user_id}"
-    seen = {member.decode() for member in current_app.redis.smembers(seen_key)}
     last = (current_app.redis.get(last_key) or b"").decode()
-    remaining = [token for token in tokens if token not in seen and token != last]
-    if not remaining:
-        current_app.redis.srem(seen_key, *tokens)
-        remaining = [token for token in tokens if token != last] or list(tokens)
-    token = random.choice(remaining)
-    current_app.redis.sadd(seen_key, token)
-    current_app.redis.expire(seen_key, 60 * 24 * 3600)
-    current_app.redis.set(last_key, token, ex=60 * 24 * 3600)
+    served = {
+        token.decode(): score
+        for token, score in current_app.redis.zrange(key, 0, -1, withscores=True)
+    }
+    unseen = [token for token in tokens if token not in served and token != last]
+    if unseen:
+        token = random.choice(unseen)
+    else:
+        # The difficulty has lapped: replay it oldest-first, breaking
+        # ties at random so a lapped pool isn't a fixed carousel
+        repeats = [token for token in tokens if token != last] or list(tokens)
+        random.shuffle(repeats)
+        token = min(repeats, key=lambda token: served.get(token, 0))
+    current_app.redis.zadd(key, {token: max(served.values(), default=0) + 1})
+    current_app.redis.expire(key, DEALT_TTL)
+    current_app.redis.set(last_key, token, ex=DEALT_TTL)
     return token
 
 

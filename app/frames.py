@@ -7,11 +7,13 @@ the pool. Frames are named by opaque tokens (the filename must never
 hint at the answer) with a Redis hash mapping token → movie; images
 live in FRAME_POOL_DIR and are served through an authenticated route,
 not the public static path. The pool tops itself up to
-FRAME_POOL_SIZE and rotates FRAME_POOL_ROTATE of its oldest entries
-each night, so every film eventually gets a turn and long-pooled
-films get fresh frames. Extraction runs on the transcode queue — the
-serial heavy-I/O lane — because the shell can't read /Volumes; only
-workers can.
+FRAME_POOL_SIZE and retires at least FRAME_POOL_ROTATE entries each
+night — every frame a player has already been dealt first, then the
+oldest — so every film eventually gets a turn, long-pooled films get
+fresh frames, and a played-out frame gives up its slot to one nobody
+has seen. Extraction runs on the transcode queue — the serial
+heavy-I/O lane — because the shell can't read /Volumes; only workers
+can.
 """
 
 import json
@@ -44,6 +46,49 @@ OFFSET_LOW, OFFSET_HIGH = 0.05, 0.85
 # decodes to a flat gray ghost frame (7 pooled frames, Aug 20 2026)
 
 SEEK_LEAD = 30
+
+# Per-user record of the frames the game has dealt: a sorted set of
+# token → the turn it was served on. The game reads it to deal a frame
+# the player has never seen (and, once a difficulty runs out of those,
+# the least-recently-seen one); the nightly pass reads it to retire
+# spent frames first, so what a player has already been shown is the
+# first thing rotation replaces (#200)
+
+DEALT_KEY = "fitzflix:frames:dealt:{user_id}"
+
+# Long enough that a lapsed player picks up where they left off, short
+# enough that the record can't outlive the pool it points into
+
+DEALT_TTL = 60 * 24 * 3600
+
+
+def dealt_key(user_id):
+    """The dealt-frames sorted set for one user."""
+
+    return DEALT_KEY.format(user_id=user_id)
+
+
+def _all_dealt_tokens():
+    """Every token any player has been dealt — rotation's "spent" set."""
+
+    dealt = set()
+    for key in current_app.redis.scan_iter(DEALT_KEY.format(user_id="*")):
+        dealt |= {token.decode() for token in current_app.redis.zrange(key, 0, -1)}
+    return dealt
+
+
+def _forget_dropped_tokens(pooled):
+    """Drop tokens that have left the pool from every player's dealt
+    record, so a rotated-out frame stops counting as spent."""
+
+    for key in current_app.redis.scan_iter(DEALT_KEY.format(user_id="*")):
+        gone = [
+            token
+            for token in current_app.redis.zrange(key, 0, -1)
+            if token.decode() not in pooled
+        ]
+        if gone:
+            current_app.redis.zrem(key, *gone)
 
 
 def frame_path(token):
@@ -146,16 +191,52 @@ def refresh_frame_pool_task():
             else:
                 valid[token] = entry
 
+        pooled = len(valid)
         pooled_movies = {entry["movie_id"] for entry in valid.values()}
         size = current_app.config["FRAME_POOL_SIZE"]
         rotate = current_app.config["FRAME_POOL_ROTATE"]
         min_rated = current_app.config["FRAME_POOL_MIN_RATED"]
 
-        # Per-reviewer floors first: whoever's Easy world is short of
-        # the minimum gets extractions from their own unpooled rated
-        # films before the general fill
+        # Rotation runs BEFORE the reviewer floors below, and retires
+        # spent frames before merely old ones (#200). Both orderings
+        # matter: measuring the floors first let rotation evict the
+        # very rated frames they had just guaranteed (Easy settled a
+        # quarter under its minimum), and retiring by age alone left
+        # frames a player had already been dealt sitting in the pool
+        # while films they'd never seen waited outside it.
 
-        to_extract = []
+        dealt = _all_dealt_tokens()
+        fresh = list(playable - pooled_movies)
+        random.shuffle(fresh)
+
+        # A full pool retires every spent frame — never fewer than
+        # FRAME_POOL_ROTATE, so the pool keeps turning over even for a
+        # player who hasn't touched the game
+
+        retired = []
+        if len(valid) + len(fresh) >= size:
+            spent = sum(1 for token in valid if token in dealt)
+            oldest = sorted(
+                valid.items(),
+                key=lambda item: (
+                    item[0] not in dealt,
+                    item[1].get("extracted_at", 0),
+                ),
+            )[: max(rotate, spent)]
+            for token, entry in oldest:
+                _drop_entry(token)
+                del valid[token]
+                pooled_movies.discard(entry["movie_id"])
+                retired.append(entry["movie_id"])
+
+        # Per-reviewer floors: whoever's Easy world is short of the
+        # minimum gets extractions from their own unpooled rated films
+        # before the general fill. A film just retired stays out for
+        # the night — the point of retiring it was to show something
+        # else — so the floor draws only on films the pool has never
+        # served.
+
+        floors = []
         chosen = set()
         reviewers = {
             user_id
@@ -170,29 +251,42 @@ def refresh_frame_pool_task():
             } & playable
             floor = min(min_rated, len(rated_playable))
             pooled_rated = len(rated_playable & (pooled_movies | chosen))
-            candidates = list(rated_playable - pooled_movies - chosen)
+            candidates = list(rated_playable - pooled_movies - chosen - set(retired))
             random.shuffle(candidates)
             needed = candidates[: max(0, floor - pooled_rated)]
-            to_extract += needed
+            short = max(0, floor - pooled_rated - len(needed))
+            if short:
+                # A reviewer with barely more rated films than the floor
+                # can run out of unpooled ones. The floor outranks the
+                # retirement: the film comes back, on a new frame
+
+                spare = [movie_id for movie_id in retired if movie_id not in chosen]
+                random.shuffle(spare)
+                needed += spare[:short]
+            floors += needed
             chosen |= set(needed)
 
-        fresh = list(playable - pooled_movies - chosen)
-        random.shuffle(fresh)
-        top_up = fresh[: max(0, size - len(valid) - len(to_extract))]
+        # Refill the room the prune and rotation left, FRAME_POOL_SIZE
+        # being the ceiling — the floors are a composition rule for the
+        # pool, not licence to grow past it. Slots go to the reviewer
+        # floors first, then to films the pool has never held, and only
+        # when the library has none of those left do the films just
+        # retired come back on brand-new frames.
+
+        to_extract = floors[: max(0, size - len(valid))]
+        chosen = set(to_extract)
+        room = max(0, size - len(valid) - len(to_extract))
+        top_up = [movie_id for movie_id in fresh if movie_id not in chosen][:room]
         to_extract += top_up
-        fresh = fresh[len(top_up) :]
+        chosen |= set(top_up)
+        room -= len(top_up)
+        to_extract += [movie_id for movie_id in retired if movie_id not in chosen][
+            :room
+        ]
 
-        # A full pool rotates its oldest entries: retire each one now
-        # and queue a replacement — an unpooled movie when any remain,
-        # otherwise the same movie gets a brand-new random frame
+        # Tokens that just left the pool stop counting as spent
 
-        if len(valid) + len(to_extract) >= size:
-            oldest = sorted(
-                valid.items(), key=lambda item: item[1].get("extracted_at", 0)
-            )[:rotate]
-            for token, entry in oldest:
-                _drop_entry(token)
-                to_extract.append(fresh.pop() if fresh else entry["movie_id"])
+        _forget_dropped_tokens(set(valid))
 
         titles = {
             movie_id: title
@@ -210,10 +304,10 @@ def refresh_frame_pool_task():
                 ),
             )
         current_app.logger.info(
-            f"Frame pool: {len(valid)} pooled, {len(entries) - len(valid)} "
-            f"pruned, {len(to_extract)} extractions queued"
+            f"Frame pool: {pooled} pooled, {len(entries) - pooled} pruned, "
+            f"{len(retired)} retired, {len(to_extract)} extractions queued"
         )
-        return {"pooled": len(valid), "queued": len(to_extract)}
+        return {"pooled": pooled, "queued": len(to_extract)}
 
 
 def extract_frame_task(movie_id):

@@ -550,3 +550,198 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
     assert "Era Rated Far (1990)" not in page
     # The fourth slot pads from in-era unrated films, not the far one
     assert "Era Far (1990)" not in page
+
+
+def test_a_lapped_difficulty_replays_least_recently_seen_first(app, admin_client):
+    """Once a difficulty has dealt every frame it holds, the pool comes
+    back round least-recently-seen first rather than at random, so the
+    whole pool cycles before anything shows twice (#200)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie_ids = []
+        for n in range(6):
+            movie = make_movie(f"Frame Lap {n}", 1990 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            movie_ids.append(movie.id)
+        db.session.commit()
+        movie_ids = [movie_id for movie_id in movie_ids]
+
+    for movie_id in movie_ids:
+        seed_frame(app, movie_id)
+
+    def deal():
+        page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        return re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1)
+
+    first_lap = [deal() for _ in range(6)]
+    assert len(set(first_lap)) == 6
+
+    # The second lap replays the first one in the same order: the frame
+    # seen longest ago always comes back first
+
+    assert [deal() for _ in range(6)] == first_lap
+
+
+def test_rotation_retires_played_frames_before_merely_old_ones(app, admin_client):
+    """A frame the game has already dealt is spent: the nightly pass
+    retires it ahead of an older frame nobody has seen, and forgets
+    its token once it has left the pool (#200)."""
+
+    import re
+
+    from app import db
+    from app.frames import POOL_KEY, dealt_key, refresh_frame_pool_task
+
+    with app.app_context():
+        movie_ids = []
+        for n in range(3):
+            movie = make_movie(f"Frame Spent {n}", 1990 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            movie_ids.append(movie.id)
+        db.session.commit()
+        movie_ids = [movie_id for movie_id in movie_ids]
+
+    # Ages run oldest-first; only the youngest frame ever gets played
+
+    tokens = [
+        seed_frame(app, movie_id, extracted_at=100 * (n + 1))
+        for n, movie_id in enumerate(movie_ids)
+    ]
+    oldest, played = tokens[0], tokens[-1]
+
+    with app.app_context():
+        app.config["FRAME_POOL_SIZE"] = 3
+        app.config["FRAME_POOL_ROTATE"] = 1
+        # Deal until the youngest frame comes up, so it lands in the
+        # user's dealt record while the others stay unseen
+        keys = set()
+        while played not in keys:
+            page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+            keys.add(re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1))
+        app.redis.delete(dealt_key(1))
+        app.redis.zadd(dealt_key(1), {played: 1})
+
+        refresh_frame_pool_task()
+
+        # Spent beats old: the played frame goes, the oldest stays
+        assert not app.redis.hexists(POOL_KEY, played)
+        assert app.redis.hexists(POOL_KEY, oldest)
+        # …and its token no longer counts as spent
+        assert app.redis.zscore(dealt_key(1), played) is None
+
+
+def test_rotation_cannot_undercut_the_rated_floor(app, monkeypatch):
+    """Rotation runs before the reviewer floors are measured, so a
+    retired rated frame is made good the same night — the floor used
+    to be counted against a pool rotation then ate into (#200)."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.frames import refresh_frame_pool_task
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
+    monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
+    monkeypatch.setitem(app.config, "FRAME_POOL_MIN_RATED", 2)
+
+    with app.app_context():
+        rated_ids = []
+        for n in range(2):
+            movie = make_movie(f"Frame Floor Keeps {n}", 1950 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id(),
+                    movie_id=movie.id,
+                    liked=True,
+                    **star_rating_fields(4.0),
+                )
+            )
+            rated_ids.append(movie.id)
+        unrated = make_movie("Frame Floor Spare", 1970)
+        make_movie_file(unrated, "Bluray-1080p")
+        for n in range(2):
+            spare = make_movie(f"Frame Floor Unpooled {n}", 1975 + n)
+            make_movie_file(spare, "Bluray-1080p")
+        db.session.commit()
+        unrated_id = unrated.id
+
+    # A full pool whose oldest entry is one of the rated films
+    seed_frame(app, rated_ids[0], extracted_at=100)
+    seed_frame(app, rated_ids[1], extracted_at=300)
+    seed_frame(app, unrated_id, extracted_at=400)
+
+    with app.app_context():
+        refresh_frame_pool_task()
+        job_ids = app.transcode_queue.get_job_ids()
+        jobs = [app.transcode_queue.fetch_job(job_id) for job_id in job_ids]
+        queued = {
+            job.args[0] for job in jobs if "extract_frame_task" in (job.func_name or "")
+        }
+        from app.frames import pool_entries
+
+        pooled = {entry["movie_id"] for entry in pool_entries().values()}
+        # Rotation retired the oldest rated frame, so the floor of two
+        # rated films is restored by a queued extraction
+        assert len(set(rated_ids) & (pooled | queued)) == 2
+
+
+def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch):
+    """FRAME_POOL_SIZE is the ceiling and the reviewer floors are a
+    composition rule inside it, not licence to grow past it — a big
+    floor deficit fills the room rotation freed and no more."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.frames import pool_entries, refresh_frame_pool_task
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 4)
+    monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
+    monkeypatch.setitem(app.config, "FRAME_POOL_MIN_RATED", 3)
+
+    with app.app_context():
+        # Three rated films, none of them pooled: a floor deficit far
+        # wider than the single slot rotation frees
+        for n in range(3):
+            movie = make_movie(f"Frame Cap Rated {n}", 1950 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            db.session.add(
+                UserMovieReview(
+                    user_id=admin_id(),
+                    movie_id=movie.id,
+                    liked=True,
+                    **star_rating_fields(4.0),
+                )
+            )
+        pooled_ids = []
+        for n in range(4):
+            movie = make_movie(f"Frame Cap Pooled {n}", 1970 + n)
+            make_movie_file(movie, "Bluray-1080p")
+            pooled_ids.append(movie.id)
+        for n in range(2):
+            spare = make_movie(f"Frame Cap Spare {n}", 1980 + n)
+            make_movie_file(spare, "Bluray-1080p")
+        db.session.commit()
+        pooled_ids = [movie_id for movie_id in pooled_ids]
+
+    for n, movie_id in enumerate(pooled_ids):
+        seed_frame(app, movie_id, extracted_at=100 * (n + 1))
+
+    with app.app_context():
+        refresh_frame_pool_task()
+        jobs = [
+            app.transcode_queue.fetch_job(job_id)
+            for job_id in app.transcode_queue.get_job_ids()
+        ]
+        queued = [
+            job.args[0] for job in jobs if "extract_frame_task" in (job.func_name or "")
+        ]
+        # One slot freed, one slot filled — the pool stays at four
+        assert len(pool_entries()) + len(queued) == 4
