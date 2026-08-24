@@ -12,115 +12,120 @@
 {# bg-body-tertiary adapts to the active color mode — the old
    navbar-light bg-light stayed light in dark mode #}
 <nav class="navbar navbar-expand-lg bg-body-tertiary fixed-top">
-	<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="me-1" alt="Fitzflix logo"></a>
-	{# The text brand is redundant next to the logo on phones, and hiding it
-	   keeps the brand, search box, and menu toggle on a single navbar row #}
-	<a class="navbar-brand d-none d-sm-block" href="{{ url_for('main.index') }}">Fitzflix</a>
-	{% if current_user.is_authenticated %}
-	{# Phones only: outside the collapse so the search box stays visible with
-	   the menu collapsed; the explicit width in the macro keeps it on the
-	   navbar's single row #}
-	{{ global_search_form("ms-auto me-2 d-lg-none") }}
-	{% endif %}
-	<button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-		<span class="navbar-toggler-icon"></span>
-	</button>
-	<div class="collapse navbar-collapse" id="navbarNav">
-		<ul class="navbar-nav">
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.index') }}">Home</a>
-			</li>
-			{% if not current_user.is_anonymous %}
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.file_activity') }}">File Activity</a>
-			</li>
-			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-					Library
-				</a>
-				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
-					<a class="dropdown-item" href="{{ url_for('main.movie_library') }}">Movies</a>
-					<a class="dropdown-item" href="{{ url_for('main.tv_library') }}">TV Shows</a>
-					<a class="dropdown-item" href="{{ url_for('main.people') }}">People</a>
-					<a class="dropdown-item" href="{{ url_for('main.files') }}">Files</a>
-					<a class="dropdown-item" href="{{ url_for('main.files', audio='lossy') }}">Lossy files</a>
-					<div class="dropdown-divider"></div>
-					<a class="dropdown-item" href="{{ url_for('main.criterion_collection') }}">Criterion Collection</a>
-					<a class="dropdown-item" href="{{ url_for('main.leaving') }}">Leaving the Criterion Channel</a>
-				</div>
-			</li>
-			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-					Shopping Lists
-				</a>
-				<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
-					<a class="dropdown-item" href="{{ url_for('main.movie_shopping') }}">Movies</a>
-					<a class="dropdown-item" href="{{ url_for('main.tv_shopping') }}">TV Shows</a>
-					<div class="dropdown-divider"></div>
-					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', max_quality='14') }}">Below WEBDL-1080p</a>
-					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', library='criterion', max_quality='21') }}">Criterion Collection</a>
-					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', media='digital', max_quality='21') }}">Digital Downloads</a>
-					<a class="dropdown-item" href="{{ url_for('main.movie_shopping', min_quality='3', max_quality='21') }}">HDTV Quality</a>
-				</div>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.history') }}">My History</a>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.watchlist') }}">My Watchlist</a>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.rate') }}">Rate Films</a>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.name_that_frame') }}">Name that Frame</a>
-			</li>
-			{% endif %}
-		</ul>
-		<ul class="navbar-nav ms-auto">
-			{% if current_user.is_anonymous %}
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
-			</li>
-			{% else %}
-			{# Desktop only: the search box sits in the right-side menu, just
-			   left of Queue; phones use the always-visible copy outside the
-			   collapse instead #}
-			<li class="nav-item d-none d-lg-block align-self-center me-2">
-				{{ global_search_form("") }}
-			</li>
-			<li class="nav-item">
-				{% set queue_count = current_user.get_queue_count() %}
-				<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge text-bg-secondary ms-1" id="queue_count">{{ queue_count }}</span></a>
-			</li>
-			{% if current_user.admin %}
-			<li class="nav-item dropdown">
-				<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
-					Admin
-				</a>
-				<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarDropdownMenuLink">
-					<a class="dropdown-item" href="{{ url_for('main.maintenance') }}">Library Maintenance</a>
-					<a class="dropdown-item" href="{{ url_for('main.system') }}">System</a>
-					<div class="dropdown-divider"></div>
-					<a class="dropdown-item" href="{{ url_for('main.profile') }}">Profile</a>
-				</div>
-			</li>
-			{% else %}
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.profile') }}">Profile</a>
-			</li>
-			{% endif %}
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
-			</li>
-			<li class="nav-item">
-				<a class="nav-link" href="{{ url_for('auth.logout') }}">Logout</a>
-			</li>
-			{% endif %}
-		</ul>
+	{# Bootstrap 5 zeroes the navbar's own horizontal padding and
+	   expects an inner container to supply the gutter; without one
+	   the logo and toggler sit flush against a phone's screen edge #}
+	<div class="container-fluid">
+		<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="me-1" alt="Fitzflix logo"></a>
+		{# The text brand is redundant next to the logo on phones, and hiding it
+		   keeps the brand, search box, and menu toggle on a single navbar row #}
+		<a class="navbar-brand d-none d-sm-block" href="{{ url_for('main.index') }}">Fitzflix</a>
+		{% if current_user.is_authenticated %}
+		{# Phones only: outside the collapse so the search box stays visible with
+		   the menu collapsed; the explicit width in the macro keeps it on the
+		   navbar's single row #}
+		{{ global_search_form("ms-auto me-2 d-lg-none") }}
+		{% endif %}
+		<button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+			<span class="navbar-toggler-icon"></span>
+		</button>
+		<div class="collapse navbar-collapse" id="navbarNav">
+			<ul class="navbar-nav">
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.index') }}">Home</a>
+				</li>
+				{% if not current_user.is_anonymous %}
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.file_activity') }}">File Activity</a>
+				</li>
+				<li class="nav-item dropdown">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+						Library
+					</a>
+					<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+						<a class="dropdown-item" href="{{ url_for('main.movie_library') }}">Movies</a>
+						<a class="dropdown-item" href="{{ url_for('main.tv_library') }}">TV Shows</a>
+						<a class="dropdown-item" href="{{ url_for('main.people') }}">People</a>
+						<a class="dropdown-item" href="{{ url_for('main.files') }}">Files</a>
+						<a class="dropdown-item" href="{{ url_for('main.files', audio='lossy') }}">Lossy files</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('main.criterion_collection') }}">Criterion Collection</a>
+						<a class="dropdown-item" href="{{ url_for('main.leaving') }}">Leaving the Criterion Channel</a>
+					</div>
+				</li>
+				<li class="nav-item dropdown">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+						Shopping Lists
+					</a>
+					<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+						<a class="dropdown-item" href="{{ url_for('main.movie_shopping') }}">Movies</a>
+						<a class="dropdown-item" href="{{ url_for('main.tv_shopping') }}">TV Shows</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('main.movie_shopping', max_quality='14') }}">Below WEBDL-1080p</a>
+						<a class="dropdown-item" href="{{ url_for('main.movie_shopping', library='criterion', max_quality='21') }}">Criterion Collection</a>
+						<a class="dropdown-item" href="{{ url_for('main.movie_shopping', media='digital', max_quality='21') }}">Digital Downloads</a>
+						<a class="dropdown-item" href="{{ url_for('main.movie_shopping', min_quality='3', max_quality='21') }}">HDTV Quality</a>
+					</div>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.history') }}">My History</a>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.watchlist') }}">My Watchlist</a>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.rate') }}">Rate Films</a>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.name_that_frame') }}">Name that Frame</a>
+				</li>
+				{% endif %}
+			</ul>
+			<ul class="navbar-nav ms-auto">
+				{% if current_user.is_anonymous %}
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
+				</li>
+				{% else %}
+				{# Desktop only: the search box sits in the right-side menu, just
+				   left of Queue; phones use the always-visible copy outside the
+				   collapse instead #}
+				<li class="nav-item d-none d-lg-block align-self-center me-2">
+					{{ global_search_form("") }}
+				</li>
+				<li class="nav-item">
+					{% set queue_count = current_user.get_queue_count() %}
+					<a class="nav-link" href="{{ url_for('main.queue') }}" tabindex="-1">Queue <span class="badge text-bg-secondary ms-1" id="queue_count">{{ queue_count }}</span></a>
+				</li>
+				{% if current_user.admin %}
+				<li class="nav-item dropdown">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+						Admin
+					</a>
+					<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarDropdownMenuLink">
+						<a class="dropdown-item" href="{{ url_for('main.maintenance') }}">Library Maintenance</a>
+						<a class="dropdown-item" href="{{ url_for('main.system') }}">System</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('main.profile') }}">Profile</a>
+					</div>
+				</li>
+				{% else %}
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.profile') }}">Profile</a>
+				</li>
+				{% endif %}
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
+				</li>
+				<li class="nav-item">
+					<a class="nav-link" href="{{ url_for('auth.logout') }}">Logout</a>
+				</li>
+				{% endif %}
+			</ul>
+		</div>
 	</div>
 </nav>
 {% endblock %}

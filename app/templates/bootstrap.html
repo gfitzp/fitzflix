@@ -35,6 +35,13 @@
 			body { overscroll-behavior-y: none; }
 		}
 
+		/* Keep the last row of content clear of a phone's rounded
+		   corners, which clipped it at the left and right. env()
+		   reports 0 unless the viewport meta opts into viewport-fit=
+		   cover, so max() carries the fix on its own today and defers
+		   to the real inset if we ever go edge-to-edge */
+		body { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
 		/* Bootstrap 5 dropped .form-inline; this is OUR class now,
 		   replicating the BS4 behavior the templates were written for:
 		   controls flow inline at their natural width */
