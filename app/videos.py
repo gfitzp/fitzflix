@@ -25,7 +25,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app, safe_job_id
-from app.maintenance import volume_alive
+from app.maintenance import VOLUMES_ROOT, volume_alive
 
 # The AWS storage layer moved to app.aws_storage; these re-exports
 # keep every stored rq job string and import site resolving through
@@ -305,7 +305,7 @@ def _dead_volumes(paths):
 
     mounts = set()
     for path in paths:
-        if path and path.startswith("/Volumes/"):
+        if path and path.startswith(VOLUMES_ROOT + os.sep):
             mounts.add("/".join(path.split("/")[:3]))
     return sorted(mount for mount in mounts if not volume_alive(mount))
 

@@ -360,3 +360,102 @@ def test_restore_drill_skips_without_aws(app):
 
     with app.app_context():
         assert restore_drill() is True
+
+
+# volume_alive: a path under the volumes root has to BE a mountpoint (#227)
+
+
+def test_volume_alive_rejects_a_volumes_path_that_is_not_a_mountpoint(
+    monkeypatch, tmp_path
+):
+    """The Aug 24 2026 failure: a share drops, macOS leaves the
+    mountpoint behind as an ordinary directory, and statvfs happily
+    answers for the boot disk. The old probe called that alive, and the
+    Plex refresh would have scanned an empty tree and emptied the trash
+    behind it."""
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    leftover = volumes / "Movies"
+    leftover.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+
+    # Exactly what the outage looked like to the probe
+
+    assert os.statvfs(str(leftover))
+    assert os.path.isdir(str(leftover))
+    assert os.path.ismount(str(leftover)) is False
+
+    assert maintenance.volume_alive(str(leftover)) is False
+
+
+def test_volume_alive_accepts_a_mounted_volumes_path(monkeypatch, tmp_path):
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    mounted = volumes / "Movies"
+    mounted.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setattr(maintenance.os.path, "ismount", lambda path: True)
+
+    assert maintenance.volume_alive(str(mounted)) is True
+
+
+def test_volume_alive_leaves_paths_outside_the_volumes_root_alone(
+    monkeypatch, tmp_path
+):
+    """Local directories are not mountpoints and were never expected to
+    be — the staging and log directories live on the boot disk."""
+
+    import app.maintenance as maintenance
+
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(tmp_path / "Volumes"))
+    local = tmp_path / "staging"
+    local.mkdir()
+
+    assert os.path.ismount(str(local)) is False
+    assert maintenance.volume_alive(str(local)) is True
+
+
+def test_volume_alive_is_false_for_a_path_that_isnt_there(tmp_path):
+    import app.maintenance as maintenance
+
+    assert maintenance.volume_alive(str(tmp_path / "gone")) is False
+
+
+def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
+    app, monkeypatch, tmp_path
+):
+    """With the leftover-directory case now visible to the probe, the
+    healer reaches paths where nothing is mounted. It must go straight
+    to remounting: `diskutil unmount force` aimed at something that
+    isn't a mountpoint is a hazard, not a no-op (#227)."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    leftover = volumes / "Movies"
+    leftover.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://nas.test")
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts([str(leftover)], app.redis, app.config)
+
+    assert not any(command[0] == "diskutil" for command in calls), calls
+    assert [command[0] for command in calls] == ["osascript"]
+
+    # The remount ran but the path is still not a mountpoint, so the
+    # probe still calls it dead — reported as a failure, not a success
+
+    assert actions == [f"failed to remount {leftover}: still dead"]

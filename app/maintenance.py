@@ -160,11 +160,30 @@ def worker_health(connection):
     return [queues[name] for name in sorted(queues)]
 
 
+# Where mounted volumes appear. A module constant so tests can stand a
+# fake mount tree somewhere writable
+
+VOLUMES_ROOT = "/Volumes"
+
+
 def volume_alive(path, timeout=10):
     """True if the filesystem behind path responds within the timeout.
 
     A dead SMB mount can hang stat calls rather than failing them, so the
     probe runs in a daemon thread and a hang counts as dead.
+
+    A path under VOLUMES_ROOT must also BE a mountpoint (#227). statvfs
+    answers for whichever filesystem is behind the path right now, and
+    when a share drops macOS leaves the mountpoint behind as an ordinary
+    directory on the boot disk: statvfs then succeeds instantly, having
+    measured the boot volume, and isdir agrees the directory is there.
+    Caught live Aug 24 2026 with Movies and TV Shows out of the mount
+    table while both read as alive — the Plex refresh would have scanned
+    an empty tree and emptied the trash behind it. ismount compares the
+    path's device against its parent's, so it costs one stat and answers
+    the question actually being asked. It complements the timeout rather
+    than replacing it: a share still mounted but wedged is caught by the
+    watchdog, not by this.
     """
 
     result = {}
@@ -172,7 +191,9 @@ def volume_alive(path, timeout=10):
     def probe():
         try:
             os.statvfs(path)
-            result["ok"] = True
+            result["ok"] = not path.startswith(VOLUMES_ROOT + os.sep) or (
+                os.path.ismount(path)
+            )
         except OSError:
             result["ok"] = False
 
@@ -206,7 +227,7 @@ def missing_volumes(config):
     missing = []
     checked = set()
     for path in _monitored_paths(config):
-        if not path.startswith("/Volumes/"):
+        if not path.startswith(VOLUMES_ROOT + os.sep):
             continue
         mount = "/".join(path.split("/")[:3])
         if mount in checked:
@@ -459,8 +480,12 @@ def heal_mounts(dead_mounts, connection, config):
             continue
 
         share = os.path.basename(mount)
-        if os.path.isdir(mount):
-            # Mountpoint still present but dead: unmount it first
+        if os.path.ismount(mount):
+            # Still mounted but dead: unmount it before remounting.
+            # Gated on ismount, not isdir (#227): the leftover-directory
+            # case now reaches here, and there is nothing to unmount
+            # then — while a force-unmount aimed at a path that isn't a
+            # mountpoint is a hazard worth not leaving available
             try:
                 subprocess.run(
                     ["diskutil", "unmount", "force", mount],

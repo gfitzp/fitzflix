@@ -41,7 +41,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app, retry_job_id, safe_job_id
-from app.maintenance import volume_alive
+from app.maintenance import VOLUMES_ROOT, volume_alive
 from app.plex_titles import _plex_get
 
 app = LocalProxy(get_app)
@@ -65,7 +65,7 @@ def _probe_target(path):
     """What to health-check for a section location: the /Volumes mount
     that backs it, or the path itself when it isn't volume-backed."""
 
-    if path.startswith("/Volumes/"):
+    if path.startswith(VOLUMES_ROOT + os.sep):
         return "/".join(path.split("/")[:3])
     return path
 
