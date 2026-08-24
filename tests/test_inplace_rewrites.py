@@ -82,3 +82,28 @@ def test_the_file_row_stores_one_size_and_no_derived_copies(app):
     assert "filesize_bytes" in File.__table__.columns
     assert "filesize_megabytes" not in File.__table__.columns
     assert "filesize_gigabytes" not in File.__table__.columns
+
+
+def test_the_file_page_formats_its_size_from_bytes(app, admin_client):
+    """The display the dropped columns used to feed. Sizes cross to GB
+    at a GiB and carry one decimal — the same threshold and rounding the
+    derived-copy row beside them has always used, so what a reader sees
+    is unchanged."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Size Display", 1994)
+        big = make_movie_file(movie, "Bluray-1080p", filesize_bytes=44933835055)
+        small = make_movie_file(
+            movie, "DVD", feature_type_name="Trailers", filesize_bytes=9698581
+        )
+        db.session.commit()
+        big_id, small_id = big.id, small.id
+
+    page = admin_client.get(f"/file/{big_id}").get_data(as_text=True)
+    assert "Size: 41.8 GB" in page
+
+    page = admin_client.get(f"/file/{small_id}").get_data(as_text=True)
+    assert "Size: 9.2 MB" in page
