@@ -32,6 +32,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app, retry_job_id, safe_job_id
 from app.aws_storage import aws_upload
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.plex_library import enqueue_plex_analyze
 
 
 def watch_mkvmerge_progress(process, job, name, activity):
@@ -683,6 +684,12 @@ def mkvpropedit_unlocked(
 
         else:
             db.session.commit()
+
+            # The file on disk changed: default flags, and after a
+            # reorder its whole track layout — re-read by Plex now
+            # rather than whenever its own scan next comes round
+
+            enqueue_plex_analyze(file_path)
 
         if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
             try:
@@ -1543,6 +1550,11 @@ def _remux_audio_plan_unlocked(file_id, plan):
             file.filesize_gigabytes = round(file.filesize_bytes / 1024**3, 1)
             file.date_updated = datetime.now(timezone.utc)
             db.session.commit()
+
+            # A rebuilt audio layout, re-read now rather than at
+            # Plex's own pace
+
+            enqueue_plex_analyze(file_path)
 
             if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
                 try:

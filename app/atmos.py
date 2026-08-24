@@ -35,6 +35,7 @@ from rq.registry import StartedJobRegistry
 
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
 
@@ -707,6 +708,12 @@ def _atmos_supplement_unlocked(file_id):
 
         else:
             db.session.commit()
+
+            # The film gained a track under a path Plex already knows,
+            # so nothing prompts it to look again until its next scan:
+            # ask for the analysis now instead (#194)
+
+            enqueue_plex_analyze(file_path)
 
             # The supplemented file replaces the untouched S3 archive
             # (Glenn's call: it's a strict superset of the rip, and
