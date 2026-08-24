@@ -1,8 +1,10 @@
 {# The poster popover's card (#45c): the fragment /movie_card renders
    for one film — title, credits, synopsis, and the at-a-glance
    badges — fetched on hover (or first tap) and injected into a
-   Bootstrap popover by the script in base.html. Served for library
-   records and bare TMDb ids alike. The card is informational only
+   Bootstrap popover by the script in base.html, which finds it by the
+   shared .poster-card class (_tv_card.html is the series-shaped
+   sibling). Served for library records and bare TMDb ids alike. The
+   card is informational only
    (Glenn's revision, Aug 2026): the star ladder and the watchlist
    toggle live under the poster on the gallery tile itself, so the
    card carries the film's FACTS — the In-library badge in its
@@ -16,13 +18,13 @@
    owned films can be sent to the living-room player from any poster,
    through the shared data-plex-play handler in base.html. #}
 {% from "_availability_badges.html" import library_badge %}
-<div class="movie-card">
+<div class="poster-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
 	{% if directors or runtime %}
 	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}</p>
 	{% endif %}
 	{% if overview %}
-	<p class="small mb-1 movie-card-overview">{{ overview }}</p>
+	<p class="small mb-1 poster-card-overview">{{ overview }}</p>
 	{% endif %}
 	{% if top_cast %}
 	<p class="small text-muted mb-1">Starring {% for credit_id, name in top_cast %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>

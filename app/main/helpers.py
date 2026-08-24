@@ -336,3 +336,26 @@ def series_upgradable(series_ids):
         upgradable[series_id] = upgradable.get(series_id, False) or season_upgradable
 
     return upgradable
+
+
+def tv_meta_line(first_year, last_year, seasons, episodes, genres):
+    """The TV series meta line — run of years, size of the run, genres
+    — shared by the series page and the popover card so both read the
+    same. TMDb only fills the season and episode counts once a show has
+    ended, so a running series simply shows fewer bits.
+    """
+
+    bits = []
+    if first_year:
+        years = str(first_year)
+        if last_year and last_year != first_year:
+            years += f"–{last_year}"
+        bits.append(years)
+    if seasons:
+        bits.append(
+            f"{seasons} season{'s' if seasons != 1 else ''}, "
+            f"{episodes} episode{'s' if episodes != 1 else ''}"
+        )
+    if genres:
+        bits.append(", ".join(genres))
+    return " · ".join(bits)

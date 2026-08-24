@@ -1,6 +1,6 @@
 """The discovery surfaces (the routes.py split): the landing rails, the
-rating drive, the TMDb log page, the poster popover card, the
-watchlist, and the Radarr hand-off."""
+rating drive, the TMDb log page, the poster popover cards (film and
+series), the watchlist, and the Radarr hand-off."""
 
 import os
 import traceback
@@ -40,6 +40,7 @@ from app.models import (
     MovieCast,
     MovieCrew,
     TMDBCredit,
+    TVCast,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -58,6 +59,8 @@ from app.main.helpers import (
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
+    series_upgradable,
+    tv_meta_line,
     _watched_timestamp,
     admin_required,
 )
@@ -816,6 +819,143 @@ def movie_card():
         in_library=False,
         library_upgradable=None,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
+    )
+
+
+@bp.route("/tv_card")
+@login_required
+def tv_card():
+    """The poster popover's card fragment for one TV series — the film
+    card's shape in TV terms: title, the run's meta line, synopsis,
+    billed cast, the In-library badge in its shopping colors, and how
+    much of the run is on the shelf. Keyed by series_id for library
+    records, or tmdb_id for a series with no local row (a person's
+    unowned television credits). Fetched only when a poster is hovered
+    or tapped, so the TV Library and filmography pages stay light.
+
+    No streaming strip, watchlist badge, or play button: watch
+    providers, the watchlist, and the Apple TV hand-off are all
+    film-keyed here, so the card carries only what it can answer."""
+
+    series_id = request.args.get("series_id", type=int)
+    tmdb_id = request.args.get("tmdb_id", type=int)
+    series = None
+    if series_id:
+        series = db.session.get(TVSeries, series_id)
+        if series is None:
+            abort(404)
+    elif tmdb_id:
+        series = TVSeries.query.filter_by(tmdb_id=tmdb_id).first()
+    else:
+        abort(404)
+
+    if series is not None:
+        top_cast = list(
+            db.session.query(TMDBCredit.id, TMDBCredit.name)
+            .join(TVCast, TVCast.credit_id == TMDBCredit.id)
+            .filter(TVCast.tv_id == series.id)
+            .order_by(TVCast.billing_order.asc(), TVCast.episode_count.desc())
+            .limit(TOP_BILLING_CUTOFF)
+        )
+
+        # What's on the shelf, counted the way the TV Library page
+        # counts it: seasons that have files, and the distinct episode
+        # numbers within them. Season 0 is called Specials there rather
+        # than counted as a season, and the card says it the same way —
+        # otherwise a show with specials reads as owning more seasons
+        # than TMDb says exist. A series record with no files at all is
+        # a leftover, and badges nothing
+
+        season_counts = (
+            db.session.query(File.season, db.func.count(db.func.distinct(File.episode)))
+            .filter(File.series_id == series.id)
+            .group_by(File.season)
+            .all()
+        )
+        owned_seasons = sum(1 for season, _ in season_counts if season)
+        return render_template(
+            "_tv_card.html",
+            # No year appended: every other TV surface titles a series
+            # by its TMDb name alone, and the meta line opens with the
+            # run of years anyway
+            display_title=series.tmdb_name if series.tmdb_name else series.title,
+            href=url_for("main.tv", series_id=series.id),
+            meta_line=tv_meta_line(
+                (
+                    series.tmdb_first_air_date.year
+                    if series.tmdb_first_air_date
+                    else None
+                ),
+                series.tmdb_last_air_date.year if series.tmdb_last_air_date else None,
+                series.tmdb_number_of_seasons,
+                series.tmdb_number_of_episodes,
+                [genre.name for genre in series.genres],
+            ),
+            overview=series.tmdb_overview,
+            top_cast=top_cast,
+            in_library=bool(season_counts),
+            upgradable=series_upgradable([series.id]).get(series.id, False),
+            owned_seasons=owned_seasons,
+            owned_specials=any(not season for season, _ in season_counts),
+            owned_episodes=sum(count for _, count in season_counts),
+        )
+
+    # No local record: the card renders from TMDb directly
+
+    if not current_app.config["TMDB_API_KEY"]:
+        abort(404)
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + "/tv/" + str(tmdb_id),
+            params={
+                "api_key": current_app.config["TMDB_API_KEY"],
+                "append_to_response": "aggregate_credits",
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        abort(503)
+
+    details = r.json()
+    series_name = details.get("name")
+    if not series_name:
+        abort(404)
+    first_year = (details.get("first_air_date") or "")[:4]
+    last_year = (details.get("last_air_date") or "")[:4]
+
+    # aggregate_credits bills the whole run, matching the TVCast rows
+    # a local record would have
+
+    billed_cast = sorted(
+        (details.get("aggregate_credits") or {}).get("cast") or [],
+        key=lambda person: person.get("order", 99),
+    )
+    top_cast = [
+        (person.get("id"), person.get("name"))
+        for person in billed_cast[:TOP_BILLING_CUTOFF]
+        if person.get("id") is not None
+    ]
+
+    return render_template(
+        "_tv_card.html",
+        display_title=series_name,
+        href=None,
+        meta_line=tv_meta_line(
+            int(first_year) if first_year.isdigit() else None,
+            int(last_year) if last_year.isdigit() else None,
+            details.get("number_of_seasons"),
+            details.get("number_of_episodes"),
+            [genre.get("name") for genre in details.get("genres") or []],
+        ),
+        overview=details.get("overview"),
+        top_cast=top_cast,
+        in_library=False,
+        upgradable=None,
+        owned_seasons=0,
+        owned_specials=False,
+        owned_episodes=0,
     )
 
 

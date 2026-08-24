@@ -196,16 +196,19 @@
 		   276px default so the credits and badges breathe, but never
 		   wider than the screen; the synopsis clamps to four lines like
 		   the Criterion card's. --bs-popover-max-width is the tip's own
-		   design token, so no cascade race with the CDN stylesheet */
-		.movie-card-pop { --bs-popover-max-width: min(22rem, calc(100vw - 1rem)); }
-		.movie-card-pop .movie-card { min-width: min(19rem, calc(100vw - 3rem)); }
-		.movie-card .movie-card-overview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+		   design token, so no cascade race with the CDN stylesheet.
+		   .poster-card is the contract the base.html script looks for,
+		   shared by the film card and the TV series card so both
+		   popovers are the same object with different facts inside */
+		.poster-card-pop { --bs-popover-max-width: min(22rem, calc(100vw - 1rem)); }
+		.poster-card-pop .poster-card { min-width: min(19rem, calc(100vw - 3rem)); }
+		.poster-card .poster-card-overview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 		/* Badges wrap INSIDE the card (Bootstrap pins them nowrap):
 		   a long "liked by people who liked…" reason folds to multiple
 		   left-aligned lines within the popover's fixed width instead
 		   of stretching it — the fix for labels that used to overflow
 		   the gallery cells (Glenn's Aug 2026 revision) */
-		.movie-card .badge { white-space: normal; text-align: start; line-height: 1.35; }
+		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; }
 		/* Gallery tiles (Glenn's variant 4): each cell is a flex
 		   column with its actions pinned to the bottom — Bootstrap's
 		   row already stretches cells in a row to equal height, so

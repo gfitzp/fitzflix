@@ -81,27 +81,30 @@
 <p class="lead">No films found for this person.</p>
 {% endif %}
 {% if television %}
-{# The TV career as the same poster grid. Owned series
-   link to their pages; TV has no review flow, so unowned tiles stay
-   unlinked (the TMDb-row rule), and there are no tile actions — ladders and
-   watchlists are film concepts #}
-{% from "_availability_badges.html" import library_badge %}
+{# The TV career as the same poster grid, and the same division of
+   labor as the films above: the series popover carries the synopsis,
+   the cast, and the In-library badge, so the tile keeps only what
+   identifies the show in THIS career — title and this person's roles.
+   Owned series link to their pages; TV has no review flow, so unowned
+   tiles stay unlinked (the TMDb-row rule) and hang their popover on a
+   plain div, and there are no tile actions — ladders and watchlists
+   are film concepts #}
 <hr>
 <h4>Television</h4>
 <div class="row">
 	{% for row in television %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
-		{% if row.owned %}<a href="{{ url_for('main.tv', series_id=row.series.id) }}" class="text-decoration-none text-body">{% endif %}
+		{% if row.owned %}<a href="{{ url_for('main.tv', series_id=row.series.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.tv_card', series_id=row.series.id) }}">{% elif row.tmdb_id %}<div data-card-url="{{ url_for('main.tv_card', tmdb_id=row.tmdb_id) }}">{% endif %}
 			{% if row.poster_path %}
 				{{ poster_image(config['TMDB_IMAGE_URL'] + '/w342' + row.poster_path, row.name ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
 			{% else %}
 				{{ poster_image(none, row.name) }}
 			{% endif %}
-			<p class="small mb-0">{{ row.name }}{% if row.year %} ({{ row.year }}){% endif %}{% if row.owned %} {{ library_badge(row.upgradable) }}{% endif %}</p>
+			<p class="small mb-0">{{ row.name }}{% if row.year %} ({{ row.year }}){% endif %}</p>
 			{% if row.jobs or row.characters %}
 			<p class="mb-0 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
 			{% endif %}
-		{% if row.owned %}</a>{% endif %}
+		{% if row.owned %}</a>{% elif row.tmdb_id %}</div>{% endif %}
 	</div>
 	{% endfor %}
 </div>

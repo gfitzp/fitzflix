@@ -90,7 +90,7 @@ from app.main.helpers import (
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
-    series_upgradable,
+    tv_meta_line,
     _watched_timestamp,
 )
 from app.recommendations import (
@@ -631,17 +631,6 @@ def movie_library():
                     row["jobs"].append(label)
             for row in tv_rows.values():
                 row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
-
-            # The In-library badge wears the shopping colors here too
-            # (#191): amber while any season still has an episode worth
-            # upgrading, green once every season is settled
-            upgradable = series_upgradable(
-                [row["series"].id for row in tv_rows.values() if row["owned"]]
-            )
-            for row in tv_rows.values():
-                row["upgradable"] = (
-                    upgradable.get(row["series"].id, False) if row["owned"] else None
-                )
 
         television = sorted(
             tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
@@ -2358,25 +2347,8 @@ def tv(series_id):
 
     # The movie page's meta line, in TV terms: run of years, size when
     # the run is complete (the apply stores counts only for Ended
-    # shows), genres
-
-    meta_bits = []
-    if tv.tmdb_first_air_date:
-        years = f"{tv.tmdb_first_air_date.year}"
-        if (
-            tv.tmdb_last_air_date
-            and tv.tmdb_last_air_date.year != tv.tmdb_first_air_date.year
-        ):
-            years += f"–{tv.tmdb_last_air_date.year}"
-        meta_bits.append(years)
-    if tv.tmdb_number_of_seasons:
-        meta_bits.append(
-            f"{tv.tmdb_number_of_seasons} seasons, "
-            f"{tv.tmdb_number_of_episodes} episodes"
-        )
-    genre_names = ", ".join(genre.name for genre in tv.genres)
-    if genre_names:
-        meta_bits.append(genre_names)
+    # shows), genres — built by the shared helper the popover card
+    # reads too
 
     return render_template(
         "tv.html",
@@ -2384,7 +2356,13 @@ def tv(series_id):
         tv=tv,
         seasons=seasons,
         cast=cast,
-        meta_line=" · ".join(meta_bits),
+        meta_line=tv_meta_line(
+            tv.tmdb_first_air_date.year if tv.tmdb_first_air_date else None,
+            tv.tmdb_last_air_date.year if tv.tmdb_last_air_date else None,
+            tv.tmdb_number_of_seasons,
+            tv.tmdb_number_of_episodes,
+            [genre.name for genre in tv.genres],
+        ),
         transcode_form=transcode_form,
         series_restore_form=series_restore_form,
         series_restore_estimate=series_restore_estimate,

@@ -1,11 +1,12 @@
-"""Episode-title surfaces: season-page episode guide, episode search,
-people-page TV credits, the filmography Television section, and the
-tv-page meta line."""
+"""TV surfaces: the season-page episode guide, episode search,
+people-page TV credits, the filmography Television section, the
+tv-page meta line, and the series popover card the TV Library and
+filmography posters show."""
 
 import json
 
 from app import db
-from app.models import TMDBCredit, TVCast
+from app.models import TMDBCredit, TMDBGenre, TVCast, TVSeries
 from app.tv_validation import VALIDATION_KEY
 
 from tests.factories import make_tv_episode, make_tv_file, make_tv_series
@@ -162,12 +163,14 @@ def test_filmography_shows_television_section(app, admin_client, monkeypatch):
     assert b"Lt. Columbo" in response.data
 
 
-def test_filmography_television_badge_wears_shopping_colors(
+def test_filmography_television_tiles_open_the_series_popover(
     app, admin_client, monkeypatch
 ):
-    """The Television section's In-library badge is colored like the
-    rest (#191): the WEBDL series has a season worth upgrading, so
-    amber, while the DVD-only series reads settled."""
+    """The Television tiles hand their facts to the series popover the
+    way the film tiles do: each poster arms a /tv_card fetch — by
+    series id when owned, by TMDb id when not — and the In-library
+    badge no longer sits under the poster, since the card carries it.
+    """
 
     with app.app_context():
         monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
@@ -204,6 +207,13 @@ def test_filmography_television_badge_wears_shopping_colors(
                             "character": "The Other One",
                             "poster_path": None,
                         },
+                        {
+                            "id": 2043,
+                            "name": "Unowned Show",
+                            "first_air_date": "1973-01-01",
+                            "character": "A Guest",
+                            "poster_path": None,
+                        },
                     ],
                     "crew": [],
                 }
@@ -211,10 +221,176 @@ def test_filmography_television_badge_wears_shopping_colors(
         )
 
     page = admin_client.get("/library/movie?credit=5001").get_data(as_text=True)
-    assert 'title="In your Fitzflix library"' not in page
-    for title, expected in (("Lagging Show", "warning"), ("Settled Show", "success")):
-        row = page[page.index(title) :]
-        assert f"text-bg-{expected} align-middle" in row[: row.index("In library")]
+
+    # Nothing badges under the poster any more — the card says it
+
+    assert "In library" not in page
+
+    # Owned series arm the card by series id, unowned ones by TMDb id
+
+    with app.app_context():
+        lagging_id = TVSeries.query.filter_by(tmdb_id=2041).one().id
+    assert f"/tv_card?series_id={lagging_id}" in page
+    assert "/tv_card?tmdb_id=2043" in page
+
+
+def test_tv_card_carries_the_series_facts(app, admin_client):
+    """The series popover is the film card's shape in TV terms: title,
+    the run's meta line standing in for "Directed by … · 96 min", the
+    synopsis, the billed cast, the In-library badge in its shopping
+    colors, and how much of the run is actually on the shelf."""
+
+    from datetime import datetime
+
+    with app.app_context():
+        series = make_tv_series(
+            "The Prisoner (1967)",
+            tmdb_id=3391,
+            tmdb_name="The Prisoner",
+            tmdb_overview="A resigning agent wakes in a village he cannot leave.",
+            tmdb_first_air_date=datetime(1967, 9, 29),
+            tmdb_last_air_date=datetime(1968, 2, 1),
+            tmdb_number_of_seasons=1,
+            tmdb_number_of_episodes=17,
+        )
+        genre = TMDBGenre(id=9101, name="Mystery")
+        db.session.add(genre)
+        series.genres.append(genre)
+        credit = TMDBCredit(id=9102, name="Patrick McGoohan")
+        db.session.add(credit)
+        db.session.flush()
+        db.session.add(
+            TVCast(
+                tv_id=series.id,
+                credit_id=credit.id,
+                character="Number Six",
+                billing_order=0,
+                episode_count=17,
+            )
+        )
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        make_tv_file(series, 1, 2, "Bluray-1080p")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv_card?series_id={series_id}").get_data(as_text=True)
+
+    # The shared popover class is what base.html's script looks for
+
+    assert 'class="poster-card"' in page
+    assert "The Prisoner" in page
+    assert f"/tv/{series_id}" in page
+    assert "1967–1968 · 1 season, 17 episodes · Mystery" in page
+    assert "A resigning agent wakes" in page
+    assert "Patrick McGoohan" in page
+    assert "/library/movie?credit=9102" in page
+
+    # Two Blu-ray episodes: settled, and counted
+
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert "1 season, 2 episodes in your library" in page
+
+    # Film-only facts stay off the card
+
+    assert "On your watchlist" not in page
+    assert "Play on Apple TV" not in page
+    assert "JustWatch" not in page
+
+
+def test_tv_card_badge_tracks_the_seasons(app, admin_client):
+    """The card's In-library badge answers the way every other one does
+    (#191): amber while a season still has an episode worth upgrading,
+    green once the whole run is settled — a DVD being as good as that
+    release will ever get."""
+
+    with app.app_context():
+        lagging = make_tv_series("Lagging Card Show", tmdb_id=3401)
+        make_tv_file(lagging, 1, 1, "WEBDL-720p")
+        settled = make_tv_series("Settled Card Show", tmdb_id=3402)
+        make_tv_file(settled, 1, 1, "DVD")
+        db.session.commit()
+        lagging_id, settled_id = lagging.id, settled.id
+
+    page = admin_client.get(f"/tv_card?series_id={lagging_id}").get_data(as_text=True)
+    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
+    page = admin_client.get(f"/tv_card?series_id={settled_id}").get_data(as_text=True)
+    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+
+
+def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypatch):
+    """A person's unowned television credit still gets a card: keyed by
+    TMDb id with no local row, it renders from TMDb and badges nothing,
+    the way the film card's tmdb lane does."""
+
+    import app.main.discover as discover
+
+    class FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "name": "Nowhere Show",
+                "first_air_date": "1980-01-01",
+                "last_air_date": "1984-01-01",
+                "number_of_seasons": 4,
+                "number_of_episodes": 52,
+                "overview": "A show the library has never held.",
+                "genres": [{"name": "Comedy"}],
+                "aggregate_credits": {
+                    "cast": [{"id": 9200, "name": "Someone Famous", "order": 0}]
+                },
+            }
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(discover, "tmdb_get", lambda *a, **k: FakeResponse())
+
+    page = admin_client.get("/tv_card?tmdb_id=999123").get_data(as_text=True)
+    assert 'class="poster-card"' in page
+    assert "Nowhere Show" in page
+    assert "1980–1984 · 4 seasons, 52 episodes · Comedy" in page
+    assert "Someone Famous" in page
+
+    # Nothing owned, so no badge and no shelf count — and with no local
+    # record there's no series page to link the title to
+
+    assert "In library" not in page
+    assert "in your library" not in page
+    assert "/tv/" not in page
+
+
+def test_tv_library_posters_open_the_series_popover(app, admin_client):
+    """The TV Library's posters carry the same card. Only the poster is
+    armed — the season list beside it still navigates on a tap."""
+
+    with app.app_context():
+        series = make_tv_series(
+            "Poster Popover Show", tmdb_id=3501, tmdb_poster_path="/popover.jpg"
+        )
+        make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get("/library/tv").get_data(as_text=True)
+    block = page[page.index(f'id="{series_id}" style="scroll-margin-top') :]
+    block = block[: block.index("<hr>")]
+
+    # Exactly one armed element in the series' block: the anchor around
+    # the poster. The season rows beside it stay plain links
+
+    assert block.count("data-card-url") == 1
+    assert f"/tv_card?series_id={series_id}" in block
+    armed = block[block.index("data-card-url") :]
+    assert armed[: armed.index("</a>")].count("/popover.jpg") == 1
+    assert f"/tv/{series_id}/1" in block
+
+
+def test_tv_card_404s_for_an_unknown_series(app, admin_client):
+    """A stale card url answers 404 rather than a blank popover, so the
+    script's fetch simply fails and no card shows."""
+
+    assert admin_client.get("/tv_card").status_code == 404
+    assert admin_client.get("/tv_card?series_id=987654").status_code == 404
 
 
 def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeypatch):

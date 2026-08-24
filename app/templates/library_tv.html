@@ -8,8 +8,13 @@
 {% if series %}
 {% for tv in series %}
 <div class="d-flex" id="{{ tv.id }}" style="scroll-margin-top: 60px;">
+	{# The poster carries the series popover (the same card the
+	   filmography's TV tiles show): synopsis, cast, and the In-library
+	   badge, none of which this page's season list says. Only the
+	   poster is armed, never the row — posters toggle cards, rows
+	   navigate #}
 	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
-		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
+		<a href="{{ url_for('main.tv', series_id=tv.id) }}" data-card-url="{{ url_for('main.tv_card', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 	</div>

@@ -868,7 +868,7 @@
 					anchor._cardLoading = false;
 					var holder = document.createElement("div");
 					holder.innerHTML = html;
-					var content = holder.querySelector(".movie-card");
+					var content = holder.querySelector(".poster-card");
 					if (!content) throw new Error("empty card");
 					// Page-specific labels ride the tile as a JSON
 					// array (data-card-reasons) and render as wrapping
@@ -895,7 +895,7 @@
 						trigger: "manual",
 						placement: "auto",
 						container: "body",
-						customClass: "movie-card-pop"
+						customClass: "poster-card-pop"
 					});
 					// Show only if the pointer still wants this card —
 					// hovers move on faster than fetches return
@@ -920,7 +920,7 @@
 					cardShowTimer = setTimeout(function() { cardShow(anchor); }, 350);
 					return;
 				}
-				if (event.target.closest(".movie-card-pop")) {
+				if (event.target.closest(".poster-card-pop")) {
 					clearTimeout(cardHideTimer);
 					return;
 				}
@@ -939,7 +939,7 @@
 			var anchor = event.target.closest("[data-card-url]");
 			if (!anchor) {
 				// Clicks inside the card act on it; anywhere else closes it
-				if (cardOpen && !event.target.closest(".movie-card-pop")) cardHide();
+				if (cardOpen && !event.target.closest(".poster-card-pop")) cardHide();
 				return;
 			}
 			if (cardHover) return;  // pointer users navigate on click
