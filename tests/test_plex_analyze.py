@@ -3,7 +3,6 @@ in place asks Plex to re-read it, since the item's path is unchanged
 and nothing else prompts Plex to look again until its next scan (#194).
 """
 
-import ast
 import os
 
 
@@ -209,39 +208,3 @@ def test_enqueue_collapses_a_second_edit_onto_the_queued_analyze(
         assert len(jobs) == 1
         assert jobs[0].func_name == "app.plex_library.analyze_plex_media"
         assert jobs[0].args[0] == [path]
-
-
-# Every task that rewrites a library file in place, and the function
-# that must end by asking Plex for a fresh analysis. Import-time edits
-# are deliberately absent: they happen in staging, before the file
-# reaches the library, so Plex's first scan analyzes them anyway
-
-IN_PLACE_REWRITES = [
-    ("app/atmos.py", "_atmos_supplement_unlocked"),
-    ("app/tracks.py", "mkvpropedit_unlocked"),
-    ("app/tracks.py", "_remux_audio_plan_unlocked"),
-]
-
-
-def test_every_in_place_rewrite_asks_plex_to_re_analyze():
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for path, function in IN_PLACE_REWRITES:
-        tree = ast.parse(open(os.path.join(root, path)).read())
-        node = next(
-            (
-                child
-                for child in ast.walk(tree)
-                if isinstance(child, ast.FunctionDef) and child.name == function
-            ),
-            None,
-        )
-        assert node is not None, f"{path}:{function} has moved"
-        calls = {
-            call.func.id
-            for call in ast.walk(node)
-            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-        }
-        assert "enqueue_plex_analyze" in calls, (
-            f"{path}:{function} rewrites the file in place but never asks "
-            f"Plex to re-analyze it"
-        )

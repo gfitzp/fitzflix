@@ -379,6 +379,7 @@ def _atmos_supplement_unlocked(file_id):
         flag_possibly_forced_subtitles,
         get_audio_tracks_from_file,
         get_subtitle_tracks_from_file,
+        record_filesize,
         remove_empty_subtitle_tracks,
         wait_for_subprocess,
         watch_mkvmerge_progress,
@@ -699,6 +700,11 @@ def _atmos_supplement_unlocked(file_id):
                 track["track"] = i + 1
                 db.session.add(FileSubtitleTrack(**track))
 
+            # Read from the staging copy, which is byte-identical to
+            # the file just renamed into the library, so the share
+            # isn't touched again
+
+            record_filesize(file, os.path.getsize(final_staging))
             file.date_updated = datetime.now(timezone.utc)
 
         except Exception:

@@ -229,6 +229,20 @@ def track_metadata_scan_task(file_id):
         return True
 
 
+def record_filesize(file, size_bytes):
+    """Store a file's size on its record, in all three units.
+
+    Every task that rewrites a library file owes its row this: the
+    supplement and remux paths change the file's size on disk, and a
+    row left holding the old one misreports the library and disagrees
+    with the archived copy's size.
+    """
+
+    file.filesize_bytes = size_bytes
+    file.filesize_megabytes = round(size_bytes / 1024**2, 1)
+    file.filesize_gigabytes = round(size_bytes / 1024**3, 1)
+
+
 def save_track_metadata(file_id, details, lock=None):
     """Write extracted track metadata to the database.
 
@@ -253,13 +267,7 @@ def save_track_metadata(file_id, details, lock=None):
             for field, value in details["video"].items():
                 setattr(file, field, value)
 
-            bytes = details["filesize_bytes"]
-            megabytes = (bytes / 1024) / 1024
-            gigabytes = ((bytes / 1024) / 1024) / 1024
-
-            file.filesize_bytes = bytes
-            file.filesize_megabytes = round(megabytes, 1)
-            file.filesize_gigabytes = round(gigabytes, 1)
+            record_filesize(file, details["filesize_bytes"])
             current_app.logger.info(f"{file} {file.filesize_bytes} bytes")
 
             # Set file audio track info
@@ -667,6 +675,7 @@ def mkvpropedit_unlocked(
                 )
                 db.session.add(subtitle_track)
 
+            record_filesize(file, os.path.getsize(file_path))
             file.date_updated = datetime.now(timezone.utc)
 
         except OSError as e:
@@ -1545,9 +1554,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
                 track["file_id"] = file.id
                 track["track"] = i + 1
                 db.session.add(FileSubtitleTrack(**track))
-            file.filesize_bytes = os.path.getsize(final_staging)
-            file.filesize_megabytes = round(file.filesize_bytes / 1024**2, 1)
-            file.filesize_gigabytes = round(file.filesize_bytes / 1024**3, 1)
+            record_filesize(file, os.path.getsize(final_staging))
             file.date_updated = datetime.now(timezone.utc)
             db.session.commit()
 
