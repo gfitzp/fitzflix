@@ -385,6 +385,57 @@ def test_tv_library_posters_open_the_series_popover(app, admin_client):
     assert f"/tv/{series_id}/1" in block
 
 
+def test_series_lists_title_by_tmdb_name_and_year(app, admin_client):
+    """The TV Library and TV shopping list name a series the way every
+    other surface does — its TMDb name, not the folder title the files
+    were imported under. The first-air year rides along because the
+    library holds three series called "Doctor Who" and the year is what
+    tells them apart. A series TMDb doesn't know keeps its folder
+    title, which already carries whatever disambiguation it has.
+    """
+
+    from datetime import datetime
+
+    with app.app_context():
+        named = make_tv_series(
+            "Avatar - The Last Airbender",
+            tmdb_id=4278,
+            tmdb_name="Avatar: The Last Airbender",
+            tmdb_first_air_date=datetime(2005, 2, 21),
+        )
+        make_tv_file(named, 1, 1, "DVD")
+        unmatched = make_tv_series("Home Movies Reel (1987)")
+        make_tv_file(unmatched, 1, 1, "DVD")
+        db.session.commit()
+
+    for path in ("/library/tv", "/shopping-list/tv"):
+        page = admin_client.get(path).get_data(as_text=True)
+        assert "Avatar: The Last Airbender (2005)" in page, path
+
+        # The folder title is gone from the heading — it survives only
+        # where the page has no TMDb name to show
+
+        assert "Avatar - The Last Airbender" not in page, path
+        assert "Home Movies Reel (1987)" in page, path
+
+
+def test_file_activity_card_names_the_series_from_tmdb(app, admin_client):
+    """The File Activity card's series link reads the TMDb name too —
+    it asked for a field TV rows have never had, so it always showed
+    the folder title."""
+
+    with app.app_context():
+        series = make_tv_series("Mash", tmdb_id=918, tmdb_name="M*A*S*H")
+        file = make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        basename = file.basename
+
+    page = admin_client.get(f"/file-activity/card?basename={basename}").get_data(
+        as_text=True
+    )
+    assert "M*A*S*H" in page
+
+
 def test_tv_card_404s_for_an_unknown_series(app, admin_client):
     """A stale card url answers 404 rather than a blank popover, so the
     script's fetch simply fails and no card shows."""

@@ -1085,6 +1085,11 @@ def tv_shopping():
                 "title": series.title,
                 "tmdb_id": series.tmdb_id,
                 "tmdb_name": series.tmdb_name,
+                "first_air_year": (
+                    series.tmdb_first_air_date.year
+                    if series.tmdb_first_air_date
+                    else None
+                ),
                 "tmdb_poster_path": series.tmdb_poster_path,
                 "seasons": seasons,
             }
