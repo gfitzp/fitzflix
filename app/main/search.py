@@ -30,7 +30,11 @@ from app.models import (
     tv_file_rank,
 )
 from app.main import bp
-from app.main.helpers import _upgrade_threshold
+from app.main.helpers import (
+    _upgrade_threshold,
+    library_upgradable,
+    series_upgradable,
+)
 from app.main.library import _credited_film_pairs, _dominant_roles
 from app.recommendations import (
     coarse_interest_score,
@@ -474,6 +478,7 @@ def search_tmdb():
                             "poster_path": result.get("poster_path"),
                             "genre_ids": result.get("genre_ids") or [],
                             "library_id": None,
+                            "upgradable": None,
                         }
                     )
 
@@ -483,17 +488,24 @@ def search_tmdb():
 
         # Annotate which results are already in the library, by TMDb id.
         # "In library" means a local main-feature file exists — a
-        # review-only record (a logged unowned film) doesn't count
+        # review-only record (a logged unowned film) doesn't count.
+        # Each owned match also carries the shopping list's verdict, so
+        # the badge here wears the same amber/green as everywhere else
+        # (#191) instead of a colorless "In library"
 
         if movie_matches:
-            owned = dict(
-                db.session.query(Movie.tmdb_id, Movie.id)
-                .filter(Movie.tmdb_id.in_([m["tmdb_id"] for m in movie_matches]))
+            owned = {
+                movie.tmdb_id: movie
+                for movie in Movie.query.filter(
+                    Movie.tmdb_id.in_([m["tmdb_id"] for m in movie_matches])
+                )
                 .filter(Movie.files.any(File.feature_type_id.is_(None)))
                 .all()
-            )
+            }
             for match in movie_matches:
-                match["library_id"] = owned.get(match["tmdb_id"])
+                movie = owned.get(match["tmdb_id"])
+                match["library_id"] = movie.id if movie else None
+                match["upgradable"] = library_upgradable(movie) if movie else None
 
         if tv_matches:
             owned = dict(
@@ -501,8 +513,13 @@ def search_tmdb():
                 .filter(TVSeries.tmdb_id.in_([m["tmdb_id"] for m in tv_matches]))
                 .all()
             )
+            # A series record with no files (one whose episodes were all
+            # deleted) has nothing to badge, so series_upgradable leaves
+            # it out and the row renders bare
+            upgradable = series_upgradable(list(owned.values()))
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
+                match["upgradable"] = upgradable.get(match["library_id"])
 
         # The personal funnel badges. "Seen" and "On your watchlist"
         # hang off any local record, file or not (a review-only record

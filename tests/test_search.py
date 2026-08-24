@@ -522,9 +522,12 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
 
     # Only the match with a local file carries the Fitzflix badge — the
     # review-only Jaws 2 record doesn't count as in-library, and its row
-    # still leads to the log page (which redirects to its movie page)
+    # still leads to the log page (which redirects to its movie page).
+    # The badge wears the shopping colors here too (#191): Jaws' DVD
+    # copy sits below the threshold, so amber
 
-    assert page.count('title="In your Fitzflix library"') == 1
+    assert page.count('title="In your Fitzflix library &mdash;') == 1
+    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
     assert "Not in library" not in page
     assert "/review/tmdb/579" in page
 
@@ -533,6 +536,82 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
 
     assert "/w185/jaws2.jpg" in page
     assert "/review/tmdb/579" in page
+
+
+def test_search_tmdb_library_badges_wear_shopping_colors(
+    app, admin_client, monkeypatch
+):
+    """Every In-library badge on the TMDb results page is colored, the
+    way the movie page's and the popover's are (#191) — never the
+    colorless badge it used to render. Films take the shopping list's
+    answer; series take their seasons', where a physical-media copy is
+    already as good as it will ever get.
+    """
+
+    with app.app_context():
+        lagging = make_movie("Lagging Film", 1975, tmdb_id=8601)
+        make_movie_file(lagging, "WEBDL-720p")
+        settled = make_movie("Settled Film", 1976, tmdb_id=8602)
+        make_movie_file(settled, "Bluray-2160p")
+
+        lagging_series = make_tv_series("Lagging Show", tmdb_id=8701)
+        make_tv_file(lagging_series, 1, 1, "WEBDL-720p")
+        settled_series = make_tv_series("Settled Show", tmdb_id=8702)
+        make_tv_file(settled_series, 1, 1, "DVD")
+        db.session.commit()
+
+    import app.main.search as search
+
+    class FakeResponse:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    def fake_get(url, params=None, timeout=None):
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                [
+                    {"id": 8601, "title": "Lagging Film", "release_date": "1975-01-01"},
+                    {"id": 8602, "title": "Settled Film", "release_date": "1976-01-01"},
+                ]
+            )
+        return FakeResponse(
+            [
+                {"id": 8701, "name": "Lagging Show", "first_air_date": "1971-01-01"},
+                {"id": 8702, "name": "Settled Show", "first_air_date": "1972-01-01"},
+            ]
+        )
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb?q=show").get_data(as_text=True)
+
+    # Four owned matches, four colored badges — two amber, two green,
+    # and nothing wearing the old neutral badge
+
+    assert page.count('title="In your Fitzflix library &mdash;') == 4
+    assert page.count("text-bg-warning align-middle") == 2
+    assert page.count("text-bg-success align-middle") == 2
+    assert 'title="In your Fitzflix library"' not in page
+
+    # Each badge sits with its own row: the sub-threshold film and the
+    # WEBDL series are worth upgrading, the 2160p film and the
+    # DVD-only season are as settled as they get
+
+    for title, expected in (
+        ("Lagging Film", "warning"),
+        ("Settled Film", "success"),
+        ("Lagging Show", "warning"),
+        ("Settled Show", "success"),
+    ):
+        row = page[page.index(title) :]
+        assert f"text-bg-{expected} align-middle" in row[: row.index("In library")]
 
 
 def test_results_pages_carry_prefilled_search_boxes(app, admin_client):

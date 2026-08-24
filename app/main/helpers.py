@@ -21,9 +21,11 @@ from app.models import (
     File,
     Movie,
     RefQuality,
+    TVSeries,
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+    tv_file_rank,
 )
 from app.recommendations import (
     estimated_rating,
@@ -275,3 +277,62 @@ def library_upgradable(movie, criterion=False):
     if movie.shopping_list_exclude:
         return False
     return bool(file.fullscreen) or quality.preference < threshold
+
+
+def series_upgradable(series_ids):
+    """Whether each TV series' library copy is worth upgrading — the
+    series-shaped answer behind the In-library badge (#191): amber
+    when any season still has an episode worth upgrading, green once
+    every season is settled.
+
+    Returns a dict keyed by series id; a series with no files is left
+    out entirely, the way library_upgradable answers None for a film
+    with no copy. The season rule is the TV library page's: rank each
+    episode's copies, keep the best, and judge the season by its worst
+    — physical-media seasons (DVD, SD/720p Blu-ray) are often the only
+    release that will ever exist, so they never count as upgradable.
+    """
+
+    series_ids = [series_id for series_id in (series_ids or []) if series_id]
+    if not series_ids:
+        return {}
+
+    ranked_files = (
+        db.session.query(
+            File.id,
+            tv_file_rank(),
+        )
+        .join(TVSeries, (TVSeries.id == File.series_id))
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .subquery()
+    )
+
+    season_aggregate = (
+        db.session.query(
+            File.series_id,
+            File.season,
+            db.func.min(RefQuality.preference).label("preference"),
+        )
+        .group_by(File.series_id, File.season)
+        .join(RefQuality, (RefQuality.id == File.quality_id))
+        .join(ranked_files, (ranked_files.c.id == File.id))
+        .filter(ranked_files.c.rank == 1)
+        .filter(File.series_id.in_(series_ids))
+        .subquery()
+    )
+
+    threshold = _upgrade_threshold()
+    upgradable = {}
+    for series_id, preference, physical in (
+        db.session.query(
+            season_aggregate.c.series_id,
+            season_aggregate.c.preference,
+            RefQuality.physical_media,
+        )
+        .join(RefQuality, (RefQuality.preference == season_aggregate.c.preference))
+        .all()
+    ):
+        season_upgradable = not physical and preference < threshold
+        upgradable[series_id] = upgradable.get(series_id, False) or season_upgradable
+
+    return upgradable

@@ -90,6 +90,7 @@ from app.main.helpers import (
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
+    series_upgradable,
     _watched_timestamp,
 )
 from app.recommendations import (
@@ -630,6 +631,17 @@ def movie_library():
                     row["jobs"].append(label)
             for row in tv_rows.values():
                 row["jobs"].sort(key=CLOSING_CREDIT_ORDER.index)
+
+            # The In-library badge wears the shopping colors here too
+            # (#191): amber while any season still has an episode worth
+            # upgrading, green once every season is settled
+            upgradable = series_upgradable(
+                [row["series"].id for row in tv_rows.values() if row["owned"]]
+            )
+            for row in tv_rows.values():
+                row["upgradable"] = (
+                    upgradable.get(row["series"].id, False) if row["owned"] else None
+                )
 
         television = sorted(
             tv_rows.values(), key=lambda row: (row["year"] is None, row["year"] or 0)
@@ -2486,11 +2498,24 @@ def season(series_id, season):
         }
         episode_guide = sorted(episodes.values(), key=lambda row: row.episode)
 
+    # Each episode's In-library badge wears the same shopping colors as
+    # every other one (#191): amber when its best copy is worth
+    # upgrading, green once it's settled. Physical-media copies (DVD,
+    # SD/720p Blu-ray) are often the only release that will ever exist,
+    # so they never count as upgradable
+
+    upgrade_threshold = _upgrade_threshold()
     owned_episodes = set()
-    for file, _, _, _ in files:
-        owned_episodes.update(
-            range(file.episode, (file.last_episode or file.episode) + 1)
-        )
+    upgradable_episodes = set()
+    for file, _, quality, rank in files:
+        span = range(file.episode, (file.last_episode or file.episode) + 1)
+        owned_episodes.update(span)
+        if (
+            rank == 1
+            and not quality.physical_media
+            and quality.preference < upgrade_threshold
+        ):
+            upgradable_episodes.update(span)
 
     return render_template(
         "season.html",
@@ -2501,6 +2526,7 @@ def season(series_id, season):
         episodes=episodes,
         episode_guide=episode_guide,
         owned_episodes=owned_episodes,
+        upgradable_episodes=upgradable_episodes,
         season_restore_form=season_restore_form,
         season_restore_estimate=season_restore_estimate,
     )

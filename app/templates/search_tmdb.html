@@ -61,9 +61,12 @@
 				{# Badges sit left-aligned under the title, like the local
 				   search rows, in the movie-page strip's grammar: the
 				   Fitzflix badge for owned matches, availability badges
-				   otherwise — absence says "not in library" #}
-				{% if match.library_id %}
-				{{ library_badge() }}
+				   otherwise — absence says "not in library". The badge
+				   wears the shopping colors the rest of the site uses
+				   (#191): amber for a copy worth upgrading, green once
+				   it's settled #}
+				{% if match.upgradable is not none %}
+				{{ library_badge(match.upgradable) }}
 				{% endif %}
 				{# The personal funnel: Seen, On your watchlist, Might
 				   interest you — seen and might-interest never show
@@ -113,8 +116,10 @@
 			{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
-				{% if match.library_id %}
-				{{ library_badge() }}
+				{# Amber when any season still has an episode worth
+				   upgrading, green once every season is settled #}
+				{% if match.upgradable is not none %}
+				{{ library_badge(match.upgradable) }}
 				{% endif %}
 				{% if match.overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ match.overview|truncate(240) }}</p>

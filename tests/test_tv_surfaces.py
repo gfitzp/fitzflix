@@ -47,6 +47,27 @@ def test_season_page_shows_guide_and_title_column(app, admin_client):
     assert b"In library" in response.data
 
 
+def test_season_page_episode_badges_wear_shopping_colors(app, admin_client):
+    """The guide's In-library badge is amber or green like every other
+    one (#191): the WEBDL episode is worth upgrading, while the DVD is
+    the only release that will ever exist, so it reads settled."""
+
+    with app.app_context():
+        series = make_tv_series("Quality Show", tmdb_id=1212)
+        make_tv_episode(series, 1, 1, title="The Lagging One")
+        make_tv_episode(series, 1, 2, title="The Settled One")
+        make_tv_file(series, 1, 1, "WEBDL-720p")
+        make_tv_file(series, 1, 2, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
+    lagging = page[page.index("The Lagging One") :]
+    settled = page[page.index("The Settled One") :]
+    assert "text-bg-warning" in lagging[: lagging.index("In library")]
+    assert "text-bg-success" in settled[: settled.index("In library")]
+
+
 def test_season_page_suspect_series_stays_plain(app, admin_client):
     with app.app_context():
         series = make_tv_series("Cursed Show", tmdb_id=999)
@@ -139,6 +160,61 @@ def test_filmography_shows_television_section(app, admin_client, monkeypatch):
     assert b"Columbo" in response.data
     assert f"/tv/{series_id}".encode() in response.data
     assert b"Lt. Columbo" in response.data
+
+
+def test_filmography_television_badge_wears_shopping_colors(
+    app, admin_client, monkeypatch
+):
+    """The Television section's In-library badge is colored like the
+    rest (#191): the WEBDL series has a season worth upgrading, so
+    amber, while the DVD-only series reads settled."""
+
+    with app.app_context():
+        monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+        lagging = make_tv_series("Lagging Show", tmdb_id=2041)
+        make_tv_file(lagging, 1, 1, "WEBDL-720p")
+        settled = make_tv_series("Settled Show", tmdb_id=2042)
+        make_tv_file(settled, 1, 1, "DVD")
+        db.session.add(TMDBCredit(id=5001, name="Jane Player"))
+        db.session.commit()
+
+        app.redis.set(
+            "fitzflix:tmdb:person:5001:details", json.dumps({"name": "Jane Player"})
+        )
+        app.redis.set(
+            "fitzflix:tmdb:person:5001:credits",
+            json.dumps({"cast": [], "crew": []}),
+        )
+        app.redis.set(
+            "fitzflix:tmdb:person:5001:tv_credits",
+            json.dumps(
+                {
+                    "cast": [
+                        {
+                            "id": 2041,
+                            "name": "Lagging Show",
+                            "first_air_date": "1971-01-01",
+                            "character": "The Lead",
+                            "poster_path": None,
+                        },
+                        {
+                            "id": 2042,
+                            "name": "Settled Show",
+                            "first_air_date": "1972-01-01",
+                            "character": "The Other One",
+                            "poster_path": None,
+                        },
+                    ],
+                    "crew": [],
+                }
+            ),
+        )
+
+    page = admin_client.get("/library/movie?credit=5001").get_data(as_text=True)
+    assert 'title="In your Fitzflix library"' not in page
+    for title, expected in (("Lagging Show", "warning"), ("Settled Show", "success")):
+        row = page[page.index(title) :]
+        assert f"text-bg-{expected} align-middle" in row[: row.index("In library")]
 
 
 def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeypatch):
