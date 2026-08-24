@@ -59,7 +59,7 @@ def test_every_in_place_rewrite_records_the_new_filesize():
         )
 
 
-def test_record_filesize_stores_all_three_units(app):
+def test_record_filesize_stores_the_size(app):
     from app.tracks import record_filesize
     from tests.factories import make_movie, make_movie_file
 
@@ -70,22 +70,15 @@ def test_record_filesize_stores_all_three_units(app):
         record_filesize(file, 44933835055)
 
         assert file.filesize_bytes == 44933835055
-        assert file.filesize_megabytes == 42852.2
-        assert file.filesize_gigabytes == 41.8
 
 
-def test_record_filesize_matches_the_scan_paths_arithmetic(app):
-    """The helper replaced two hand-rolled copies of this sum; it has to
-    round exactly as they did, or every row it touches drifts."""
+def test_the_file_row_stores_one_size_and_no_derived_copies(app):
+    """The MB and GB columns are gone: nothing read them but one line of
+    one template, while four write sites had to keep them in step — the
+    drift that left 43 supplemented films a gigabyte short."""
 
-    from app.tracks import record_filesize
-    from tests.factories import make_movie, make_movie_file
+    from app.models import File
 
-    with app.app_context():
-        movie = make_movie("Glory", 1989)
-        file = make_movie_file(movie, "WEBDL-1080p")
-
-        for size in (0, 1, 1024, 38547363893, 87345627892):
-            record_filesize(file, size)
-            assert file.filesize_megabytes == round(((size / 1024) / 1024), 1)
-            assert file.filesize_gigabytes == round((((size / 1024) / 1024) / 1024), 1)
+    assert "filesize_bytes" in File.__table__.columns
+    assert "filesize_megabytes" not in File.__table__.columns
+    assert "filesize_gigabytes" not in File.__table__.columns

@@ -62,6 +62,7 @@ from app.tracks import (
     flag_possibly_forced_subtitles,
     get_audio_tracks_from_file,
     get_subtitle_tracks_from_file,
+    record_filesize,
     remove_empty_subtitle_tracks,
     supplement_lossless_tracks,
     watch_mkvmerge_progress,
@@ -1453,13 +1454,7 @@ def finalize_localization(
                 "aws_untouched_filesize_bytes"
             )
 
-            bytes = inspection["filesize_bytes"]
-            megabytes = (bytes / 1024) / 1024
-            gigabytes = ((bytes / 1024) / 1024) / 1024
-
-            file.filesize_bytes = bytes
-            file.filesize_megabytes = round(megabytes, 1)
-            file.filesize_gigabytes = round(gigabytes, 1)
+            record_filesize(file, inspection["filesize_bytes"])
             current_app.logger.info(
                 f"'{os.path.basename(hidden_output_file)}' {file.filesize_bytes} bytes"
             )

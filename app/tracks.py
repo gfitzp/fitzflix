@@ -230,17 +230,23 @@ def track_metadata_scan_task(file_id):
 
 
 def record_filesize(file, size_bytes):
-    """Store a file's size on its record, in all three units.
+    """Store a file's size on its record.
 
     Every task that rewrites a library file owes its row this: the
     supplement and remux paths change the file's size on disk, and a
     row left holding the old one misreports the library and disagrees
     with the archived copy's size.
+
+    One line, but a named one — it's the call the in-place rewrite
+    contract is asserted against, and the single place a size is
+    written. The MB and GB columns it used to keep in step were dropped:
+    four write sites had to remember three fields, three of them with
+    their own copy of the arithmetic, and nothing ever read the derived
+    two except one line of one template. Sizes are formatted where
+    they're displayed now.
     """
 
     file.filesize_bytes = size_bytes
-    file.filesize_megabytes = round(size_bytes / 1024**2, 1)
-    file.filesize_gigabytes = round(size_bytes / 1024**3, 1)
 
 
 def save_track_metadata(file_id, details, lock=None):

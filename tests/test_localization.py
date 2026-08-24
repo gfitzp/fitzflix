@@ -918,7 +918,7 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
         db.session.expire_all()
 
         assert file.format == "AVC"
-        assert float(file.filesize_gigabytes) == 4.0
+        assert file.filesize_bytes == 4 * 1024**3
         assert [t.language for t in file.audiotrack] == ["eng"]
         assert len(file.subtrack) == 1
 

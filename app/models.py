@@ -1841,8 +1841,6 @@ class File(db.Model):
     dolby_vision_profile = db.Column(db.String(8))
     video_bitrate_kbps = db.Column(db.Integer)
     filesize_bytes = db.Column(db.BigInteger)
-    filesize_megabytes = db.Column(db.Numeric(precision=8, scale=1))
-    filesize_gigabytes = db.Column(db.Numeric(precision=5, scale=1))
     date_added = db.Column(
         db.DateTime, nullable=False, index=True, default=db.func.utc_timestamp()
     )
