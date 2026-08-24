@@ -140,6 +140,9 @@ def index():
     )
 
     recs = []
+    # Candidates that clear every other test, so an empty rail can tell
+    # "nothing fits the filter" from "nothing left to recommend" (#198)
+    recs_eligible = 0
     computed_at = None
     if stored:
         computed_at = stored.get("computed_at")
@@ -180,6 +183,7 @@ def index():
             .all()
         )
         watchlist_ids = {movie.id for movie in wanted_owned}
+        recs_eligible = len(wanted_owned)
         pin_candidates = [
             {
                 "movie": movie,
@@ -199,6 +203,7 @@ def index():
                 continue
             if item["movie_id"] in watchlist_ids:
                 continue
+            recs_eligible += 1
             if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
                 continue
             recs.append(
@@ -241,6 +246,7 @@ def index():
     # as the other rails; the rest rotates daily
 
     again_items = []
+    again_eligible = 0
     again_ranked = watch_again_shelf(current_user.id)
     if again_ranked:
         again_movies = {
@@ -260,6 +266,7 @@ def index():
             again_movie = again_movies.get(item["movie_id"])
             if again_movie is None:
                 continue
+            again_eligible += 1
             if minutes and not (
                 again_movie.tmdb_runtime and again_movie.tmdb_runtime <= minutes
             ):
@@ -293,6 +300,7 @@ def index():
     # picks but no stored rail gets a one-off compute enqueued
 
     rail = []
+    rail_eligible = 0
     rail_computed_at = None
     rail_payload = stored_rail(current_app.redis, current_user.id)
     if rail_payload:
@@ -339,6 +347,7 @@ def index():
         for item in rail_payload.get("items", []):
             if item["tmdb_id"] in dropped:
                 continue
+            rail_eligible += 1
             if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
                 continue
             item["watchlisted"] = item["tmdb_id"] in watchlisted_now
@@ -376,11 +385,13 @@ def index():
 
     shelf = leaving_shelf(current_user)
     shelf_items = []
+    shelf_eligible = 0
     shelf_departs = None
     shelf_url = None
     if shelf:
         shelf_departs = shelf["departs"].strftime("%B %-d")
         shelf_url = shelf["url"]
+        shelf_eligible = len(shelf["items"])
         fitting = [
             item
             for item in shelf["items"]
@@ -398,6 +409,16 @@ def index():
             f"shelf:{int(current_user.id)}:{date.today().isoformat()}",
         )
 
+    # A rail the runtime filter emptied says so rather than vanishing —
+    # silence reads as "there's nothing here" (#198). Each flag means
+    # the rail had films and the filter took them all
+
+    def filtered_out(shown, eligible):
+        """True when a rail had films and the runtime filter took
+        every one of them."""
+
+        return bool(minutes) and not shown and eligible > 0
+
     return render_template(
         "index.html",
         title="Home",
@@ -405,6 +426,10 @@ def index():
         computed_at=computed_at,
         has_history=has_history,
         recs_stored=bool(stored),
+        recs_filtered_out=filtered_out(recs, recs_eligible),
+        again_filtered_out=filtered_out(again_items, again_eligible),
+        rail_filtered_out=filtered_out(rail, rail_eligible),
+        shelf_filtered_out=filtered_out(shelf_items, shelf_eligible),
         again=again_items,
         rail=rail,
         rail_computed_at=rail_computed_at,

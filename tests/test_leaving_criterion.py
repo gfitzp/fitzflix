@@ -471,6 +471,25 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     assert "Shelf Wanted" not in filtered
 
 
+def test_runtime_filter_says_when_the_shelf_empties(app, admin_client):
+    """A filter that trims every departing film keeps the shelf heading
+    — with its date and inventory link — and says why the grid is empty
+    (GitHub #198)."""
+
+    subscribe_criterion(app)
+    plant_shelf(app, [shelf_item(8201, "Shelf Nothing Fits", runtime=200)])
+
+    body = admin_client.get("/?minutes=10").get_data(as_text=True)
+    assert 'id="leaving-shelf"' in body
+    assert 'href="/leaving"' in body
+    assert "Nothing leaving fits in 10 minutes" in body
+    assert "Shelf Nothing Fits" not in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Shelf Nothing Fits (1956)" in body
+    assert "Nothing leaving fits" not in body
+
+
 def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
     """A stored set from before the source key existed still gets a
     source link on /leaving, reconstructed from the departure date."""

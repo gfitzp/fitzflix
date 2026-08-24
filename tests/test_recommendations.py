@@ -653,6 +653,41 @@ def test_runtime_filter_says_when_nothing_fits(app, admin_client):
     assert "No recommended films fit" not in body
 
 
+def test_runtime_filter_says_when_the_rewatch_shelf_empties(app, admin_client):
+    """The rewatch shelf keeps its heading and explains itself when the
+    filter trims every film, rather than vanishing (GitHub #198)."""
+
+    from datetime import datetime, timedelta
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+
+    with app.app_context():
+        user_id = admin_id()
+        favorite = make_movie("Again Nothing Fits", 1975, tmdb_runtime=180)
+        make_movie_file(favorite, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id,
+                movie_id=favorite.id,
+                liked=True,
+                date_watched=datetime.now() - timedelta(days=1500),
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+
+    body = admin_client.get("/?minutes=10").get_data(as_text=True)
+    assert "Watch it again" in body
+    assert "Nothing you'd rewatch fits in 10 minutes" in body
+    assert "Again Nothing Fits" not in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Again Nothing Fits (1975)" in body
+    assert "Nothing you'd rewatch fits" not in body
+
+
 def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     """Unowned TMDb search matches run the filmography markers' coarse
     scorer, minus the person term: on-profile films badge, off-profile

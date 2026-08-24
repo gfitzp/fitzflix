@@ -484,3 +484,44 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
     assert "Rail Filter Short (1994)" in body
     assert "Rail Filter Long (1994)" in body
     assert "Rail Filter Unknown (1994)" in body
+
+
+def test_runtime_filter_says_when_the_rail_empties(app, admin_client):
+    """A filter that trims every streaming film keeps the rail's heading
+    and says why it's empty (GitHub #198)."""
+
+    from app.models import User
+    from app.streaming_rail import RAIL_KEY
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-24 02:15",
+                "items": [
+                    {
+                        "tmdb_id": 7101,
+                        "title": "Rail Nothing Fits",
+                        "year": "1994",
+                        "poster_path": None,
+                        "runtime": 200,
+                        "providers": [{**NETFLIX, "kind": "flatrate"}],
+                        "because": ["popular on Netflix"],
+                        "score": 1.0,
+                    }
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?minutes=10").get_data(as_text=True)
+    assert "Streaming on your services" in body
+    assert "Nothing streaming on your services fits in 10 minutes" in body
+    assert "Rail Nothing Fits" not in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Rail Nothing Fits (1994)" in body
+    assert "Nothing streaming on your services fits" not in body

@@ -58,7 +58,7 @@
 {% if computed_at %}
 <p class="small text-muted">Recommended from your library by what you've rated, liked, and watched. Recomputed nightly; last run {{ computed_at }}.</p>
 {% endif %}
-{% elif recs_stored and minutes %}
+{% elif recs_filtered_out %}
 {# The rail is computed, the runtime filter just emptied it (#198):
    say so, instead of claiming the recommendations aren't ready yet #}
 <p class="lead">No recommended films fit in {{ minutes }} minutes.</p>
@@ -140,12 +140,17 @@
 	})();
 </script>
 {% endif %}
-{% if shelf %}
+{% if shelf or shelf_filtered_out %}
 <hr>
 {# "See more…" opens the in-app departure inventory — the complete
    set with library/Seen/watchlist badges; the criterionchannel.com
    source link lives on that page #}
 <div><h4 id="leaving-shelf" style="display: inline;">Leaving the Criterion Channel {{ shelf_departs }}</h4>&nbsp;<span><a href="{{ url_for('main.leaving') }}" class="small">See more&hellip;</a></span></div>
+{% if shelf_filtered_out %}
+{# Emptied by the runtime filter, not empty: the header stays so the
+   departure date and the full inventory link keep their place (#198) #}
+<p class="text-muted mt-3">Nothing leaving fits in {{ minutes }} minutes &mdash; see the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+{% else %}
 <div class="row mt-3">
 	{% for item in shelf %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -167,9 +172,13 @@
 </div>
 <p class="small text-muted">Departing films from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>, ranked by your taste profile. A watchlisted film's card says so &mdash; watch it before it leaves, or buy the disc.</p>
 {% endif %}
-{% if rail %}
+{% endif %}
+{% if rail or rail_filtered_out %}
 <hr>
 <h4>Streaming on your services</h4>
+{% if rail_filtered_out %}
+<p class="text-muted mt-3">Nothing streaming on your services fits in {{ minutes }} minutes &mdash; try a longer evening, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+{% else %}
 <div class="row mt-3">
 	{% for item in rail %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -194,12 +203,16 @@
 </div>
 <p class="small text-muted">Films on your streaming services, picked by the same taste profile as your library recommendations{% if rail_computed_at %}; last run {{ rail_computed_at }}{% endif %}. Streaming data by JustWatch.</p>
 {% endif %}
-{% if again %}
+{% endif %}
+{% if again or again_filtered_out %}
 <hr>
 {# The rewatch shelf: liked films whose last watch is long past —
    the complement of the recommendation rails, which never show
    logged films #}
 <h4>Watch it again</h4>
+{% if again_filtered_out %}
+<p class="text-muted mt-3">Nothing you'd rewatch fits in {{ minutes }} minutes &mdash; try a longer evening, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+{% else %}
 <div class="row mt-3">
 	{% for item in again %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -222,5 +235,6 @@
 	{% endfor %}
 </div>
 <p class="small text-muted">Films you liked that you haven't watched in at least two years.</p>
+{% endif %}
 {% endif %}
 {% endblock %}
