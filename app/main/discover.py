@@ -404,6 +404,7 @@ def index():
         recs=recs,
         computed_at=computed_at,
         has_history=has_history,
+        recs_stored=bool(stored),
         again=again_items,
         rail=rail,
         rail_computed_at=rail_computed_at,

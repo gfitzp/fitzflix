@@ -617,6 +617,42 @@ def test_runtime_filter_trims_the_library_rail(app, admin_client):
     assert "95 min" not in body
 
 
+def test_runtime_filter_says_when_nothing_fits(app, admin_client):
+    """A filter that empties the rail says so (GitHub #198): the stored
+    recommendations are computed, so the page must not claim they're
+    still being calculated."""
+
+    from app import db
+    from app.recommendations import RECS_KEY
+    from app.models import User
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        long = make_movie("Nothing Fits Long", 1991, tmdb_runtime=200)
+        make_movie_file(long, "Bluray-1080p")
+        movie_id = long.id
+        db.session.commit()
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-24 01:45",
+                "items": [{"movie_id": movie_id, "score": 1.0, "because": ["Drama"]}],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?minutes=10").get_data(as_text=True)
+    assert "No recommended films fit in 10 minutes" in body
+    assert "check back in a few minutes" not in body
+    assert ">Clear</a>" in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Nothing Fits Long (1991)" in body
+    assert "No recommended films fit" not in body
+
+
 def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     """Unowned TMDb search matches run the filmography markers' coarse
     scorer, minus the person term: on-profile films badge, off-profile
