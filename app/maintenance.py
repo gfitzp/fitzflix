@@ -166,6 +166,23 @@ def worker_health(connection):
 VOLUMES_ROOT = "/Volumes"
 
 
+def mountpoint_ok(path):
+    """Whether a path meets the mountpoint requirement (#227).
+
+    A path under VOLUMES_ROOT must BE a mountpoint. When a share drops,
+    macOS leaves the mountpoint behind as an ordinary directory on the
+    boot disk, so every existence check — statvfs, isdir — succeeds
+    instantly having answered for the boot volume, and calls a dead share
+    alive. ismount compares the path's device against its parent's, which
+    is the question actually being asked, for the cost of one stat.
+
+    Paths outside VOLUMES_ROOT were never expected to be mountpoints and
+    pass unconditionally: staging and the logs live on the boot disk.
+    """
+
+    return not path.startswith(VOLUMES_ROOT + os.sep) or os.path.ismount(path)
+
+
 def volume_alive(path, timeout=10):
     """True if the filesystem behind path responds within the timeout.
 
@@ -191,9 +208,7 @@ def volume_alive(path, timeout=10):
     def probe():
         try:
             os.statvfs(path)
-            result["ok"] = not path.startswith(VOLUMES_ROOT + os.sep) or (
-                os.path.ismount(path)
-            )
+            result["ok"] = mountpoint_ok(path)
         except OSError:
             result["ok"] = False
 

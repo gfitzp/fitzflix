@@ -171,13 +171,33 @@ def share_root(path):
 def share_available(path):
     """Whether the share a path belongs to is currently there.
 
-    Deliberately isdir and not ismount: macOS deletes the mount point
-    when an SMB share unmounts, so its absence is the signal, and a
-    library that isn't on a separate mount still answers correctly.
+    The directory existing is not enough (#232). macOS does usually
+    delete the mount point when a share unmounts cleanly, which is what
+    the original isdir check relied on — but when the SMB session dies it
+    leaves the mount point behind as an ordinary directory on the boot
+    disk, and isdir then answers True for a share that is not there.
+    Seen Aug 25 2026: /Volumes/TV Shows sat as an empty stub for ~25
+    minutes while the real share ran at /Volumes/TV Shows-1.
+
+    That is the one case this function exists to catch. If it answers
+    True for a dead share, absent() claims every file on it as a
+    legitimate departure — thousands at once, none of them a finding,
+    and recheck reaps their durations. So a path under /Volumes has to
+    BE a mountpoint, exactly as #227 established for volume_alive.
+
+    A library that isn't under /Volumes still answers correctly: the
+    mountpoint requirement only applies below VOLUMES_ROOT.
     """
 
+    # Imported here rather than at module scope: maintenance pulls in the
+    # app factory, and this module stays light enough for a CLI or a test
+    # to import on its own
+
+    from app.maintenance import mountpoint_ok
+
+    share = share_root(path)
     try:
-        return os.path.isdir(share_root(path))
+        return os.path.isdir(share) and mountpoint_ok(share)
     except OSError:
         return False
 

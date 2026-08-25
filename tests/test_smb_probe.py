@@ -641,3 +641,88 @@ def test_mkvpropedit_probes_after_a_failed_edit_too(app, monkeypatch):
             videos.mkvpropedit_task(file_id, "2", None, [])
 
         assert path in smb_probe.recorded_state()
+
+
+def test_a_leftover_mountpoint_is_not_an_available_share(app, tmp_path, monkeypatch):
+    """#232, seen live Aug 25 2026. When the SMB session dies macOS can
+    leave the mount point behind as an ordinary directory on the boot
+    disk. isdir called that share present, so unmounted() answered False
+    and every file on it would have been recorded as a departure."""
+
+    import app.maintenance as maintenance
+    from app.smb_probe import absent, probe_path, share_available, unmounted
+
+    volumes = tmp_path / "Volumes"
+    leftover = volumes / "TV Shows"
+    leftover.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+
+    path = str(leftover / "Top Gear (2002)" / "s01e01.mkv")
+
+    # Exactly what the outage looked like: the directory is there, and
+    # it is not a mountpoint
+
+    assert os.path.isdir(str(leftover))
+    assert os.path.ismount(str(leftover)) is False
+
+    with app.app_context():
+        app.config["LIBRARY_DIR"] = str(volumes)
+
+        assert share_available(path) is False
+
+        result = probe_path(path)
+        assert absent(result)
+        assert unmounted(result) is True
+
+
+def test_a_mounted_share_is_available(app, tmp_path, monkeypatch):
+    import app.maintenance as maintenance
+    from app.smb_probe import share_available
+
+    volumes = tmp_path / "Volumes"
+    mounted = volumes / "Movies"
+    mounted.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setattr(maintenance.os.path, "ismount", lambda path: True)
+
+    with app.app_context():
+        app.config["LIBRARY_DIR"] = str(volumes)
+
+        assert share_available(str(mounted / "A Film (1999)" / "a.mkv")) is True
+
+
+def test_a_library_off_the_volumes_root_needs_no_mountpoint(app, tmp_path, monkeypatch):
+    """The case the original isdir check was protecting: a library that
+    isn't on a separate mount. It is not a mountpoint and was never
+    meant to be, so requiring one everywhere would call it dead."""
+
+    import app.maintenance as maintenance
+    from app.smb_probe import share_available
+
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(tmp_path / "Volumes"))
+    library = tmp_path / "library"
+    (library / "Movies").mkdir(parents=True)
+
+    assert os.path.ismount(str(library / "Movies")) is False
+
+    with app.app_context():
+        app.config["LIBRARY_DIR"] = str(library)
+
+        assert share_available(str(library / "Movies" / "a.mkv")) is True
+
+
+def test_a_share_that_is_gone_entirely_is_still_unavailable(app, tmp_path, monkeypatch):
+    """A clean unmount does delete the mount point, and that has to keep
+    answering the same way it always did."""
+
+    import app.maintenance as maintenance
+    from app.smb_probe import share_available
+
+    volumes = tmp_path / "Volumes"
+    volumes.mkdir()
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+
+    with app.app_context():
+        app.config["LIBRARY_DIR"] = str(volumes)
+
+        assert share_available(str(volumes / "Movies" / "a.mkv")) is False
