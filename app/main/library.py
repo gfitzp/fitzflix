@@ -127,8 +127,8 @@ from app.videos import (
     clear_watchlist,
     criterion_release_lookups,
     get_criterion_collection_from_wikidata,
-    iso_639_2_languages,
     language_names,
+    library_language_choices,
     resolve_language_code,
     star_rating_fields,
     track_metadata_scan,
@@ -3017,11 +3017,11 @@ def file(file_id):
         pending_subtitle_triage=pending_subtitle_triage,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
-        # The boxes show a language by name and the datalist offers the
-        # same names; language_names covers the stored spellings too, so
-        # a track recorded as "deu" still reads as German
+        # The dropdowns offer the collection's own languages; language_names
+        # covers the stored spellings too, so a track recorded as "deu"
+        # still reads as German
         languages=(
-            iso_639_2_languages()
+            library_language_choices()
             if file.container == "Matroska" and (audio_tracks or subtitle_tracks)
             else ()
         ),

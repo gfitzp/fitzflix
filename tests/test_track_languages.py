@@ -12,7 +12,9 @@ otherwise look like a silent no-op.
 #222 rides along because it is the same template: a </div> that sat
 outside {% if subtitle_tracks %} closed the left column early on any
 file without subtitles, so the remux column escaped the grid row and
-stretched the width of the page.
+stretched the width of the page. The grid it broke is gone now — every
+track control lives in the Tracks table — so the guard is a balance
+check over the whole page, which is the class of bug that was.
 """
 
 import os
@@ -160,7 +162,9 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
         assert rows[0].language_name == "English"
 
 
-def _matroska_file_page(app, admin_client, *, subtitles, local=True, language="und"):
+def _matroska_file_page(
+    app, admin_client, *, subtitles, local=True, language="und", subtitle_default=True
+):
     """A Matroska file with one audio track (and optionally one subtitle
     track), and its rendered File page. Returns the file's library path
     only when `local`, since that is what the caller has to clean up."""
@@ -170,7 +174,9 @@ def _matroska_file_page(app, admin_client, *, subtitles, local=True, language="u
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
-        movie = make_movie(f"Page Markup {language}", 2022 if subtitles else 2023)
+        movie = make_movie(
+            f"Page Markup {language} {subtitle_default}", 2022 if subtitles else 2023
+        )
         file = make_movie_file(movie, "Bluray-1080p", container="Matroska")
         db.session.flush()
         db.session.add(
@@ -195,7 +201,7 @@ def _matroska_file_page(app, admin_client, *, subtitles, local=True, language="u
                     language_name="Undetermined",
                     format="PGS",
                     elements=900,
-                    default=True,
+                    default=subtitle_default,
                     forced=False,
                     streamorder=1,
                 )
@@ -215,88 +221,126 @@ def _matroska_file_page(app, admin_client, *, subtitles, local=True, language="u
     return file_id, library_path, page
 
 
-class _DivNesting(HTMLParser):
-    """Records the ancestor div classes in force at each div open."""
+class _Balance(HTMLParser):
+    """Records tags that close without opening, and tags left open."""
+
+    VOID = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack = []
-        self.opened = []
+        self.stray = []
 
     def handle_starttag(self, tag, attrs):
-        if tag != "div":
-            return
-        classes = dict(attrs).get("class", "")
-        self.opened.append((classes, tuple(self.stack)))
-        self.stack.append(classes)
+        if tag not in self.VOID:
+            self.stack.append(tag)
 
     def handle_endtag(self, tag):
-        if tag == "div" and self.stack:
-            self.stack.pop()
-
-    def ancestors_of(self, classes):
-        """The ancestor chains of every div opened with exactly `classes`."""
-
-        return [chain for opened, chain in self.opened if opened == classes]
+        if tag in self.VOID:
+            return
+        if tag not in self.stack:
+            self.stray.append(tag)
+            return
+        while self.stack and self.stack.pop() != tag:
+            pass
 
 
 @pytest.mark.parametrize("subtitles", [False, True])
-def test_the_remux_column_stays_inside_its_grid_row(app, admin_client, subtitles):
-    """#222: the two MKV forms are grid columns of one row. A file with
-    no subtitle tracks used to close the left column an element early,
-    which pushed the remux column out of the row and let it stretch the
-    full width of the page — so the with-subtitles case is the control."""
+def test_the_page_markup_stays_balanced(app, admin_client, subtitles):
+    """#222 was a </div> sitting outside its {% if subtitle_tracks %}: on
+    a file with no subtitle tracks the page closed one element too many,
+    the remux form escaped its grid row and stretched the width of the
+    page. That grid is gone, but the branch still is — so check the thing
+    that actually broke, on both sides of the condition."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=subtitles)
     try:
-        nesting = _DivNesting()
-        nesting.feed(page)
+        balance = _Balance()
+        balance.feed(page)
+        balance.close()
 
-        chains = nesting.ancestors_of("col-md-4")
-        assert chains, "the remux column is missing from the page"
-        assert all(
-            "row align-items-end" in chain for chain in chains
-        ), "the remux column escaped its row and will stretch the page width"
+        assert not balance.stray, f"closed without opening: {balance.stray}"
+        assert not balance.stack, f"left open: {balance.stack}"
     finally:
         os.remove(library_path)
 
 
-def test_the_page_offers_a_language_box_per_track(app, admin_client):
-    """#218: every audio and subtitle track gets a box, prefilled with
-    what is stored, backed by one shared language list."""
+def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
+    """#218: every audio and subtitle track gets a dropdown, showing the
+    language it holds now."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
         assert 'name="language_a1"' in page
         assert 'name="language_s1"' in page
-        assert page.count('list="iso-639-2-languages"') == 2
-        assert page.count('<datalist id="iso-639-2-languages">') == 1
+        assert page.count("<select") == 2
 
-        # Glenn's call (Aug 24 2026): languages read as names, not codes
+        # Glenn's call (Aug 24 2026): languages read as names, not codes,
+        # and (Aug 25 2026) they are picked, not typed
 
-        assert '<option value="English" label="eng">' in page
-        assert 'value="Undetermined"' in page
-        assert 'value="und"' not in page
+        assert '<option value="und" selected>Undetermined</option>' in page
+        assert '<option value="eng">English</option>' in page
+        assert 'list="iso-639-2-languages"' not in page, "still a text box"
     finally:
         os.remove(library_path)
 
 
-class _BoxPlacement(HTMLParser):
-    """Where the language boxes sit, and what form they submit with."""
+def test_the_dropdown_offers_the_collection_not_the_whole_iso_table(app, admin_client):
+    """All 1,006 ISO 639-2 languages is ~38 KB of options per track, and
+    the library has a twenty-track disc. The list is the collection's own
+    languages instead, so it stays small and still covers every track."""
+
+    from app.tracks import iso_639_2_languages, library_language_choices
+
+    _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
+    try:
+        with app.app_context():
+            choices = library_language_choices()
+            assert len(choices) < len(iso_639_2_languages()) / 4
+
+            # whatever a track already holds has to be offered, or saving
+            # an untouched form would quietly change it
+
+            codes = {code for code, name in choices}
+            assert "und" in codes
+            assert "eng" in codes, "the native language is always worth offering"
+
+        assert page.count("<option") == 2 * len(choices)
+    finally:
+        os.remove(library_path)
+
+
+class _Placement(HTMLParser):
+    """Where each named control sits, and which form it submits with."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.open_tags = []
-        self.boxes = []
+        self.controls = []
         self.form_ids = set()
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "form" and attrs.get("id"):
             self.form_ids.add(attrs["id"])
-        if tag == "input" and attrs.get("name", "").startswith("language_"):
-            self.boxes.append((attrs, tuple(self.open_tags)))
-        if tag not in ("input", "br", "hr", "img", "option"):
+        if tag in ("input", "select") and attrs.get("name"):
+            self.controls.append((attrs, tuple(self.open_tags)))
+        if tag not in ("input", "br", "hr", "img", "option", "meta", "link"):
             self.open_tags.append(tag)
 
     def handle_endtag(self, tag):
@@ -304,35 +348,90 @@ class _BoxPlacement(HTMLParser):
             while self.open_tags.pop() != tag:
                 pass
 
+    def named(self, name):
+        return [(a, anc) for a, anc in self.controls if a.get("name") == name]
 
-def test_the_boxes_edit_in_the_track_listing_and_save_with_the_edit_form(
-    app, admin_client
-):
-    """Glenn's placement (Aug 24 2026): the boxes belong inline in the
-    Tracks table, not in a block of their own. That puts them outside the
-    form they submit with, so each one carries a `form` attribute naming
-    it — drop that and the edits silently never arrive."""
+
+def test_every_track_control_lives_in_the_listing(app, admin_client):
+    """Glenn's placement (Aug 24-25 2026): the language, the default and
+    forced flags and the remux selection all belong on the track's own
+    row, not in blocks below it. That puts them outside the forms they
+    submit with, so each carries a `form` attribute naming one — drop
+    that and the control silently stops being submitted."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
-        placement = _BoxPlacement()
-        placement.feed(page)
+        page_controls = _Placement()
+        page_controls.feed(page)
 
-        assert len(placement.boxes) == 2
-        assert "mkvpropedit-form" in placement.form_ids
+        assert {"mkvpropedit-form", "mkvmerge-form"} <= page_controls.form_ids
 
-        for attrs, ancestors in placement.boxes:
-            assert "table" in ancestors, "the box left the track listing"
-            assert "form" not in ancestors, "a form nested inside the table"
-            assert attrs.get("form") == "mkvpropedit-form"
+        # name -> the form it has to reach. The property editor owns the
+        # flags; the remuxer owns which tracks survive
+
+        owners = {
+            "language_a1": "mkvpropedit-form",
+            "language_s1": "mkvpropedit-form",
+            "default_audio": "mkvpropedit-form",
+            "default_subtitle": "mkvpropedit-form",
+            "forced_subtitles": "mkvpropedit-form",
+            "audio_tracks": "mkvmerge-form",
+            "subtitle_tracks": "mkvmerge-form",
+        }
+        for name, owner in owners.items():
+            found = page_controls.named(name)
+            assert found, f"{name} is missing from the page"
+            for attrs, ancestors in found:
+                assert "table" in ancestors, f"{name} left the track listing"
+                assert "form" not in ancestors, f"{name} nested inside a form"
+                assert attrs.get("form") == owner, f"{name} submits to the wrong form"
     finally:
         os.remove(library_path)
 
 
-def test_the_boxes_are_disabled_when_the_file_is_not_local(app, admin_client):
-    """The property-edit form disables itself through its fieldset, which
-    can't reach boxes living outside it — so they carry their own disabled
-    attribute. Otherwise the listing offers an edit the route can only
+def test_the_remux_selection_starts_with_every_track_kept(app, admin_client):
+    """The remux drops whatever isn't ticked, so an untouched form has to
+    mean "change nothing"."""
+
+    _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
+    try:
+        page_controls = _Placement()
+        page_controls.feed(page)
+
+        for name in ("audio_tracks", "subtitle_tracks"):
+            for attrs, _ in page_controls.named(name):
+                assert "checked" in attrs, f"{name} would drop a track by default"
+    finally:
+        os.remove(library_path)
+
+
+def test_a_file_with_no_default_subtitle_says_so(app, admin_client):
+    """The subtitle default is a track OR nothing at all, and "nothing"
+    has no row of its own to live on — so the listing grows one."""
+
+    _, library_path, page = _matroska_file_page(
+        app, admin_client, subtitles=True, subtitle_default=False
+    )
+    try:
+        page_controls = _Placement()
+        page_controls.feed(page)
+
+        none_option = [
+            attrs
+            for attrs, _ in page_controls.named("default_subtitle")
+            if attrs.get("value") == "0"
+        ]
+        assert none_option, "no way to say the file has no default subtitle"
+        assert "checked" in none_option[0]
+        assert "No default subtitle track" in page
+    finally:
+        os.remove(library_path)
+
+
+def test_the_controls_are_disabled_when_the_file_is_not_local(app, admin_client):
+    """Both forms disable themselves through their fieldsets, which can't
+    reach controls living outside them — so each carries its own disabled
+    attribute. Otherwise the listing offers edits the route can only
     refuse afterwards."""
 
     _, library_path, page = _matroska_file_page(
@@ -340,11 +439,14 @@ def test_the_boxes_are_disabled_when_the_file_is_not_local(app, admin_client):
     )
     assert library_path is None
 
-    placement = _BoxPlacement()
-    placement.feed(page)
+    page_controls = _Placement()
+    page_controls.feed(page)
 
-    assert len(placement.boxes) == 2
-    assert all("disabled" in attrs for attrs, ancestors in placement.boxes)
+    assert page_controls.controls
+    for name in ("language_a1", "default_audio", "forced_subtitles", "audio_tracks"):
+        found = page_controls.named(name)
+        assert found, f"{name} is missing from the page"
+        assert all("disabled" in attrs for attrs, _ in found), f"{name} stayed live"
 
 
 def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
@@ -364,8 +466,8 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
                 "csrf_token": csrf_token_from(page),
                 "default_audio": "1",
                 "default_subtitle": "1",
-                "language_a1": "English",
-                "language_s1": "Undetermined",
+                "language_a1": "eng",
+                "language_s1": "und",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,
@@ -422,9 +524,9 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
 
 def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_client):
     """MediaInfo wrote "deu" into 212 of the library's files where
-    mkvtoolnix's table only carries "ger". The box has to show German,
-    and submitting it back untouched must not read as a request to
-    rewrite the track — nor refuse the flag edits alongside it."""
+    mkvtoolnix's table only carries "ger". The dropdown has to show
+    German, and picking that same entry back must not read as a request
+    to rewrite the track — nor refuse the flag edits alongside it."""
 
     import inspect
 
@@ -435,7 +537,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
         app, admin_client, subtitles=False, language="deu"
     )
     try:
-        assert 'value="German"' in page
+        assert '<option value="ger" selected>German</option>' in page
 
         response = admin_client.post(
             f"/file/{file_id}",
@@ -443,7 +545,7 @@ def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_clie
                 "csrf_token": csrf_token_from(page),
                 "default_audio": "1",
                 "default_subtitle": "0",
-                "language_a1": "German",
+                "language_a1": "ger",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,

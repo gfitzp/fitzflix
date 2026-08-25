@@ -14,6 +14,7 @@ imported lazily inside functions, keeping the module import direction
 one-way.
 """
 
+import json
 import os
 import random
 import re
@@ -480,6 +481,64 @@ def language_names():
         for alias, code in _language_aliases().items()
         if code in names
     }
+
+
+# Rebuilt on the hour rather than per render; a language new to the
+# library shows up in the dropdowns within that
+
+LANGUAGE_CHOICES_KEY = "fitzflix:language-choices"
+LANGUAGE_CHOICES_SECONDS = 3600
+
+
+def library_language_choices():
+    """The languages worth offering on the File page, as (code, name).
+
+    A dropdown of all 1,006 ISO 639-2 languages costs about 38 KB per
+    track, which a twenty-track disc turns into most of a megabyte. This
+    is the set that actually applies to this collection: every language
+    already on a track, every original language TMDb records for a film
+    in the library, and the codes the page exists to move between. It
+    grows on its own — a film in a new language brings its language with
+    it — so nothing has to be maintained by hand.
+    """
+
+    from app.models import FileAudioTrack, FileSubtitleTrack, Movie
+
+    # Three DISTINCTs over the track tables is ~40 ms, which is too much
+    # to spend on every File page render for an answer that changes only
+    # when a new language enters the library
+
+    cached = current_app.redis.get(LANGUAGE_CHOICES_KEY)
+    if cached:
+        return tuple(tuple(pair) for pair in json.loads(cached))
+
+    stored = set()
+    for column in (
+        FileAudioTrack.language,
+        FileSubtitleTrack.language,
+        Movie.tmdb_original_language,
+    ):
+        stored |= {value for (value,) in db.session.query(column).distinct() if value}
+
+    codes = {resolve_language_code(value) for value in stored}
+    codes |= {
+        "und",
+        "zxx",
+        resolve_language_code(current_app.config["NATIVE_LANGUAGE"]),
+    }
+    codes.discard(None)
+
+    names = dict(iso_639_2_languages())
+    choices = tuple(
+        sorted(
+            ((code, names.get(code, code)) for code in codes),
+            key=lambda language: language[1].lower(),
+        )
+    )
+    current_app.redis.set(
+        LANGUAGE_CHOICES_KEY, json.dumps(choices), ex=LANGUAGE_CHOICES_SECONDS
+    )
+    return choices
 
 
 def resolve_language_code(value):
