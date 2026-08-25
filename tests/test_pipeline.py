@@ -72,6 +72,33 @@ def test_file_id_stages_look_the_basename_up(app):
     assert trails[0]["entries"][0]["stage"] == "Archiving to S3"
 
 
+def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
+    """The enqueue hook writes after the job is already claimable, so a
+    job that lands in milliseconds — the deferred re-archive skipping a
+    superseded key — can beat its own "queued" stamp. The late stamp is
+    dropped rather than freezing the chip at queued forever."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Late Stamp (2023) - [DVD].mkv",),
+        )
+
+    record_job_event(app.redis, job, "started")
+    record_job_event(app.redis, job, "done")
+
+    # The enqueue side's stamp arrives after the worker has finished
+
+    record_job_event(app.redis, job, "queued")
+
+    trails = pipeline_trails(app.redis)
+    entries = [entry for entry in trails[0]["entries"] if entry["job"] == job.id]
+    assert len(entries) == 1
+    assert entries[0]["status"] == "done"
+
+
 def test_lifecycle_updates_one_entry_in_place(app):
     """A job moving queued → started → done is ONE trail line whose
     status advances — the worker hooks call the same recorder."""

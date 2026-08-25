@@ -109,6 +109,10 @@ STAGES = {
     ),
     "app.videos.finalize_localization": ("Cataloging", _basename_from_details),
     "app.videos.upload_task": ("Archiving to S3", _basename_from_file_id),
+    "app.videos.rearchive_untouched_object": (
+        "Re-archiving to S3",
+        _basename_from_file_id,
+    ),
     "app.videos.track_metadata_scan_task": (
         "Scanning track metadata",
         _basename_from_file_id,
@@ -203,6 +207,16 @@ def _write_trail_entry(
 
                 for entry in reversed(trail):
                     if entry.get("job") == job_id and entry.get("stage") == stage:
+                        # A job can land before its own enqueue-side
+                        # stamp is written — the deferred re-archive
+                        # skips a superseded key in milliseconds — and a
+                        # late "queued" would drag the chip back and
+                        # freeze it there. The enqueue side never
+                        # overrules a stamp the worker already made
+                        if status in ("queued", "scheduled") and entry.get(
+                            "status"
+                        ) in ("started", "done", "failed"):
+                            return
                         entry["status"] = status
                         entry["at"] = now
                         break

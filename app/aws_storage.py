@@ -761,7 +761,7 @@ def untouched_key_still_claimed(key):
     )
 
 
-def rename_untouched_object(file, new_key):
+def rename_untouched_object(file, new_key, defer_upload=False):
     """Move a file's untouched S3 archive when its derived key changes,
     keeping the invariant that aws_untouched_key only ever names a REAL
     object (the old flow rewrote the database field without
@@ -776,7 +776,16 @@ def rename_untouched_object(file, new_key):
     future re-upload heals it; the archive-replace convention already
     trades the pristine original for the current library file on every
     remux, and the original survives as a noncurrent version).
-    Returns True when the field now matches new_key.
+
+    That force-upload is multi-gigabyte, so a caller running on a queue
+    with a short budget passes defer_upload and gets it handed to
+    rearchive_untouched_object on the file queue instead (#231: a
+    43.9 GB upload died at SQL_TASK_TIMEOUT mid-flight, leaving the
+    movie record renamed and its archive key not).
+
+    Returns True when the field now matches new_key — a deferred
+    upload returns False, since the field only changes once the object
+    really lands.
     """
 
     old_key = file.aws_untouched_key
@@ -817,6 +826,20 @@ def rename_untouched_object(file, new_key):
         file.aws_untouched_key = new_key
         return True
 
+    if defer_upload:
+        current_app.logger.info(
+            f"'{basename}' archive can't be copied "
+            f"({storage_class if head else 'missing'}); queuing a re-archive "
+            f"of the library copy as '{new_key}'"
+        )
+        current_app.file_queue.enqueue(
+            "app.videos.rearchive_untouched_object",
+            args=(file.id, new_key),
+            job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+            description=f"'{basename}'",
+        )
+        return False
+
     current_app.logger.info(
         f"'{basename}' archive can't be copied "
         f"({storage_class if head else 'missing'}); force-uploading the "
@@ -836,6 +859,71 @@ def rename_untouched_object(file, new_key):
     if head is not None:
         s3_client.delete_object(Bucket=bucket, Key=old_key)
     return True
+
+
+def rearchive_untouched_object(file_id, new_key):
+    """File-queue half of an archive rename that couldn't be copied
+    server-side: force-upload the local library copy under the new key.
+
+    Deferred off the sql queue because the upload is multi-gigabyte and
+    the sql queue's ten-minute budget is sized for database work — a
+    43.9 GB re-archive was killed at 84% mid-refresh, silently, leaving
+    the movie record pointing at one film and its archive key at
+    another (#231). The file queue's budget is six hours.
+
+    Re-reads the File record, so a disk rename the refresh performed
+    after enqueuing is already reflected in the path uploaded.
+    """
+
+    with app.app_context():
+        file = File.query.filter_by(id=file_id).first()
+        if file is None:
+            current_app.logger.warning(
+                f"File id {file_id} no longer exists, skipping the "
+                f"re-archive as '{new_key}'"
+            )
+            return False
+
+        if file.aws_untouched_key == new_key:
+            current_app.logger.info(f"'{file.basename}' archive is already '{new_key}'")
+            return True
+
+        # The key the record wants NOW. It differs when the refresh
+        # that queued this rolled back, or when a later refresh queued
+        # a newer key behind this one — either way, uploading tens of
+        # gigabytes under a key the record has moved on from is waste
+        expected_key = os.path.join(
+            current_app.config["AWS_UNTOUCHED_PREFIX"],
+            sanitize_s3_key(file.untouched_basename or ""),
+        )
+        if expected_key != new_key:
+            current_app.logger.warning(
+                f"'{file.basename}' skipping the re-archive as '{new_key}': "
+                f"the record now wants '{expected_key}'"
+            )
+            return False
+
+        local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        if not os.path.isfile(local_path):
+            # Nothing to re-upload — the record keeps the old key,
+            # which still names a real object, so the invariant holds
+            current_app.logger.error(
+                f"'{file.basename}' can't be re-archived as '{new_key}': "
+                f"'{local_path}' isn't present locally"
+            )
+            return False
+
+        try:
+            renamed = rename_untouched_object(file, new_key)
+            db.session.commit()
+
+        except Exception:
+            # Let the job fail loudly: a half-applied rename is exactly
+            # what #231 was about, and FailedJobRegistry is the trace
+            db.session.rollback()
+            raise
+
+        return renamed
 
 
 def aws_delete(key):

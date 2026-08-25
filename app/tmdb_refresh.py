@@ -378,18 +378,36 @@ def apply_tmdb_refresh(
                         f"New untouched basename: '{untouched_basename}'"
                     )
 
+                # The new basenames commit BEFORE any archive move is
+                # queued: a deferred re-archive reads the key the record
+                # wants from its own session, so it must not be able to
+                # start while that key is still only in this transaction
+
+                try:
+                    db.session.commit()
+
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
+
+                for f in files:
                     aws_untouched_key = os.path.join(
                         current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        sanitize_s3_key(untouched_basename),
+                        sanitize_s3_key(f.untouched_basename),
                     )
                     if f.aws_untouched_key != aws_untouched_key and os.path.exists(
                         os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
                     ):
-                        # Moves the S3 object (or deliberately declines,
-                        # for Deep Archive) — the field only changes when
-                        # the object really moved
+                        # Moves the S3 object — the field only changes
+                        # when the object really moved. An object that
+                        # can't be copied server-side (Deep Archive)
+                        # needs the library copy re-uploaded instead,
+                        # which is far too big for this queue's budget:
+                        # defer_upload hands that to the file queue (#231)
                         try:
-                            rename_untouched_object(f, aws_untouched_key)
+                            rename_untouched_object(
+                                f, aws_untouched_key, defer_upload=True
+                            )
                         except Exception:
                             current_app.logger.error(traceback.format_exc())
 
