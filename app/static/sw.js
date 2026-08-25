@@ -1,9 +1,17 @@
 // Fitzflix service worker: keeps the shopping list and search usable in
 // stores with bad reception. Static assets (posters, icons, CDN styles)
-// are served cache-first; pages are network-first so they're always fresh
-// online, with the last good copy as the offline fallback.
+// are served from cache and revalidated in the background; pages are
+// network-first so they're always fresh online, with the last good copy
+// as the offline fallback.
+//
+// Only successful responses are cached. A failure kept cache-first is
+// permanent: a 502 from the reverse proxy — gunicorn recycling mid-request
+// is enough to produce one — was stored under a custom poster's URL and
+// served in that image's place from then on, in the one browser that
+// happened to load it during the restart, until its cache was emptied
+// by hand (#206).
 
-const CACHE = "fitzflix-v1";
+const CACHE = "fitzflix-v2";
 
 self.addEventListener("install", function () {
 	self.skipWaiting();
@@ -30,6 +38,16 @@ self.addEventListener("activate", function (event) {
 	);
 });
 
+// An error page or a missing file must never displace the last good copy:
+// the offline fallback would then serve the failure instead of the page,
+// and a cached 404 for an asset would outlive the file that replaced it.
+// Cross-origin CDN responses are opaque (status 0), so they're judged by
+// type rather than by status
+
+function isCacheable(response) {
+	return response.ok || response.type === "opaque";
+}
+
 self.addEventListener("fetch", function (event) {
 	var request = event.request;
 
@@ -46,7 +64,8 @@ self.addEventListener("fetch", function (event) {
 
 	var isManifest = url.pathname.endsWith("/site.webmanifest");
 
-	// Static assets and CDN resources: cache first, fetch once
+	// Static assets and CDN resources: answered from cache, refreshed
+	// in the background
 
 	if (
 		!isManifest &&
@@ -54,16 +73,28 @@ self.addEventListener("fetch", function (event) {
 	) {
 		event.respondWith(
 			caches.match(request).then(function (cached) {
-				return (
-					cached ||
-					fetch(request).then(function (response) {
-						var copy = response.clone();
-						caches.open(CACHE).then(function (cache) {
-							cache.put(request, copy);
-						});
+				// Stale-while-revalidate: the cached copy answers straight
+				// away, and the background fetch replaces it for next time.
+				// These URLs are stable but their contents are not — a
+				// custom poster and the site's own CSS are both replaced in
+				// place — so an entry that never refreshed would serve the
+				// old bytes until the cache version changed
+
+				var revalidated = fetch(request)
+					.then(function (response) {
+						if (isCacheable(response)) {
+							var copy = response.clone();
+							caches.open(CACHE).then(function (cache) {
+								cache.put(request, copy);
+							});
+						}
 						return response;
 					})
-				);
+					.catch(function () {
+						return cached || Response.error();
+					});
+
+				return cached || revalidated;
 			})
 		);
 		return;
@@ -75,10 +106,12 @@ self.addEventListener("fetch", function (event) {
 	event.respondWith(
 		fetch(request)
 			.then(function (response) {
-				var copy = response.clone();
-				caches.open(CACHE).then(function (cache) {
-					cache.put(request, copy);
-				});
+				if (isCacheable(response)) {
+					var copy = response.clone();
+					caches.open(CACHE).then(function (cache) {
+						cache.put(request, copy);
+					});
+				}
 				return response;
 			})
 			.catch(function () {

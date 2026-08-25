@@ -228,12 +228,31 @@ def test_service_worker_is_served_from_root_scope(client):
     response = client.get("/sw.js")
     assert response.status_code == 200
     assert "javascript" in response.headers["Content-Type"]
-    assert b"fitzflix-v1" in response.data
+    assert b"fitzflix-v2" in response.data
 
     # The manifest is excluded from cache-first so start_url/icon/shortcut
     # edits actually reach installed apps
 
     assert b"site.webmanifest" in response.data
+
+
+def test_service_worker_only_caches_successful_responses(client):
+    """A failed response kept cache-first is permanent: a proxy 502 stored
+    under a poster's URL was served in the image's place until that browser's
+    cache was emptied (#206). So every cache.put is gated on the response
+    being usable, and the static branch revalidates so a file replaced in
+    place isn't served stale forever."""
+
+    body = client.get("/sw.js").get_data(as_text=True)
+
+    assert "function isCacheable(response)" in body
+    assert 'response.ok || response.type === "opaque"' in body
+
+    # Neither branch may write to the cache unconditionally
+
+    assert body.count("cache.put(request, copy)") == body.count(
+        "if (isCacheable(response))"
+    )
 
 
 def test_pages_register_the_service_worker(admin_client):
