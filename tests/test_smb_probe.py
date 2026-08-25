@@ -1,0 +1,344 @@
+"""The SMB lost-handle probe: the cheap question that finds a file whose
+handle the NAS has lost before a 28GB upload discovers it at close().
+
+A file in that state reads perfectly and answers close(2) with EBADF
+forever, so the only way to see it is to ask.
+"""
+
+import errno
+import json
+import os
+
+import pytest
+
+
+class UnclosableOS:
+    """An os module whose close(2) answers EBADF the way the NAS does.
+
+    Patched onto app.smb_probe only, so the fake close can't reach the
+    Redis connection the recorder is using.
+    """
+
+    def __init__(self, err=errno.EBADF):
+        self.err = err
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    def close(self, fd):
+        os.close(fd)
+        raise OSError(self.err, os.strerror(self.err))
+
+
+def test_healthy_file_probes_clean(app, tmp_path):
+    from app.smb_probe import lost_handle, probe_path
+
+    path = str(tmp_path / "healthy.mkv")
+    open(path, "wb").write(b"x")
+
+    result = probe_path(path)
+    assert result["ok"]
+    assert result["errno"] is None
+    assert not lost_handle(result)
+
+
+def test_missing_file_reports_the_open_not_a_lost_handle(app, tmp_path):
+    """A file that isn't there is a different problem, and counting it as a
+    handle failure would bury the real ones."""
+
+    from app.smb_probe import lost_handle, probe_path
+
+    result = probe_path(str(tmp_path / "gone.mkv"))
+    assert not result["ok"]
+    assert result["stage"] == "open"
+    assert result["errno"] == errno.ENOENT
+    assert not lost_handle(result)
+
+
+def test_failing_close_is_the_lost_handle_state(app, tmp_path, monkeypatch):
+    """The signature: the open succeeds, the close returns EBADF."""
+
+    from app import smb_probe
+
+    path = str(tmp_path / "unclosable.mkv")
+    open(path, "wb").write(b"x")
+
+    monkeypatch.setattr(smb_probe, "os", UnclosableOS())
+
+    result = smb_probe.probe_path(path)
+    assert not result["ok"]
+    assert result["stage"] == "close"
+    assert smb_probe.lost_handle(result)
+
+
+def test_a_close_failure_that_is_not_ebadf_is_not_the_state(app, tmp_path, monkeypatch):
+    from app import smb_probe
+
+    path = str(tmp_path / "eio.mkv")
+    open(path, "wb").write(b"x")
+
+    monkeypatch.setattr(smb_probe, "os", UnclosableOS(errno.EIO))
+
+    result = smb_probe.probe_path(path)
+    assert not result["ok"]
+    assert not smb_probe.lost_handle(result)
+
+
+def failure(path, stage="close", err=errno.EBADF):
+    """A probe result standing in for a file in the lost-handle state."""
+
+    return {
+        "path": path,
+        "ok": False,
+        "stage": stage,
+        "errno": err,
+        "message": f"{stage} failed: Bad file descriptor (errno {err})",
+    }
+
+
+def test_repeated_failures_keep_the_first_sighting(app):
+    """How long a file has been stuck is the number the investigation
+    wants, so a later probe must not reset the clock."""
+
+    from app.smb_probe import record_result, recorded_state
+
+    with app.app_context():
+        first = record_result(failure("/library/stuck.mkv"), context="mkvpropedit_task")
+        again = record_result(failure("/library/stuck.mkv"), context="cli probe")
+
+        assert again["first_seen"] == first["first_seen"]
+        assert again["last_seen"] >= first["last_seen"]
+        assert again["context"] == "cli probe"
+
+        state = recorded_state()
+        assert list(state) == ["/library/stuck.mkv"]
+        assert state["/library/stuck.mkv"]["errno"] == errno.EBADF
+
+
+def test_a_clean_probe_records_the_recovery_it_found(app, tmp_path):
+    """The duration is the whole point, so a recovery is recorded rather
+    than deleted: the entry stops being a failure and starts carrying how
+    long the file was stuck."""
+
+    from app.smb_probe import (
+        HEALED,
+        failing_state,
+        healed_state,
+        probe_path,
+        record_result,
+    )
+
+    path = str(tmp_path / "recovered.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        record_result(failure(path), context="mkvpropedit_task")
+        assert path in failing_state()
+
+        entry = record_result(probe_path(path), context="mkvpropedit_task")
+
+        assert entry["state"] == HEALED
+        assert entry["healed_at"]
+        assert entry["held_for_seconds"] >= 0
+        assert entry["context"] == "mkvpropedit_task"
+        assert path not in failing_state()
+        assert path in healed_state()
+
+
+def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
+    """The gap this closes. On Aug 25 2026 the one real recovery went
+    unmeasured because mkvpropedit_task's own clean probe deleted the
+    record before any recheck could read it."""
+
+    from app.smb_probe import probe_and_record, recheck, record_result
+
+    path = str(tmp_path / "healed-by-a-task.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        record_result(failure(path), context="mkvpropedit_task")
+
+        # The task touches the file again after the mount comes back
+
+        probe_and_record(path, context="mkvpropedit_task")
+
+        healed, still_failing = recheck()
+
+        assert [result["path"] for result in healed] == [path]
+        assert healed[0]["held_for_seconds"] is not None
+        assert healed[0]["healed_by"] == "mkvpropedit_task"
+        assert still_failing == []
+
+
+def test_a_clean_probe_of_an_unrecorded_file_records_nothing(app, tmp_path):
+    """Healthy files are the overwhelming majority; recording them would
+    turn the record into a library listing."""
+
+    from app.smb_probe import probe_path, record_result, recorded_state
+
+    path = str(tmp_path / "fine.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        assert record_result(probe_path(path)) is None
+        assert recorded_state() == {}
+
+
+def test_a_recovery_is_reported_once_and_then_reaped(app, tmp_path):
+    """Otherwise every recheck re-reports the same recoveries forever."""
+
+    from app.smb_probe import probe_path, recheck, record_result, recorded_state
+
+    path = str(tmp_path / "reported-once.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        record_result(failure(path))
+        record_result(probe_path(path))
+
+        healed, _ = recheck()
+        assert [result["path"] for result in healed] == [path]
+
+        assert recorded_state() == {}
+        assert recheck() == ([], [])
+
+
+def test_breaking_again_after_a_recovery_starts_a_new_clock(app, tmp_path):
+    """A second episode is its own episode: inheriting the first sighting
+    would report a duration that spans a stretch when the file was fine."""
+
+    from app.smb_probe import FAILING, probe_path, record_result
+
+    path = str(tmp_path / "twice.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        first = record_result(failure(path))
+        record_result(probe_path(path))
+        again = record_result(failure(path))
+
+        assert again["state"] == FAILING
+        assert again["first_seen"] > first["first_seen"]
+        assert "healed_at" not in again
+
+
+def test_recheck_reports_how_long_a_file_was_stuck(app, tmp_path):
+    from app.smb_probe import STATE_KEY, recheck, recorded_state
+
+    path = str(tmp_path / "healed.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        # Backdate the sighting: the file has since recovered on its own,
+        # which is exactly what the NAS does
+
+        app.redis.hset(
+            STATE_KEY,
+            path,
+            json.dumps(
+                {
+                    "stage": "close",
+                    "errno": errno.EBADF,
+                    "message": "close failed",
+                    "context": "mkvpropedit_task",
+                    "first_seen": "2026-08-24T12:00:00+00:00",
+                    "last_seen": "2026-08-24T12:00:00+00:00",
+                }
+            ),
+        )
+
+        healed, still_failing = recheck()
+
+        assert [result["path"] for result in healed] == [path]
+        assert healed[0]["held_for_seconds"] > 0
+        assert still_failing == []
+        assert recorded_state() == {}
+
+
+def test_recheck_keeps_a_file_that_is_still_stuck(app, tmp_path, monkeypatch):
+    from app import smb_probe
+
+    path = str(tmp_path / "still-stuck.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        smb_probe.record_result(failure(path), context="mkvpropedit_task")
+        monkeypatch.setattr(smb_probe, "os", UnclosableOS())
+
+        healed, still_failing = smb_probe.recheck()
+
+        assert healed == []
+        assert [result["path"] for result in still_failing] == [path]
+        assert path in smb_probe.recorded_state()
+
+
+def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
+    """The probe runs after work that already succeeded. A diagnostic that
+    can fail the task it's reporting on is worse than no diagnostic."""
+
+    from app import smb_probe
+
+    def exploding_probe(path):
+        raise RuntimeError("redis is down, or the mount is")
+
+    monkeypatch.setattr(smb_probe, "probe_path", exploding_probe)
+
+    with app.app_context():
+        assert smb_probe.probe_and_record("/library/whatever.mkv") is None
+
+
+def test_mkvpropedit_probes_the_file_it_just_wrote(app, monkeypatch):
+    """The bulk mkvpropedit run is the reproducer, so the task reports for
+    itself instead of waiting for the re-archive's close to fail."""
+
+    import app.videos as videos
+
+    from app import db, smb_probe, tracks
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Probe After Edit", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        path = smb_probe.library_path(file)
+
+        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", lambda *a, **kw: True)
+        monkeypatch.setattr(smb_probe, "probe_path", failure)
+
+        assert videos.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is True
+
+        state = smb_probe.recorded_state()
+        assert path in state
+        assert state[path]["context"] == "mkvpropedit_task"
+
+
+def test_mkvpropedit_probes_after_a_failed_edit_too(app, monkeypatch):
+    """The Aug 24 sighting surfaced as an S3 error at the end of the
+    re-archive, so the failure path is the one that most needs to say
+    which file went bad."""
+
+    import app.videos as videos
+
+    from app import db, smb_probe, tracks
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Probe After Failure", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+        path = smb_probe.library_path(file)
+
+        def unsafe_unlocked(*args, **kwargs):
+            error = OSError(errno.EBADF, "Bad file descriptor")
+            error.retry_unsafe = True
+            raise error
+
+        monkeypatch.setattr(tracks, "mkvpropedit_unlocked", unsafe_unlocked)
+        monkeypatch.setattr(smb_probe, "probe_path", failure)
+
+        with pytest.raises(OSError):
+            videos.mkvpropedit_task(file_id, "2", None, [])
+
+        assert path in smb_probe.recorded_state()

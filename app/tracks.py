@@ -35,6 +35,7 @@ from app import db, get_app, retry_job_id, safe_job_id
 from app.aws_storage import aws_upload
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.plex_library import enqueue_plex_analyze
+from app.smb_probe import library_path, probe_and_record
 
 
 def watch_mkvmerge_progress(process, job, name, activity):
@@ -629,8 +630,14 @@ def mkvpropedit_task(
         if not lock:
             return True
 
+        # Bulk writing over SMB is what puts files into the lost-handle
+        # state, so ask this one directly on the way out rather than
+        # letting a later upload's close discover it
+
+        probed_path = library_path(file)
+
         try:
-            return mkvpropedit_unlocked(
+            edited = mkvpropedit_unlocked(
                 file_id,
                 default_audio_track,
                 default_subtitle_track,
@@ -638,6 +645,7 @@ def mkvpropedit_task(
                 track_languages,
             )
         except OSError as e:
+            probe_and_record(probed_path, context="mkvpropedit_task")
             if (
                 e.errno in TRANSIENT_COPY_ERRNOS
                 and transient_retries < MAX_TRANSIENT_RETRIES
@@ -672,6 +680,9 @@ def mkvpropedit_task(
                 return False
             current_app.logger.error(traceback.format_exc())
             raise
+        else:
+            probe_and_record(probed_path, context="mkvpropedit_task")
+            return edited
         finally:
             current_app.lock_manager.unlock(lock)
 

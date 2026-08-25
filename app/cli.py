@@ -482,3 +482,129 @@ def register(app):
                 f"hit@10 {metrics['hit_at_10']:.1%}, "
                 f"hit@25 {metrics['hit_at_25']:.1%}"
             )
+
+    @app.cli.group()
+    def smb():
+        """Probe library files for the SMB lost-handle state."""
+        pass
+
+    @smb.command()
+    @click.option(
+        "--file-id",
+        "file_ids",
+        multiple=True,
+        type=int,
+        help="Probe these file ids; repeatable.",
+    )
+    @click.option(
+        "--since",
+        default=None,
+        type=int,
+        help="Probe every file written in the last N minutes — the way to "
+        "ask a finished batch which files it broke.",
+    )
+    @click.option("--all", "everything", is_flag=True, help="Probe the whole library.")
+    def probe(file_ids, since, everything):
+        """Open and close files to find the ones whose handle the NAS lost.
+
+        Reads still succeed on such a file, so nothing else notices until
+        an upload's final close fails. Costs one open and one close each."""
+
+        from datetime import datetime, timedelta, timezone
+
+        from app.models import File
+        from app.smb_probe import library_path, lost_handle, probe_path, record_result
+
+        query = File.query
+        if file_ids:
+            query = query.filter(File.id.in_(file_ids))
+        elif everything:
+            pass
+        else:
+            minutes = since if since is not None else 60
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+            query = query.filter(File.date_updated >= cutoff)
+            click.echo(f"Probing files written in the last {minutes} minute(s)")
+
+        files = query.order_by(File.file_path).all()
+        if not files:
+            click.echo("No files matched")
+            return
+
+        broken = []
+        other = []
+        for file in files:
+            result = probe_path(library_path(file))
+            record_result(result, context="cli probe")
+            if lost_handle(result):
+                broken.append(file)
+                click.echo(f"  LOST HANDLE  {file.file_path}")
+            elif not result["ok"]:
+                other.append(file)
+                click.echo(f"  {result['message']}  {file.file_path}")
+
+        click.echo(
+            f"{len(files)} file(s) probed, {len(broken)} in the lost-handle "
+            f"state, {len(other)} otherwise unreadable"
+        )
+
+    @smb.command()
+    def status():
+        """List the files currently recorded as failing their probe."""
+
+        from app.smb_probe import failing_state, healed_state
+
+        failing = failing_state()
+        pending = healed_state()
+
+        if not failing:
+            click.echo("No files are recorded as failing")
+
+        for path in sorted(failing):
+            entry = failing[path]
+            click.echo(
+                f"  {entry['message']} since {entry['first_seen']} "
+                f"(after {entry.get('context') or 'unknown'})  {path}"
+            )
+
+        if failing:
+            click.echo(f"{len(failing)} file(s) failing")
+
+        # Recoveries wait here to be reported: a task's own clean probe
+        # records one, and used to erase the duration instead
+
+        if pending:
+            click.echo(
+                f"{len(pending)} recovery(ies) recorded and not yet reported; "
+                f"run 'flask smb recheck' to see how long they were stuck"
+            )
+
+    @smb.command()
+    def recheck():
+        """Report every recovery, and re-probe the files still failing.
+
+        Run it on a schedule during an investigation: how long a file
+        stays in the state is the number nothing has ever measured.
+        Recoveries are reported once and then dropped, so run it before
+        you need the numbers, not after."""
+
+        from app.smb_probe import recheck as recheck_state
+
+        healed, still_failing = recheck_state()
+        for result in healed:
+            held = result.get("held_for_seconds")
+
+            # "at least": first_seen is when something first asked, and the
+            # file was already in the state by then
+
+            duration = f" after at least {held / 60:.0f} minute(s)" if held else ""
+            found_by = result.get("healed_by")
+            found = (
+                f", found by {found_by}" if found_by and found_by != "recheck" else ""
+            )
+            click.echo(f"  RECOVERED{duration}{found}  {result['path']}")
+        for result in still_failing:
+            click.echo(
+                f"  still failing since {result['first_seen']}  {result['path']}"
+            )
+        click.echo(f"{len(healed)} recovered, {len(still_failing)} still failing")
