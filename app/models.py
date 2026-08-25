@@ -1857,6 +1857,15 @@ class File(db.Model):
     aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)
     aws_untouched_date_deleted = db.Column(db.DateTime)
+
+    # Set when an archive upload was lost and the S3 object is known to
+    # be older than the local file. Nothing else can tell: the key still
+    # exists and the date is the old upload's, so every existing check
+    # reads the row as consistent. Cleared by a successful upload.
+
+    aws_untouched_stale = db.Column(
+        db.Boolean, nullable=False, server_default="0", default=False
+    )
     subtrack = db.relationship(
         "FileSubtitleTrack", backref="file", lazy="select", cascade="all,delete"
     )

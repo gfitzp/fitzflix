@@ -296,6 +296,7 @@ def sync_aws_s3_storage_task():
                 if (
                     file.aws_untouched_key not in s3_keys
                     or file.aws_untouched_date_uploaded == None
+                    or file.aws_untouched_stale
                 ) and os.path.isfile(file_path):
 
                     # ...then queue for upload to S3
@@ -725,6 +726,7 @@ def upload_task(
                 )
 
             file.date_updated = file.aws_untouched_date_uploaded
+            file.aws_untouched_stale = False
 
             db.session.commit()
 
@@ -1126,7 +1128,7 @@ def aws_upload(
 ):
     """Search for a file in AWS S3, and upload if it doesn't exist or if it differs."""
 
-    from app.videos import move_to_rejects
+    from app.videos import TRANSIENT_COPY_ERRNOS, move_to_rejects
 
     if not os.path.isfile(file_path):
         current_app.logger.error(
@@ -1240,6 +1242,22 @@ def aws_upload(
                 current_app.logger.error(e)
                 raise
 
+        except OSError as e:
+            # A mount that dropped out is not a bad file. Rejecting it
+            # would move a library file out of the library over a problem
+            # that clears on its own — and this is exactly how the NAS's
+            # lost-handle state arrives, from inside s3transfer's close.
+
+            if e.errno in TRANSIENT_COPY_ERRNOS:
+                current_app.logger.error(
+                    f"'{file_path}' upload failed on a transient filesystem "
+                    f"error ({e.strerror}); leaving the file where it is"
+                )
+                raise
+
+            move_to_rejects(file_path, "upload error")
+            raise
+
         except:
             move_to_rejects(file_path, "upload error")
             raise
@@ -1259,6 +1277,38 @@ def aws_upload(
     raise RuntimeError(
         f"Unable to upload '{file_path}' to AWS after {MAX_RETRY_COUNT} attempts"
     )
+
+
+def mark_archive_stale(file_id, reason=""):
+    """Record that a file's S3 archive is older than its local copy.
+
+    Committed in its own transaction because every caller is a failure
+    path that rolls back, and a marker discarded by that rollback would
+    leave the loss exactly as undiscoverable as it was before: the key
+    still exists and its date is the previous upload's, so nothing that
+    inspects the row can tell the archive is behind.
+    """
+
+    from app.models import File
+
+    try:
+        file = File.query.filter_by(id=file_id).first()
+        if file is None:
+            return False
+
+        file.aws_untouched_stale = True
+        db.session.commit()
+
+    except Exception:
+        db.session.rollback()
+        current_app.logger.error(traceback.format_exc())
+        return False
+
+    current_app.logger.warning(
+        f"'{file.basename}' its S3 archive is now stale ({reason}); "
+        f"queued for repair, which will run once the file is readable again"
+    )
+    return True
 
 
 def calculate_etag(file_path):

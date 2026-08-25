@@ -401,6 +401,136 @@ def test_share_root_is_the_share_not_the_library(app):
         )
 
 
+def test_the_stale_mark_survives_the_rollback_that_follows_it(app):
+    """Every caller is a failure path that rolls back. A marker taken
+    with it would leave the loss as undiscoverable as before."""
+
+    from app import db
+    from app.aws_storage import mark_archive_stale
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Rolled Back", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        file_id = file.id
+
+        assert mark_archive_stale(file_id, reason="test") is True
+        db.session.rollback()
+
+        db.session.expire_all()
+        assert File.query.get(file_id).aws_untouched_stale is True
+
+
+def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
+    """Otherwise the repair queue never empties."""
+
+    from datetime import datetime, timezone
+
+    from app import db
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    import app.aws_storage as aws_storage
+
+    with app.app_context():
+        movie = make_movie("Repaired", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        file.aws_untouched_key = "untouched/repaired.mkv"
+        file.aws_untouched_stale = True
+        db.session.commit()
+        file_id = file.id
+
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_upload",
+            lambda **kwargs: (
+                "untouched/repaired.mkv",
+                datetime.now(timezone.utc),
+                123,
+            ),
+        )
+
+        assert aws_storage.upload_task(file_id) is True
+
+        db.session.expire_all()
+        assert File.query.get(file_id).aws_untouched_stale is False
+
+
+def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeypatch):
+    """Rejecting would move a library file out of the library over a
+    problem that clears on its own — and this is precisely how the
+    lost-handle state arrives, from inside s3transfer's close."""
+
+    import app.aws_storage as aws_storage
+    import app.videos as videos
+
+    path = str(tmp_path / "transient.mkv")
+    open(path, "wb").write(b"x")
+
+    rejected = []
+    monkeypatch.setattr(
+        videos, "move_to_rejects", lambda p, reason="": rejected.append(p)
+    )
+
+    class ExplodingClient:
+        def list_objects(self, **kwargs):
+            return {}
+
+        def upload_file(self, *args, **kwargs):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: ExplodingClient())
+
+    app.config["AWS_BUCKET"] = "test-bucket"
+
+    with app.app_context():
+        with pytest.raises(OSError):
+            aws_storage.aws_upload(path, "untouched")
+
+        assert rejected == []
+
+
+def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatch):
+    """Retrying while the handle is lost fails exactly the same way, so
+    the probe is what decides whether a repair can run at all — the whole
+    reason the two halves belong together."""
+
+    import app.cli as app_cli
+
+    from app import db, smb_probe
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    app_cli.register(app)
+
+    with app.app_context():
+        movie = make_movie("Still Stuck", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        file.aws_untouched_key = "untouched/still-stuck.mkv"
+        file.aws_untouched_stale = True
+        db.session.commit()
+
+        queued = []
+        monkeypatch.setattr(smb_probe, "probe_path", failure)
+        monkeypatch.setattr(
+            app.file_queue,
+            "enqueue",
+            lambda *a, **kw: queued.append(a),
+        )
+
+        result = app.test_cli_runner().invoke(args=["smb", "repair", "--enqueue"])
+
+        assert "BLOCKED" in result.output
+        assert queued == []
+
+        # And it stays marked, so the nightly sync still owes the repair
+
+        db.session.expire_all()
+        assert File.query.filter_by(aws_untouched_stale=True).count() == 1
+
+
 def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
     """The probe runs after work that already succeeded. A diagnostic that
     can fail the task it's reporting on is worse than no diagnostic."""

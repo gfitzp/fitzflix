@@ -585,6 +585,7 @@ def register(app):
     def status():
         """List the files currently recorded as failing their probe."""
 
+        from app.models import File
         from app.smb_probe import failing_state, healed_state
 
         failing = failing_state()
@@ -611,6 +612,78 @@ def register(app):
                 f"{len(pending)} recovery(ies) recorded and not yet reported; "
                 f"run 'flask smb recheck' to see how long they were stuck"
             )
+
+        stale = File.query.filter_by(aws_untouched_stale=True).count()
+        if stale:
+            click.echo(
+                f"{stale} file(s) have a stale S3 archive; "
+                f"run 'flask smb repair' to re-archive them"
+            )
+
+    @smb.command()
+    @click.option(
+        "--enqueue",
+        is_flag=True,
+        help="Actually queue the repairs, instead of only reporting them.",
+    )
+    def repair(enqueue):
+        """Re-archive the files whose S3 copy is behind the local one.
+
+        A lost re-archive is invisible to everything else — the key is
+        still there and its date is the old upload's — so these files
+        would otherwise keep a pre-edit archive forever. Retrying while
+        the handle is still lost just fails the same way, so each file is
+        probed first and only the readable ones are queued."""
+
+        from flask import current_app
+
+        from app.models import File
+        from app.smb_probe import library_path, lost_handle, probe_path, unmounted
+
+        files = (
+            File.query.filter_by(aws_untouched_stale=True)
+            .order_by(File.file_path)
+            .all()
+        )
+        if not files:
+            click.echo("No archives are marked stale")
+            return
+
+        ready = []
+        blocked = []
+        offline = []
+        for file in files:
+            result = probe_path(library_path(file))
+            if lost_handle(result):
+                blocked.append(file)
+                click.echo(f"  BLOCKED, handle still lost  {file.file_path}")
+            elif not result["ok"]:
+                offline.append(file)
+                reason = "share not mounted" if unmounted(result) else result["message"]
+                click.echo(f"  UNREADABLE ({reason})  {file.file_path}")
+            else:
+                ready.append(file)
+                click.echo(f"  {'QUEUED' if enqueue else 'READY'}  {file.file_path}")
+
+                if enqueue:
+                    current_app.file_queue.enqueue(
+                        "app.videos.upload_task",
+                        args=(
+                            file.id,
+                            current_app.config["AWS_UNTOUCHED_PREFIX"],
+                            True,
+                        ),
+                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                        description=f"'{file.basename}'",
+                    )
+
+        click.echo(
+            f"{len(files)} stale archive(s): {len(ready)} "
+            f"{'queued' if enqueue else 'ready to repair'}, "
+            f"{len(blocked)} blocked by a lost handle, {len(offline)} unreadable"
+        )
+        if ready and not enqueue:
+            click.echo("Re-run with --enqueue to queue the repairs")
 
     @smb.command(name="history")
     def show_history():

@@ -32,7 +32,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app, retry_job_id, safe_job_id
-from app.aws_storage import aws_upload
+from app.aws_storage import aws_upload, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
 from app.plex_library import enqueue_plex_analyze
 from app.smb_probe import library_path, probe_and_record
@@ -1003,15 +1003,25 @@ def mkvpropedit_unlocked(
                     force_upload=True,
                     ignore_etag=True,
                 )
+                file.aws_untouched_stale = False
 
             except OSError as e:
                 # The edit itself already succeeded and committed, so a
                 # whole-task retry could re-edit a restructured file; only
-                # the re-upload was lost, and the S3 sync task heals that
+                # the re-upload was lost.
+                #
+                # Nothing else can find that loss on its own. The S3 key
+                # still exists and carries the previous upload's date, so
+                # the sync task reads the row as consistent — and then
+                # backfills the recorded size from the stale object, which
+                # makes the row consistent with the wrong copy. Left alone
+                # the archive stays a pre-edit file forever, so say so
+                # explicitly and let the repair queue deal with it.
 
                 e.retry_unsafe = True
                 current_app.logger.error(traceback.format_exc())
                 db.session.rollback()
+                mark_archive_stale(file_id, reason="re-archive after a track edit")
                 raise
 
             except Exception:
