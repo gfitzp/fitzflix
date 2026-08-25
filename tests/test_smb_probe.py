@@ -162,7 +162,8 @@ def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
 
         probe_and_record(path, context="mkvpropedit_task")
 
-        healed, still_failing, _ = recheck()
+        report = recheck()
+        healed, still_failing = report.healed, report.still_failing
 
         assert [result["path"] for result in healed] == [path]
         assert healed[0]["held_for_seconds"] is not None
@@ -196,11 +197,11 @@ def test_a_recovery_is_reported_once_and_then_reaped(app, tmp_path):
         record_result(failure(path))
         record_result(probe_path(path))
 
-        healed, _, _ = recheck()
+        healed = recheck().healed
         assert [result["path"] for result in healed] == [path]
 
         assert recorded_state() == {}
-        assert recheck() == ([], [], [])
+        assert recheck() == ([], [], [], [])
 
 
 def test_breaking_again_after_a_recovery_starts_a_new_clock(app, tmp_path):
@@ -247,7 +248,8 @@ def test_recheck_reports_how_long_a_file_was_stuck(app, tmp_path):
             ),
         )
 
-        healed, still_failing, _ = recheck()
+        report = recheck()
+        healed, still_failing = report.healed, report.still_failing
 
         assert [result["path"] for result in healed] == [path]
         assert healed[0]["held_for_seconds"] > 0
@@ -265,7 +267,8 @@ def test_recheck_keeps_a_file_that_is_still_stuck(app, tmp_path, monkeypatch):
         smb_probe.record_result(failure(path), context="mkvpropedit_task")
         monkeypatch.setattr(smb_probe, "os", UnclosableOS())
 
-        healed, still_failing, _ = smb_probe.recheck()
+        report = smb_probe.recheck()
+        healed, still_failing = report.healed, report.still_failing
 
         assert healed == []
         assert [result["path"] for result in still_failing] == [path]
@@ -304,12 +307,98 @@ def test_a_recorded_file_that_leaves_the_volume_is_dropped(app, tmp_path):
 
         # The file goes away — a rename, or a better edition replacing it
 
-        healed, still_failing, gone = recheck()
+        report = recheck()
 
-        assert healed == []
-        assert still_failing == []
-        assert [result["path"] for result in gone] == [path]
+        assert report.healed == []
+        assert report.still_failing == []
+        assert [result["path"] for result in report.gone] == [path]
         assert recorded_state() == {}
+
+
+def test_an_unmounted_share_is_not_thousands_of_departures(app, tmp_path, monkeypatch):
+    """The trap this closes. Every file on an unmounted share reports
+    ENOENT at once, and calling that departure would drop the whole
+    record — including durations that exist nowhere else."""
+
+    from app import smb_probe
+
+    path = str(tmp_path / "Movies" / "on-a-dead-share.mkv")
+
+    with app.app_context():
+        smb_probe.record_result(failure(path), context="mkvpropedit_task")
+
+        # The share the file lives on is not there
+
+        monkeypatch.setattr(smb_probe, "share_available", lambda p: False)
+
+        report = smb_probe.recheck()
+
+        assert report.gone == []
+        assert report.healed == []
+        assert [result["path"] for result in report.skipped] == [path]
+
+        # The record — and the first_seen it carries — must survive
+
+        assert path in smb_probe.recorded_state()
+
+
+def test_a_recovery_outlives_the_recheck_that_reported_it(app, tmp_path):
+    """recheck reaps what it reports, so without a durable history the
+    only trace of a measurement is the terminal that ran the command."""
+
+    from app.smb_probe import history, probe_path, recheck, record_result
+
+    path = str(tmp_path / "measured.mkv")
+    open(path, "wb").write(b"x")
+
+    with app.app_context():
+        record_result(failure(path), context="mkvpropedit_task")
+        record_result(probe_path(path), context="recheck")
+
+        recheck()  # reports the recovery and reaps the state entry
+
+        episodes = history()
+        assert [episode["path"] for episode in episodes] == [path]
+        assert episodes[0]["held_for_seconds"] is not None
+        assert episodes[0]["context"] == "mkvpropedit_task"
+
+        # And a second recheck doesn't duplicate it
+
+        recheck()
+        assert len(history()) == 1
+
+
+def test_history_accumulates_across_episodes(app, tmp_path):
+    """One episode never answers how long the state lasts."""
+
+    from app.smb_probe import history, probe_path, record_result
+
+    with app.app_context():
+        for name in ("first.mkv", "second.mkv"):
+            path = str(tmp_path / name)
+            open(path, "wb").write(b"x")
+            record_result(failure(path), context="cli probe")
+            record_result(probe_path(path), context="recheck")
+
+        assert len(history()) == 2
+
+
+def test_share_root_is_the_share_not_the_library(app):
+    """A path's share is the first component below LIBRARY_DIR, which is
+    what gets unmounted — /Volumes/Movies, not /Volumes."""
+
+    import os
+
+    from app.smb_probe import share_root
+
+    with app.app_context():
+        library = app.config["LIBRARY_DIR"]
+        assert share_root(
+            os.path.join(library, "Movies", "x", "y.mkv")
+        ) == os.path.join(library, "Movies")
+        assert share_root(os.path.join(library, "TV Shows", "s", "e.mkv")) == (
+            os.path.join(library, "TV Shows")
+        )
 
 
 def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):

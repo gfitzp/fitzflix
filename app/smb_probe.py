@@ -25,10 +25,20 @@ import errno
 import json
 import os
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from flask import current_app
 
 STATE_KEY = "fitzflix:smb:handle_state"
+
+# Recoveries are reported once and reaped from the state, so the durations
+# would live nowhere but the terminal that happened to run the recheck.
+# They accumulate here instead: the state says what is broken, the history
+# says what the state has ever cost, and only the history answers how long
+# this lasts.
+
+HISTORY_KEY = "fitzflix:smb:handle_history"
+HISTORY_LIMIT = 1000
 
 # What a record describes: a file failing its probe now, or one that has
 # recovered and is holding its duration until a recheck reports it
@@ -140,6 +150,50 @@ def absent(result):
     )
 
 
+def share_root(path):
+    """The share a library path lives on.
+
+    Library paths are LIBRARY_DIR plus a share name — /Volumes/Movies,
+    /Volumes/TV Shows — so the share is the first component below the
+    configured library directory. A path from somewhere else answers with
+    the library directory itself.
+    """
+
+    library_dir = current_app.config["LIBRARY_DIR"]
+    first = os.path.relpath(path, library_dir).split(os.sep)[0]
+
+    if first in ("", os.curdir, os.pardir):
+        return library_dir
+
+    return os.path.join(library_dir, first)
+
+
+def share_available(path):
+    """Whether the share a path belongs to is currently there.
+
+    Deliberately isdir and not ismount: macOS deletes the mount point
+    when an SMB share unmounts, so its absence is the signal, and a
+    library that isn't on a separate mount still answers correctly.
+    """
+
+    try:
+        return os.path.isdir(share_root(path))
+    except OSError:
+        return False
+
+
+def unmounted(result):
+    """Whether an ENOENT means the share is gone, not the file.
+
+    The difference matters enormously: one missing file is routine, a
+    missing share makes every file look deleted at once, and treating
+    that as thousands of departures would drop the whole record —
+    including durations that exist nowhere else.
+    """
+
+    return absent(result) and not share_available(result["path"])
+
+
 def library_path(file):
     """The absolute path of a File row on the library volume."""
 
@@ -188,6 +242,7 @@ def record_result(result, context=None):
             }
         )
         current_app.redis.hset(STATE_KEY, path, json.dumps(entry))
+        _append_history(path, entry)
         return entry
 
     # A file that broke again after recovering is a new episode, so it
@@ -214,6 +269,52 @@ def forget(path):
     """Drop a file's record entirely, reported and done with."""
 
     current_app.redis.hdel(STATE_KEY, path)
+
+
+def _append_history(path, entry):
+    """Record one completed episode, permanently.
+
+    This is the only durable trace: the state entry it came from is
+    reaped by the next recheck. Failures here are swallowed for the same
+    reason the probe swallows its own — losing a measurement is bad, but
+    failing the task that produced it is worse.
+    """
+
+    try:
+        current_app.redis.rpush(
+            HISTORY_KEY,
+            json.dumps(
+                {
+                    "path": path,
+                    "stage": entry.get("stage"),
+                    "errno": entry.get("errno"),
+                    "context": entry.get("context"),
+                    "healed_by": entry.get("healed_by"),
+                    "first_seen": entry.get("first_seen"),
+                    "healed_at": entry.get("healed_at"),
+                    "held_for_seconds": entry.get("held_for_seconds"),
+                }
+            ),
+        )
+        current_app.redis.ltrim(HISTORY_KEY, -HISTORY_LIMIT, -1)
+    except Exception:
+        current_app.logger.warning(
+            f"Could not record the SMB recovery of '{path}' to history",
+            exc_info=True,
+        )
+
+
+def history():
+    """Every recovery ever recorded, oldest first."""
+
+    episodes = []
+    for payload in current_app.redis.lrange(HISTORY_KEY, 0, -1):
+        payload = payload.decode() if isinstance(payload, bytes) else payload
+        try:
+            episodes.append(json.loads(payload))
+        except ValueError:
+            continue
+    return episodes
 
 
 def probe_and_record(path, context=None):
@@ -311,11 +412,21 @@ def _healed_result(path, entry):
     }
 
 
+class RecheckReport(NamedTuple):
+    """What one recheck found. Named because four buckets is past the
+    point where positional unpacking reads as anything."""
+
+    healed: list
+    still_failing: list
+    gone: list
+    skipped: list
+
+
 def recheck():
     """Re-probe the recorded failures and collect every recovery.
 
-    Returns (healed, still_failing, gone) as lists of result dicts. A
-    healed result carries `held_for_seconds` — how long the file spent in the
+    Returns a RecheckReport of result-dict lists. A healed result carries
+    `held_for_seconds` — how long the file spent in the
     state — which is the number the investigation actually wants.
 
     Two kinds of recovery land here: a file this recheck found closing
@@ -326,11 +437,18 @@ def recheck():
     A recorded file that has since left the volume goes into `gone`
     rather than either bucket: it didn't recover, and it can't still be
     stuck, so tracking it forever would be the wrong answer twice.
+
+    A file whose SHARE is unmounted goes into `skipped` and keeps its
+    record untouched. Every file on an unmounted share reports ENOENT at
+    once, and mistaking that for departure would drop the entire record —
+    including durations that exist nowhere else — the moment a recheck
+    happened to run mid-remount.
     """
 
     healed = []
     still_failing = []
     gone = []
+    skipped = []
 
     for path, entry in recorded_state().items():
         if _entry_state(entry) == HEALED:
@@ -340,7 +458,12 @@ def recheck():
 
         result = probe_path(path)
 
-        if absent(result):
+        if unmounted(result):
+            result["first_seen"] = entry.get("first_seen")
+            result["share"] = share_root(path)
+            skipped.append(result)
+
+        elif absent(result):
             result["first_seen"] = entry.get("first_seen")
             gone.append(result)
             forget(path)
@@ -359,4 +482,4 @@ def recheck():
             result["first_seen"] = entry.get("first_seen")
             still_failing.append(result)
 
-    return healed, still_failing, gone
+    return RecheckReport(healed, still_failing, gone, skipped)

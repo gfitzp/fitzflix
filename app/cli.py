@@ -519,6 +519,8 @@ def register(app):
             lost_handle,
             probe_path,
             record_result,
+            share_root,
+            unmounted,
         )
 
         query = File.query
@@ -545,12 +547,16 @@ def register(app):
         broken = []
         other = []
         not_local = []
+        offline_shares = set()
         for file in files:
-            result = probe_path(library_path(file))
+            path = library_path(file)
+            result = probe_path(path)
             record_result(result, context="cli probe")
             if lost_handle(result):
                 broken.append(file)
                 click.echo(f"  LOST HANDLE  {file.file_path}")
+            elif unmounted(result):
+                offline_shares.add(share_root(path))
             elif absent(result):
                 not_local.append(file)
                 if file_ids:
@@ -559,12 +565,20 @@ def register(app):
                 other.append(file)
                 click.echo(f"  {result['message']}  {file.file_path}")
 
+        # An unmounted share isn't a probe result at all — every file on
+        # it reports missing at once, which says nothing about handles
+
+        for share in sorted(offline_shares):
+            click.echo(f"  SHARE NOT MOUNTED  {share} — its files were not probed")
+
         summary = (
             f"{len(files)} file(s) probed, {len(broken)} in the lost-handle "
             f"state, {len(other)} otherwise unreadable"
         )
         if not_local:
             summary += f", {len(not_local)} not on the local volume (not a finding)"
+        if offline_shares:
+            summary += f", {len(offline_shares)} share(s) not mounted"
         click.echo(summary)
 
     @smb.command()
@@ -598,6 +612,48 @@ def register(app):
                 f"run 'flask smb recheck' to see how long they were stuck"
             )
 
+    @smb.command(name="history")
+    def show_history():
+        """Every recovery ever recorded, with how long each one lasted.
+
+        recheck reports a recovery once and reaps it, so this is the only
+        place a duration survives. How long the state lasts is the number
+        the whole investigation is after, and one episode never answers
+        it — the answer accumulates here."""
+
+        from statistics import median
+
+        from app.smb_probe import history
+
+        episodes = history()
+        if not episodes:
+            click.echo("No recoveries recorded yet")
+            return
+
+        for episode in episodes:
+            held = episode.get("held_for_seconds")
+            duration = f"{held / 60:6.0f} min" if held else "      ?    "
+            broke = episode.get("context") or "unknown"
+            click.echo(
+                f"  {duration}  {episode.get('first_seen')} -> "
+                f"{episode.get('healed_at')}  (broke after {broke})  "
+                f"{episode['path']}"
+            )
+
+        # Every duration is a floor — first_seen is when something first
+        # asked, and the file was already stuck by then
+
+        durations = [
+            e["held_for_seconds"] for e in episodes if e.get("held_for_seconds")
+        ]
+        click.echo(f"{len(episodes)} recovery(ies) recorded")
+        if durations:
+            click.echo(
+                f"held for at least: min {min(durations) / 60:.0f} min, "
+                f"median {median(durations) / 60:.0f} min, "
+                f"max {max(durations) / 60:.0f} min"
+            )
+
     @smb.command()
     def recheck():
         """Report every recovery, and re-probe the files still failing.
@@ -609,7 +665,9 @@ def register(app):
 
         from app.smb_probe import recheck as recheck_state
 
-        healed, still_failing, gone = recheck_state()
+        report = recheck_state()
+        healed, still_failing = report.healed, report.still_failing
+        gone, skipped = report.gone, report.skipped
         for result in healed:
             held = result.get("held_for_seconds")
 
@@ -628,8 +686,15 @@ def register(app):
             )
         for result in gone:
             click.echo(f"  GONE from the volume, dropped  {result['path']}")
+        for result in skipped:
+            click.echo(
+                f"  SKIPPED, share not mounted ({result.get('share')}); "
+                f"record kept  {result['path']}"
+            )
 
         summary = f"{len(healed)} recovered, {len(still_failing)} still failing"
         if gone:
             summary += f", {len(gone)} gone"
+        if skipped:
+            summary += f", {len(skipped)} skipped (share not mounted)"
         click.echo(summary)
