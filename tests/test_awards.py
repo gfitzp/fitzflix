@@ -445,3 +445,50 @@ def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
     assert sleeps == [awards.AWARDS_ERROR_PAUSE_SECONDS] * (
         awards.AWARDS_MAX_CONSECUTIVE_FAILURES - 1
     )
+
+
+def test_award_badges_can_wrap(app, admin_client):
+    """#199: Bootstrap's .badge sets white-space: nowrap, so a long award
+    name grew a badge wider than a phone and scrolled the whole page
+    sideways — 939px of badge in a 375px viewport, 579px of overflow.
+    The badge has to carry the wrapping utility to override that."""
+
+    from html.parser import HTMLParser
+
+    long_name = "Golden Reel Award for Outstanding Achievement in Sound Editing - Sound"
+
+    with app.app_context():
+        movie = make_movie("Wrapping Film", 1999, tmdb_data_as_of=datetime.utcnow())
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.add(
+            MovieAward(
+                movie_id=movie.id,
+                award_id="Q123456",
+                award_name=long_name,
+                win=True,
+                year=2000,
+            )
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert long_name in page
+
+    class Badges(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.classes = []
+            self.depth = 0
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "span" and "badge" in (attrs.get("class") or ""):
+                self.classes.append(attrs["class"].split())
+
+    badges = Badges()
+    badges.feed(page)
+    award_badges = [c for c in badges.classes if "text-bg-light" in c]
+    assert award_badges, "no award badge on the page"
+    for classes in award_badges:
+        assert "text-wrap" in classes, "the badge would overflow instead of wrapping"
