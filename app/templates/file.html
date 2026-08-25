@@ -85,7 +85,7 @@
 			{% for audio in audio_tracks %}
 			<tr>
 				<th scope="row">{{ audio.track }}</th>
-				<td>{% if languages %}<input class="form-control form-control-sm" style="width: 6rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" value="{{ audio.language }}" autocomplete="off" spellcheck="false" aria-label="Language of audio track {{ audio.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ audio.language_name }}{% endif %}</td>
+				<td>{% if languages %}<input class="form-control form-control-sm" style="min-width: 11rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" value="{{ language_names.get(audio.language, audio.language) }}" autocomplete="off" spellcheck="false" aria-label="Language of audio track {{ audio.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ audio.language_name }}{% endif %}</td>
 				<td>{{ audio.codec }}</td>
 				<td>{{ audio.channels }}</td>
 				<td>
@@ -119,7 +119,7 @@
 			{% for subtitle in subtitle_tracks %}
 			<tr>
 				<th scope="row">{{ subtitle.track }}</th>
-				<td>{% if languages %}<input class="form-control form-control-sm" style="width: 6rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" value="{{ subtitle.language }}" autocomplete="off" spellcheck="false" aria-label="Language of subtitle track {{ subtitle.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ subtitle.language }}{% endif %}</td>
+				<td>{% if languages %}<input class="form-control form-control-sm" style="min-width: 11rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" value="{{ language_names.get(subtitle.language, subtitle.language) }}" autocomplete="off" spellcheck="false" aria-label="Language of subtitle track {{ subtitle.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ language_names.get(subtitle.language, subtitle.language) }}{% endif %}</td>
 				<td>{{ subtitle.format }}</td>
 				<td>{{ subtitle.elements }}</td>
 				<td></td>
@@ -133,7 +133,7 @@
 </div>
 {% if languages %}
 <datalist id="iso-639-2-languages">
-	{% for code, name in languages %}<option value="{{ code }}" label="{{ name }}"></option>
+	{% for code, name in languages %}<option value="{{ name }}" label="{{ code }}"></option>
 	{% endfor %}
 </datalist>
 {% if file_exists_locally %}<p class="small text-muted mt-n2">Edit a Language cell to correct it, then save with <em>Update MKV Properties</em>.</p>{% endif %}

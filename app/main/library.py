@@ -128,6 +128,7 @@ from app.videos import (
     criterion_release_lookups,
     get_criterion_collection_from_wikidata,
     iso_639_2_languages,
+    language_names,
     resolve_language_code,
     star_rating_fields,
     track_metadata_scan,
@@ -2732,7 +2733,13 @@ def file(file_id):
                 if not language:
                     unresolved.append(submitted.strip())
 
-                elif language != track.language:
+                # Compared as resolved codes, so a box left holding a
+                # stored ISO 639-2/T spelling ("deu") doesn't read as a
+                # request to rewrite the track to the bibliographic one
+
+                elif language != (
+                    resolve_language_code(track.language) or track.language
+                ):
                     track_languages[f"{prefix}{track.track}"] = language
 
         if unresolved:
@@ -3010,11 +3017,15 @@ def file(file_id):
         pending_subtitle_triage=pending_subtitle_triage,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
+        # The boxes show a language by name and the datalist offers the
+        # same names; language_names covers the stored spellings too, so
+        # a track recorded as "deu" still reads as German
         languages=(
             iso_639_2_languages()
             if file.container == "Matroska" and (audio_tracks or subtitle_tracks)
             else ()
         ),
+        language_names=language_names(),
         mkvmerge_form=mkvmerge_form,
         transcode_form=transcode_form,
         upload_form=upload_form,

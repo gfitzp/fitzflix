@@ -345,8 +345,8 @@ def track_metadata_scan(file_id):
 
 # The languages a track can be set to. Read out of mkvtoolnix's own
 # table so the file page can never offer a code the edit would reject,
-# and narrowed to the ISO 639-2 entries — that's what MediaInfo reports
-# back and what the track records store
+# and keyed by the ISO 639-2 codes — that's what the track records
+# store. The other columns become aliases rather than choices
 
 FALLBACK_LANGUAGES = (
     ("eng", "English"),
@@ -354,13 +354,44 @@ FALLBACK_LANGUAGES = (
     ("zxx", "No linguistic content"),
 )
 
+# The twenty languages ISO 639-2 gives two codes: a bibliographic one,
+# which is the only one mkvtoolnix lists, and a terminological one,
+# which is what MediaInfo reports for some files ("deu" not "ger",
+# "fra" not "fre"). The same language either way, so the terminological
+# spellings have to resolve to the codes the table knows rather than be
+# refused as unrecognized
+
+ISO_639_2_TERMINOLOGIC = {
+    "bod": "tib",
+    "ces": "cze",
+    "cym": "wel",
+    "deu": "ger",
+    "ell": "gre",
+    "eus": "baq",
+    "fas": "per",
+    "fra": "fre",
+    "hye": "arm",
+    "isl": "ice",
+    "kat": "geo",
+    "mkd": "mac",
+    "mri": "mao",
+    "msa": "may",
+    "mya": "bur",
+    "nld": "dut",
+    "ron": "rum",
+    "slk": "slo",
+    "sqi": "alb",
+    "zho": "chi",
+}
+
 
 @lru_cache(maxsize=1)
-def iso_639_2_languages():
-    """Every (code, name) pair mkvpropedit accepts, sorted by name.
+def _language_table():
+    """mkvtoolnix's language table as (name, 639-3, 639-2, 639-1) rows.
 
     Cached for the life of the process: the table belongs to the
-    installed mkvtoolnix, not to any one file.
+    installed mkvtoolnix, not to any one file. Empty when it can't be
+    read, which the callers fall back from.
     """
 
     try:
@@ -372,57 +403,106 @@ def iso_639_2_languages():
         ).stdout
 
     except Exception:
+        current_app.logger.error(traceback.format_exc())
+        return ()
+
+    rows = []
+    for line in listing.splitlines():
+        # "English language name | ISO 639-3 | ISO 639-2 | ISO 639-1";
+        # the header and rule rows fail the 3-character check, as do the
+        # 639-3-only languages that have no code the records can hold
+
+        columns = [column.strip() for column in line.split("|")]
+        if len(columns) < 4 or len(columns[2]) != 3:
+            continue
+
+        rows.append(tuple(columns[:4]))
+
+    return tuple(rows)
+
+
+@lru_cache(maxsize=1)
+def iso_639_2_languages():
+    """Every (code, name) pair a track can be set to, sorted by name."""
+
+    rows = _language_table()
+    if not rows:
         # Without the table the page can still offer the three codes
         # this exists to correct between
 
-        current_app.logger.error(traceback.format_exc())
         return FALLBACK_LANGUAGES
 
-    languages = []
-    for line in listing.splitlines():
-        # "English language name | ISO 639-3 | ISO 639-2 | ISO 639-1";
-        # the header and rule rows fail the 3-character check, as do
-        # the 639-3-only languages we can't store
+    return tuple(
+        sorted(
+            ((iso_639_2, name) for name, _, iso_639_2, _ in rows),
+            key=lambda language: language[1].lower(),
+        )
+    )
 
-        columns = [column.strip() for column in line.split("|")]
-        if len(columns) < 3 or len(columns[2]) != 3:
-            continue
 
-        languages.append((columns[2], columns[0]))
+@lru_cache(maxsize=1)
+def _language_aliases():
+    """Everything that names a language, lowercased, to its 639-2 code.
 
-    if not languages:
-        return FALLBACK_LANGUAGES
+    The name, every code column the table carries, and the ISO 639-2/T
+    spellings it doesn't — see ISO_639_2_TERMINOLOGIC.
+    """
 
-    return tuple(sorted(languages, key=lambda language: language[1].lower()))
+    aliases = {}
+    for name, iso_639_3, iso_639_2, iso_639_1 in _language_table():
+        for alias in (name, iso_639_3, iso_639_2, iso_639_1):
+            if alias:
+                aliases.setdefault(alias.lower(), iso_639_2)
+
+    for terminologic, bibliographic in ISO_639_2_TERMINOLOGIC.items():
+        if bibliographic in aliases:
+            aliases.setdefault(terminologic, aliases[bibliographic])
+
+    if not aliases:
+        for code, name in FALLBACK_LANGUAGES:
+            aliases[code] = code
+            aliases[name.lower()] = code
+
+    return aliases
+
+
+@lru_cache(maxsize=1)
+def language_names():
+    """Every code a track record might hold, mapped to its display name.
+
+    Keyed by alias rather than only by the canonical code, so a track
+    stored as "deu" still shows as German.
+    """
+
+    names = dict(iso_639_2_languages())
+    return {
+        alias: names[code]
+        for alias, code in _language_aliases().items()
+        if code in names
+    }
 
 
 def resolve_language_code(value):
     """The ISO 639-2 code for whatever was typed in a language box.
 
-    The datalist fills in the bare code, but browsers disagree over
-    whether they match on an option's label, so a language's name (or
-    the "English (eng)" pairing) is accepted just as readily. Returns
-    None when nothing matches, which the caller reports rather than
-    guessing at.
+    The boxes hold language names, but a bare code in any of the three
+    standards works too, as does the "German (ger)" pairing — someone
+    typing what they know shouldn't have to guess which spelling the
+    table wants. Returns None when nothing matches, which the caller
+    reports rather than guessing at.
     """
 
-    value = (value or "").strip()
+    value = (value or "").strip().lower()
     if not value:
         return None
 
-    languages = iso_639_2_languages()
-    by_code = {code.lower(): code for code, name in languages}
-    by_name = {name.lower(): code for code, name in languages}
+    aliases = _language_aliases()
+    if value in aliases:
+        return aliases[value]
 
-    if value.lower() in by_code:
-        return by_code[value.lower()]
-
-    if value.lower() in by_name:
-        return by_name[value.lower()]
-
-    paired = re.fullmatch(r"(?P<name>.+?)\s*\((?P<code>[A-Za-z]{3})\)", value)
-    if paired and paired.group("code").lower() in by_code:
-        return by_code[paired.group("code").lower()]
+    paired = re.fullmatch(r"(?P<name>.+?)\s*\((?P<code>[a-z]{2,3})\)", value)
+    if paired and paired.group("code") in aliases:
+        return aliases[paired.group("code")]
 
     return None
 

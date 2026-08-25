@@ -100,6 +100,16 @@ def test_a_typed_language_resolves_however_the_browser_filled_it_in(app):
         assert resolve_language_code("English") == "eng"
         assert resolve_language_code("english") == "eng"
         assert resolve_language_code("English (eng)") == "eng"
+        assert resolve_language_code("de") == "ger"
+
+        # ISO 639-2 gives twenty languages two codes and mkvtoolnix lists
+        # only the bibliographic one, but MediaInfo writes the
+        # terminological one into some track records. Refusing those
+        # would lock the whole property-edit form on 212 files
+
+        assert resolve_language_code("deu") == "ger"
+        assert resolve_language_code("fra") == "fre"
+        assert resolve_language_code("German") == "ger"
 
         # Nothing is guessed at: an unknown entry comes back as None so
         # the caller can refuse the edit rather than write a bad code
@@ -150,7 +160,7 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
         assert rows[0].language_name == "English"
 
 
-def _matroska_file_page(app, admin_client, *, subtitles, local=True):
+def _matroska_file_page(app, admin_client, *, subtitles, local=True, language="und"):
     """A Matroska file with one audio track (and optionally one subtitle
     track), and its rendered File page. Returns the file's library path
     only when `local`, since that is what the caller has to clean up."""
@@ -160,14 +170,14 @@ def _matroska_file_page(app, admin_client, *, subtitles, local=True):
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
-        movie = make_movie("Page Markup", 2022 if subtitles else 2023)
+        movie = make_movie(f"Page Markup {language}", 2022 if subtitles else 2023)
         file = make_movie_file(movie, "Bluray-1080p", container="Matroska")
         db.session.flush()
         db.session.add(
             FileAudioTrack(
                 file_id=file.id,
                 track=1,
-                language="und",
+                language=language,
                 language_name="Undetermined",
                 format="DTS",
                 codec="DTS",
@@ -261,7 +271,12 @@ def test_the_page_offers_a_language_box_per_track(app, admin_client):
         assert 'name="language_s1"' in page
         assert page.count('list="iso-639-2-languages"') == 2
         assert page.count('<datalist id="iso-639-2-languages">') == 1
-        assert '<option value="eng" label="English">' in page
+
+        # Glenn's call (Aug 24 2026): languages read as names, not codes
+
+        assert '<option value="English" label="eng">' in page
+        assert 'value="Undetermined"' in page
+        assert 'value="und"' not in page
     finally:
         os.remove(library_path)
 
@@ -350,7 +365,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
                 "default_audio": "1",
                 "default_subtitle": "1",
                 "language_a1": "English",
-                "language_s1": "und",
+                "language_s1": "Undetermined",
                 "mkvpropedit_submit": "Update MKV Properties",
             },
             follow_redirects=True,
@@ -401,5 +416,47 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
             for job in app.file_queue.jobs
             if job.func_name == "app.videos.mkvpropedit_task"
         ]
+    finally:
+        os.remove(library_path)
+
+
+def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_client):
+    """MediaInfo wrote "deu" into 212 of the library's files where
+    mkvtoolnix's table only carries "ger". The box has to show German,
+    and submitting it back untouched must not read as a request to
+    rewrite the track — nor refuse the flag edits alongside it."""
+
+    import inspect
+
+    from app.videos import mkvpropedit_task
+    from tests.test_subtitle_triage import csrf_token_from
+
+    file_id, library_path, page = _matroska_file_page(
+        app, admin_client, subtitles=False, language="deu"
+    )
+    try:
+        assert 'value="German"' in page
+
+        response = admin_client.post(
+            f"/file/{file_id}",
+            data={
+                "csrf_token": csrf_token_from(page),
+                "default_audio": "1",
+                "default_subtitle": "0",
+                "language_a1": "German",
+                "mkvpropedit_submit": "Update MKV Properties",
+            },
+            follow_redirects=True,
+        )
+        assert "Unrecognized language" not in response.get_data(as_text=True)
+
+        jobs = [
+            job
+            for job in app.file_queue.jobs
+            if job.func_name == "app.videos.mkvpropedit_task"
+        ]
+        assert len(jobs) == 1
+        inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
+        assert jobs[0].args[4] is None, "an untouched box rewrote the language"
     finally:
         os.remove(library_path)
