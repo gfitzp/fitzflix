@@ -166,23 +166,6 @@ def _scheduled_tasks():
     results are filtered to its own queue.
     """
 
-    cron_descriptions = {
-        "0 0 * * *": "Daily at midnight",
-        "30 0 * * *": "Daily at 12:30 AM",
-        "0 1 * * 0": "Weekly on Sunday at 1:00 AM",
-        "15 4 * * 1": "Weekly on Monday at 4:15 AM",
-        "45 1 * * *": "Daily at 1:45 AM",
-        "15 2 * * *": "Daily at 2:15 AM",
-        "0 3 18 * *": "Monthly on the 18th at 3:00 AM",
-        "0 4 1 * *": "Monthly on the 1st at 4:00 AM",
-        "30 3 1 * *": "Monthly on the 1st at 3:30 AM",
-        "0 * * * *": "Hourly",
-        "30 * * * *": "Hourly at :30",
-        "20,50 * * * *": "Twice hourly at :20 and :50",
-        "*/10 * * * *": "Every 10 minutes",
-        "*/15 * * * *": "Every 15 minutes",
-        "* * * * *": "Every minute",
-    }
     scheduled_tasks = []
     for scheduler in CronScheduler.all(current_app.redis):
         for cron_job in scheduler.get_jobs():
@@ -192,7 +175,7 @@ def _scheduled_tasks():
             scheduled_tasks.append(
                 {
                     "name": meta.get("description") or cron_job.func_name,
-                    "schedule": cron_descriptions.get(cron_string, cron_string),
+                    "schedule": _cron_description(cron_string),
                     "cron_string": cron_string,
                     # rq.cron records enqueue times, so "last ran" means
                     # "last started" now, not "last finished"
@@ -208,6 +191,155 @@ def _scheduled_tasks():
 
     scheduled_tasks.sort(key=lambda task: _cron_frequency_key(task["cron_string"]))
     return scheduled_tasks
+
+
+# cron counts day-of-week from Sunday, and accepts 7 as a second
+# spelling of it
+
+_WEEKDAY_NAMES = (
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+)
+
+# How a within-the-hour schedule reads out loud: "Twice hourly at :20
+# and :50". Counts past twelve keep the numeral ("13 times hourly")
+
+_TIMES_PER_HOUR = {
+    2: "Twice",
+    3: "Three times",
+    4: "Four times",
+    5: "Five times",
+    6: "Six times",
+    7: "Seven times",
+    8: "Eight times",
+    9: "Nine times",
+    10: "Ten times",
+    11: "Eleven times",
+    12: "Twelve times",
+}
+
+
+def _cron_description(cron_string):
+    """Human-readable text for a five-field cron string: "Daily at
+    1:45 AM", "Four times hourly at :03, :18, :33, and :48".
+
+    Generated rather than looked up. The map this replaces had drifted
+    nine schedules behind the cron table (app/__init__.py), because a
+    lookup only stays right if whoever adds a job remembers to add a
+    second line here. Grammar the rules below don't cover — ranges,
+    hour steps, a month field — falls back to the raw cron string,
+    which is terse but never wrong.
+    """
+
+    try:
+        minute, hour, dom, month, dow = cron_string.split()
+    except (ValueError, AttributeError):
+        return cron_string
+
+    if month != "*":
+        return cron_string
+
+    if hour == "*":
+        if dom != "*" or dow != "*":
+            return cron_string
+        return _within_the_hour_text(minute) or cron_string
+
+    minutes = _cron_field_values(minute)
+    hours = _cron_field_values(hour)
+    if not minutes or not hours or len(minutes) != 1 or len(hours) != 1:
+        return cron_string
+    at = _clock_text(hours[0], minutes[0])
+    if at is None:
+        return cron_string
+
+    if dom == "*" and dow == "*":
+        return f"Daily at {at}"
+    if dom == "*":
+        days = _cron_field_values(dow)
+        if not days or len(days) != 1 or not 0 <= days[0] <= 7:
+            return cron_string
+        return f"Weekly on {_WEEKDAY_NAMES[days[0] % 7]} at {at}"
+    if dow == "*":
+        days = _cron_field_values(dom)
+        if not days or len(days) != 1 or not 1 <= days[0] <= 31:
+            return cron_string
+        return f"Monthly on the {_ordinal(days[0])} at {at}"
+    return cron_string
+
+
+def _within_the_hour_text(minute):
+    """Text for a schedule whose hour field is a wildcard — a step
+    ("Every 10 minutes") or the minutes it lands on ("Hourly at :30").
+    None when the field uses syntax past a step or a plain list."""
+
+    if minute == "*":
+        return "Every minute"
+    if minute.startswith("*/"):
+        try:
+            step = int(minute[2:])
+        except ValueError:
+            return None
+        return "Every minute" if step == 1 else f"Every {step} minutes"
+
+    minutes = _cron_field_values(minute)
+    if not minutes or any(not 0 <= value <= 59 for value in minutes):
+        return None
+    if len(minutes) == 1:
+        return "Hourly" if minutes[0] == 0 else f"Hourly at :{minutes[0]:02d}"
+    times = _TIMES_PER_HOUR.get(len(minutes), f"{len(minutes)} times")
+    marks = _and_list([f":{value:02d}" for value in sorted(minutes)])
+    return f"{times} hourly at {marks}"
+
+
+def _cron_field_values(field):
+    """The plain integers a cron field lists, or None if it uses any
+    syntax past a comma-separated list — a wildcard, range, or step."""
+
+    try:
+        return [int(value) for value in field.split(",")]
+    except ValueError:
+        return None
+
+
+def _and_list(items):
+    """Join items the way the schedule text reads them: "a and b" for
+    two, and an Oxford-comma list for three or more."""
+
+    if len(items) == 2:
+        return " and ".join(items)
+    if len(items) > 2:
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    return "".join(items)
+
+
+def _clock_text(hour, minute):
+    """A 24-hour cron time as the page says it: "1:45 AM", or the words
+    for the two times that have them. None if either field is out of
+    range."""
+
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        return None
+    if minute == 0 and hour == 0:
+        return "midnight"
+    if minute == 0 and hour == 12:
+        return "noon"
+    return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
+def _ordinal(number):
+    """1 -> "1st", 18 -> "18th": the day-of-month in a monthly
+    schedule's description."""
+
+    if 11 <= number % 100 <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+    return f"{number}{suffix}"
 
 
 def _naive_utc(when):

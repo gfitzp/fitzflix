@@ -260,6 +260,72 @@ def test_cron_table_entries_are_well_formed(app):
         assert isinstance(entry["timeout"], int)
 
 
+def test_every_cron_table_schedule_gets_a_written_description():
+    """The System page's schedule column never falls back to a raw cron
+    string. The description used to come from a hardcoded map that had
+    drifted nine schedules behind the table; this fails the moment a new
+    job's schedule outruns the generator's grammar.
+
+    Every config-dependent row is switched on, so the jobs the test
+    config leaves out of the table are covered too."""
+
+    from app.main.admin import _cron_description
+
+    entries = cron_table(
+        {"AWS_SQS_URL": "sqs", "PLEX_URL": "plex", "PLEX_TOKEN": "token"}
+    )
+
+    raw = {
+        entry["cron"]
+        for entry in entries
+        if _cron_description(entry["cron"]) == entry["cron"]
+    }
+    assert not raw, f"no written description for {sorted(raw)}"
+
+
+def test_cron_descriptions_read_as_english():
+    """The house phrasing, per frequency class — including the two
+    times of day that have names, and the Oxford-comma list."""
+
+    from app.main.admin import _cron_description
+
+    assert _cron_description("* * * * *") == "Every minute"
+    assert _cron_description("*/10 * * * *") == "Every 10 minutes"
+    assert _cron_description("0 * * * *") == "Hourly"
+    assert _cron_description("30 * * * *") == "Hourly at :30"
+    assert _cron_description("7,37 * * * *") == "Twice hourly at :07 and :37"
+    assert (
+        _cron_description("3,18,33,48 * * * *")
+        == "Four times hourly at :03, :18, :33, and :48"
+    )
+    assert _cron_description("0 0 * * *") == "Daily at midnight"
+    assert _cron_description("0 12 * * *") == "Daily at noon"
+    assert _cron_description("45 1 * * *") == "Daily at 1:45 AM"
+    assert _cron_description("30 4 * * *") == "Daily at 4:30 AM"
+    assert _cron_description("15 4 * * 1") == "Weekly on Monday at 4:15 AM"
+    assert _cron_description("0 1 * * 0") == "Weekly on Sunday at 1:00 AM"
+    assert _cron_description("0 4 1 * *") == "Monthly on the 1st at 4:00 AM"
+    assert _cron_description("0 3 18 * *") == "Monthly on the 18th at 3:00 AM"
+
+
+def test_cron_descriptions_fall_back_to_the_raw_string():
+    """Grammar the generator doesn't cover shows the cron string itself
+    rather than a wrong sentence."""
+
+    from app.main.admin import _cron_description
+
+    for cron_string in (
+        "0 */6 * * *",  # an hour step
+        "0-30 * * * *",  # a range
+        "0 5 * * 1,4",  # twice weekly isn't "weekly on"
+        "0 0 1 1 *",  # yearly
+        "0 0 1 * 1",  # day-of-month and day-of-week together
+        "61 * * * *",  # out of range
+        "nonsense",
+    ):
+        assert _cron_description(cron_string) == cron_string
+
+
 def test_cron_frequency_sort_orders_by_class_then_parameter():
     """The System page's ordering: every-X-minutes by X, hourly by
     minute, daily by time, weekly by day and time, monthly by
