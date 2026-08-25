@@ -493,13 +493,21 @@ LANGUAGE_CHOICES_SECONDS = 3600
 def library_language_choices():
     """The languages worth offering on the File page, as (code, name).
 
-    A dropdown of all 1,006 ISO 639-2 languages costs about 38 KB per
-    track, which a twenty-track disc turns into most of a megabyte. This
-    is the set that actually applies to this collection: every language
-    already on a track, every original language TMDb records for a film
-    in the library, and the codes the page exists to move between. It
-    grows on its own — a film in a new language brings its language with
-    it — so nothing has to be maintained by hand.
+    Every ISO 639-2 language that also carries a 639-1 code — 183 of the
+    table's 1,006, and effectively the set with real publishing presence
+    — plus anything this collection already uses that falls outside it.
+
+    The whole table is about 54 KB of options per track, and a select
+    repeats its options for every track, so the 21-track Doctor Who disc
+    would carry a megabyte of them. The 639-1 set is 8 KB per track and
+    still covers any film that could plausibly be bought; what it leaves
+    out is the long tail of dead languages and collective buckets
+    (Akkadian, "Algonquian languages") no audio track is ever in.
+
+    The collection's own languages are unioned in regardless, so a track
+    can never hold a language the dropdown can't show — und and zxx have
+    no 639-1 code and would otherwise be missing — and the list still
+    grows on its own as films in new languages arrive.
     """
 
     from app.models import FileAudioTrack, FileSubtitleTrack, Movie
@@ -521,6 +529,11 @@ def library_language_choices():
         stored |= {value for (value,) in db.session.query(column).distinct() if value}
 
     codes = {resolve_language_code(value) for value in stored}
+    codes |= {
+        iso_639_2
+        for name, iso_639_3, iso_639_2, iso_639_1 in _language_table()
+        if iso_639_1
+    }
     codes |= {
         "und",
         "zxx",

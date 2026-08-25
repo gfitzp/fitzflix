@@ -300,25 +300,48 @@ def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
         os.remove(library_path)
 
 
-def test_the_dropdown_offers_the_collection_not_the_whole_iso_table(app, admin_client):
-    """All 1,006 ISO 639-2 languages is ~38 KB of options per track, and
-    the library has a twenty-track disc. The list is the collection's own
-    languages instead, so it stays small and still covers every track."""
+def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_client):
+    """A select repeats its options for every track, so all 1,006 ISO
+    639-2 languages would put a megabyte of them on the 21-track Doctor
+    Who disc. The offer is the 183 languages that also carry a 639-1
+    code (Glenn's call, Aug 25 2026), which is a quarter of the table and
+    still covers anything buyable — plus whatever this collection already
+    uses, since und and zxx have no 639-1 code at all."""
 
-    from app.tracks import iso_639_2_languages, library_language_choices
+    from app import db
+    from app.models import FileAudioTrack, FileSubtitleTrack
+    from app.tracks import (
+        _language_table,
+        iso_639_2_languages,
+        library_language_choices,
+        resolve_language_code,
+    )
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
         with app.app_context():
             choices = library_language_choices()
+            codes = {code for code, name in choices}
             assert len(choices) < len(iso_639_2_languages()) / 4
 
-            # whatever a track already holds has to be offered, or saving
-            # an untouched form would quietly change it
+            # the 639-1 set, whole
 
-            codes = {code for code, name in choices}
-            assert "und" in codes
-            assert "eng" in codes, "the native language is always worth offering"
+            major = {
+                iso_639_2
+                for name, iso_639_3, iso_639_2, iso_639_1 in _language_table()
+                if iso_639_1
+            }
+            assert major and major <= codes
+
+            # and nothing a track holds is missing, or saving an
+            # untouched form would quietly change it
+
+            assert {"und", "zxx", "eng"} <= codes
+            for model in (FileAudioTrack, FileSubtitleTrack):
+                stored = {
+                    value for (value,) in db.session.query(model.language).distinct()
+                }
+                assert {resolve_language_code(v) or v for v in stored} <= codes
 
         assert page.count("<option") == 2 * len(choices)
     finally:
