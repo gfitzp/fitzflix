@@ -1773,3 +1773,71 @@ def test_pick_tmdb_match_skips_when_nothing_plausible(app):
         _pick_tmdb_match("TRIGUN", 1998, [], [_result("Trigun: Badlands Rumble", 2010)])
         is None
     )
+
+
+def test_history_orders_by_day_then_time_then_title(app, admin_client):
+    """#196: within a day, later viewings come first, then title.
+
+    A midnight date_watched means "no time recorded" — only a watch logged
+    on the day it happened keeps a clock time (_watched_timestamp). Sorting
+    on the raw timestamp therefore sank every date-only row below any timed
+    row on the same day, no matter how late it was actually logged. The
+    time a row was written is the best evidence left, so it stands in.
+    """
+
+    from app import db
+    from app.models import User, UserMovieReview
+    from tests.conftest import ADMIN_EMAIL
+
+    with app.app_context():
+        user_id = User.query.filter_by(email=ADMIN_EMAIL).one().id
+        watched = datetime(2026, 3, 14)
+
+        def log(title, watched_at, reviewed_at):
+            movie = make_movie(title, 2001)
+            db.session.add(
+                UserMovieReview(
+                    user_id=user_id,
+                    movie_id=movie.id,
+                    review="",
+                    date_watched=watched_at,
+                    date_reviewed=reviewed_at,
+                )
+            )
+
+        # same day: one watch with a real clock time, one date-only row
+        # logged later that evening, and two date-only rows that carry no
+        # time at all and must fall back to the title
+        log("Evening Entry", watched, datetime(2026, 3, 14, 23, 19))
+        log(
+            "Clocked Watch",
+            watched.replace(hour=18, minute=55),
+            datetime(2026, 3, 14, 19, 5),
+        )
+        log("Zebra Untimed", watched, watched)
+        log("Alpha Untimed", watched, watched)
+
+        # a different day, to prove the day is still the first key
+        log(
+            "Yesterday Film", datetime(2026, 3, 13, 22, 0), datetime(2026, 3, 13, 22, 5)
+        )
+        db.session.commit()
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    order = sorted(
+        (
+            "Evening Entry",
+            "Clocked Watch",
+            "Zebra Untimed",
+            "Alpha Untimed",
+            "Yesterday Film",
+        ),
+        key=page.index,
+    )
+    assert order == [
+        "Evening Entry",  # 23:19, latest known time that day
+        "Clocked Watch",  # 18:55 on the clock
+        "Alpha Untimed",  # no time at all -> title
+        "Zebra Untimed",
+        "Yesterday Film",  # the previous day, whatever its time
+    ]

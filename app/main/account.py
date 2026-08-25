@@ -233,13 +233,29 @@ def history():
     # drive recommendations and the stats below, and stay editable from
     # their film's page.
 
+    # Day, then time of day, then title (#196). A midnight date_watched
+    # means "no time recorded" rather than "watched at 00:00" — only a
+    # watch logged on the day it happened keeps a clock time, see
+    # _watched_timestamp — so sorting on the raw timestamp sank every
+    # date-only row below any timed row on the same day, however late it
+    # was actually logged. Fall back to the time the row was written,
+    # which is the best evidence left of when the viewing happened.
+
+    watched_time = db.func.nullif(
+        db.func.time(UserMovieReview.date_watched), "00:00:00"
+    )
+    time_of_day = db.func.coalesce(
+        watched_time, db.func.time(UserMovieReview.date_reviewed)
+    )
+
     reviews = (
         UserMovieReview.query.join(Movie, (Movie.id == UserMovieReview.movie_id))
         .options(contains_eager(UserMovieReview.movie))
         .filter(UserMovieReview.user_id == int(current_user.id))
         .filter(UserMovieReview.date_watched.isnot(None))
         .order_by(
-            UserMovieReview.date_watched.desc(),
+            db.func.date(UserMovieReview.date_watched).desc(),
+            time_of_day.desc(),
             UserMovieReview.date_reviewed.desc(),
             Movie.title.asc(),
         )
