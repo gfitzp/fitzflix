@@ -513,7 +513,13 @@ def register(app):
         from datetime import datetime, timedelta, timezone
 
         from app.models import File
-        from app.smb_probe import library_path, lost_handle, probe_path, record_result
+        from app.smb_probe import (
+            absent,
+            library_path,
+            lost_handle,
+            probe_path,
+            record_result,
+        )
 
         query = File.query
         if file_ids:
@@ -531,22 +537,35 @@ def register(app):
             click.echo("No files matched")
             return
 
+        # A row whose local copy is gone is the normal state for every
+        # superseded edition, so name those separately instead of letting
+        # thousands of them bury the handful that matter. Worth listing
+        # one by one only when the file was asked for by id.
+
         broken = []
         other = []
+        not_local = []
         for file in files:
             result = probe_path(library_path(file))
             record_result(result, context="cli probe")
             if lost_handle(result):
                 broken.append(file)
                 click.echo(f"  LOST HANDLE  {file.file_path}")
+            elif absent(result):
+                not_local.append(file)
+                if file_ids:
+                    click.echo(f"  not on the local volume  {file.file_path}")
             elif not result["ok"]:
                 other.append(file)
                 click.echo(f"  {result['message']}  {file.file_path}")
 
-        click.echo(
+        summary = (
             f"{len(files)} file(s) probed, {len(broken)} in the lost-handle "
             f"state, {len(other)} otherwise unreadable"
         )
+        if not_local:
+            summary += f", {len(not_local)} not on the local volume (not a finding)"
+        click.echo(summary)
 
     @smb.command()
     def status():
@@ -590,7 +609,7 @@ def register(app):
 
         from app.smb_probe import recheck as recheck_state
 
-        healed, still_failing = recheck_state()
+        healed, still_failing, gone = recheck_state()
         for result in healed:
             held = result.get("held_for_seconds")
 
@@ -607,4 +626,10 @@ def register(app):
             click.echo(
                 f"  still failing since {result['first_seen']}  {result['path']}"
             )
-        click.echo(f"{len(healed)} recovered, {len(still_failing)} still failing")
+        for result in gone:
+            click.echo(f"  GONE from the volume, dropped  {result['path']}")
+
+        summary = f"{len(healed)} recovered, {len(still_failing)} still failing"
+        if gone:
+            summary += f", {len(gone)} gone"
+        click.echo(summary)

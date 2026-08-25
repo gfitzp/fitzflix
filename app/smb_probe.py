@@ -124,6 +124,22 @@ def lost_handle(result):
     )
 
 
+def absent(result):
+    """Whether the file simply isn't on the local volume.
+
+    Not a finding. A File row outlives its local copy: when a better
+    edition supersedes one, the row and its S3 archive stay while the
+    local file goes away, so thousands of rows are legitimately absent
+    and would otherwise drown the real failures.
+    """
+
+    return (
+        not result["ok"]
+        and result["stage"] == "open"
+        and result["errno"] == errno.ENOENT
+    )
+
+
 def library_path(file):
     """The absolute path of a File row on the library volume."""
 
@@ -140,10 +156,17 @@ def record_result(result, context=None):
     survives until a recheck reports it.
 
     A clean probe of a file nobody recorded stays unrecorded — healthy
-    files are the overwhelming majority and are not news.
+    files are the overwhelming majority and are not news — and a file
+    that isn't on the volume at all is not recorded either.
 
     Returns the entry it wrote, or None when it wrote nothing.
     """
+
+    if absent(result):
+        # Nothing to say about the handle of a file that isn't there;
+        # recheck is what drops a recorded file that has since gone away
+
+        return None
 
     path = result["path"]
     now = datetime.now(timezone.utc).isoformat()
@@ -291,18 +314,23 @@ def _healed_result(path, entry):
 def recheck():
     """Re-probe the recorded failures and collect every recovery.
 
-    Returns (healed, still_failing) as lists of result dicts. A healed
-    result carries `held_for_seconds` — how long the file spent in the
+    Returns (healed, still_failing, gone) as lists of result dicts. A
+    healed result carries `held_for_seconds` — how long the file spent in the
     state — which is the number the investigation actually wants.
 
     Two kinds of recovery land here: a file this recheck found closing
     cleanly, and one whose recovery a task's own probe already recorded
     in the meantime. Both are reported once and then reaped, so what
     stays behind is a description of what is broken now.
+
+    A recorded file that has since left the volume goes into `gone`
+    rather than either bucket: it didn't recover, and it can't still be
+    stuck, so tracking it forever would be the wrong answer twice.
     """
 
     healed = []
     still_failing = []
+    gone = []
 
     for path, entry in recorded_state().items():
         if _entry_state(entry) == HEALED:
@@ -312,7 +340,12 @@ def recheck():
 
         result = probe_path(path)
 
-        if result["ok"]:
+        if absent(result):
+            result["first_seen"] = entry.get("first_seen")
+            gone.append(result)
+            forget(path)
+
+        elif result["ok"]:
             # record_result carries the failing entry's context forward,
             # so this keeps which task broke the file and adds who found
             # it healed
@@ -326,4 +359,4 @@ def recheck():
             result["first_seen"] = entry.get("first_seen")
             still_failing.append(result)
 
-    return healed, still_failing
+    return healed, still_failing, gone

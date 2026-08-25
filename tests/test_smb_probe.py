@@ -162,7 +162,7 @@ def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
 
         probe_and_record(path, context="mkvpropedit_task")
 
-        healed, still_failing = recheck()
+        healed, still_failing, _ = recheck()
 
         assert [result["path"] for result in healed] == [path]
         assert healed[0]["held_for_seconds"] is not None
@@ -196,11 +196,11 @@ def test_a_recovery_is_reported_once_and_then_reaped(app, tmp_path):
         record_result(failure(path))
         record_result(probe_path(path))
 
-        healed, _ = recheck()
+        healed, _, _ = recheck()
         assert [result["path"] for result in healed] == [path]
 
         assert recorded_state() == {}
-        assert recheck() == ([], [])
+        assert recheck() == ([], [], [])
 
 
 def test_breaking_again_after_a_recovery_starts_a_new_clock(app, tmp_path):
@@ -247,7 +247,7 @@ def test_recheck_reports_how_long_a_file_was_stuck(app, tmp_path):
             ),
         )
 
-        healed, still_failing = recheck()
+        healed, still_failing, _ = recheck()
 
         assert [result["path"] for result in healed] == [path]
         assert healed[0]["held_for_seconds"] > 0
@@ -265,11 +265,51 @@ def test_recheck_keeps_a_file_that_is_still_stuck(app, tmp_path, monkeypatch):
         smb_probe.record_result(failure(path), context="mkvpropedit_task")
         monkeypatch.setattr(smb_probe, "os", UnclosableOS())
 
-        healed, still_failing = smb_probe.recheck()
+        healed, still_failing, _ = smb_probe.recheck()
 
         assert healed == []
         assert [result["path"] for result in still_failing] == [path]
         assert path in smb_probe.recorded_state()
+
+
+def test_a_file_that_is_not_local_is_not_a_finding(app, tmp_path):
+    """Every superseded edition keeps its row and its S3 archive after the
+    local copy goes away, so absence is the normal state for thousands of
+    files and must not be recorded as a failure."""
+
+    from app.smb_probe import absent, lost_handle, probe_path, record_result
+    from app.smb_probe import recorded_state
+
+    result = probe_path(str(tmp_path / "superseded.mkv"))
+
+    assert absent(result)
+    assert not lost_handle(result)
+
+    with app.app_context():
+        assert record_result(result, context="cli probe") is None
+        assert recorded_state() == {}
+
+
+def test_a_recorded_file_that_leaves_the_volume_is_dropped(app, tmp_path):
+    """It didn't recover and it can't still be stuck, so keeping it in the
+    record would be the wrong answer twice."""
+
+    from app.smb_probe import recheck, record_result, recorded_state
+
+    path = str(tmp_path / "vanished.mkv")
+
+    with app.app_context():
+        record_result(failure(path), context="mkvpropedit_task")
+        assert path in recorded_state()
+
+        # The file goes away — a rename, or a better edition replacing it
+
+        healed, still_failing, gone = recheck()
+
+        assert healed == []
+        assert still_failing == []
+        assert [result["path"] for result in gone] == [path]
+        assert recorded_state() == {}
 
 
 def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
