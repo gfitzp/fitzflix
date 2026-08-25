@@ -453,9 +453,215 @@ def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
     actions = maintenance.heal_mounts([str(leftover)], app.redis, app.config)
 
     assert not any(command[0] == "diskutil" for command in calls), calls
-    assert [command[0] for command in calls] == ["osascript"]
+
+    # `mount` is the duplicate check (#233); it finds nothing here, so the
+    # healer goes straight on to remounting, then looks again to say where
+    # the share went when the remount doesn't take
+
+    assert [command[0] for command in calls] == ["mount", "osascript", "mount"]
 
     # The remount ran but the path is still not a mountpoint, so the
     # probe still calls it dead — reported as a failure, not a success
 
     assert actions == [f"failed to remount {leftover}: still dead"]
+
+
+def _mount_output(*lines):
+    """`mount` output with the shares this app cares about."""
+
+    return "\n".join(lines) + "\n"
+
+
+def test_share_mounted_elsewhere_finds_a_suffixed_duplicate(monkeypatch):
+    """#233. The share name in the mount table is URL-encoded, so a
+    share with a space in it only matches after unquoting."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    output = _mount_output(
+        "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)",
+        "//server@192.168.1.175/TV%20Shows on /Volumes/TV Shows-1 "
+        "(smbfs, nodev, nosuid, mounted by server)",
+        "//server@192.168.1.175/Movies on /Volumes/Movies (smbfs, nodev, nosuid)",
+    )
+    monkeypatch.setattr(
+        maintenance.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess_module.CompletedProcess(
+            command, 0, stdout=output, stderr=""
+        ),
+    )
+
+    assert maintenance.share_mounted_elsewhere("TV Shows", "/Volumes/TV Shows") == [
+        "/Volumes/TV Shows-1"
+    ]
+
+    # The share already on its canonical path is not its own duplicate
+
+    assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []
+
+
+def test_share_mounted_elsewhere_leaves_local_disks_alone(monkeypatch):
+    """A local volume that happens to parse out of `mount` is not ours
+    to unmount, however its name lines up."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    output = _mount_output("/dev/disk7s2 on /Volumes/Movies-1 (apfs, local, nodev)")
+    monkeypatch.setattr(
+        maintenance.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess_module.CompletedProcess(
+            command, 0, stdout=output, stderr=""
+        ),
+    )
+
+    assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []
+
+
+def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_path):
+    """The #233 failure: the share came back at /Volumes/<share>-1 while
+    a stub held the canonical path. Remounting can't free the canonical
+    path while the share is mounted somewhere else, so the healer used
+    to succeed at the mount call forever and leave the path dead."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    stub = volumes / "TV Shows"
+    stub.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+
+    duplicate = f"{stub}-1"
+    output = _mount_output(
+        f"//server@nas.test/TV%20Shows on {duplicate} (smbfs, nodev, nosuid)"
+    )
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "mount":
+            return subprocess_module.CompletedProcess(
+                command, 0, stdout=output, stderr=""
+            )
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts([str(stub)], app.redis, app.config)
+
+    # The duplicate is unmounted, cleanly, BEFORE the remount is attempted
+
+    assert ["diskutil", "unmount", duplicate] in calls
+    assert calls.index(["diskutil", "unmount", duplicate]) < next(
+        i for i, command in enumerate(calls) if command[0] == "osascript"
+    )
+
+    # Nothing was force-unmounted: the clean unmount succeeded, and the
+    # stub itself is not a mountpoint (#227)
+
+    assert ["diskutil", "unmount", "force", duplicate] not in calls
+    assert f"unmounted {duplicate} to free {stub}" in actions
+
+
+def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
+    app, monkeypatch, tmp_path
+):
+    """Leaving the duplicate is worse than interrupting it: every config
+    path stays aimed at an empty directory on the boot disk, and
+    TRANSCODES_DIR pointed there fills the boot disk."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    stub = volumes / "Transcoded"
+    stub.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+
+    duplicate = f"{stub}-1"
+    output = _mount_output(
+        f"//server@nas.test/Transcoded on {duplicate} (smbfs, nodev, nosuid)"
+    )
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "mount":
+            return subprocess_module.CompletedProcess(
+                command, 0, stdout=output, stderr=""
+            )
+        if command == ["diskutil", "unmount", duplicate]:
+            return subprocess_module.CompletedProcess(
+                command, 1, stdout="", stderr="Resource busy"
+            )
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts([str(stub)], app.redis, app.config)
+
+    # Clean unmount first, force only after it refuses
+
+    assert ["diskutil", "unmount", duplicate] in calls
+    assert ["diskutil", "unmount", "force", duplicate] in calls
+    assert calls.index(["diskutil", "unmount", duplicate]) < calls.index(
+        ["diskutil", "unmount", "force", duplicate]
+    )
+    assert f"unmounted {duplicate} to free {stub}" in actions
+
+
+def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path):
+    """ "still dead" sends a person looking. Naming the path the share is
+    actually on makes the alert actionable."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    stub = volumes / "Movies"
+    stub.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+
+    duplicate = f"{stub}-1"
+    output = _mount_output(
+        f"//server@nas.test/Movies on {duplicate} (smbfs, nodev, nosuid)"
+    )
+
+    def fake_run(command, **kwargs):
+        if command[0] == "mount":
+            return subprocess_module.CompletedProcess(
+                command, 0, stdout=output, stderr=""
+            )
+        if command[0] == "diskutil":
+            # Nothing frees the duplicate, so the remount can't land
+            return subprocess_module.CompletedProcess(
+                command, 1, stdout="", stderr="Resource busy"
+            )
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts([str(stub)], app.redis, app.config)
+
+    assert (
+        f"failed to unmount {duplicate}, which is holding the share {stub} needs"
+        in actions
+    )
+    assert (
+        f"failed to remount {stub}: still dead — share is mounted at {duplicate}"
+        in (actions)
+    )

@@ -10,6 +10,7 @@ import threading
 import time
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote
 
 import requests
 
@@ -476,6 +477,43 @@ def heal_worker_processes(connection, config):
     return actions
 
 
+def share_mounted_elsewhere(share, mount):
+    """Other paths where `share` is currently mounted.
+
+    When the SMB session dies it takes every share with it and macOS
+    leaves each mount point behind as an ordinary directory. A share that
+    comes back while its stub is still there — Finder, an app touching
+    the path, a person — lands on a suffixed path, /Volumes/TV Shows-1,
+    and the canonical path stays a dead directory on the boot disk.
+
+    Remounting cannot free that path while the share is still mounted
+    somewhere else, so the duplicate has to go first (#233). Seen live
+    Aug 25 2026: TV Shows and Transcoded both ran at -1 paths for about
+    25 minutes, and recovery needed the -1 mount unmounted before the
+    remount would land where it was asked to.
+
+    Only network mounts are considered. A local disk that happens to
+    parse out of `mount` is not ours to unmount.
+    """
+
+    try:
+        result = subprocess.run(["mount"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+    elsewhere = []
+    for line in result.stdout.splitlines():
+        # `//server@host/TV%20Shows on /Volumes/TV Shows-1 (smbfs, ...)`.
+        # rsplit on the options, so a path containing " (" survives
+        device, separator, path = line.rsplit(" (", 1)[0].partition(" on ")
+        if not separator or not device.startswith("//"):
+            continue
+        if unquote(device.rsplit("/", 1)[-1]) == share and path != mount:
+            elsewhere.append(path)
+
+    return elsewhere
+
+
 def heal_mounts(dead_mounts, connection, config):
     """Try to remount dead network volumes; return actions taken.
 
@@ -511,6 +549,35 @@ def heal_mounts(dead_mounts, connection, config):
             except (OSError, subprocess.TimeoutExpired):
                 pass
 
+        for duplicate in share_mounted_elsewhere(share, mount):
+            # A clean unmount first. The duplicate is usually a perfectly
+            # healthy mount with readers on it — Plex streams from these
+            # shares — and force is a last resort rather than the opener.
+            # But leaving it is worse than interrupting it: every config
+            # path stays aimed at an empty directory on the boot disk,
+            # and TRANSCODES_DIR pointed there fills the boot disk
+            freed = False
+            for command in (
+                ["diskutil", "unmount", duplicate],
+                ["diskutil", "unmount", "force", duplicate],
+            ):
+                try:
+                    outcome = subprocess.run(
+                        command, capture_output=True, text=True, timeout=60
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if outcome.returncode == 0:
+                    freed = True
+                    actions.append(f"unmounted {duplicate} to free {mount}")
+                    break
+
+            if not freed:
+                actions.append(
+                    f"failed to unmount {duplicate}, which is holding the "
+                    f"share {mount} needs"
+                )
+
         try:
             result = subprocess.run(
                 ["osascript", "-e", f'mount volume "{url_prefix}/{share}"'],
@@ -525,9 +592,16 @@ def heal_mounts(dead_mounts, connection, config):
         if result.returncode == 0 and volume_alive(mount):
             actions.append(f"remounted {mount}")
         else:
-            actions.append(
-                f"failed to remount {mount}: {result.stderr.strip() or 'still dead'}"
-            )
+            reason = result.stderr.strip() or "still dead"
+
+            # Naming where the share actually went turns "still dead"
+            # into something a person can act on without going looking
+
+            stranded = share_mounted_elsewhere(share, mount)
+            if stranded:
+                reason = f"{reason} — share is mounted at {', '.join(stranded)}"
+
+            actions.append(f"failed to remount {mount}: {reason}")
 
     return actions
 

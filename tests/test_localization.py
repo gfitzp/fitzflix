@@ -739,6 +739,9 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
     class FakeResult:
         returncode = 0
         stderr = ""
+        # `mount` is read for duplicate mountpoints now (#233); an empty
+        # table means there is no duplicate to free
+        stdout = ""
 
     def fake_run(command, **kwargs):
         commands.append(command)
