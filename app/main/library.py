@@ -3000,11 +3000,20 @@ def file(file_id):
             return redirect(url_for("main.index"))
 
     # The per-file triage link only exists while this file has
-    # pending possibly-forced tracks (and only admins can act on them)
+    # pending possibly-forced tracks (and only admins can act on them).
+    # The candidate track ids ride along so the Tracks table can badge
+    # the rows the triage page is actually asking about: the import-time
+    # marker (forced left unknown) only covers the older, cruder
+    # heuristic, so a candidate recorded as plainly unforced would
+    # otherwise carry no badge and no way in
 
-    pending_subtitle_triage = bool(
-        current_user.admin and forced_subtitle_candidates(file_id=file.id)
-    )
+    triage_candidates = forced_subtitle_candidates(file_id=file.id)
+    possibly_forced_track_ids = {
+        candidate["track"].id
+        for entry in triage_candidates
+        for candidate in entry["tracks"]
+    }
+    pending_subtitle_triage = bool(current_user.admin and triage_candidates)
 
     return render_template(
         "file.html",
@@ -3015,6 +3024,7 @@ def file(file_id):
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
         pending_subtitle_triage=pending_subtitle_triage,
+        possibly_forced_track_ids=possibly_forced_track_ids,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
         # The dropdowns offer the collection's own languages; language_names

@@ -185,7 +185,9 @@ def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
     # Reviewed: the file page link disappears; the other file pends on
 
     file_page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
-    assert "Review possibly-forced tracks" not in file_page
+    assert f"/maintenance/subtitles/{file_id}?origin=" not in (
+        file_page.replace("&amp;", "&")
+    )
     with app.app_context():
         assert db.session.get(File, file_id).subtitle_triage_reviewed is not None
         assert db.session.get(File, other_id).subtitle_triage_reviewed is None
