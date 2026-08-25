@@ -85,7 +85,7 @@
 			{% for audio in audio_tracks %}
 			<tr>
 				<th scope="row">{{ audio.track }}</th>
-				<td>{{ audio.language_name }}</td>
+				<td>{% if languages %}<input class="form-control form-control-sm" style="width: 6rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" value="{{ audio.language }}" autocomplete="off" spellcheck="false" aria-label="Language of audio track {{ audio.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ audio.language_name }}{% endif %}</td>
 				<td>{{ audio.codec }}</td>
 				<td>{{ audio.channels }}</td>
 				<td>
@@ -119,7 +119,7 @@
 			{% for subtitle in subtitle_tracks %}
 			<tr>
 				<th scope="row">{{ subtitle.track }}</th>
-				<td>{{ subtitle.language }}</td>
+				<td>{% if languages %}<input class="form-control form-control-sm" style="width: 6rem" list="iso-639-2-languages" form="mkvpropedit-form" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" value="{{ subtitle.language }}" autocomplete="off" spellcheck="false" aria-label="Language of subtitle track {{ subtitle.track }}"{% if not file_exists_locally %} disabled{% endif %}>{% else %}{{ subtitle.language }}{% endif %}</td>
 				<td>{{ subtitle.format }}</td>
 				<td>{{ subtitle.elements }}</td>
 				<td></td>
@@ -131,13 +131,20 @@
 		{% endif %}
 	</table>
 </div>
+{% if languages %}
+<datalist id="iso-639-2-languages">
+	{% for code, name in languages %}<option value="{{ code }}" label="{{ name }}"></option>
+	{% endfor %}
+</datalist>
+{% if file_exists_locally %}<p class="small text-muted mt-n2">Edit a Language cell to correct it, then save with <em>Update MKV Properties</em>.</p>{% endif %}
+{% endif %}
 {% endif %}
 {% if file.container == "Matroska" %}
 <div class="row align-items-end">
 	<div class="col-md-8">
 		<hr class="d-block d-md-none">
 		{% if audio_tracks or subtitle_tracks %}
-		<form action="" method="post">
+		<form id="mkvpropedit-form" action="" method="post">
 			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
 			{{ mkvpropedit_form.hidden_tag() }}
 			{% if audio_tracks %}
@@ -171,32 +178,6 @@
 						</div>
 						{% endfor %}
 					</div>
-				</div>
-			{% endif %}
-			{% if languages %}
-				<div class="row">
-					{% if audio_tracks %}
-					<div class="mb-3 col-xl-4 col-lg-5">
-						Audio track languages:
-						{% for audio in audio_tracks %}
-						<div class="mt-1">
-							<label class="form-label small text-muted mb-0" for="language_a{{ audio.track }}">Track {{ audio.track }}: {{ audio.codec }} {{ audio.channels }}</label>
-							<input class="form-control form-control-sm" list="iso-639-2-languages" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" value="{{ audio.language }}" autocomplete="off" spellcheck="false" aria-label="Language of audio track {{ audio.track }}">
-						</div>
-						{% endfor %}
-					</div>
-					{% endif %}
-					{% if subtitle_tracks %}
-					<div class="mb-3 col">
-						Subtitle track languages:
-						{% for subtitle in subtitle_tracks %}
-						<div class="mt-1">
-							<label class="form-label small text-muted mb-0" for="language_s{{ subtitle.track }}">Track {{ subtitle.track }}: {{ subtitle.elements }}-element {{ subtitle.format }}</label>
-							<input class="form-control form-control-sm" list="iso-639-2-languages" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" value="{{ subtitle.language }}" autocomplete="off" spellcheck="false" aria-label="Language of subtitle track {{ subtitle.track }}">
-						</div>
-						{% endfor %}
-					</div>
-					{% endif %}
 				</div>
 			{% endif %}
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
@@ -238,12 +219,6 @@
 		{% endif %}
 	</div>
 </div>
-{% if languages %}
-<datalist id="iso-639-2-languages">
-	{% for code, name in languages %}<option value="{{ code }}" label="{{ name }}"></option>
-	{% endfor %}
-</datalist>
-{% endif %}
 {% endif %}
 <hr>
 <div class="row">

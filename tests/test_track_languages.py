@@ -150,9 +150,10 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
         assert rows[0].language_name == "English"
 
 
-def _matroska_file_page(app, admin_client, *, subtitles):
-    """A local Matroska file with one audio track (and optionally one
-    subtitle track), and its rendered File page."""
+def _matroska_file_page(app, admin_client, *, subtitles, local=True):
+    """A Matroska file with one audio track (and optionally one subtitle
+    track), and its rendered File page. Returns the file's library path
+    only when `local`, since that is what the caller has to clean up."""
 
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
@@ -193,9 +194,12 @@ def _matroska_file_page(app, admin_client, *, subtitles):
         file_id = file.id
         library_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-    os.makedirs(os.path.dirname(library_path), exist_ok=True)
-    with open(library_path, "wb") as handle:
-        handle.write(b"mkv bytes")
+    if local:
+        os.makedirs(os.path.dirname(library_path), exist_ok=True)
+        with open(library_path, "wb") as handle:
+            handle.write(b"mkv bytes")
+    else:
+        library_path = None
 
     page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
     return file_id, library_path, page
@@ -249,7 +253,7 @@ def test_the_remux_column_stays_inside_its_grid_row(app, admin_client, subtitles
 
 def test_the_page_offers_a_language_box_per_track(app, admin_client):
     """#218: every audio and subtitle track gets a box, prefilled with
-    what is stored, backed by the shared language list."""
+    what is stored, backed by one shared language list."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
@@ -260,6 +264,72 @@ def test_the_page_offers_a_language_box_per_track(app, admin_client):
         assert '<option value="eng" label="English">' in page
     finally:
         os.remove(library_path)
+
+
+class _BoxPlacement(HTMLParser):
+    """Where the language boxes sit, and what form they submit with."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.open_tags = []
+        self.boxes = []
+        self.form_ids = set()
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "form" and attrs.get("id"):
+            self.form_ids.add(attrs["id"])
+        if tag == "input" and attrs.get("name", "").startswith("language_"):
+            self.boxes.append((attrs, tuple(self.open_tags)))
+        if tag not in ("input", "br", "hr", "img", "option"):
+            self.open_tags.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in self.open_tags:
+            while self.open_tags.pop() != tag:
+                pass
+
+
+def test_the_boxes_edit_in_the_track_listing_and_save_with_the_edit_form(
+    app, admin_client
+):
+    """Glenn's placement (Aug 24 2026): the boxes belong inline in the
+    Tracks table, not in a block of their own. That puts them outside the
+    form they submit with, so each one carries a `form` attribute naming
+    it — drop that and the edits silently never arrive."""
+
+    _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
+    try:
+        placement = _BoxPlacement()
+        placement.feed(page)
+
+        assert len(placement.boxes) == 2
+        assert "mkvpropedit-form" in placement.form_ids
+
+        for attrs, ancestors in placement.boxes:
+            assert "table" in ancestors, "the box left the track listing"
+            assert "form" not in ancestors, "a form nested inside the table"
+            assert attrs.get("form") == "mkvpropedit-form"
+    finally:
+        os.remove(library_path)
+
+
+def test_the_boxes_are_disabled_when_the_file_is_not_local(app, admin_client):
+    """The property-edit form disables itself through its fieldset, which
+    can't reach boxes living outside it — so they carry their own disabled
+    attribute. Otherwise the listing offers an edit the route can only
+    refuse afterwards."""
+
+    _, library_path, page = _matroska_file_page(
+        app, admin_client, subtitles=True, local=False
+    )
+    assert library_path is None
+
+    placement = _BoxPlacement()
+    placement.feed(page)
+
+    assert len(placement.boxes) == 2
+    assert all("disabled" in attrs for attrs, ancestors in placement.boxes)
 
 
 def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
