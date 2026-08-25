@@ -22,6 +22,7 @@ import subprocess
 import traceback
 
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 from pymediainfo import MediaInfo
 from rq import get_current_job
@@ -342,14 +343,104 @@ def track_metadata_scan(file_id):
     return save_track_metadata(file_id, details, lock=lock)
 
 
+# The languages a track can be set to. Read out of mkvtoolnix's own
+# table so the file page can never offer a code the edit would reject,
+# and narrowed to the ISO 639-2 entries — that's what MediaInfo reports
+# back and what the track records store
+
+FALLBACK_LANGUAGES = (
+    ("eng", "English"),
+    ("und", "Undetermined"),
+    ("zxx", "No linguistic content"),
+)
+
+
+@lru_cache(maxsize=1)
+def iso_639_2_languages():
+    """Every (code, name) pair mkvpropedit accepts, sorted by name.
+
+    Cached for the life of the process: the table belongs to the
+    installed mkvtoolnix, not to any one file.
+    """
+
+    try:
+        listing = subprocess.run(
+            [current_app.config["MKVMERGE_BIN"], "--list-languages"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    except Exception:
+        # Without the table the page can still offer the three codes
+        # this exists to correct between
+
+        current_app.logger.error(traceback.format_exc())
+        return FALLBACK_LANGUAGES
+
+    languages = []
+    for line in listing.splitlines():
+        # "English language name | ISO 639-3 | ISO 639-2 | ISO 639-1";
+        # the header and rule rows fail the 3-character check, as do
+        # the 639-3-only languages we can't store
+
+        columns = [column.strip() for column in line.split("|")]
+        if len(columns) < 3 or len(columns[2]) != 3:
+            continue
+
+        languages.append((columns[2], columns[0]))
+
+    if not languages:
+        return FALLBACK_LANGUAGES
+
+    return tuple(sorted(languages, key=lambda language: language[1].lower()))
+
+
+def resolve_language_code(value):
+    """The ISO 639-2 code for whatever was typed in a language box.
+
+    The datalist fills in the bare code, but browsers disagree over
+    whether they match on an option's label, so a language's name (or
+    the "English (eng)" pairing) is accepted just as readily. Returns
+    None when nothing matches, which the caller reports rather than
+    guessing at.
+    """
+
+    value = (value or "").strip()
+    if not value:
+        return None
+
+    languages = iso_639_2_languages()
+    by_code = {code.lower(): code for code, name in languages}
+    by_name = {name.lower(): code for code, name in languages}
+
+    if value.lower() in by_code:
+        return by_code[value.lower()]
+
+    if value.lower() in by_name:
+        return by_name[value.lower()]
+
+    paired = re.fullmatch(r"(?P<name>.+?)\s*\((?P<code>[A-Za-z]{3})\)", value)
+    if paired and paired.group("code").lower() in by_code:
+        return by_code[paired.group("code").lower()]
+
+    return None
+
+
 def mkvpropedit_task(
     file_id,
     default_audio_track,
     default_subtitle_track,
     forced_subtitle_tracks,
+    track_languages=None,
     transient_retries=0,
 ):
-    """Update a file's MKV properties."""
+    """Update a file's MKV properties.
+
+    `track_languages` maps a track to the ISO 639-2 code it should be
+    given, keyed the way mkvpropedit names tracks ({"a1": "eng"});
+    None (or an empty mapping) leaves every language alone.
+    """
 
     # Shared lock/retry/copy plumbing stays in app.videos; lazy so the
     # module import direction stays one-way
@@ -379,6 +470,7 @@ def mkvpropedit_task(
                 default_audio_track,
                 default_subtitle_track,
                 forced_subtitle_tracks,
+                track_languages,
             ),
             kwargs={"transient_retries": transient_retries},
         )
@@ -391,6 +483,7 @@ def mkvpropedit_task(
                 default_audio_track,
                 default_subtitle_track,
                 forced_subtitle_tracks,
+                track_languages,
             )
         except OSError as e:
             if (
@@ -415,6 +508,7 @@ def mkvpropedit_task(
                     default_audio_track,
                     default_subtitle_track,
                     forced_subtitle_tracks,
+                    track_languages,
                     transient_retries=transient_retries + 1,
                     job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
                     job_id=retry_job_id(
@@ -431,7 +525,11 @@ def mkvpropedit_task(
 
 
 def mkvpropedit_unlocked(
-    file_id, default_audio_track, default_subtitle_track, forced_subtitle_tracks
+    file_id,
+    default_audio_track,
+    default_subtitle_track,
+    forced_subtitle_tracks,
+    track_languages=None,
 ):
     """Update a file's MKV properties; the caller must hold the title's lock."""
 
@@ -474,6 +572,9 @@ def mkvpropedit_unlocked(
             current_app.logger.info(
                 f"{file.basename} selected forced_subtitle_tracks: {forced_subtitle_tracks} {type(forced_subtitle_tracks)}"
             )
+            current_app.logger.info(
+                f"{file.basename} selected track_languages: {track_languages} {type(track_languages)}"
+            )
 
             # The web form sends track ids as strings; mkvmerge_task sends ints,
             # and None means the file has no audio tracks to set a default on.
@@ -486,6 +587,7 @@ def mkvpropedit_unlocked(
 
             audio_track_arguments = []
             subtitle_track_arguments = []
+            language_arguments = []
 
             for track_id, track in enumerate(audio_tracks, 1):
                 track_id = str(track_id)
@@ -524,11 +626,28 @@ def mkvpropedit_unlocked(
                             f"--edit track:s{track_id} --set flag-forced=0"
                         )
 
+            # Language corrections stand on their own: a file whose
+            # default flags are already right still needs the edit applied,
+            # so they're collected outside the flag loops above.
+            # mkvpropedit carries the change into LanguageIETF for us
+
+            for track_type, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
+                for track_id, track in enumerate(tracks, 1):
+                    language = (track_languages or {}).get(f"{track_type}{track_id}")
+                    if language:
+                        language_arguments.append(
+                            f"--edit track:{track_type}{track_id} "
+                            f"--set language={language}"
+                        )
+
             current_app.logger.info(
                 f"{file.basename} audio_track_arguments: {audio_track_arguments}"
             )
             current_app.logger.info(
                 f"{file.basename} subtitle_track_arguments: {subtitle_track_arguments}"
+            )
+            current_app.logger.info(
+                f"{file.basename} language_arguments: {language_arguments}"
             )
 
             # subprocess expects an array of arguments,
@@ -538,6 +657,9 @@ def mkvpropedit_unlocked(
                 localization_arguments.extend(arg.split())
 
             for arg in subtitle_track_arguments:
+                localization_arguments.extend(arg.split())
+
+            for arg in language_arguments:
                 localization_arguments.extend(arg.split())
 
             current_app.logger.info(

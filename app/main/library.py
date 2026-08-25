@@ -127,6 +127,8 @@ from app.videos import (
     clear_watchlist,
     criterion_release_lookups,
     get_criterion_collection_from_wikidata,
+    iso_639_2_languages,
+    resolve_language_code,
     star_rating_fields,
     track_metadata_scan,
     untouched_key_still_claimed,
@@ -2712,6 +2714,37 @@ def file(file_id):
             mkvpropedit_form.default_audio.data if audio_tracks else None
         )
 
+        # The per-track language boxes ride along with the flag edits, so
+        # one mkvpropedit pass and one rescan cover both. They're rendered
+        # by hand rather than as form fields (there's one per track, like
+        # the subtitle triage checkboxes), and only the tracks whose code
+        # actually changed are sent — an untouched form leaves them alone
+
+        track_languages = {}
+        unresolved = []
+        for prefix, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
+            for track in tracks:
+                submitted = request.form.get(f"language_{prefix}{track.track}", "")
+                if not submitted.strip():
+                    continue
+
+                language = resolve_language_code(submitted)
+                if not language:
+                    unresolved.append(submitted.strip())
+
+                elif language != track.language:
+                    track_languages[f"{prefix}{track.track}"] = language
+
+        if unresolved:
+            flash(
+                f"Unrecognized language "
+                f"{'entries' if len(unresolved) > 1 else 'entry'} "
+                f"{', '.join(repr(entry) for entry in unresolved)} — "
+                f"no properties were changed.",
+                "danger",
+            )
+            return redirect(url_for("main.file", file_id=file.id))
+
         current_app.logger.debug(f"Default audio: {default_audio_track}")
         current_app.logger.debug(
             f"Default subtitle: {mkvpropedit_form.default_subtitle.data}"
@@ -2728,6 +2761,7 @@ def file(file_id):
                     default_audio_track,
                     mkvpropedit_form.default_subtitle.data,
                     mkvpropedit_form.forced_subtitles.data,
+                    track_languages or None,
                 ),
                 job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
                 description=f"'{file.basename}'",
@@ -2976,6 +3010,11 @@ def file(file_id):
         pending_subtitle_triage=pending_subtitle_triage,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,
+        languages=(
+            iso_639_2_languages()
+            if file.container == "Matroska" and (audio_tracks or subtitle_tracks)
+            else ()
+        ),
         mkvmerge_form=mkvmerge_form,
         transcode_form=transcode_form,
         upload_form=upload_form,

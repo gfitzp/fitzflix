@@ -49,7 +49,6 @@
 		{% endif %}
 	{% endif %}
 </p>
-</p>
 {% if not file_exists_locally %}
 <div class="alert alert-warning" role="alert">
 	This file isn't present in the local library — restore it from AWS to enable editing, transcoding, or uploading.
@@ -172,8 +171,34 @@
 						</div>
 						{% endfor %}
 					</div>
-				{% endif %}
-			</div>
+				</div>
+			{% endif %}
+			{% if languages %}
+				<div class="row">
+					{% if audio_tracks %}
+					<div class="mb-3 col-xl-4 col-lg-5">
+						Audio track languages:
+						{% for audio in audio_tracks %}
+						<div class="mt-1">
+							<label class="form-label small text-muted mb-0" for="language_a{{ audio.track }}">Track {{ audio.track }}: {{ audio.codec }} {{ audio.channels }}</label>
+							<input class="form-control form-control-sm" list="iso-639-2-languages" id="language_a{{ audio.track }}" name="language_a{{ audio.track }}" value="{{ audio.language }}" autocomplete="off" spellcheck="false" aria-label="Language of audio track {{ audio.track }}">
+						</div>
+						{% endfor %}
+					</div>
+					{% endif %}
+					{% if subtitle_tracks %}
+					<div class="mb-3 col">
+						Subtitle track languages:
+						{% for subtitle in subtitle_tracks %}
+						<div class="mt-1">
+							<label class="form-label small text-muted mb-0" for="language_s{{ subtitle.track }}">Track {{ subtitle.track }}: {{ subtitle.elements }}-element {{ subtitle.format }}</label>
+							<input class="form-control form-control-sm" list="iso-639-2-languages" id="language_s{{ subtitle.track }}" name="language_s{{ subtitle.track }}" value="{{ subtitle.language }}" autocomplete="off" spellcheck="false" aria-label="Language of subtitle track {{ subtitle.track }}">
+						</div>
+						{% endfor %}
+					</div>
+					{% endif %}
+				</div>
+			{% endif %}
 			{{ mkvpropedit_form.mkvpropedit_submit(class_="btn btn-sm btn-warning mb-2") }}
 			</fieldset>
 		</form>
@@ -213,9 +238,14 @@
 		{% endif %}
 	</div>
 </div>
+{% if languages %}
+<datalist id="iso-639-2-languages">
+	{% for code, name in languages %}<option value="{{ code }}" label="{{ name }}"></option>
+	{% endfor %}
+</datalist>
+{% endif %}
 {% endif %}
 <hr>
-<p>
 <div class="row">
 	<div class="col-lg-4 col-md-6 col-sm-8">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.file_poster', file_id=file.id) }}" role="button">Change poster&hellip;</a>

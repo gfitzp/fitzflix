@@ -495,7 +495,8 @@ def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
 
 def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
     """A transient mount error before the file is restructured reschedules
-    the edit with the same arguments; the retry re-acquires the lock."""
+    the edit with the same arguments — the language corrections among them,
+    since nothing has been applied yet; the retry re-acquires the lock."""
 
     import errno
 
@@ -518,7 +519,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
         monkeypatch.setattr(tracks, "mkvpropedit_unlocked", flaky_unlocked)
 
-        assert videos.mkvpropedit_task(file_id, "2", None, []) is False
+        assert videos.mkvpropedit_task(file_id, "2", None, [], {"a1": "eng"}) is False
 
         retries = [
             job
@@ -529,7 +530,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
             retry_job_id("mkvpropedit_task", file_id, 1)
         ]
         job = retries[0]
-        assert list(job.args) == [file_id, "2", None, []]
+        assert list(job.args) == [file_id, "2", None, [], {"a1": "eng"}]
         assert job.kwargs == {"transient_retries": 1}
         assert_binds(job)
 
