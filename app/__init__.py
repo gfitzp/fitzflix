@@ -137,6 +137,18 @@ def cron_table(config):
             3600,
             "Cleaning up orphaned partial files",
         ),
+        # Ask every library file whether the NAS still holds its handle.
+        # The state is invisible until an upload's close fails, so the
+        # sweep asks nightly instead of waiting to be surprised. 5am is
+        # after the night's other maintenance and far outside viewing
+        # hours: it is ~21k opens over SMB, a minute's work, and Plex
+        # reads the same shares.
+        (
+            "0 5 * * *",
+            "app.maintenance.smb_handle_sweep",
+            3600,
+            "Probing library files for lost SMB handles",
+        ),
         ("*/10 * * * *", "app.maintenance.health_probe", 600, "Probing system health"),
         # Sync Letterboxd diaries from each user's RSS feed; the
         # task no-ops for users without a configured username

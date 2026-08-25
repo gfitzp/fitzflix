@@ -531,6 +531,46 @@ def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatc
         assert File.query.filter_by(aws_untouched_stale=True).count() == 1
 
 
+def test_the_nightly_sweep_records_what_it_finds(app, monkeypatch):
+    """Nothing discovers this state on its own, so something has to ask
+    on a schedule rather than wait to be surprised by an upload."""
+
+    from app import db, smb_probe
+    from app.maintenance import smb_handle_sweep
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Swept", 2021)
+        file = make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        path = smb_probe.library_path(file)
+
+        monkeypatch.setattr(smb_probe, "probe_path", failure)
+
+        assert smb_handle_sweep() is True
+
+        state = smb_probe.recorded_state()
+        assert path in state
+        assert state[path]["context"] == "nightly sweep"
+
+
+def test_the_sweep_is_scheduled_nightly(app):
+    """The cron table is authoritative on every scheduler start, so the
+    entry being there is the whole of the scheduling."""
+
+    from app import cron_table
+
+    rows = [
+        row
+        for row in cron_table(app.config)
+        if row["func"] == "app.maintenance.smb_handle_sweep"
+    ]
+
+    assert len(rows) == 1
+    assert rows[0]["cron"] == "0 5 * * *"
+    assert rows[0]["queue"] == "fitzflix-maintenance"
+
+
 def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
     """The probe runs after work that already succeeded. A diagnostic that
     can fail the task it's reporting on is worse than no diagnostic."""
