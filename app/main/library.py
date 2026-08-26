@@ -652,7 +652,7 @@ def movie_library():
         )
 
     elif q:
-        title = f"Movies matching '{q}'"
+        title = f"Library movies matching '{q}'"
         q = q.replace(" ", "%")
         movies = (
             db.session.query(File, Movie, RefQuality)
