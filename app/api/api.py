@@ -7,10 +7,7 @@ from datetime import datetime, timezone
 from flask import current_app, jsonify, request
 from flask_login import current_user
 
-from app import db
 from app.api import bp
-from app.api.auth import authenticate_api_request
-from app.models import Movie
 
 
 @bp.route("/queue-details")
@@ -105,50 +102,3 @@ def plex_webhook(token):
         description=f"Recording Plex watch of tmdb:{tmdb_id} by {username}",
     )
     return "", 204
-
-
-@bp.route("/add-to-cart", methods=["POST"])
-def add_to_cart():
-    """Endpoint for adding movies to the shopping cart."""
-
-    current_app.logger.info(f"Authorization: *redacted*, Request: {request.get_json()}")
-    payload = request.get_json()
-    response = jsonify({})
-
-    if not request.authorization:
-        response.status_code = 401
-        return response
-
-    if request.authorization.get("username") and request.authorization.get("password"):
-        # The password field must hold the user's API key
-
-        if authenticate_api_request() is None:
-            response.status_code = 401
-            return response
-
-        # Build the response before setting the status code; jsonify() returns
-        # a fresh response object, so setting the code first would discard it
-
-        response = jsonify(request.get_json())
-        response.status_code = 202
-
-        cart_item = Movie.query.filter_by(tmdb_id=int(payload["tmdb_id"])).first()
-        if not cart_item:
-            response.status_code = 500
-            return response
-
-        current_app.logger.info(f"Adding to shopping cart: {cart_item}")
-
-        cart_item.shopping_cart_add_date = datetime.now(timezone.utc)
-        if cart_item.shopping_cart_priority is None:
-            cart_item.shopping_cart_priority = 1
-        else:
-            cart_item.shopping_cart_priority = cart_item.shopping_cart_priority + 1
-        db.session.commit()
-
-        return response
-
-    else:
-        response.status_code = 401
-
-    return response

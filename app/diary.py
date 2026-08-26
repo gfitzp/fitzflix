@@ -484,8 +484,8 @@ def apply_letterboxd_import(user_id, films):
 def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
     """Record one Plex movie watch, from either the webhook or the poller.
 
-    Every watch bumps the movie's household shopping-cart priority (the
-    same effect as the Tautulli add-to-cart call). When the Plex account
+    Every watch bumps the movie's household shopping-cart priority.
+    When the Plex account
     maps to a Fitzflix user via User.plex_username, the watch also lands
     in their diary as an unrated review row keyed on user/movie/date —
     with rewatch computed from whether any earlier row exists.
