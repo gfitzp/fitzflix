@@ -599,10 +599,12 @@ def test_a_tied_worst_copy_prefers_the_upgradable_episode(app):
         assert series_upgradable([series.id]) == {series.id: True}
 
 
-def test_tv_library_search_narrows_by_title_and_episode_info(app, admin_client):
-    """The TV library's own search (#210): show titles, TMDB names,
-    TMDB episode titles, and the file names carrying the SxxEyy slots
-    all match — this library alone, never movies."""
+def test_tv_library_search_splits_series_and_episode_matches(app, admin_client):
+    """The TV library's own search (#210, revised): the series list
+    holds only series whose TITLE matches; episodes whose TMDB titles
+    match render as their own section below, the main search page's
+    grammar — a matched episode never drags its series into the series
+    list (searching "venture" must not surface Bob's Burgers)."""
 
     import re
 
@@ -622,21 +624,23 @@ def test_tv_library_search_narrows_by_title_and_episode_info(app, admin_client):
         movie = make_movie("Quincke The Movie", 1999)
         make_movie_file(movie, "DVD")
         db.session.commit()
+        title_id, episode_series_id = by_title.id, by_episode_title.id
 
     page = admin_client.get("/library/tv?q=quincke").get_data(as_text=True)
-    assert "TV series matching &#39;quincke&#39;" in page
+    assert "TV library matches for &#39;quincke&#39;" in page
     assert "Quincke&#39;s Casebook" in page
     assert "Quincke Files" in page
-    assert "Anthology Hour" in page
     assert "Unrelated Show" not in page
     assert "Quincke The Movie" not in page
-    assert "3 series match" in page
+    assert "2 series titles and 1 episode title match" in page
 
-    # The SxxEyy slot in the file name counts as episode info
+    # The episode-only match renders as an episode row landing on its
+    # season page — never as a series row
 
-    page = admin_client.get("/library/tv?q=S02E03").get_data(as_text=True)
-    assert "Anthology Hour" in page
-    assert "Quincke&#39;s Casebook" not in page
+    assert "The Quincke Emergency Broadcast" in page
+    assert f'href="/tv/{episode_series_id}/2"' in page
+    assert f'href="/tv/{episode_series_id}"' not in page
+    assert f'href="/tv/{title_id}"' in page
 
     # The search box posts and redirects into ?q=
 
@@ -653,8 +657,10 @@ def test_tv_library_search_narrows_by_title_and_episode_info(app, admin_client):
     assert response.status_code == 302
     assert "q=quincke" in response.headers["Location"]
 
-    # No matches offers the whole library back
+    # No matches offers the whole library back — and a bare SxxEyy slot
+    # is no longer a match on its own (episode matching is TMDB titles)
 
-    page = admin_client.get("/library/tv?q=zzzzzz").get_data(as_text=True)
-    assert "No TV series or episodes match" in page
-    assert "Show the whole TV library" in page
+    for miss in ("zzzzzz", "S02E03"):
+        page = admin_client.get(f"/library/tv?q={miss}").get_data(as_text=True)
+        assert "No TV series or episodes match" in page
+        assert "Show the whole TV library" in page

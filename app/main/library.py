@@ -1981,10 +1981,12 @@ def movie_files(movie_id):
 def tv_library():
     """Show the worst quality in each season for each TV show in the library.
 
-    ?q= narrows the listing within the TV library alone (#210): series
-    whose title matches, plus series carrying an episode whose TMDB
-    title or file name matches — so a half-remembered episode finds
-    its show."""
+    ?q= narrows the listing within the TV library alone (#210): the
+    series list holds only series whose TITLE matches, and episodes
+    whose TMDB titles match render as their own section below, the
+    main search page's grammar — a matched episode never drags its
+    whole series into the series list (Glenn: searching "venture"
+    must not surface Bob's Burgers)."""
 
     # Subquery to get the number of episodes we have for in each season,
     # and the worst quality for each season
@@ -2069,28 +2071,24 @@ def tv_library():
         )
 
     series_query = TVSeries.query.join(File, (File.series_id == TVSeries.id)).distinct()
+    episode_results = []
     if q:
-        # Spaces become wildcards like the movie library's search, and
-        # episode info matches too: TMDB episode titles, and the file
-        # names that carry the SxxEyy slots
+        # Spaces become wildcards like the movie library's search. The
+        # series list matches titles alone; matching episodes get the
+        # main search page's own episode rows (lazy import — search.py
+        # imports from this module)
 
-        like = f"%{q.replace(' ', '%')}%"
-        episode_title_match = db.session.query(TVEpisode.series_id).filter(
-            TVEpisode.title.ilike(like)
-        )
-        episode_file_match = (
-            db.session.query(File.series_id)
-            .filter(File.series_id.isnot(None))
-            .filter(db.or_(File.plex_title.ilike(like), File.basename.ilike(like)))
-        )
+        wildcard = q.replace(" ", "%")
         series_query = series_query.filter(
             db.or_(
-                TVSeries.title.ilike(like),
-                TVSeries.tmdb_name.ilike(like),
-                TVSeries.id.in_(episode_title_match),
-                TVSeries.id.in_(episode_file_match),
+                TVSeries.title.ilike(f"%{wildcard}%"),
+                TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
             )
         )
+
+        from app.main.search import _episode_search_results
+
+        episode_results = _episode_search_results(wildcard)
 
     tv = []
     for series in series_query.order_by(
@@ -2114,8 +2112,9 @@ def tv_library():
 
     return render_template(
         "library_tv.html",
-        title=f"TV series matching '{q}'" if q else "TV Library",
+        title=f"TV library matches for '{q}'" if q else "TV Library",
         series=tv,
+        episode_results=episode_results,
         q=q,
         library_search_form=library_search_form,
     )

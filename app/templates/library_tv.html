@@ -4,8 +4,10 @@
 <div class="row mt-n2 mb-n2 d-flex">
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
-		{# The TV library's own search (#210): show titles and episode
-		   info, this library alone — the movie library's grammar #}
+		{# The TV library's own search (#210): this library alone, the
+		   movie library's grammar. Series matches and episode matches
+		   render as separate sections, like the main search page — a
+		   matched episode never drags its series into the series list #}
 		<form class="form-inline float-sm-right mb-2 d-flex" action="" method="post">
 			{{ library_search_form.hidden_tag() }}
 			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
@@ -14,11 +16,14 @@
 	</div>
 </div>
 <hr>
-{% if q and not series %}
+{% if q and not series and not episode_results %}
 <p class="lead">No TV series or episodes match &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 <p class="text-muted"><a href="{{ url_for('main.tv_library') }}">Show the whole TV library</a> instead.</p>
 {% elif q %}
-<p class="small text-muted">{{ series|length }} series match{{ "es" if series|length == 1 }} &mdash; <a href="{{ url_for('main.tv_library') }}">show the whole TV library</a> instead.</p>
+<p class="small text-muted">{{ series|length }} series title{{ "s" if series|length != 1 }} and {{ episode_results|length }} episode title{{ "s" if episode_results|length != 1 }} match &mdash; <a href="{{ url_for('main.tv_library') }}">show the whole TV library</a> instead.</p>
+{% endif %}
+{% if q and series %}
+<h4>Series</h4>
 {% endif %}
 {% if series %}
 {% for tv in series %}
@@ -61,5 +66,28 @@
 </div>
 <hr>
 {% endfor %}
+{% endif %}
+{% if episode_results %}
+{# The main search page's episode rows: TMDB episode titles, each
+   landing on its season page; numbering-suspect series never appear #}
+<h4>Episodes</h4>
+<div class="list-group mb-4">
+	{% for result in episode_results %}
+	{% set tv = result.series %}
+	{% set episode = result.episode %}
+	<a href="{{ url_for('main.season', series_id=tv.id, season=episode.season) }}" class="list-group-item list-group-item-action">
+		<div class="d-flex">
+			{% if episode.tmdb_still_path %}
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ episode.tmdb_still_path }}" loading="lazy" alt="" class="rounded me-3 align-self-start" style="width: 92px;">
+			{% endif %}
+			<div class="flex-grow-1">
+				<h5 class="mb-1">{{ episode.title }}</h5>
+				<div class="small text-muted">{{ tv.tmdb_name if tv.tmdb_name else tv.title }} &middot; S{{ "%02d"|format(episode.season) }}E{{ "%02d"|format(episode.episode) }}{% if episode.air_date %} &middot; {{ episode.air_date.year }}{% endif %}</div>
+				{% if episode.overview %}<p class="mb-1 mt-1 small text-muted">{{ episode.overview|truncate(200) }}</p>{% endif %}
+			</div>
+		</div>
+	</a>
+	{% endfor %}
+</div>
 {% endif %}
 {% endblock %}
