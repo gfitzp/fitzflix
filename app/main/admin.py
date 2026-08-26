@@ -1136,10 +1136,26 @@ def files():
         .subquery()
     )
 
+    # A lossy FIRST track flags a file — except the E-AC-3 Atmos twin
+    # leading the Atmos pipeline's trio (#55b), which is deliberate:
+    # DD+ Atmos first for Apple TV passthrough, the lossless original
+    # riding behind. Those files are configured exactly as wanted, so
+    # they're not lossless-upgrade candidates (#212). atmos imports
+    # lazily like its other callers — it resolves the worker app
+    # singleton at module import time
+
+    from app.atmos import EAC3_ATMOS_CODEC
+
     lossy_files = (
         db.session.query(FileAudioTrack.file_id)
         .filter(FileAudioTrack.track == 1)
         .filter(FileAudioTrack.compression_mode != "Lossless")
+        .filter(
+            db.or_(
+                FileAudioTrack.codec.is_(None),
+                FileAudioTrack.codec != EAC3_ATMOS_CODEC,
+            )
+        )
         .subquery()
     )
 
