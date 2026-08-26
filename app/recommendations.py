@@ -18,7 +18,7 @@ import bisect
 import json
 import random
 
-from datetime import datetime
+from datetime import date, datetime
 
 from flask import current_app
 from werkzeug.local import LocalProxy
@@ -992,6 +992,67 @@ def shuffle_daily(items, seed):
     shuffled = list(items)
     rng.shuffle(shuffled)
     return shuffled
+
+
+# The day's frozen shelves (#204): a shelf must show the same films in
+# the same slots all day — the pickers are day-deterministic, but their
+# INPUTS move during the day (a logged film shrinks the ranked list and
+# every tier boundary with it), which is what kept reshuffling the
+# cards. Keys are per user, per shelf, per calendar day; they expire on
+# their own, so tomorrow's first render starts fresh from live state.
+
+SHELF_SNAPSHOT_KEY = "fitzflix:shelf:{shelf}:{user_id}:{day}"
+SHELF_SNAPSHOT_TTL = 2 * 86400
+
+
+def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
+    """The day's stable ordered card ids for one shelf.
+
+    The first render of the day calls pick() for the baseline and
+    snapshots it; later renders replay the snapshot in slot order. A
+    card that stopped being eligible — watched, waved off, acquired —
+    is replaced IN ITS SLOT by the first id from eligible_ids not
+    already showing, and every other card keeps its position (Glenn's
+    rule: it's fine to replace a watched film during the day, never to
+    move the rest). eligible_ids carries every id still showable right
+    now, in replacement-priority order; a slot with no replacement
+    left simply closes up.
+    """
+
+    day = day or date.today().isoformat()
+    key = SHELF_SNAPSHOT_KEY.format(shelf=shelf, user_id=int(user_id), day=day)
+    eligible = list(eligible_ids)
+    eligible_set = set(eligible)
+    snapshot = None
+    stored = redis_client.get(key)
+    if stored:
+        try:
+            snapshot = json.loads(stored)
+        except (TypeError, ValueError):
+            snapshot = None
+    if snapshot is None:
+        snapshot = list(pick())
+        redis_client.set(key, json.dumps(snapshot), ex=SHELF_SNAPSHOT_TTL)
+        return snapshot
+
+    showing = set(snapshot)
+    # Lazy on purpose: `showing` grows as replacements land, and the
+    # generator's membership test reads the live set
+    replacements = (card_id for card_id in eligible if card_id not in showing)
+    cards = []
+    changed = False
+    for card_id in snapshot:
+        if card_id in eligible_set:
+            cards.append(card_id)
+            continue
+        changed = True
+        replacement = next(replacements, None)
+        if replacement is not None:
+            cards.append(replacement)
+            showing.add(replacement)
+    if changed:
+        redis_client.set(key, json.dumps(cards), ex=SHELF_SNAPSHOT_TTL)
+    return cards
 
 
 def stored_recommendations(redis, user_id):

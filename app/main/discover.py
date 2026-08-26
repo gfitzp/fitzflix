@@ -72,6 +72,7 @@ from app.recommendations import (
     resolved_tmdb_score,
     rotate_daily,
     rotate_partition,
+    frozen_shelf,
     shuffle_daily,
     stored_profile,
     stored_recommendations,
@@ -122,6 +123,12 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 WATCHLIST_PIN_LIMIT = 4
 
 
+def _fits(movie, minutes):
+    """True when the film fits the evening's runtime filter."""
+
+    return bool(movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
+
+
 @bp.route("/")
 @bp.route("/index")
 @login_required
@@ -132,7 +139,13 @@ def index():
     ?minutes=N filters both rails at view time to films that fit the
     evening — the computed recommendations themselves never consider
     length, and films with unknown runtimes hide only from filtered
-    views."""
+    views.
+
+    The default view's shelves are frozen for the calendar day (#204):
+    the first render snapshots each rail's cards and later renders
+    replay them, with only a no-longer-eligible film's slot replaced —
+    see frozen_shelf. The ?minutes= view stays a live pick, a
+    transient planning lens rather than the shelf."""
 
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
@@ -199,12 +212,9 @@ def index():
                 "watchlisted": True,
             }
             for movie in wanted_owned
-            if not minutes or (movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
         ]
-        pinned = rotate_partition(
-            pin_candidates, WATCHLIST_PIN_LIMIT, date.today().toordinal()
-        )
 
+        rec_rows = []
         for item in stored.get("items", []):
             movie = movies.get(item["movie_id"])
             if movie is None or item["movie_id"] in seen:
@@ -212,9 +222,7 @@ def index():
             if item["movie_id"] in watchlist_ids:
                 continue
             recs_eligible += 1
-            if minutes and not (movie.tmdb_runtime and movie.tmdb_runtime <= minutes):
-                continue
-            recs.append(
+            rec_rows.append(
                 {
                     "movie": movie,
                     "because": item.get("because", [])[:3],
@@ -227,12 +235,41 @@ def index():
         # set (400+ films, roughly monthly) before anything repeats.
         # The day's cards then shuffle so neither the amber pins nor
         # the quality tiers hold fixed positions (Glenn: slot one must
-        # not always be a pin or a top-tier film)
+        # not always be a pin or a top-tier film). The default view
+        # freezes the day's result (#204); the ?minutes= view stays a
+        # live pick over the films that fit — it's a transient planning
+        # lens, not the shelf
 
-        recs = shuffle_daily(
-            pinned + rotate_partition(recs, 12 - len(pinned), date.today().toordinal()),
-            f"mix:recs:{int(current_user.id)}:{date.today().isoformat()}",
-        )
+        def pick_recs(pins, rows):
+            """The day's baseline card order for the library rail."""
+
+            chosen = rotate_partition(
+                pins, WATCHLIST_PIN_LIMIT, date.today().toordinal()
+            )
+            return shuffle_daily(
+                chosen
+                + rotate_partition(rows, 12 - len(chosen), date.today().toordinal()),
+                f"mix:recs:{int(current_user.id)}:{date.today().isoformat()}",
+            )
+
+        if minutes:
+            recs = pick_recs(
+                [row for row in pin_candidates if _fits(row["movie"], minutes)],
+                [row for row in rec_rows if _fits(row["movie"], minutes)],
+            )
+        else:
+            rows_by_id = {row["movie"].id: row for row in pin_candidates + rec_rows}
+            shown_ids = frozen_shelf(
+                current_app.redis,
+                current_user.id,
+                day=date.today().isoformat(),
+                shelf="recs",
+                eligible_ids=list(rows_by_id),
+                pick=lambda: [
+                    row["movie"].id for row in pick_recs(pin_candidates, rec_rows)
+                ],
+            )
+            recs = [rows_by_id[movie_id] for movie_id in shown_ids]
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
         # reviewer): compute once now instead of waiting for tonight; the
@@ -275,10 +312,6 @@ def index():
             if again_movie is None:
                 continue
             again_eligible += 1
-            if minutes and not (
-                again_movie.tmdb_runtime and again_movie.tmdb_runtime <= minutes
-            ):
-                continue
             again_rows.append(
                 {
                     "movie": again_movie,
@@ -286,21 +319,43 @@ def index():
                     "watchlisted": item["movie_id"] in again_watchlisted,
                 }
             )
-        again_pinned = rotate_partition(
-            [row for row in again_rows if row["watchlisted"]],
-            WATCHLIST_PIN_LIMIT,
-            date.today().toordinal(),
-        )
-        again_rest = [row for row in again_rows if not row["watchlisted"]]
-        again_items = shuffle_daily(
-            again_pinned
-            + rotate_daily(
-                again_rest,
-                12 - len(again_pinned),
-                f"again:{int(current_user.id)}:{date.today().isoformat()}",
-            ),
-            f"mix:again:{int(current_user.id)}:{date.today().isoformat()}",
-        )
+
+        def pick_again(rows):
+            """The day's baseline card order for the rewatch shelf."""
+
+            chosen = rotate_partition(
+                [row for row in rows if row["watchlisted"]],
+                WATCHLIST_PIN_LIMIT,
+                date.today().toordinal(),
+            )
+            return shuffle_daily(
+                chosen
+                + rotate_daily(
+                    [row for row in rows if not row["watchlisted"]],
+                    12 - len(chosen),
+                    f"again:{int(current_user.id)}:{date.today().isoformat()}",
+                ),
+                f"mix:again:{int(current_user.id)}:{date.today().isoformat()}",
+            )
+
+        if minutes:
+            again_items = pick_again(
+                [row for row in again_rows if _fits(row["movie"], minutes)]
+            )
+        else:
+            again_by_id = {row["movie"].id: row for row in again_rows}
+            shown_ids = frozen_shelf(
+                current_app.redis,
+                current_user.id,
+                day=date.today().isoformat(),
+                shelf="again",
+                eligible_ids=[
+                    row["movie"].id for row in again_rows if row["watchlisted"]
+                ]
+                + [row["movie"].id for row in again_rows if not row["watchlisted"]],
+                pick=lambda: [row["movie"].id for row in pick_again(again_rows)],
+            )
+            again_items = [again_by_id[movie_id] for movie_id in shown_ids]
 
     # The second rail: films streaming on this user's services, from the
     # nightly discover-pool recompute. Films logged or acquired since
@@ -352,29 +407,54 @@ def index():
                 .filter(Movie.tmdb_id.in_(rail_ids))
                 .filter(UserWatchlist.user_id == int(current_user.id))
             }
+        rail_rows = []
         for item in rail_payload.get("items", []):
             if item["tmdb_id"] in dropped:
                 continue
             rail_eligible += 1
-            if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
-                continue
             item["watchlisted"] = item["tmdb_id"] in watchlisted_now
-            rail.append(item)
-        pinned = rotate_partition(
-            [item for item in rail if item["watchlisted"]],
-            WATCHLIST_PIN_LIMIT,
-            date.today().toordinal(),
-        )
-        rest = [item for item in rail if not item["watchlisted"]]
-        rail = shuffle_daily(
-            pinned
-            + rotate_daily(
-                rest,
-                12 - len(pinned),
-                f"rail:{int(current_user.id)}:{date.today().isoformat()}",
-            ),
-            f"mix:rail:{int(current_user.id)}:{date.today().isoformat()}",
-        )
+            rail_rows.append(item)
+
+        def pick_rail(rows):
+            """The day's baseline card order for the streaming rail."""
+
+            chosen = rotate_partition(
+                [item for item in rows if item["watchlisted"]],
+                WATCHLIST_PIN_LIMIT,
+                date.today().toordinal(),
+            )
+            return shuffle_daily(
+                chosen
+                + rotate_daily(
+                    [item for item in rows if not item["watchlisted"]],
+                    12 - len(chosen),
+                    f"rail:{int(current_user.id)}:{date.today().isoformat()}",
+                ),
+                f"mix:rail:{int(current_user.id)}:{date.today().isoformat()}",
+            )
+
+        if minutes:
+            rail = pick_rail(
+                [
+                    item
+                    for item in rail_rows
+                    if item.get("runtime") and item["runtime"] <= minutes
+                ]
+            )
+        else:
+            rail_by_id = {item["tmdb_id"]: item for item in rail_rows}
+            shown_ids = frozen_shelf(
+                current_app.redis,
+                current_user.id,
+                day=date.today().isoformat(),
+                shelf="rail",
+                eligible_ids=[
+                    item["tmdb_id"] for item in rail_rows if item["watchlisted"]
+                ]
+                + [item["tmdb_id"] for item in rail_rows if not item["watchlisted"]],
+                pick=lambda: [item["tmdb_id"] for item in pick_rail(rail_rows)],
+            )
+            rail = [rail_by_id[tmdb_id] for tmdb_id in shown_ids]
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id
     ):
@@ -400,22 +480,50 @@ def index():
         shelf_departs = shelf["departs"].strftime("%B %-d")
         shelf_url = shelf["url"]
         shelf_eligible = len(shelf["items"])
-        fitting = [
-            item
-            for item in shelf["items"]
-            if not minutes or (item.get("runtime") and item["runtime"] <= minutes)
-        ]
 
         # Watchlist urgencies stay pinned; the rest rotates daily so a
-        # month-long departure set doesn't look frozen
+        # month-long departure set doesn't look frozen — but frozen
+        # WITHIN the day like the other rails (#204). No shuffle here:
+        # watchlist-first order is urgency, not discovery
 
-        pinned = [item for item in fitting if item.get("watchlisted")][:12]
-        rest = [item for item in fitting if not item.get("watchlisted")]
-        shelf_items = pinned + rotate_daily(
-            rest,
-            12 - len(pinned),
-            f"shelf:{int(current_user.id)}:{date.today().isoformat()}",
-        )
+        def pick_shelf(rows):
+            """The day's baseline card order for the departure shelf."""
+
+            chosen = [item for item in rows if item.get("watchlisted")][:12]
+            return chosen + rotate_daily(
+                [item for item in rows if not item.get("watchlisted")],
+                12 - len(chosen),
+                f"shelf:{int(current_user.id)}:{date.today().isoformat()}",
+            )
+
+        if minutes:
+            shelf_items = pick_shelf(
+                [
+                    item
+                    for item in shelf["items"]
+                    if item.get("runtime") and item["runtime"] <= minutes
+                ]
+            )
+        else:
+            shelf_by_id = {item["tmdb_id"]: item for item in shelf["items"]}
+            shown_ids = frozen_shelf(
+                current_app.redis,
+                current_user.id,
+                day=date.today().isoformat(),
+                shelf="leaving",
+                eligible_ids=[
+                    item["tmdb_id"]
+                    for item in shelf["items"]
+                    if item.get("watchlisted")
+                ]
+                + [
+                    item["tmdb_id"]
+                    for item in shelf["items"]
+                    if not item.get("watchlisted")
+                ],
+                pick=lambda: [item["tmdb_id"] for item in pick_shelf(shelf["items"])],
+            )
+            shelf_items = [shelf_by_id[tmdb_id] for tmdb_id in shown_ids]
 
     # A rail the runtime filter emptied says so rather than vanishing —
     # silence reads as "there's nothing here" (#198). Each flag means
