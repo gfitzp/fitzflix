@@ -52,6 +52,10 @@
 <p class="small text-muted">Movies and series with no TMDB id and no verdict &mdash; match each one by hand, or flag it as unmatchable so no refresh path ever answers it with a blind title search.</p>
 <a class="btn btn-sm btn-{{ "warning" if tmdb_triage_count else "outline-secondary" }}" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
 <hr>
+<h3>Runtime mismatches</h3>
+<p class="small text-muted">Files whose estimated length disagrees hard with the film's TMDb runtime &mdash; the shape of a mislabelled recording, or a truncated download.</p>
+<a class="btn btn-sm btn-{{ "warning" if runtime_mismatch_count else "outline-secondary" }}" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
+<hr>
 <h3>Possibly-forced subtitles</h3>
 <p class="small text-muted">Unforced subtitle tracks that are far smaller than a same-language sibling in the same file &mdash; the shape of a foreign-parts-only track that should carry the forced flag.</p>
 <a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>

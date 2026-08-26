@@ -1908,6 +1908,13 @@ class File(db.Model):
     # rows because rescans delete and rebuild those.
 
     subtitle_triage_reviewed = db.Column(db.DateTime)
+
+    # When the runtime triage (#234) accepted this file's length as
+    # known-benign — a full-disc rip, a short recorded into a longer
+    # broadcast slot — so it stops reappearing on the candidates list.
+    # Reset on re-import: a replacement's length is new evidence.
+
+    runtime_mismatch_reviewed = db.Column(db.DateTime)
     aws_untouched_key = db.Column(db.String(255), index=True)
     aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)

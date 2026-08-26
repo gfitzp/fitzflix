@@ -15,6 +15,9 @@ per-track index) and renders the snapshots. The files live outside the
 custom-artwork tree so backups ignore them, and they're deleted the
 moment they stop being useful: when the file is triaged, or when its
 local copy goes away. There is deliberately no orphan sweep.
+
+The runtime-mismatch triage (#234) lives here too: no aids to
+generate, just the candidates query over what's already stored.
 """
 
 import json
@@ -27,7 +30,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, FileSubtitleTrack
+from app.models import File, FileAudioTrack, FileSubtitleTrack, Movie
 
 # This process's app instance, resolved lazily so the generation task
 # can run on a worker without building a second application
@@ -103,6 +106,71 @@ def forced_subtitle_candidates(file_id=None):
     return list(grouped.values())
 
 
+# The runtime triage (#234): a file whose estimated duration disagrees
+# hard with its movie's TMDb runtime is usually a title collision at
+# capture time — a mislabelled recording matched faithfully — or a
+# truncated download. The estimate needs no probe: size over the summed
+# track bitrates, all already stored. Thresholds and the short-runtime
+# exclusion come straight from the Aug 2026 survey: raw, the check
+# flagged 16 of 3,790 files, thirteen of them shorts recorded into
+# longer broadcast slots; excluding runtimes of 25 minutes or less left
+# the three genuinely wrong files and nothing else.
+
+RUNTIME_RATIO_HIGH = 1.9
+RUNTIME_RATIO_LOW = 0.55
+RUNTIME_EXCLUDE_MAX_MINUTES = 25
+
+
+def runtime_mismatch_candidates():
+    """Main-feature movie files whose bitrate-estimated duration is far
+    off their film's TMDb runtime and that nobody has acknowledged,
+    longest overshoot first. The estimate is approximate — a flagged
+    file wants an ffprobe before anything acts on it — so the ratio
+    does the filtering and the page shows its ingredients."""
+
+    audio_sum = (
+        db.session.query(
+            FileAudioTrack.file_id.label("file_id"),
+            db.func.sum(FileAudioTrack.bitrate_kbps).label("audio_kbps"),
+        )
+        .group_by(FileAudioTrack.file_id)
+        .subquery()
+    )
+    total_kbps = File.video_bitrate_kbps + db.func.coalesce(audio_sum.c.audio_kbps, 0)
+    estimated_minutes = File.filesize_bytes * 8 / 1000 / total_kbps / 60
+    ratio = estimated_minutes / Movie.tmdb_runtime
+
+    rows = (
+        db.session.query(
+            File,
+            Movie,
+            estimated_minutes.label("estimated_minutes"),
+            ratio.label("ratio"),
+        )
+        .join(Movie, Movie.id == File.movie_id)
+        .outerjoin(audio_sum, audio_sum.c.file_id == File.id)
+        .filter(
+            File.feature_type_id.is_(None),
+            File.runtime_mismatch_reviewed.is_(None),
+            File.filesize_bytes.isnot(None),
+            File.video_bitrate_kbps > 0,
+            Movie.tmdb_runtime > RUNTIME_EXCLUDE_MAX_MINUTES,
+            db.or_(ratio > RUNTIME_RATIO_HIGH, ratio < RUNTIME_RATIO_LOW),
+        )
+        .order_by(db.desc("ratio"))
+        .all()
+    )
+    return [
+        {
+            "file": file,
+            "movie": movie,
+            "estimated_minutes": float(estimated),
+            "ratio": float(flag_ratio),
+        }
+        for file, movie, estimated, flag_ratio in rows
+    ]
+
+
 def triage_snapshot_dir(file_id):
     """Where one file's triage aids live, outside the custom-artwork
     tree so the nightly backup ignores them."""
@@ -118,15 +186,17 @@ def remove_triage_snapshots(file_id):
 
 
 def reset_triage_state(file):
-    """A replaced file's subtitle content is new evidence: any earlier
-    reviewed verdict applied to the OLD tracks, and stale inspection
-    aids picture streams that no longer exist. Both reset on import so
-    the file re-earns its way off the triage page (Glenn's rule:
-    a replacement may carry a forced track the original didn't — the
+    """A replaced file's content is new evidence: any earlier reviewed
+    verdict applied to the OLD file, and stale inspection aids picture
+    streams that no longer exist. Everything resets on import so the
+    file re-earns its way off the triage pages (Glenn's rule: a
+    replacement may carry a forced track the original didn't — the
     A Fish Called Wanda case, where an Aug 12 dismissal silently gated
-    the file re-imported Aug 18)."""
+    the file re-imported Aug 18 — and a replacement's length is a new
+    length, so the runtime acknowledgement (#234) goes too)."""
 
     file.subtitle_triage_reviewed = None
+    file.runtime_mismatch_reviewed = None
     remove_triage_snapshots(file.id)
 
 

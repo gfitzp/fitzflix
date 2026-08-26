@@ -165,6 +165,14 @@ class TMDBRemoveForm(FlaskForm):
     remove_submit = SubmitField("Remove TMDB ID")
 
 
+class RuntimeMismatchForm(FlaskForm):
+    """The runtime triage page (#234): accept one flagged file's length
+    as known-benign so it stops reappearing."""
+
+    file_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
+    acknowledge_submit = SubmitField("Acknowledge")
+
+
 class TMDBTriageForm(FlaskForm):
     """The TMDB triage page (#226): per unmatched record, either flag
     it as unmatchable — the Remove button's path, so no refresh ever

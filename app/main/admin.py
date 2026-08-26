@@ -34,6 +34,7 @@ from app.main.forms import (
     RejectActionForm,
     SyncAWSStorageForm,
     QualityFilterForm,
+    RuntimeMismatchForm,
     TMDBRefreshForm,
     TMDBTriageForm,
     TrackMetadataScanForm,
@@ -55,6 +56,7 @@ from app.maintenance import system_health
 from app.triage import (
     forced_subtitle_candidates,
     remove_triage_snapshots,
+    runtime_mismatch_candidates,
     triage_presentation,
 )
 from app.videos import (
@@ -636,6 +638,7 @@ def maintenance():
         rejected_count=len(_rejected_files()),
         subtitle_triage_count=len(forced_subtitle_candidates()),
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
+        runtime_mismatch_count=len(runtime_mismatch_candidates()),
         tv_suspect_count=sum(1 for e in validation_report() if e["suspect"]),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
@@ -664,6 +667,40 @@ def tv_title_validation():
         entries=validation_report(),
         min_compared=MIN_COMPARED,
         suspect_below=SUSPECT_BELOW,
+    )
+
+
+@bp.route("/maintenance/runtime", methods=["GET", "POST"])
+@login_required
+@admin_required
+def runtime_triage():
+    """Triage files whose estimated length disagrees with their film's
+    TMDb runtime (#234) — the shape of a title collision at capture
+    time, or a truncated download. The page lists the estimate's
+    ingredients; Acknowledge accepts a known-benign mismatch (a
+    full-disc rip, a deliberately longer recording) so it stops
+    reappearing. Re-importing the file clears the acknowledgement."""
+
+    form = RuntimeMismatchForm()
+    if form.acknowledge_submit.data and form.validate_on_submit() and form.file_id.data:
+        file = db.session.get(File, form.file_id.data)
+        if file is None:
+            flash("That file no longer exists.", "warning")
+            return redirect(url_for("main.runtime_triage"))
+        file.runtime_mismatch_reviewed = datetime.now()
+        db.session.commit()
+        flash(
+            f"Acknowledged '{file.plex_title}' — its length is accepted "
+            f"as-is until the file is replaced",
+            "success",
+        )
+        return redirect(url_for("main.runtime_triage"))
+
+    return render_template(
+        "runtime_triage.html",
+        title="Runtime mismatches",
+        candidates=runtime_mismatch_candidates(),
+        runtime_form=RuntimeMismatchForm(),
     )
 
 
