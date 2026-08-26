@@ -100,14 +100,22 @@ class InfusePinForm(FlaskForm):
 
 class DefaultPlayerForm(FlaskForm):
     """Which app the plain play buttons target when this user has both
-    Plex and Infuse playback configured."""
+    Plex and Infuse playback configured.
+
+    The submit label must not put two SQL keywords next to each other:
+    the CloudFront WAF's SQLi_BODY rule blocked "Set Default Player"
+    live with a bare 403 (2026-08-26), and tested against the same WAF
+    "Update Default Player" blocks too (UPDATE and DEFAULT are both
+    keywords) while "Update Playback Device" and "Save Default Player"
+    pass — one keyword is fine, an adjacent pair reads as SQL.
+    """
 
     default_player = RadioField(
         "Default Player",
         choices=[("plex", "Plex"), ("infuse", "Infuse")],
         validators=[DataRequired()],
     )
-    default_player_submit = SubmitField("Set Default Player")
+    default_player_submit = SubmitField("Save Default Player")
 
 
 class ImportForm(FlaskForm):

@@ -684,12 +684,19 @@ def profile():
         else:
             if ":" not in address.strip("[]"):
                 address = f"{address}:{COMPANION_PORT}"
-            start_pairing(current_user.id, address)
-            flash(
-                "Look at the Apple TV — it should show a PIN within a few "
-                "seconds. Enter it below to finish pairing.",
-                "info",
-            )
+            if start_pairing(current_user.id, address):
+                flash(
+                    "Look at the Apple TV — it should show a PIN within a "
+                    "few seconds. Enter it below to finish pairing.",
+                    "info",
+                )
+            else:
+                flash(
+                    "A pairing is already waiting for its PIN — enter that "
+                    "below, or give it a couple of minutes to expire before "
+                    "starting over.",
+                    "warning",
+                )
         return redirect(url_for("main.profile"))
 
     infuse_pin_form = InfusePinForm()

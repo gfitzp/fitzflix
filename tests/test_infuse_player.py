@@ -456,7 +456,7 @@ class FakePairing:
         self.log.append("close")
 
 
-def _run_pair(app, monkeypatch, user_id, accept=True):
+def _run_pair(app, monkeypatch, user_id, accept=True, attempt=None):
     import app.infuse_player as infuse_player
 
     log = []
@@ -471,7 +471,7 @@ def _run_pair(app, monkeypatch, user_id, accept=True):
 
     monkeypatch.setattr(infuse_player.pyatv, "pair", fake_pair)
     with app.app_context():
-        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153"))
+        asyncio.run(infuse_player._pair(app, user_id, "192.168.1.63:49153", attempt))
     return log
 
 
@@ -538,6 +538,136 @@ def test_pairing_outcome_reads_the_task_verdict(app):
         app.redis.delete("fitzflix:infuse-pair:7:state")
         ok, message = pairing_outcome(7, wait_seconds=1)
         assert ok is False and "timed out" in message
+
+
+# --- Pairing: the attempt fence ---
+#
+# Two overlapping pairing attempts killed the first one live (a second
+# begin() makes the Apple TV drop the earlier session — 2026-08-26),
+# and a stale task could then overwrite the winner's outcome. The
+# guard is two-part: start_pairing refuses while an attempt awaits its
+# PIN, and each task only acts while its token is still current.
+
+
+def test_start_pairing_refuses_while_an_attempt_awaits_its_pin(app):
+    from app.infuse_player import start_pairing
+
+    with app.test_request_context():
+        for state in ("queued", "show-pin"):
+            app.redis.set("fitzflix:infuse-pair:5:state", state, ex=300)
+            assert start_pairing(5, "192.168.1.63:49153") is False
+        # Nothing was enqueued for either refusal
+        assert app.request_queue.count == 0
+
+
+def test_start_pairing_after_an_error_starts_fresh(app):
+    from app.infuse_player import start_pairing
+
+    with app.test_request_context():
+        app.redis.set("fitzflix:infuse-pair:5:state", "error:whatever", ex=300)
+        assert start_pairing(5, "192.168.1.63:49153") is True
+        assert app.redis.get("fitzflix:infuse-pair:5:state") == b"queued"
+        assert app.redis.get("fitzflix:infuse-pair:5:attempt") is not None
+        assert app.request_queue.count == 1
+        app.request_queue.empty()
+
+
+def test_superseded_task_bows_out_without_touching_anything(app, monkeypatch):
+    """A stale task (another attempt is now current) must not open a
+    pairing session, eat the newer attempt's PIN, or write state."""
+
+    user_id = _member_id(app)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:attempt", "newer", ex=300)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:state", "queued", ex=300)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:pin", "1234", ex=300)
+
+    log = _run_pair(app, monkeypatch, user_id, attempt="stale")
+
+    assert log == []  # never even reached pyatv.pair
+    assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:state") == b"queued"
+    assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:pin") == b"1234"
+
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        assert db.session.get(User, user_id).infuse_player_credentials is None
+
+
+def test_current_attempt_still_pairs_normally(app, monkeypatch):
+    user_id = _member_id(app)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:attempt", "mine", ex=300)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:pin", "1234", ex=300)
+
+    log = _run_pair(app, monkeypatch, user_id, attempt="mine")
+
+    assert ("pin", 1234) in log
+    assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:state") == b"ok"
+
+    from app import db
+    from app.models import User
+
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user.infuse_player_credentials == CREDENTIALS
+        user.infuse_player_address = None
+        user.infuse_player_credentials = None
+        db.session.commit()
+
+
+def test_profile_refuses_a_second_pairing_while_one_waits(app, user_client):
+    user_id = _member_id(app)
+    app.redis.set(f"fitzflix:infuse-pair:{user_id}:state", "show-pin", ex=300)
+
+    r = _profile_post(
+        user_client,
+        {"infuse_player_address": "192.168.1.63:49153", "infuse_player_submit": "1"},
+    )
+    assert "already waiting" in r.get_data(as_text=True)
+    assert app.request_queue.count == 0
+
+
+# --- The WAF trap ---
+
+
+SQL_KEYWORDS = {
+    "set",
+    "update",
+    "select",
+    "insert",
+    "delete",
+    "drop",
+    "union",
+    "default",
+    "values",
+    "table",
+    "from",
+    "where",
+    "create",
+    "alter",
+}
+
+
+def test_no_submit_button_reads_like_sql(app, user_client, member_players):
+    """The CloudFront WAF's SQLi_BODY rule blocked a live POST whose
+    body contained "…submit=Set+Default+Player" (2026-08-26). Tested
+    against that WAF: a single SQL keyword in the value passes
+    ("Update Playback Device", "Save Default Player") but two adjacent
+    keywords read as SQL and 403 ("Set Default Player", "Update
+    Default Player"). No submit value on the profile page may carry an
+    adjacent keyword pair."""
+
+    page = user_client.get("/profile").get_data(as_text=True)
+    values = re.findall(r'type="submit"[^>]*value="([^"]+)"', page)
+    assert values, "no submit buttons found on the profile page"
+    for value in values:
+        words = value.lower().split()
+        assert not any(
+            a in SQL_KEYWORDS and b in SQL_KEYWORDS for a, b in zip(words, words[1:])
+        ), (
+            f"submit value {value!r} puts two SQL keywords side by side — "
+            "the WAF will block the POST"
+        )
 
 
 # --- Pairing: the Profile page flow ---
