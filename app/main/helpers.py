@@ -297,41 +297,48 @@ def series_upgradable(series_ids):
     if not series_ids:
         return {}
 
+    # Each episode's best copy, with its quality's own preference and
+    # physical flag on the same row — the season's worst is then picked
+    # in Python off that row, rather than re-resolving a min(preference)
+    # back to a RefQuality by value (#238: preference carries no unique
+    # constraint, so a value join fans out if two tiers ever share one)
+
     ranked_files = (
         db.session.query(
-            File.id,
+            File.series_id.label("series_id"),
+            File.season.label("season"),
+            RefQuality.preference.label("preference"),
+            RefQuality.physical_media.label("physical_media"),
             tv_file_rank(),
         )
         .join(TVSeries, (TVSeries.id == File.series_id))
         .join(RefQuality, (RefQuality.id == File.quality_id))
-        .subquery()
-    )
-
-    season_aggregate = (
-        db.session.query(
-            File.series_id,
-            File.season,
-            db.func.min(RefQuality.preference).label("preference"),
-        )
-        .group_by(File.series_id, File.season)
-        .join(RefQuality, (RefQuality.id == File.quality_id))
-        .join(ranked_files, (ranked_files.c.id == File.id))
-        .filter(ranked_files.c.rank == 1)
         .filter(File.series_id.in_(series_ids))
         .subquery()
     )
 
+    worst = {}
+    for series_id, season, preference, physical in db.session.query(
+        ranked_files.c.series_id,
+        ranked_files.c.season,
+        ranked_files.c.preference,
+        ranked_files.c.physical_media,
+    ).filter(ranked_files.c.rank == 1):
+        key = (series_id, season)
+        held = worst.get(key)
+        # Ties break toward the non-physical copy: if two episodes tie
+        # at the season's worst and one of them CAN be upgraded, the
+        # season still has an episode worth upgrading
+        if (
+            held is None
+            or preference < held[0]
+            or (preference == held[0] and not physical)
+        ):
+            worst[key] = (preference, physical)
+
     threshold = _upgrade_threshold()
     upgradable = {}
-    for series_id, preference, physical in (
-        db.session.query(
-            season_aggregate.c.series_id,
-            season_aggregate.c.preference,
-            RefQuality.physical_media,
-        )
-        .join(RefQuality, (RefQuality.preference == season_aggregate.c.preference))
-        .all()
-    ):
+    for (series_id, _season), (preference, physical) in worst.items():
         season_upgradable = not physical and preference < threshold
         upgradable[series_id] = upgradable.get(series_id, False) or season_upgradable
 

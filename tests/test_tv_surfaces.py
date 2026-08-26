@@ -542,3 +542,58 @@ def test_tv_page_meta_line(app, admin_client):
     assert response.status_code == 200
     assert "1963–1989".encode() in response.data
     assert b"26 seasons, 694 episodes" in response.data
+
+
+def test_series_upgradable_reads_physical_from_the_files_own_tier(app):
+    """#238: RefQuality.preference carries no unique constraint, and the
+    old implementation resolved a season's worst preference back to a
+    tier by joining on that VALUE — so a non-physical tier that merely
+    shared the DVD's preference number made a DVD-only season read as
+    upgradable. The verdict has to come from the file's own quality row."""
+
+    from app.main.helpers import series_upgradable
+    from app.models import RefQuality
+
+    with app.app_context():
+        series = make_tv_series("Tied Tier Show")
+        make_tv_file(series, 1, 1, "DVD")
+        dvd = RefQuality.query.filter_by(quality_title="DVD").one()
+        db.session.add(
+            RefQuality(
+                quality_title="Tied Tier",
+                preference=dvd.preference,
+                physical_media=False,
+            )
+        )
+        db.session.commit()
+
+        # A DVD season is as good as that release will ever get: green,
+        # however many other tiers share its preference number
+
+        assert series_upgradable([series.id]) == {series.id: False}
+
+
+def test_a_tied_worst_copy_prefers_the_upgradable_episode(app):
+    """Two episodes tying at a season's worst, one on physical media and
+    one not: the non-physical copy CAN be upgraded, so the season still
+    has an episode worth upgrading and stays amber (#238)."""
+
+    from app.main.helpers import series_upgradable
+    from app.models import RefQuality
+
+    with app.app_context():
+        dvd = RefQuality.query.filter_by(quality_title="DVD").one()
+        db.session.add(
+            RefQuality(
+                quality_title="Tied Web Tier",
+                preference=dvd.preference,
+                physical_media=False,
+            )
+        )
+        db.session.flush()
+        series = make_tv_series("Tied Worst Show")
+        make_tv_file(series, 1, 1, "DVD")
+        make_tv_file(series, 1, 2, "Tied Web Tier")
+        db.session.commit()
+
+        assert series_upgradable([series.id]) == {series.id: True}
