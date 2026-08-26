@@ -23,6 +23,7 @@ Mako==1.4.1
 MarkupSafe==3.0.3
 pathvalidate==3.3.1
 pillow==12.3.0
+pyatv==0.18.0
 PyJWT==2.13.0
 pymediainfo==7.0.1
 PyMySQL==1.2.0

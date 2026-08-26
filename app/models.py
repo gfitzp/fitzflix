@@ -1116,6 +1116,47 @@ class User(UserMixin, db.Model):
 
         return bool(self.plex_player_address and self.plex_player_id)
 
+    # This user's Infuse target: the Apple TV's Companion-protocol
+    # address (ip:port) and the pyatv credentials from the one-time PIN
+    # pairing on the Profile page (#192). Separate from the Plex player
+    # fields — Infuse is driven over Apple's Companion protocol, not
+    # Plex Companion, and a user may enable either app or both
+
+    infuse_player_address = db.Column(db.String(64))
+    infuse_player_credentials = db.Column(db.String(512))
+
+    # Which app the plain play buttons target when BOTH are configured:
+    # "plex" or "infuse" (Profile page setting). Ignored while only one
+    # app is configured — that one simply wins
+
+    default_player = db.Column(db.String(8))
+
+    @property
+    def infuse_player_configured(self):
+        """Whether this user has a paired Apple TV to open Infuse on."""
+
+        return bool(self.infuse_player_address and self.infuse_player_credentials)
+
+    @property
+    def preferred_player(self):
+        """The app a plain (no-choice) play button targets: "plex" or
+        "infuse" — the configured one, the chosen default when both
+        are, or None with no player at all."""
+
+        players = [
+            player
+            for player, configured in (
+                ("plex", self.plex_player_configured),
+                ("infuse", self.infuse_player_configured),
+            )
+            if configured
+        ]
+        if not players:
+            return None
+        if len(players) == 1:
+            return players[0]
+        return self.default_player if self.default_player in players else "plex"
+
     # The streaming services this user subscribes to — availability
     # displays are customized per user, never site-wide
 

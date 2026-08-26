@@ -82,6 +82,34 @@ class PlexPlayerForm(FlaskForm):
     plex_player_submit = SubmitField("Update Playback Device")
 
 
+class InfusePlayerForm(FlaskForm):
+    """This user's Infuse target: the Apple TV's Companion address.
+    Submitting starts the one-time PIN pairing (the TV shows a PIN,
+    entered via InfusePinForm); blank removes the device."""
+
+    infuse_player_address = StringField("Apple TV Address", validators=[Optional()])
+    infuse_player_submit = SubmitField("Pair Apple TV for Infuse")
+
+
+class InfusePinForm(FlaskForm):
+    """The PIN the Apple TV is showing for an in-flight pairing."""
+
+    infuse_pin = StringField("PIN Shown on the Apple TV", validators=[DataRequired()])
+    infuse_pin_submit = SubmitField("Finish Pairing")
+
+
+class DefaultPlayerForm(FlaskForm):
+    """Which app the plain play buttons target when this user has both
+    Plex and Infuse playback configured."""
+
+    default_player = RadioField(
+        "Default Player",
+        choices=[("plex", "Plex"), ("infuse", "Infuse")],
+        validators=[DataRequired()],
+    )
+    default_player_submit = SubmitField("Set Default Player")
+
+
 class ImportForm(FlaskForm):
     """Manually trigger an import-directory scan."""
 

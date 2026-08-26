@@ -750,8 +750,13 @@ def movie_card():
             play_url=(
                 url_for("main.movie_play", movie_id=movie.id)
                 if in_library
-                and current_user.plex_player_configured
-                and remote_playback_configured()
+                and (
+                    (
+                        current_user.plex_player_configured
+                        and remote_playback_configured()
+                    )
+                    or (current_user.infuse_player_configured and movie.tmdb_id)
+                )
                 else None
             ),
             streaming=(

@@ -26,7 +26,10 @@ from sqlalchemy.orm import contains_eager
 
 from app import db
 from app.main.forms import (
+    DefaultPlayerForm,
     EditProfileForm,
+    InfusePinForm,
+    InfusePlayerForm,
     MovieReviewForm,
     ReviewExportForm,
     ReviewUploadForm,
@@ -35,6 +38,13 @@ from app.main.forms import (
     PlexUsernameForm,
     StreamingProvidersForm,
     UpdateAPIKeyForm,
+)
+from app.infuse_player import (
+    COMPANION_PORT,
+    pairing_outcome,
+    pairing_pending,
+    start_pairing,
+    submit_pin,
 )
 from app.plex_player import probe_player, remote_playback_configured
 from app.models import (
@@ -654,6 +664,64 @@ def profile():
                 )
         return redirect(url_for("main.profile"))
 
+    # This user's Infuse target (#192): the same Apple TV, driven over
+    # Apple's Companion protocol instead of Plex Companion. Saving an
+    # address starts the one-time PIN pairing, which must live in a
+    # single process across the PIN round-trip — so it runs as a
+    # user-request queue task and the PIN crosses over through Redis;
+    # the PIN form below only appears while a pairing is waiting
+
+    infuse_form = InfusePlayerForm()
+    if infuse_form.infuse_player_submit.data and infuse_form.validate_on_submit():
+        address = (infuse_form.infuse_player_address.data or "").strip() or None
+        if address is None:
+            current_user.infuse_player_address = None
+            current_user.infuse_player_credentials = None
+            db.session.commit()
+            flash("Removed your Infuse player.", "success")
+        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
+            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+        else:
+            if ":" not in address.strip("[]"):
+                address = f"{address}:{COMPANION_PORT}"
+            start_pairing(current_user.id, address)
+            flash(
+                "Look at the Apple TV — it should show a PIN within a few "
+                "seconds. Enter it below to finish pairing.",
+                "info",
+            )
+        return redirect(url_for("main.profile"))
+
+    infuse_pin_form = InfusePinForm()
+    if infuse_pin_form.infuse_pin_submit.data and infuse_pin_form.validate_on_submit():
+        pin = (infuse_pin_form.infuse_pin.data or "").strip()
+        if not pin.isdigit():
+            flash("The PIN is the number shown on the Apple TV's screen.", "danger")
+        else:
+            submit_pin(current_user.id, pin)
+            ok, message = pairing_outcome(current_user.id)
+            flash(message, {True: "success", False: "danger", None: "info"}[ok])
+        return redirect(url_for("main.profile"))
+
+    # Which app plain play buttons target, asked only while both are
+    # configured; with a single app there is no choice to make
+
+    default_player_form = DefaultPlayerForm()
+    if (
+        default_player_form.default_player_submit.data
+        and default_player_form.validate_on_submit()
+    ):
+        current_user.default_player = default_player_form.default_player.data
+        db.session.commit()
+        flash(
+            f"Play buttons now default to "
+            f"{'Infuse' if current_user.default_player == 'infuse' else 'Plex'}.",
+            "success",
+        )
+        return redirect(url_for("main.profile"))
+    if not default_player_form.default_player_submit.data:
+        default_player_form.default_player.data = current_user.preferred_player
+
     # Form to pick the streaming services availability displays are
     # customized to — a per-user setting, never site-wide. The picker
     # offers every registry provider, alphabetically
@@ -696,6 +764,10 @@ def profile():
         letterboxd_form=letterboxd_form,
         plex_player_form=plex_player_form,
         remote_playback=remote_playback_configured(),
+        infuse_form=infuse_form,
+        infuse_pin_form=infuse_pin_form,
+        infuse_pairing_pending=pairing_pending(current_user.id),
+        default_player_form=default_player_form,
         streaming_form=streaming_form,
         provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )

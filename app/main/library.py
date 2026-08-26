@@ -77,6 +77,8 @@ from app.models import (
     tv_file_rank,
 )
 from app.main import bp
+from app.infuse_player import infuse_only_formats
+from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
     _card_fetch,
@@ -1805,6 +1807,13 @@ def movie(movie_id):
             and current_user.plex_player_configured
             and remote_playback_configured()
         ),
+        infuse_playable=(
+            bool(films)
+            and bool(movie.tmdb_id)
+            and current_user.infuse_player_configured
+        ),
+        default_player=current_user.preferred_player,
+        infuse_reasons=infuse_only_formats(films),
     )
 
 
@@ -1812,12 +1821,41 @@ def movie(movie_id):
 @login_required
 def movie_play(movie_id):
     """Start this movie on the current user's own playback device
-    (their Profile-page setting) via Plex Companion. Background posts
-    (the play buttons) get JSON; a plain form post falls back to
-    flash-and-redirect."""
+    (their Profile-page settings) — the Plex app via Plex Companion, or
+    Infuse via an Apple-Companion deep link (#192). The movie page's
+    buttons name their app in the "player" field; a plain post (the
+    poster popovers) uses the user's default, falling back to the other
+    app when the default can't take this movie. A Plex play of a film
+    whose formats only Infuse handles rides the recommendation along
+    in its status message, so popover plays hear it too. Background
+    posts get JSON; a plain form post falls back to flash-and-redirect.
+    """
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
-    ok, message = play_movie(movie, current_user)
+    infuse_possible = bool(movie.tmdb_id) and current_user.infuse_player_configured
+    plex_possible = current_user.plex_player_configured and remote_playback_configured()
+    player = request.form.get("player") or current_user.preferred_player or "plex"
+    if player == "infuse" and not infuse_possible and plex_possible:
+        player = "plex"
+    elif player == "plex" and not plex_possible and infuse_possible:
+        player = "infuse"
+
+    if player == "infuse":
+        ok, message = infuse_play_movie(movie, current_user)
+    else:
+        ok, message = play_movie(movie, current_user)
+        if ok and infuse_possible:
+            films = (
+                File.query.filter(File.movie_id == movie.id)
+                .filter(File.feature_type_id == None)
+                .all()
+            )
+            reasons = infuse_only_formats(films)
+            if reasons:
+                message += (
+                    f" Heads-up: this film's {' and '.join(reasons)} only "
+                    "play correctly in Infuse."
+                )
     if request.headers.get("X-Requested-With") == "play":
         return jsonify({"ok": ok, "message": message}), 200 if ok else 502
     flash(message)

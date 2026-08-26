@@ -123,20 +123,31 @@
    configured, unowned, and TMDB-known #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
-	{% if plex_playable %}
-	{# Plex Companion hand-off (admin + owned + player configured): the
+	{# Remote playback hand-off (owned + player configured): the
 	   background post — base.html's shared data-plex-play handler —
-	   starts the film on the Apple TV; failures — most commonly the
-	   Plex app not being open on it — land as the small status line
-	   under the button #}
+	   starts the film on the Apple TV via the Plex app (Plex
+	   Companion) or Infuse (Apple Companion deep link, #192); failures
+	   land as the small status line under the button. With both apps
+	   configured the user's default leads, and films whose formats
+	   only Infuse plays right carry a recommendation note #}
+	{% set both_playable = plex_playable and infuse_playable %}
+	{% set targets = [] %}
+	{% if plex_playable %}{% set _ = targets.append(("plex", "Play (Plex)" if both_playable else "Play on Apple TV")) %}{% endif %}
+	{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
+	{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
+	{% for player, label in targets %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<form data-plex-play action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-			<button class="btn btn-success btn-sm container" type="submit">&#9654;&#xFE0E; Play on Apple TV</button>
+			<input type="hidden" name="player" value="{{ player }}">
+			<button class="btn {{ 'btn-success' if loop.first else 'btn-outline-success' }} btn-sm container" type="submit">&#9654;&#xFE0E; {{ label }}</button>
+			{% if both_playable and player == "infuse" and infuse_reasons %}
+			<div class="small text-muted">Recommended — {{ infuse_reasons|join(" and ") }} only play correctly in Infuse.</div>
+			{% endif %}
 			<div class="small" data-plex-play-status></div>
 		</form>
 	</div>
-	{% endif %}
+	{% endfor %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>

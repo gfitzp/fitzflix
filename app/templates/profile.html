@@ -64,6 +64,48 @@
     	<p class="small text-muted mt-1">The Plex player (e.g. an Apple TV) your ▶&#xFE0E; Play buttons send films to — enter its IP address or hostname (port optional). Open the Plex app on it with "Advertise as Player" enabled before saving, so it can be verified. A device in another household works too if it's reachable over a VPN (enter its VPN address). Leave blank to remove.</p>
     </div>
     {% endif %}
+    <div class="col-md-4">
+    	<p>Infuse player:{% if current_user.infuse_player_configured %} {{ current_user.infuse_player_address }}{% else %} <span class="text-muted">not paired</span>{% endif %}</p>
+    	{% if infuse_pairing_pending %}
+    	<form action="" method="post">
+    		{{ infuse_pin_form.hidden_tag() }}
+    		<div class="mb-3">
+    			{{ infuse_pin_form.infuse_pin.label }}
+    			{{ infuse_pin_form.infuse_pin(size=8, class_="form-control", autocomplete="off") }}
+    		</div>
+    		{{ infuse_pin_form.infuse_pin_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">The Apple TV is showing a pairing PIN — enter it here to finish.</p>
+    	{% else %}
+    	<form action="" method="post">
+    		{{ infuse_form.hidden_tag() }}
+    		<div class="mb-3">
+    			{{ infuse_form.infuse_player_address.label }}
+    			{{ infuse_form.infuse_player_address(size=32, class_="form-control", value=current_user.infuse_player_address or "", placeholder="192.168.1.x:49153") }}
+    		</div>
+    		{{ infuse_form.infuse_player_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">The Apple TV your ▶&#xFE0E; Play buttons open Infuse on — enter its IP address and Companion port, then type the PIN the TV shows. Find the port from a machine on the Apple TV's own network with <code>dns-sd -B _companion-link._tcp</code>. Unlike the Plex path this can wake the box and launch Infuse from cold. Leave blank to remove.</p>
+    	{% endif %}
+    </div>
+    {% if current_user.plex_player_configured and current_user.infuse_player_configured %}
+    <div class="col-md-4">
+    	<p>Default player: {{ "Infuse" if current_user.preferred_player == "infuse" else "Plex" }}</p>
+    	<form action="" method="post">
+    		{{ default_player_form.hidden_tag() }}
+    		<div class="mb-3">
+    			{% for option in default_player_form.default_player %}
+    			<div class="form-check">
+    				{{ option(class_="form-check-input") }}
+    				<label class="form-check-label" for="{{ option.id }}">{{ option.label.text }}</label>
+    			</div>
+    			{% endfor %}
+    		</div>
+    		{{ default_player_form.default_player_submit(class_="btn btn-sm btn-warning") }}
+    	</form>
+    	<p class="small text-muted mt-1">With both apps configured, plain ▶&#xFE0E; Play buttons use this one. Movie pages offer both, and flag films whose formats (Dolby Vision Profile 8, E-AC-3 Atmos) only play correctly in Infuse.</p>
+    </div>
+    {% endif %}
 </div>
 <hr>
 <h5>Streaming Services</h5>
