@@ -260,6 +260,21 @@ class StreamingProvidersForm(FlaskForm):
     providers_submit = SubmitField("Save Streaming Services")
 
 
+class AvailabilityAlertsForm(FlaskForm):
+    """Profile page: the watchlist availability digest opt-ins
+    (#156/#230) — the nightly email when a watchlisted film arrives in
+    the library or turns up on a subscribed service, plus the separate
+    rentals opt-in. Submit label checked against the CloudFront WAF's
+    adjacent-SQL-keywords rule: "Save" and "Alert" are safe together.
+    """
+
+    notify_availability = BooleanField(
+        "Email me when films on my watchlist become available"
+    )
+    notify_rentals = BooleanField("Also tell me when they become available to rent")
+    alerts_submit = SubmitField("Save Alert Settings")
+
+
 class WatchlistForm(FlaskForm):
     """Watchlist toggles on film pages, and per-row removal on the
     watchlist page itself (movie_id rides in the hidden field there)."""

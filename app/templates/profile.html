@@ -132,4 +132,19 @@
 {% else %}
 <p class="text-muted">The provider list couldn't be loaded from TMDB right now; try again later.</p>
 {% endif %}
+<hr>
+<h5>Watchlist Alerts</h5>
+<p class="small text-muted">A nightly email digest when films on your watchlist become available &mdash; added to the library, or newly streaming on one of your services above. Rentals are a separate opt-in, since renting costs an extra fee on top of what you already pay for.</p>
+<form action="" method="post">
+	{{ alerts_form.hidden_tag() }}
+	<div class="form-check">
+		{{ alerts_form.notify_availability(class_="form-check-input") }}
+		<label class="form-check-label" for="{{ alerts_form.notify_availability.id }}">{{ alerts_form.notify_availability.label.text }}</label>
+	</div>
+	<div class="form-check">
+		{{ alerts_form.notify_rentals(class_="form-check-input") }}
+		<label class="form-check-label" for="{{ alerts_form.notify_rentals.id }}">{{ alerts_form.notify_rentals.label.text }}</label>
+	</div>
+	{{ alerts_form.alerts_submit(class_="btn btn-sm btn-warning mt-2") }}
+</form>
 {% endblock %}

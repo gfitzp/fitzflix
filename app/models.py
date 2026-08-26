@@ -1157,6 +1157,19 @@ class User(UserMixin, db.Model):
             return players[0]
         return self.default_player if self.default_player in players else "plex"
 
+    # Watchlist availability alerts (#156/#230): the nightly digest
+    # email is strictly opt-in — it's the only per-user mail besides
+    # password resets — and rentals are a further opt-in on top, since
+    # a rental costs an extra fee and shouldn't read as "available"
+    # unless the user asked for that
+
+    notify_availability = db.Column(
+        db.Boolean, nullable=False, default=False, server_default="0"
+    )
+    notify_rentals = db.Column(
+        db.Boolean, nullable=False, default=False, server_default="0"
+    )
+
     # The streaming services this user subscribes to — availability
     # displays are customized per user, never site-wide
 

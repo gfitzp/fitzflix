@@ -244,6 +244,22 @@ def register(app):
         click.echo(build_copref_table(dataset))
 
     @app.cli.group()
+    def alerts():
+        """Manage watchlist availability alerts."""
+        pass
+
+    @alerts.command()
+    def availability():
+        """Diff watchlisted films' availability against the stored
+        snapshot and send the digests now, instead of waiting for the
+        nightly run. The first run only plants the snapshots."""
+
+        from app.availability_alerts import notify_watchlist_availability
+
+        notify_watchlist_availability()
+        click.echo("Watchlist availability checked")
+
+    @app.cli.group()
     def transcodes():
         """Manage the derived transcoded copies."""
         pass

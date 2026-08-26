@@ -1,0 +1,24 @@
+Hello {{ user.email }},
+
+There are new ways to watch films on your watchlist:
+{% if events.local %}
+Added to the library:
+{% for item in events.local %}  - {{ item.title }} ({{ item.year }}): {{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}
+{% endfor %}{% endif %}{% if events.streaming %}
+Now streaming on your services:
+{% for item in events.streaming %}  - {{ item.title }} ({{ item.year }}) — {{ item.note }}: {{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}
+{% endfor %}{% endif %}{% if events.rent %}
+Newly available to rent:
+{% for item in events.rent %}  - {{ item.title }} ({{ item.year }}) — {{ item.note }}: {{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}
+{% endfor %}{% endif %}{% if events.leaving %}
+Leaving the Criterion Channel:
+{% for item in events.leaving %}  - {{ item.title }} ({{ item.year }}) — {{ item.note }}: {{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}
+{% endfor %}{% endif %}
+Streaming data by JustWatch.
+
+You're receiving this digest because availability alerts are switched
+on in your profile. To stop them, turn the alerts off here:
+
+{{ url_for("main.profile", _external=True) }}
+
+- Fitzflix

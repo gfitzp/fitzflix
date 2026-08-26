@@ -26,6 +26,7 @@ from sqlalchemy.orm import contains_eager
 
 from app import db
 from app.main.forms import (
+    AvailabilityAlertsForm,
     DefaultPlayerForm,
     EditProfileForm,
     InfusePinForm,
@@ -762,6 +763,21 @@ def profile():
     if not streaming_form.providers_submit.data:
         streaming_form.providers.data = list(subscribed)
 
+    # The watchlist availability digest opt-ins (#156/#230): the
+    # nightly email is off unless asked for, and rentals are a further
+    # opt-in on top of it
+
+    alerts_form = AvailabilityAlertsForm()
+    if alerts_form.alerts_submit.data and alerts_form.validate_on_submit():
+        current_user.notify_availability = bool(alerts_form.notify_availability.data)
+        current_user.notify_rentals = bool(alerts_form.notify_rentals.data)
+        db.session.commit()
+        flash("Updated your watchlist alerts.", "success")
+        return redirect(url_for("main.profile"))
+    if not alerts_form.alerts_submit.data:
+        alerts_form.notify_availability.data = current_user.notify_availability
+        alerts_form.notify_rentals.data = current_user.notify_rentals
+
     return render_template(
         "profile.html",
         title="Profile",
@@ -776,5 +792,6 @@ def profile():
         infuse_pairing_pending=pairing_pending(current_user.id),
         default_player_form=default_player_form,
         streaming_form=streaming_form,
+        alerts_form=alerts_form,
         provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )

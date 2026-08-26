@@ -37,6 +37,12 @@
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</p>
 		</a>
+		{# The recently-available badge (#156/#230): stamped by the
+		   nightly alert diff, shown for a month after the film became
+		   watchable — locally, on a service, or (if opted in) to rent #}
+		{% if row.recent %}
+		<p class="mb-0"><span class="badge bg-success">{{ row.recent.label }}</span></p>
+		{% endif %}
 		{# This page pins its whole action cluster — ladder, buttons,
 		   date — to the cell bottom as one .poster-bottom block, so
 		   Radarr-eligible and owned tiles keep a shared baseline #}

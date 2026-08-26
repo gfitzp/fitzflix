@@ -1,0 +1,29 @@
+<p>Hello {{ user.email }},</p>
+<p>There are new ways to watch films on your watchlist:</p>
+{% if events.local %}
+<p><strong>Added to the library</strong></p>
+<ul>
+{% for item in events.local %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a></li>
+{% endfor %}</ul>
+{% endif %}
+{% if events.streaming %}
+<p><strong>Now streaming on your services</strong></p>
+<ul>
+{% for item in events.streaming %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
+{% endfor %}</ul>
+{% endif %}
+{% if events.rent %}
+<p><strong>Newly available to rent</strong></p>
+<ul>
+{% for item in events.rent %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
+{% endfor %}</ul>
+{% endif %}
+{% if events.leaving %}
+<p><strong>Leaving the Criterion Channel</strong></p>
+<ul>
+{% for item in events.leaving %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
+{% endfor %}</ul>
+{% endif %}
+<p>Streaming data by JustWatch.</p>
+<p>You're receiving this digest because availability alerts are switched on in your profile. To stop them, <a href="{{ url_for("main.profile", _external=True) }}">turn the alerts off here</a>.</p>
+<p>- Fitzflix</p>

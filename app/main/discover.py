@@ -78,6 +78,7 @@ from app.recommendations import (
     stored_scores,
     watch_again_shelf,
 )
+from app.availability_alerts import recent_availability
 from app.streaming import (
     batch_title_availability,
     rental_matches,
@@ -1309,6 +1310,11 @@ def watchlist():
         radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
     )
 
+    # Films the nightly alert diff found newly available for this user
+    # inside the last month (#156/#230) get a badge on their tile
+
+    recent = recent_availability(current_user)
+
     rows = []
     streaming_attribution = False
     for entry in entries:
@@ -1342,6 +1348,7 @@ def watchlist():
                     and availability_by_id.get(movie.tmdb_id) is None
                 ),
                 "in_radarr": movie.tmdb_id in radarr_ids if movie.tmdb_id else False,
+                "recent": recent.get(movie.id),
             }
         )
 

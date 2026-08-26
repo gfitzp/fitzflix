@@ -252,6 +252,17 @@ def cron_table(config):
             3600,
             "Refreshing streaming availability",
         ),
+        # Diff watchlisted films' availability against last night's
+        # snapshot and alert the watchers (#156/#230): badge records
+        # for everyone, one digest email per opted-in user. After the
+        # 4:30 refresh so the diff reads tonight's cache, not
+        # yesterday's
+        (
+            "30 5 * * *",
+            "app.availability_alerts.notify_watchlist_availability",
+            1800,
+            "Checking watchlisted films for new availability",
+        ),
     ]
 
     # Download files restored from Glacier: poll SQS hourly, offset from
