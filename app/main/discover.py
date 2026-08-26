@@ -1349,6 +1349,13 @@ def watchlist():
                 ),
                 "in_radarr": movie.tmdb_id in radarr_ids if movie.tmdb_id else False,
                 "recent": recent.get(movie.id),
+                # The month's leaving-Criterion departure ("August
+                # 31"), riding on the film's Criterion match — only
+                # subscribers ever have one — for the poster overlay
+                "leaving": next(
+                    (match["leaving"] for match in streaming if match.get("leaving")),
+                    None,
+                ),
             }
         )
 

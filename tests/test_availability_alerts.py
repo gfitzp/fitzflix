@@ -394,6 +394,26 @@ def test_watchlist_page_badges_recent_films_and_prunes_stale(app, user_client):
     assert app.redis.hget(key, str(stale_id)) is None
 
 
+def test_watchlist_page_overlays_leaving_badge(app, user_client):
+    """A watchlisted film on the user's Criterion subscription that's
+    in the stored leaving set wears the red departure date overlaid on
+    its poster tile."""
+
+    from app.leaving_criterion import LEAVING_KEY
+
+    watchlist_movie(app, "Going Soon", 9013)
+    subscribe(app, 258, "Criterion Channel", email=MEMBER_EMAIL)
+    plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
+    departs = date.today() + timedelta(days=5)
+    app.redis.set(
+        LEAVING_KEY,
+        json.dumps({"departs": departs.isoformat(), "items": [{"tmdb_id": 9013}]}),
+    )
+
+    page = user_client.get("/watchlist").get_data(as_text=True)
+    assert f"Leaving {departs.strftime('%B %-d')}" in page
+
+
 def test_profile_saves_alert_opt_ins(app, user_client):
     """The Profile page's alert checkboxes write both columns, and the
     section renders with the rentals framing."""

@@ -34,15 +34,22 @@
 	{% set movie = row.movie %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
+			{# Poster overlays (Glenn's ask, Aug 2026): the
+			   recently-available badge (#156/#230, stamped by the
+			   nightly alert diff, worn for a month) and the red
+			   leaving-Criterion date ride on the artwork itself,
+			   stacked top-left so they can never collide #}
+			<div class="position-relative">
+				{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
+				{% if row.recent or row.leaving %}
+				<div class="position-absolute top-0 start-0 m-1 d-flex flex-column align-items-start" style="gap: .25rem;">
+					{% if row.recent %}<span class="badge text-bg-success">{{ row.recent.label }}</span>{% endif %}
+					{% if row.leaving %}<span class="badge text-bg-danger" title="Leaving the Criterion Channel {{ row.leaving }}">Leaving {{ row.leaving }}</span>{% endif %}
+				</div>
+				{% endif %}
+			</div>
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</p>
 		</a>
-		{# The recently-available badge (#156/#230): stamped by the
-		   nightly alert diff, shown for a month after the film became
-		   watchable — locally, on a service, or (if opted in) to rent #}
-		{% if row.recent %}
-		<p class="mb-0"><span class="badge bg-success">{{ row.recent.label }}</span></p>
-		{% endif %}
 		{# This page pins its whole action cluster — ladder, buttons,
 		   date — to the cell bottom as one .poster-bottom block, so
 		   Radarr-eligible and owned tiles keep a shared baseline #}
