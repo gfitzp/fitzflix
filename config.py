@@ -1,9 +1,29 @@
 import os
+from urllib.parse import unquote
 
 from dotenv import load_dotenv
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, ".env"))
+
+
+def _mount_urls(raw):
+    """Parse a comma-separated list of share URLs into {share name: URL}.
+
+    A share's name is its URL's basename, URL-decoded — the name macOS
+    gives its mount point under /Volumes. Each share carries its own full
+    URL rather than sharing a server prefix because NFS exports don't
+    share one: the same server exports /volume2/Movies and
+    /volume3/TV Shows, which no single prefix can address.
+    """
+
+    urls = {}
+    for url in (raw or "").split(","):
+        url = url.strip().rstrip("/")
+        if url:
+            urls[unquote(url.rsplit("/", 1)[-1])] = url
+    return urls
+
 
 # Skip system proxy detection: on macOS it loads an Objective-C framework,
 # which aborts the process when it happens inside a forked gunicorn worker
@@ -62,9 +82,11 @@ class Config(object):
     MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
     TV_LIBRARY                          = os.environ.get("TV_LIBRARY") or os.path.join(LIBRARY_DIR, "TV Shows")
 
-    # SMB server URL prefix (e.g. smb://user@nas.local) for remounting dead
-    # network volumes; when unset, mount problems alert but aren't self-healed
-    SMB_URL_PREFIX                      = os.environ.get("SMB_URL_PREFIX") or None
+    # Mount URLs for the network shares, comma-separated (e.g.
+    # smb://user@nas.local/Movies,nfs://nas.local/volume2/Movies), for
+    # remounting dead network volumes; a dead share with no URL here
+    # alerts but isn't self-healed
+    MOUNT_URLS                          = _mount_urls(os.environ.get("MOUNT_URLS"))
 
     # Application locations
     ATOMICPARSLEY_BIN                   = os.environ.get("ATOMICPARSLEY_BIN") or "/opt/homebrew/bin/AtomicParsley"

@@ -529,12 +529,17 @@ def heal_mounts(dead_mounts, connection, config):
 
     A half-dead mountpoint is force-unmounted first, then remounted through
     the user session (osascript's `mount volume` authenticates from the
-    keychain). Requires SMB_URL_PREFIX; alert-only when it's unset.
+    keychain; NFS URLs need no credentials). Each share's remount URL comes
+    from MOUNT_URLS, keyed by mount-point name — per-share URLs rather than
+    a server prefix, because NFS exports live on different volume roots.
+    Alert-only when the map is empty; a dead share missing from a
+    configured map is called out, since a silent skip would hide why it
+    never heals.
     """
 
     actions = []
-    url_prefix = config.get("SMB_URL_PREFIX")
-    if not url_prefix:
+    mount_urls = config.get("MOUNT_URLS") or {}
+    if not mount_urls:
         return actions
 
     for mount in dead_mounts:
@@ -543,6 +548,13 @@ def heal_mounts(dead_mounts, connection, config):
             continue
 
         share = os.path.basename(mount)
+        url = mount_urls.get(share)
+        if url is None:
+            actions.append(
+                f"no MOUNT_URLS entry for {share}, so not attempting to "
+                f"remount {mount}"
+            )
+            continue
         if os.path.ismount(mount):
             # Still mounted but dead: unmount it before remounting.
             # Gated on ismount, not isdir (#227): the leftover-directory
@@ -590,7 +602,7 @@ def heal_mounts(dead_mounts, connection, config):
 
         try:
             result = subprocess.run(
-                ["osascript", "-e", f'mount volume "{url_prefix}/{share}"'],
+                ["osascript", "-e", f'mount volume "{url}"'],
                 capture_output=True,
                 text=True,
                 timeout=60,

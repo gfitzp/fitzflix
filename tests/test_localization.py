@@ -749,7 +749,9 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
 
     monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
     monkeypatch.setattr(maintenance, "volume_alive", lambda mount, timeout=10: True)
-    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://user@nas.local")
+    monkeypatch.setitem(
+        app.config, "MOUNT_URLS", {"Movies": "smb://user@nas.local/Movies"}
+    )
 
     with app.app_context():
         actions = maintenance.heal_mounts(["/Volumes/Movies"], app.redis, app.config)

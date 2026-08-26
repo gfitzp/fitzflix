@@ -440,7 +440,7 @@ def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
     leftover = volumes / "Movies"
     leftover.mkdir(parents=True)
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
-    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://nas.test")
+    monkeypatch.setitem(app.config, "MOUNT_URLS", {"Movies": "smb://nas.test/Movies"})
 
     calls = []
 
@@ -537,7 +537,9 @@ def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_p
     stub = volumes / "TV Shows"
     stub.mkdir(parents=True)
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
-    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+    monkeypatch.setitem(
+        app.config, "MOUNT_URLS", {"TV Shows": "smb://server@nas.test/TV Shows"}
+    )
 
     duplicate = f"{stub}-1"
     output = _mount_output(
@@ -587,7 +589,9 @@ def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
     stub = volumes / "Transcoded"
     stub.mkdir(parents=True)
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
-    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+    monkeypatch.setitem(
+        app.config, "MOUNT_URLS", {"Transcoded": "smb://server@nas.test/Transcoded"}
+    )
 
     duplicate = f"{stub}-1"
     output = _mount_output(
@@ -634,7 +638,9 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
     stub = volumes / "Movies"
     stub.mkdir(parents=True)
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
-    monkeypatch.setitem(app.config, "SMB_URL_PREFIX", "smb://server@nas.test")
+    monkeypatch.setitem(
+        app.config, "MOUNT_URLS", {"Movies": "smb://server@nas.test/Movies"}
+    )
 
     duplicate = f"{stub}-1"
     output = _mount_output(
@@ -665,6 +671,58 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
         f"failed to remount {stub}: still dead — share is mounted at {duplicate}"
         in (actions)
     )
+
+
+def test_mount_urls_keys_each_share_by_its_url_basename():
+    """NFS exports live on different volume roots (/volume2/Movies,
+    /volume3/TV Shows), so one server prefix can't address them; each
+    share carries a full URL, keyed by its mount-point name. An encoded
+    basename is decoded so it matches what os.path.basename says about
+    the /Volumes path."""
+
+    from config import _mount_urls
+
+    assert _mount_urls(
+        "smb://user@nas.local/Movies, nfs://nas.local/volume3/TV%20Shows/"
+    ) == {
+        "Movies": "smb://user@nas.local/Movies",
+        "TV Shows": "nfs://nas.local/volume3/TV%20Shows",
+    }
+    assert _mount_urls(None) == {}
+    assert _mount_urls("") == {}
+
+
+def test_heal_mounts_calls_out_a_share_missing_from_the_map(app, monkeypatch, tmp_path):
+    """A configured map that lacks the dead share must say so: a silent
+    skip would hide why the share never heals, and the old prefix scheme
+    would have attempted it."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    volumes = tmp_path / "Volumes"
+    leftover = volumes / "Music"
+    leftover.mkdir(parents=True)
+    monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
+    monkeypatch.setitem(
+        app.config, "MOUNT_URLS", {"Movies": "nfs://nas.test/volume2/Movies"}
+    )
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return subprocess_module.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(maintenance.subprocess, "run", fake_run)
+
+    actions = maintenance.heal_mounts([str(leftover)], app.redis, app.config)
+
+    assert actions == [
+        f"no MOUNT_URLS entry for Music, so not attempting to remount {leftover}"
+    ]
+    assert calls == []
 
 
 def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
