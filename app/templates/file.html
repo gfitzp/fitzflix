@@ -42,7 +42,10 @@
 		<br>Bitrate: {{ file.video_bitrate_kbps }} kbps
 	{% endif %}
 	{% if file.filesize_bytes %}
-		{% if file.filesize_bytes >= 1073741824 %}
+		{# The GB threshold tests the ROUNDED MB figure, as the dropped
+		   filesize_megabytes column always did: a file at 1023.95 MiB
+		   displays as GB, not as "1024.0 MB" (#241) #}
+		{% if (file.filesize_bytes / 1048576) | round(1) >= 1024 %}
 			<br>Size: {{ "%.1f"|format(file.filesize_bytes / 1073741824) }} GB
 		{% else %}
 			<br>Size: {{ "%.1f"|format(file.filesize_bytes / 1048576) }} MB

@@ -107,3 +107,30 @@ def test_the_file_page_formats_its_size_from_bytes(app, admin_client):
 
     page = admin_client.get(f"/file/{small_id}").get_data(as_text=True)
     assert "Size: 9.2 MB" in page
+
+
+def test_size_display_crosses_to_gb_at_the_rounded_mb_threshold(app, admin_client):
+    """The boundary case (#241): the dropped filesize_megabytes column
+    rounded to one decimal BEFORE the >= 1024 test, so a file just shy
+    of a GiB whose MB figure rounds to 1024.0 displayed as GB. The
+    from-bytes formatting has to keep that, not show "1024.0 MB"."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Size Boundary", 1994)
+        # 1023.95001 MiB: rounds to 1024.0 MB, so it crosses to GB
+        crosses = make_movie_file(movie, "Bluray-1080p", filesize_bytes=1073689500)
+        # 1023.86 MiB: rounds to 1023.9 MB and stays MB
+        stays = make_movie_file(
+            movie, "DVD", feature_type_name="Trailers", filesize_bytes=1073600000
+        )
+        db.session.commit()
+        crosses_id, stays_id = crosses.id, stays.id
+
+    page = admin_client.get(f"/file/{crosses_id}").get_data(as_text=True)
+    assert "Size: 1.0 GB" in page
+
+    page = admin_client.get(f"/file/{stays_id}").get_data(as_text=True)
+    assert "Size: 1023.9 MB" in page
