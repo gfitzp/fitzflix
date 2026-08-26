@@ -100,7 +100,12 @@ from app.radarr_push import (
     request_movie,
     withdraw_movie,
 )
-from app.leaving_criterion import leaving_inventory, leaving_shelf
+from app.leaving_criterion import (
+    CRITERION_PROVIDER_ID,
+    leaving_departure,
+    leaving_inventory,
+    leaving_shelf,
+)
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
 from app.videos import (
     clear_not_interested,
@@ -1053,6 +1058,23 @@ def movie_states():
             .filter(UserWatchlist.movie_id.in_(all_ids))
         }
 
+    # Poster folds (#197, plus #156/#230's badge): the per-user corner
+    # overlays every gallery tile paints through this one batched
+    # fetch — green for a watchlist film that recently became
+    # available (the nightly alert diff's record), red for a film in
+    # the leaving-Criterion set, subscribers only. Movie-keyed tiles
+    # need their tmdb ids for the leaving lookup; one query covers
+    # them, and leaving_departure parses the stored set once per
+    # request on flask.g
+
+    recent = recent_availability(current_user)
+    criterion_member = CRITERION_PROVIDER_ID in user_provider_ids(current_user)
+    movie_tmdb = {}
+    if all_ids and criterion_member:
+        movie_tmdb = dict(
+            db.session.query(Movie.id, Movie.tmdb_id).filter(Movie.id.in_(all_ids))
+        )
+
     profile = stored_profile(current_app.redis, current_user.id)
     scores = stored_scores(current_app.redis, current_user.id)
 
@@ -1152,6 +1174,8 @@ def movie_states():
                 "flagged": False,
                 "estimated": None,
                 "on_watchlist": False,
+                "fold_new": None,
+                "fold_leaving": None,
             }
         row = latest.get(movie_id)
         flagged = movie_id in flagged_ids
@@ -1172,12 +1196,20 @@ def movie_states():
             "flagged": flagged,
             "estimated": estimated,
             "on_watchlist": movie_id in listed_ids,
+            "fold_new": (recent.get(movie_id) or {}).get("label"),
+            "fold_leaving": (
+                leaving_departure(movie_tmdb.get(movie_id))
+                if criterion_member
+                else None
+            ),
         }
 
     def tmdb_state_for(tmdb_id):
         state = state_for(tmdb_to_movie.get(tmdb_id))
         if state["estimated"] is None:
             state["estimated"] = tmdb_estimates.get(tmdb_id)
+        if criterion_member and state["fold_leaving"] is None:
+            state["fold_leaving"] = leaving_departure(tmdb_id)
         return state
 
     return jsonify(
@@ -1310,11 +1342,6 @@ def watchlist():
         radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
     )
 
-    # Films the nightly alert diff found newly available for this user
-    # inside the last month (#156/#230) get a badge on their tile
-
-    recent = recent_availability(current_user)
-
     rows = []
     streaming_attribution = False
     for entry in entries:
@@ -1348,14 +1375,6 @@ def watchlist():
                     and availability_by_id.get(movie.tmdb_id) is None
                 ),
                 "in_radarr": movie.tmdb_id in radarr_ids if movie.tmdb_id else False,
-                "recent": recent.get(movie.id),
-                # The month's leaving-Criterion departure ("August
-                # 31"), riding on the film's Criterion match — only
-                # subscribers ever have one — for the poster overlay
-                "leaving": next(
-                    (match["leaving"] for match in streaming if match.get("leaving")),
-                    None,
-                ),
             }
         )
 

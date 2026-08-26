@@ -359,9 +359,10 @@ def test_digest_stays_unsent_without_opt_in(app, monkeypatch):
         assert recent_availability(user)[movie_id]["label"] == "New on Netflix"
 
 
-def test_watchlist_page_badges_recent_films_and_prunes_stale(app, user_client):
-    """The watchlist tile badges films the diff found newly available
-    in the last month; older records age out of the store on read."""
+def test_movie_states_serves_recent_fold_and_prunes_stale(app, user_client):
+    """/movie_states carries the green fold's label for films the diff
+    found newly available in the last month; older records answer None
+    and age out of the store on read."""
 
     from app.availability_alerts import RECENT_KEY
 
@@ -388,30 +389,45 @@ def test_watchlist_page_badges_recent_films_and_prunes_stale(app, user_client):
         ),
     )
 
-    page = user_client.get("/watchlist").get_data(as_text=True)
-    assert "New on Netflix" in page
-    assert "New in library" not in page
+    payload = user_client.get(
+        f"/movie_states?movie_ids={movie_id},{stale_id}"
+    ).get_json()
+    assert payload["movies"][str(movie_id)]["fold_new"] == "New on Netflix"
+    assert payload["movies"][str(stale_id)]["fold_new"] is None
     assert app.redis.hget(key, str(stale_id)) is None
 
 
-def test_watchlist_page_overlays_leaving_badge(app, user_client):
-    """A watchlisted film on the user's Criterion subscription that's
-    in the stored leaving set wears the red departure date overlaid on
-    its poster tile."""
+def test_movie_states_serves_leaving_fold_to_subscribers_only(
+    app, user_client, admin_client
+):
+    """/movie_states carries the red fold's departure date for films in
+    the stored leaving set — for Criterion subscribers, by movie id and
+    bare tmdb id alike; non-subscribers get None."""
 
     from app.leaving_criterion import LEAVING_KEY
 
-    watchlist_movie(app, "Going Soon", 9013)
+    movie_id = watchlist_movie(app, "Going Soon", 9013)
     subscribe(app, 258, "Criterion Channel", email=MEMBER_EMAIL)
-    plant_availability(app, 9013, {**EMPTY, "flatrate": [CRITERION]})
     departs = date.today() + timedelta(days=5)
     app.redis.set(
         LEAVING_KEY,
-        json.dumps({"departs": departs.isoformat(), "items": [{"tmdb_id": 9013}]}),
+        json.dumps(
+            {
+                "departs": departs.isoformat(),
+                "items": [{"tmdb_id": 9013}, {"tmdb_id": 9014}],
+            }
+        ),
     )
+    label = departs.strftime("%B %-d")
 
-    page = user_client.get("/watchlist").get_data(as_text=True)
-    assert f"Leaving {departs.strftime('%B %-d')}" in page
+    payload = user_client.get(
+        f"/movie_states?movie_ids={movie_id}&tmdb_ids=9014"
+    ).get_json()
+    assert payload["movies"][str(movie_id)]["fold_leaving"] == label
+    assert payload["tmdb"]["9014"]["fold_leaving"] == label
+
+    unsubscribed = admin_client.get(f"/movie_states?movie_ids={movie_id}").get_json()
+    assert unsubscribed["movies"][str(movie_id)]["fold_leaving"] is None
 
 
 def test_profile_saves_alert_opt_ins(app, user_client):

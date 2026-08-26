@@ -221,6 +221,25 @@
 		   its whole button-cluster via .poster-bottom instead. */
 		.poster-cell { display: flex; flex-direction: column; text-align: center; }
 		.poster-cell > .poster-actions, .poster-cell > .poster-bottom { margin-top: auto; }
+		/* Poster corner folds (#197 + #156/#230): the Plex-style
+		   status fold, painted by the /movie_states hydration onto
+		   every popover-armed movie tile — green upper-left with a
+		   plus = recently became available (watchlist alert diff),
+		   red upper-right with a clock = in the leaving-Criterion
+		   set. Each state owns its corner and carries a glyph, so
+		   the pair never relies on color alone (Glenn's A-prime
+		   pick from the overlay studies). The fold layer sizes
+		   itself to the poster's 2:3 box from the tile's top and
+		   clips to the same radius, so folds hug the artwork's
+		   rounded corners and never bleed past them. */
+		.poster-fold-host { position: relative; display: block; }
+		.poster-folds { position: absolute; top: 0; left: 0; right: 0; aspect-ratio: 2 / 3; border-radius: var(--bs-border-radius); overflow: hidden; pointer-events: none; }
+		.poster-fold { position: absolute; top: 0; width: 30px; height: 30px; pointer-events: auto; }
+		.poster-fold-new { left: 0; background: var(--bs-success); clip-path: polygon(0 0, 100% 0, 0 100%); }
+		.poster-fold-leaving { right: 0; background: var(--bs-danger); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+		.poster-fold svg { position: absolute; top: 3px; width: 11px; height: 11px; color: #fff; }
+		.poster-fold-new svg { left: 3px; }
+		.poster-fold-leaving svg { right: 3px; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
 		/* Name that Frame: the frame sits in a fixed-size
 		   letterbox, so a scope frame and a 4:3 frame occupy identical

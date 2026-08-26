@@ -1034,19 +1034,73 @@
 
 		(function() {
 			var tiles = document.querySelectorAll("[data-state-movie], [data-state-tmdb]");
-			if (!tiles.length) return;
+			// Poster folds (#197): every popover-armed movie tile also
+			// hydrates its corner folds from the same batched fetch —
+			// the film's id is parsed off its own card URL, so no
+			// template carries fold-specific markup. Surfaces where a
+			// fold would be redundant (the leaving shelf and page —
+			// everything there is leaving by definition) opt out with
+			// data-no-folds on a wrapper; tv_card tiles never match.
+			var cards = [];
+			document.querySelectorAll("[data-card-url]").forEach(function(el) {
+				var cardUrl = el.getAttribute("data-card-url");
+				if (cardUrl.indexOf("movie_card") === -1) return;
+				if (el.closest("[data-no-folds]")) return;
+				var params = new URLSearchParams(cardUrl.split("?")[1] || "");
+				var id = params.get("movie_id");
+				var attr = "data-state-movie";
+				if (!id) {
+					id = params.get("tmdb_id");
+					attr = "data-state-tmdb";
+				}
+				if (id) cards.push({attr: attr, id: id, el: el});
+			});
+			if (!tiles.length && !cards.length) return;
 			var STATE_CHUNK = 300;
 			var ids = [];
+			function collect(attr, id) {
+				if (!id) return;
+				var known = ids.some(function(entry) {
+					return entry.attr === attr && entry.id === id;
+				});
+				if (!known) ids.push({attr: attr, id: id});
+			}
 			tiles.forEach(function(tile) {
 				["data-state-movie", "data-state-tmdb"].forEach(function(attr) {
-					var id = tile.getAttribute(attr);
-					if (!id) return;
-					var known = ids.some(function(entry) {
-						return entry.attr === attr && entry.id === id;
-					});
-					if (!known) ids.push({attr: attr, id: id});
+					collect(attr, tile.getAttribute(attr));
 				});
 			});
+			cards.forEach(function(card) {
+				collect(card.attr, card.id);
+			});
+			function fold(kind, label, glyph) {
+				var corner = document.createElement("div");
+				corner.className = "poster-fold poster-fold-" + kind;
+				corner.title = label;
+				corner.setAttribute("role", "img");
+				corner.setAttribute("aria-label", label);
+				corner.innerHTML = '<svg viewBox="0 0 16 16" fill="none"'
+					+ ' stroke="currentColor" stroke-width="2.4"'
+					+ ' stroke-linecap="round">' + glyph + '</svg>';
+				return corner;
+			}
+			function paintFolds(el, state) {
+				if (!state.fold_new && !state.fold_leaving) return;
+				if (el.querySelector(".poster-folds")) return;
+				el.classList.add("poster-fold-host");
+				var box = document.createElement("div");
+				box.className = "poster-folds";
+				if (state.fold_new) {
+					box.appendChild(fold("new", state.fold_new,
+						'<path d="M8 3.2v9.6M3.2 8h9.6"/>'));
+				}
+				if (state.fold_leaving) {
+					box.appendChild(fold("leaving",
+						"Leaving the Criterion Channel " + state.fold_leaving,
+						'<circle cx="8" cy="8" r="5.4"/><path d="M8 5.2v2.8l2 1.3"/>'));
+				}
+				el.insertBefore(box, el.firstChild);
+			}
 			function paintFrom(payload) {
 				tiles.forEach(function(tile) {
 					var state = tile.hasAttribute("data-state-movie")
@@ -1059,6 +1113,12 @@
 						tile.querySelector("[data-card-watchlist]"),
 						state.on_watchlist
 					);
+				});
+				cards.forEach(function(card) {
+					var state = card.attr === "data-state-movie"
+						? payload.movies[card.id]
+						: payload.tmdb[card.id];
+					if (state) paintFolds(card.el, state);
 				});
 			}
 			// The in-flight shimmer: every tile a request still owes an
