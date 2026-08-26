@@ -6,7 +6,18 @@ import json
 import os
 import time
 
-from tests.factories import make_movie, make_movie_file
+from tests.factories import make_movie as _make_movie, make_movie_file
+
+_tmdb_seq = iter(range(700000, 800000))
+
+
+def make_movie(title, year, **kwargs):
+    """Every frames-test film carries a TMDB id by default — pool
+    candidacy and the option list require one since #205; pass
+    tmdb_id=None explicitly to model a home movie."""
+
+    kwargs.setdefault("tmdb_id", next(_tmdb_seq))
+    return _make_movie(title, year, **kwargs)
 
 
 def seed_frame(app, movie_id, token=None, extracted_at=None):
@@ -46,11 +57,17 @@ def test_refresh_prunes_and_tops_up(app):
         fresh = make_movie("Frame Fresh", 1991)
         make_movie_file(fresh, "Bluray-1080p")
         fileless = make_movie("Frame Fileless", 1992)
+        # A home movie (#205): has a playable file but no TMDB entry, so
+        # it must neither stay pooled nor be queued for extraction
+        home = make_movie("Frame Home Movie", 1993, tmdb_id=None)
+        make_movie_file(home, "Bluray-1080p")
         db.session.commit()
         kept_id, fresh_id, fileless_id = kept.id, fresh.id, fileless.id
+        home_id = home.id
 
     kept_token = seed_frame(app, kept_id)
     dead_token = seed_frame(app, fileless_id)  # no main-feature file
+    home_token = seed_frame(app, home_id)  # no TMDB id (#205)
     gone_token = "goneimage0001"
     app.redis.hset(
         POOL_KEY,
@@ -74,6 +91,7 @@ def test_refresh_prunes_and_tops_up(app):
     assert app.redis.hexists(POOL_KEY, kept_token)
     assert not app.redis.hexists(POOL_KEY, dead_token)
     assert not app.redis.hexists(POOL_KEY, gone_token)
+    assert not app.redis.hexists(POOL_KEY, home_token)
 
 
 def test_refresh_rotates_the_oldest_when_full(app, monkeypatch):

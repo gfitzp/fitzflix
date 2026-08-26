@@ -181,6 +181,9 @@ def refresh_frame_pool_task():
             for (movie_id,) in db.session.query(Movie.id).filter(
                 Movie.files.any(File.feature_type_id.is_(None))
             )
+            # Home movies and other recordings without a TMDB entry
+            # never deal (#205) — this prunes any already pooled, too
+            .filter(Movie.tmdb_id.isnot(None))
         }
         valid = {}
         for token, entry in entries.items():

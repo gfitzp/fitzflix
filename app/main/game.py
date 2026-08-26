@@ -54,7 +54,7 @@ TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
 
 def _display_title(movie):
-    """The site-wide display grammar: TMDb title and year when known."""
+    """The site-wide display grammar: TMDB title and year when known."""
 
     title = movie.tmdb_title or movie.title
     year = (
@@ -79,7 +79,7 @@ def _normalize(text):
 
 def _fuzzy_match(guess, movie):
     """True when the guess lands close enough to any of the film's
-    titles (local or TMDb, with or without the year)."""
+    titles (local or TMDB, with or without the year)."""
 
     normalized = _normalize(guess)
     if not normalized:
@@ -106,7 +106,7 @@ def _rated_movie_ids():
 
 
 def _display_year(year, tmdb_title, tmdb_release_date):
-    """The year the site displays for a film — TMDb's when it rules
+    """The year the site displays for a film — TMDB's when it rules
     the title, the local one otherwise."""
 
     return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
@@ -131,7 +131,9 @@ def _build_options(answer_id, difficulty):
         movie_id: _display_year(year, tmdb_title, tmdb_release_date)
         for movie_id, year, tmdb_title, tmdb_release_date in db.session.query(
             Movie.id, Movie.year, Movie.tmdb_title, Movie.tmdb_release_date
-        ).filter(Movie.id != answer_id)
+        )
+        .filter(Movie.id != answer_id)
+        .filter(Movie.tmdb_id.isnot(None))
     }
     rated = _rated_movie_ids() - {answer_id} if difficulty == "easy" else set()
 
