@@ -1037,15 +1037,15 @@
 			// Poster folds (#197): every popover-armed movie tile also
 			// hydrates its corner folds from the same batched fetch —
 			// the film's id is parsed off its own card URL, so no
-			// template carries fold-specific markup. Surfaces where a
-			// fold would be redundant (the leaving shelf and page —
-			// everything there is leaving by definition) opt out with
-			// data-no-folds on a wrapper; tv_card tiles never match.
+			// template carries fold-specific markup. The leaving shelf
+			// and page suppress just the red fold with
+			// data-no-leaving-fold on a wrapper (everything there is
+			// leaving by definition, but a film can still be newly
+			// arrived); tv_card tiles never match.
 			var cards = [];
 			document.querySelectorAll("[data-card-url]").forEach(function(el) {
 				var cardUrl = el.getAttribute("data-card-url");
 				if (cardUrl.indexOf("movie_card") === -1) return;
-				if (el.closest("[data-no-folds]")) return;
 				var params = new URLSearchParams(cardUrl.split("?")[1] || "");
 				var id = params.get("movie_id");
 				var attr = "data-state-movie";
@@ -1053,7 +1053,12 @@
 					id = params.get("tmdb_id");
 					attr = "data-state-tmdb";
 				}
-				if (id) cards.push({attr: attr, id: id, el: el});
+				if (id) cards.push({
+					attr: attr,
+					id: id,
+					el: el,
+					noLeaving: !!el.closest("[data-no-leaving-fold]")
+				});
 			});
 			if (!tiles.length && !cards.length) return;
 			var STATE_CHUNK = 300;
@@ -1084,8 +1089,9 @@
 					+ ' stroke-linecap="round">' + glyph + '</svg>';
 				return corner;
 			}
-			function paintFolds(el, state) {
-				if (!state.fold_new && !state.fold_leaving) return;
+			function paintFolds(el, state, noLeaving) {
+				var leaving = noLeaving ? null : state.fold_leaving;
+				if (!state.fold_new && !leaving) return;
 				if (el.querySelector(".poster-folds")) return;
 				el.classList.add("poster-fold-host");
 				var box = document.createElement("div");
@@ -1094,9 +1100,9 @@
 					box.appendChild(fold("new", state.fold_new,
 						'<path d="M8 3.2v9.6M3.2 8h9.6"/>'));
 				}
-				if (state.fold_leaving) {
+				if (leaving) {
 					box.appendChild(fold("leaving",
-						"Leaving the Criterion Channel " + state.fold_leaving,
+						"Leaving the Criterion Channel " + leaving,
 						'<circle cx="8" cy="8" r="5.4"/><path d="M8 5.2v2.8l2 1.3"/>'));
 				}
 				el.insertBefore(box, el.firstChild);
@@ -1118,7 +1124,7 @@
 					var state = card.attr === "data-state-movie"
 						? payload.movies[card.id]
 						: payload.tmdb[card.id];
-					if (state) paintFolds(card.el, state);
+					if (state) paintFolds(card.el, state, card.noLeaving);
 				});
 			}
 			// The in-flight shimmer: every tile a request still owes an

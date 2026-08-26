@@ -142,9 +142,10 @@
    departure date and the full inventory link keep their place (#198) #}
 <p class="text-muted mt-3">Nothing leaving fits in {{ minutes }} minutes &mdash; see the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
-{# data-no-folds: every film on this shelf is leaving by definition,
-   so the red corner fold (#197) would just repeat the header #}
-<div class="row mt-3" data-no-folds>
+{# data-no-leaving-fold: every film on this shelf is leaving by
+   definition, so the red corner fold (#197) would just repeat the
+   header — but the green newly-arrived fold still paints #}
+<div class="row mt-3" data-no-leaving-fold>
 	{% for item in shelf %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
 		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}"{% if item.because %} data-card-reasons='{{ item.because[:3] | tojson }}'{% endif %}>
