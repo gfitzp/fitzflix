@@ -42,6 +42,11 @@
 			{{ rating_ladder(estimated=featured_estimated) }}
 			{{ form.watchlist_submit(class_="btn btn-sm btn-outline-primary me-1") }}
 			{{ form.unseen_submit(class_="btn btn-sm btn-outline-secondary") }}
+			{# Letterboxd-first (#159): a one-tap exit to log the viewing
+			   properly instead of a bare star verdict here #}
+			{% if current_user.letterboxd_username and featured.tmdb_id %}
+			<a class="btn btn-sm btn-primary ms-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ featured.tmdb_id }}/">Log it on Letterboxd</a>
+			{% endif %}
 		</form>
 	</div>
 </div>
