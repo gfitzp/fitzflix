@@ -2,19 +2,22 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
+{# Display names for the difficulty slugs (renamed per #203); the
+   slugs themselves are stored in score rows and URLs, so they stay #}
+{% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult"} %}
 <h2 class="mt-n2">Name that Frame</h2>
 <p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
 {# Difficulty pills: switching deals a fresh round at that level #}
 <ul class="nav nav-pills mb-3">
 	{% for level in difficulties %}
 	<li class="nav-item">
-		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ {"easy": "Easy", "difficult": "Difficult", "siracusa": "Siracusa"}[level] }}</a>
+		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ difficulty_labels[level] }}</a>
 	</li>
 	{% endfor %}
 	{% if streak or best %}
 	<li class="nav-item ms-auto align-self-center">
 		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
-		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty }} streak">Best: {{ best }}</span>{% endif %}
+		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
 	</li>
 	{% endif %}
 </ul>
@@ -76,8 +79,8 @@
 		{% endfor %}
 	</div>
 	{% else %}
-	{# Siracusa: type the title yourself — close counts (typos and
-	   missing articles forgiven), the year is optional #}
+	{# Difficult (free text): type the title yourself — close counts
+	   (typos and missing articles forgiven), the year is optional #}
 	<div class="mb-3">
 		<input type="text" name="guess" class="form-control" placeholder="Type the film's title&hellip;" aria-label="Your guess" autocomplete="off" autofocus>
 	</div>
@@ -90,7 +93,7 @@
 {# The pool has frames, just none this difficulty can serve — Easy
    before the user has rated any pooled films #}
 <p class="lead">No frames to serve on this difficulty yet.</p>
-<p class="text-muted">Easy only deals films you've rated &mdash; rate a few on the <a href="{{ url_for('main.rate') }}">Rate Films</a> page, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Difficult</a>, which deals from the whole library.</p>
+<p class="text-muted">Easy only deals films you've rated &mdash; rate a few on the <a href="{{ url_for('main.rate') }}">Rate Films</a> page, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
 {% else %}
 <p class="lead">The frame pool is still empty.</p>
 <p class="text-muted">Frames are extracted nightly from the library{% if current_user.admin %} &mdash; or start a fill now with <code>flask frames refresh</code>{% endif %}. Check back soon.</p>

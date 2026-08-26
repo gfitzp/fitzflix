@@ -3,7 +3,8 @@
 Rounds draw from the pre-extracted pool (app/frames.py) — the page
 never touches ffmpeg. Three difficulties, per Glenn's issue: Easy
 serves only films the current user has rated, with four choices;
-Difficult serves the whole pooled library with eight; "Siracusa"
+Hard (slug "difficult") serves the whole pooled library with eight;
+Difficult (slug "siracusa", renamed per #203)
 serves the whole library and takes free text, fuzzy-matched against
 the film's titles. Frames are served through an authenticated route
 keyed by the pool's opaque tokens, so neither the image URL nor the
@@ -43,7 +44,7 @@ DIFFICULTIES = {"easy": 4, "difficult": 8, "siracusa": None}
 
 YEAR_WINDOWS = {"easy": (5, 10), "difficult": (2, 5)}
 
-# How close a Siracusa guess must come to a real title, after
+# How close a free-text (Difficult) guess must come to a real title, after
 # normalization — loose enough for a typo, tight enough that a random
 # film name doesn't score
 
@@ -115,7 +116,7 @@ def _build_options(answer_id, difficulty):
     """The round's shuffled multiple-choice list: the answer plus
     random distractors from its own era — the tight year window
     first, the widened one when the library runs thin there (±5→±10
-    on Easy, ±2→±5 on Difficult; Glenn's rule, Aug 20 2026). Easy
+    on Easy, ±2→±5 on Hard; Glenn's rule, Aug 20 2026). Easy
     prefers the user's rated films within each window, but the era
     always outranks ratedness — an out-of-era option is the
     deduction giveaway this exists to close. Anything-goes is the
