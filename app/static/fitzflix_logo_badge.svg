@@ -1,4 +1,7 @@
-<svg width="100%" height="100%" viewBox="0 0 512 471" version="1.1" xmlns="http://www.w3.org/2000/svg" xml:space="preserve" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5;">
+<svg width="100%" height="100%" viewBox="0 0 512 512" version="1.1" xmlns="http://www.w3.org/2000/svg" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5;">
+<rect x="0" y="0" width="512" height="512" fill="white"/>
+<g transform="translate(56.3,72.3) scale(0.78)">
+
     <defs>
         <clipPath id="bodyclip">
             <path d="M676.684,101.384L362.918,98.938C315.011,130.566 287.242,180.411 285.922,254.186L292.79,615.391L251.264,745.745L187.209,792.046L482.927,794.153L561.327,751.63L619.581,641.617L596.695,262.638L639.895,138.967L676.684,101.384Z" transform="matrix(0.63955,0,0,0.63955,-57.5974,-50.9233)"/>
@@ -81,4 +84,6 @@
             <path d="M814.675,202.608C811.082,163.589 766.543,122.409 738.393,112.195" style="fill:none;stroke:white;stroke-width:13.16px;stroke-linecap:butt;stroke-miterlimit:2.0122;stroke-dasharray:13.16,13.16;"/>
         </g>
     </g>
+
+</g>
 </svg>

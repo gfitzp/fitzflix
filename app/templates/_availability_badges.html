@@ -12,7 +12,7 @@
    library_upgradable, series ask series_upgradable, and a title with
    no copy shows no badge at all. #}
 {% macro library_badge(upgradable) -%}
-<span class="badge text-bg-{{ "warning" if upgradable else "success" }} align-middle me-1" title="In your Fitzflix library &mdash; {{ "worth upgrading" if upgradable else "settled" }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" alt="" style="height: 1.4em;" class="me-1">In library</span>
+<span class="badge text-bg-{{ "warning" if upgradable else "success" }} align-middle me-1" title="In your Fitzflix library &mdash; {{ "worth upgrading" if upgradable else "settled" }}"><img src="{{ url_for('static', filename='fitzflix_logo_badge.svg') }}" alt="" style="height: 1.4em;" class="rounded me-1">In library</span>
 {%- endmacro %}
 
 {% macro availability_badge(provider) -%}
