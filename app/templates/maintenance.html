@@ -13,11 +13,11 @@
 <hr>
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}
-<p class="small text-muted">These movies share a TMDb id. Merging moves each duplicate's files and reviews to the oldest record (marked kept) and deletes the duplicate.</p>
+<p class="small text-muted">These movies share a TMDB id. Merging moves each duplicate's files and reviews to the oldest record (marked kept) and deletes the duplicate.</p>
 <table class="table table-sm mt-3">
 	<thead class="table-light">
 		<tr>
-			<th scope="col">TMDb id</th>
+			<th scope="col">TMDB id</th>
 			<th scope="col">Movies</th>
 			<th scope="col"></th>
 		</tr>
@@ -45,7 +45,7 @@
 	</tbody>
 </table>
 {% else %}
-<p class="small text-muted">No two movies share a TMDb id.</p>
+<p class="small text-muted">No two movies share a TMDB id.</p>
 {% endif %}
 <hr>
 <h3>Possibly-forced subtitles</h3>
@@ -57,7 +57,7 @@
 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View lossy files</a>
 <hr>
 <h3>TV episode titles</h3>
-<p class="small text-muted">How well each series' TMDb episode titles agree with the titles Plex gave the same files &mdash; a series whose numbering diverges is flagged so episode titles never mislabel.</p>
+<p class="small text-muted">How well each series' TMDB episode titles agree with the titles Plex gave the same files &mdash; a series whose numbering diverges is flagged so episode titles never mislabel.</p>
 <a class="btn btn-sm btn-{{ "warning" if tv_suspect_count else "outline-secondary" }}" href="{{ url_for('main.tv_title_validation') }}" role="button">Review title verdicts <span class="badge text-bg-light">{{ tv_suspect_count }}</span></a>
 <hr>
 <h3>Filename tester</h3>

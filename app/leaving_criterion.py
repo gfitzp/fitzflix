@@ -3,10 +3,10 @@
 criterionchannel.com/leaving-{month}-{lastday} is the canonical source
 for what departs at month's end — structured HTML with a tooltip per
 film carrying title, director, and year; no feed or API exists (the
-JSON/RSS variants 404, JustWatch has no public leaving API, and TMDb
+JSON/RSS variants 404, JustWatch has no public leaving API, and TMDB
 doesn't license departure data). Scraping this one official page for
 title extraction is a narrow, deliberate exception to the no-scraping
-rule. A monthly task parses the collection, matches each film to TMDb
+rule. A monthly task parses the collection, matches each film to TMDB
 by title and year, embeds the enriched payloads (so the shelf outlives
 every shorter cache), and stores the set with its departure date; the
 landing page ranks it against the viewer's taste profile for Criterion
@@ -43,7 +43,7 @@ from app.models import tmdb_get
 
 app = LocalProxy(get_app)
 
-# TMDb's provider id for the Criterion Channel — the shelf only renders
+# TMDB's provider id for the Criterion Channel — the shelf only renders
 # for users subscribed to it
 
 CRITERION_PROVIDER_ID = 258
@@ -156,7 +156,7 @@ def _normalize(text):
 
 
 def _tmdb_json(path, params):
-    """One TMDb GET's JSON body, or None on any failure (logged)."""
+    """One TMDB GET's JSON body, or None on any failure (logged)."""
 
     try:
         r = tmdb_get(
@@ -172,19 +172,19 @@ def _tmdb_json(path, params):
 
 
 def match_tmdb_id(title, year, director=None):
-    """The TMDb id for a leaving film, by title-and-year search, cached
-    for two months; None when TMDb has no match.
+    """The TMDB id for a leaving film, by title-and-year search, cached
+    for two months; None when TMDB has no match.
 
-    TMDb's search ranks by popularity, so a generic short-film title
+    TMDB's search ranks by popularity, so a generic short-film title
     like "Here", "Kid", or "Ambition" comes back with a popular
     feature first — the Aug 2026 set put "Right Here, Right Now" and
     "The Karate Kid" on the shelf in place of Bas Devos's and Hal
     Hartley's films. So a scraped director is verified against each
     candidate's credits, exact-title candidates are tried first, and
-    a film whose director matches nothing TMDb offers stays unmatched
+    a film whose director matches nothing TMDB offers stays unmatched
     (a plain "Also leaving" row) rather than becoming the wrong film.
     A candidate with no director credited at all passes on an exact
-    title-and-year match — shorts often have no crew on TMDb. Without
+    title-and-year match — shorts often have no crew on TMDB. Without
     a scraped director, the exact-title candidate wins, else the
     first result (the pre-Aug 2026 behaviour). The cache key carries
     the director, so a director-aware lookup never reads an entry the
@@ -205,7 +205,7 @@ def match_tmdb_id(title, year, director=None):
 
     def candidates(params, pages):
         """Search results worth a look, exact-title matches first, then
-        releases within a year of the scraped date (Criterion and TMDb
+        releases within a year of the scraped date (Criterion and TMDB
         often disagree by one — festival year versus release year),
         capped at the handful worth a credits lookup. With a director
         to verify, only those two kinds are candidates at all: the
@@ -259,10 +259,10 @@ def match_tmdb_id(title, year, director=None):
 
     def pick(params):
         """The chosen candidate id for one search, or None. When no
-        candidate's director corroborates, the one result TMDb knows
+        candidate's director corroborates, the one result TMDB knows
         by exactly this title and year still passes — Criterion and
-        TMDb can credit a film differently (Criterion files "Regarding
-        Soon" under Hal Hartley, its subject; TMDb under Richard
+        TMDB can credit a film differently (Criterion files "Regarding
+        Soon" under Hal Hartley, its subject; TMDB under Richard
         Sylvarnes, who shot and cut it) — but only when it's unique,
         so a same-title stranger from the same year can't slip in."""
 
@@ -279,8 +279,8 @@ def match_tmdb_id(title, year, director=None):
             ]
             if len(exact) == 1:
                 current_app.logger.info(
-                    f"Leaving-Criterion: '{title}' ({year}) matched TMDb "
-                    f"{exact[0].get('id')} by exact title and year; TMDb "
+                    f"Leaving-Criterion: '{title}' ({year}) matched TMDB "
+                    f"{exact[0].get('id')} by exact title and year; TMDB "
                     f"credits a director other than {director}"
                 )
                 return exact[0].get("id")
@@ -298,7 +298,7 @@ def match_tmdb_id(title, year, director=None):
 
 def refresh_leaving_criterion():
     """Monthly task: scrape the leaving collection, match each film to
-    TMDb, embed the enriched payloads, and store the set with its
+    TMDB, embed the enriched payloads, and store the set with its
     departure date. The stored set has no TTL — the shelf simply hides
     once the departure date passes."""
 
@@ -310,7 +310,7 @@ def refresh_leaving_criterion():
             )
             return True
 
-        # Films the TMDb matcher can't resolve still make the stored
+        # Films the TMDB matcher can't resolve still make the stored
         # set, carrying just the scraped facts (title, director, year)
         # — the /leaving page lists them as plain rows so the departure
         # inventory stays complete; the home shelf skips them (its
@@ -476,7 +476,7 @@ def leaving_inventory(user):
     Unlike the home shelf, nothing is excluded: owned films stay
     listed with their library badge (the relaxing case — the disc is
     on the shelf), seen films stay with their Seen badge, and films
-    the TMDb matcher couldn't resolve trail as plain scraped rows so
+    the TMDB matcher couldn't resolve trail as plain scraped rows so
     the inventory is the whole departure set. Watchlisted films lead,
     then unowned films by taste score, owned films after.
     """

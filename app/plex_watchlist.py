@@ -77,7 +77,7 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
     """{tmdb_id: {title, year, rating_key}} for the account's whole
     watchlist — paginated (the API silently caps a page at 20), with
     tmdb ids read from the bulk includeGuids payload. Movies only: the
-    account watchlist also holds TV shows, whose tmdb guids are TMDb
+    account watchlist also holds TV shows, whose tmdb guids are TMDB
     TV-series ids, not film ids.
 
     An item can carry SEVERAL tmdb guids (The Animatrix exposes the
@@ -132,7 +132,7 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
 
 
 def plex_rating_key(tmdb_id):
-    """The discover ratingKey for a TMDb film, or None: the matches
+    """The discover ratingKey for a TMDB film, or None: the matches
     endpoint resolves tmdb://<id> deterministically, and the plex guid's
     tail is the key."""
 
@@ -231,7 +231,7 @@ def sync_plex_watchlist():
             movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
             if movie is None:
                 movie, created = find_or_create_tmdb_movie(
-                    tmdb_id, item.get("title") or f"TMDb {tmdb_id}", item.get("year")
+                    tmdb_id, item.get("title") or f"TMDB {tmdb_id}", item.get("year")
                 )
                 if movie is None:
                     synced.discard(tmdb_id)

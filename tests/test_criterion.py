@@ -1,5 +1,5 @@
 """Criterion Collection refresh from Wikidata: SPARQL response parsing, the
-access etiquette headers, TMDb-id-first matching with title/year fallback,
+access etiquette headers, TMDB-id-first matching with title/year fallback,
 preservation of hand-set fields, and the Redis cache.
 """
 
@@ -17,7 +17,7 @@ SPARQL_RESPONSE = {
     "results": {
         "bindings": [
             {
-                # Matched by TMDb id, even though the library title differs
+                # Matched by TMDB id, even though the library title differs
                 "spine": {"value": "1"},
                 "tmdbId": {"value": "1863"},
                 "filmLabel": {"value": "La Grande Illusion"},
@@ -25,7 +25,7 @@ SPARQL_RESPONSE = {
                 "criterionId": {"value": "336-grand-illusion"},
             },
             {
-                # No TMDb id on Wikidata: matched by title and year
+                # No TMDB id on Wikidata: matched by title and year
                 "spine": {"value": "2"},
                 "filmLabel": {"value": "Seven Samurai"},
                 "year": {"value": "1954"},
@@ -87,12 +87,12 @@ def test_refresh_matches_by_tmdb_id_and_title_year(app, monkeypatch):
     fake_sparql(monkeypatch, calls)
 
     with app.app_context():
-        # The library's title differs from Wikidata's label; only the TMDb
+        # The library's title differs from Wikidata's label; only the TMDB
         # id can connect them
 
         by_id = make_movie("Grand Illusion", 1937, tmdb_id=1863)
 
-        # No TMDb match yet: falls back to title and year
+        # No TMDB match yet: falls back to title and year
 
         by_title = make_movie("Seven Samurai", 1954)
 
@@ -401,10 +401,10 @@ def release(spine, title, year, tmdb_id=None, set_title=None):
 
 def test_criterion_page_shows_full_catalog(app, admin_client):
     """The page lists the whole spine catalog: library films consume
-    their releases (TMDb id or title+year, never duplicated), an owned
+    their releases (TMDB id or title+year, never duplicated), an owned
     film the refresh never marked still rows up with its catalog spine,
     releases beyond the library render as log-page links with funnel
-    badges off any local record, TMDb-less releases render as plain
+    badges off any local record, TMDB-less releases render as plain
     rows, and the Criterion Channel badge marks what's streaming."""
 
     from app.models import User, UserWatchlist
@@ -426,12 +426,12 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         make_movie_file(owned, "Bluray-1080p")
 
         # In the library and in the catalog, but the refresh never
-        # stamped its criterion fields — the TMDb id connects them
+        # stamped its criterion fields — the TMDB id connects them
 
         unmarked = make_movie("Unmarked Owned", 1980, tmdb_id=555003)
         make_movie_file(unmarked, "Bluray-1080p")
 
-        # Criterion-marked but TMDb-less: consumes its release by
+        # Criterion-marked but TMDB-less: consumes its release by
         # title and year, so the catalog must not repeat it
 
         by_title = make_movie(
@@ -440,7 +440,7 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         make_movie_file(by_title, "DVD")
 
         # A file-less record for a catalog release (a watchlisted film
-        # logged through TMDb): dresses the row and carries the funnel
+        # logged through TMDB): dresses the row and carries the funnel
 
         record = make_movie(
             "Catalog Only",
@@ -460,7 +460,7 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
             release(300, "No Tmdb Release", 1971),
             release(400, "Unmarked Owned", 1980, tmdb_id=555003),
             release(500, "Title Match", 1990),
-            # A box-set CONTAINER (the set item holds the spine, no TMDb
+            # A box-set CONTAINER (the set item holds the spine, no TMDB
             # id) plus its member: only the member may render
             release(600, "Shadow Trilogy", 1944),
             release(
@@ -470,7 +470,7 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     )
 
     # The catalog release is streaming on the Criterion Channel (day
-    # cache seeded, so no TMDb call happens)
+    # cache seeded, so no TMDB call happens)
 
     app.redis.set(
         AVAILABILITY_KEY.format(tmdb_id=555002),
@@ -564,16 +564,16 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
 def test_full_refresh_creates_catalog_records(app, monkeypatch):
     """A full refresh creates file-less records for spine releases the
     library has never seen — under the Wikidata label, with criterion
-    fields stamped and the standard TMDb refresh queued (which renames
-    them to TMDb's canonical title, so later imports match) — adopts
-    title+year records that lack a TMDb id, skips TMDb-less releases,
+    fields stamped and the standard TMDB refresh queued (which renames
+    them to TMDB's canonical title, so later imports match) — adopts
+    title+year records that lack a TMDB id, skips TMDB-less releases,
     and never creates on the single-movie path."""
 
     fake_sparql(monkeypatch)
 
     with app.app_context():
         # An existing record with the release's title and year but no
-        # TMDb id gets adopted rather than duplicated
+        # TMDB id gets adopted rather than duplicated
 
         adoptee = make_movie("All Monsters Attack", 1969)
         db.session.commit()
@@ -596,11 +596,11 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         assert created.criterion_spine_number == 1
         assert created.files.count() == 0
 
-        # The TMDb-less Seven Samurai release created nothing
+        # The TMDB-less Seven Samurai release created nothing
 
         assert Movie.query.filter_by(title="Seven Samurai").first() is None
 
-        # Both the new record and the adopted one queued a TMDb refresh
+        # Both the new record and the adopted one queued a TMDB refresh
 
         jobs = app.maintenance_queue.jobs
         refreshed_ids = {
@@ -620,7 +620,7 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
 def test_catalog_exclusion_blocks_recreation_and_rendering(
     app, monkeypatch, admin_client
 ):
-    """`flask catalog exclude` deletes a bogus record and bars its TMDb
+    """`flask catalog exclude` deletes a bogus record and bars its TMDB
     id: later full refreshes don't recreate it, the catalog page stops
     rendering its release, and records with real library data refuse."""
 

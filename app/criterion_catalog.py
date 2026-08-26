@@ -10,7 +10,7 @@ current.
 
 app.videos re-exports every name here, so stored rq job strings
 ("app.videos.refresh_criterion_collection_info") and import sites keep
-resolving; the record-creation path leans on app.videos' TMDb helpers
+resolving; the record-creation path leans on app.videos' TMDB helpers
 via lazy imports, keeping the module import direction one-way.
 """
 
@@ -26,7 +26,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import CatalogExclusion, Movie
 
-# Wikidata models Criterion spine numbers as property P12279, TMDb movie ids
+# Wikidata models Criterion spine numbers as property P12279, TMDB movie ids
 # as P4947, and publication dates as P577; the earliest publication year is
 # taken since a film carries one date per release
 
@@ -187,7 +187,7 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
 
 
 def criterion_release_lookups(criterion_collection):
-    """Index Criterion releases by TMDb id and by (title, year)."""
+    """Index Criterion releases by TMDB id and by (title, year)."""
 
     by_tmdb_id = {}
     by_title_year = {}
@@ -202,8 +202,8 @@ def criterion_release_lookups(criterion_collection):
 def assign_criterion_release(movie, by_tmdb_id, by_title_year):
     """Record a movie's Criterion spine number if a release matches.
 
-    TMDb id matches are exact; title and year are the fallback for movies
-    that haven't been matched to TMDb yet. Box-set members get their set's
+    TMDB id matches are exact; title and year are the fallback for movies
+    that haven't been matched to TMDB yet. Box-set members get their set's
     spine and title. Wikidata doesn't model in-print status, so existing
     values are kept and new matches get optimistic defaults; hand-curated
     set titles are never overwritten.
@@ -240,7 +240,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
     about permanently: a durable record keeps its poster, overview,
     genres, and awards in the database instead of a week-long cache
     (Glenn's call, Aug 2026). Records are created under the Wikidata
-    label; the enqueued TMDb refresh renames each to TMDb's canonical
+    label; the enqueued TMDB refresh renames each to TMDB's canonical
     title and year (tmdb_movie_apply's standard behavior), so a later
     import of the film matches the record by title+year and attaches
     its files instead of spawning a duplicate. Year-less releases are
@@ -249,7 +249,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
     internal commit, so the enqueued refreshes can see their rows.
     """
 
-    # TMDb record plumbing stays in app.videos; lazy so the module
+    # TMDB record plumbing stays in app.videos; lazy so the module
     # import direction stays one-way
 
     from app.videos import find_or_create_tmdb_movie
@@ -264,7 +264,7 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
         )
     }
     # Hand-excluded ids (Wikidata junk like an unfinished film with a
-    # stale TMDb id) are never re-created — see CatalogExclusion
+    # stale TMDB id) are never re-created — see CatalogExclusion
     excluded = {tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)}
     to_refresh = []
     created_count = 0

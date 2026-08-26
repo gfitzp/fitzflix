@@ -24,7 +24,7 @@
 	</div>
 </div>
 {% if episode_guide %}
-{# The season's TMDb episode guide: every episode TMDb knows,
+{# The season's TMDB episode guide: every episode TMDB knows,
    owned or not — numbering-suspect series get no guide at all #}
 <h4>Episodes</h4>
 <div class="list-group mb-3">
@@ -65,7 +65,7 @@
 			<th scope="row" class="align-middle">{{ file.id }}</th>
 			<td class="align-middle">{{ file.episode }}{% if file.episode != file.last_episode %}-{{ file.last_episode }}{% endif %}</td>
 			{# The edition IS the title where one exists (the curated
-			   specials); TMDb's title otherwise, suspect series stay blank #}
+			   specials); TMDB's title otherwise, suspect series stay blank #}
 			<td class="align-middle">{% if file.edition %}{{ file.edition }}{% elif episodes.get(file.episode) %}{{ episodes[file.episode].title }}{% endif %}</td>
 			<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 			<td class="align-middle">{{ quality.quality_title }}</td>

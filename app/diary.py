@@ -10,7 +10,7 @@ new log always runs.
 
 app.videos re-exports every name here, so stored rq job strings
 ("app.videos.letterboxd_import_task") and import sites keep resolving;
-record creation leans on app.videos' TMDb helpers via lazy imports,
+record creation leans on app.videos' TMDB helpers via lazy imports,
 keeping the module import direction one-way.
 """
 
@@ -189,7 +189,7 @@ def parse_letterboxd_export(zip_bytes):
 
 def _normalize_title(title):
     """Casefold a title and iron out the typography that separates
-    Letterboxd's rendering from TMDb's — en/em dashes vs hyphens, curly
+    Letterboxd's rendering from TMDB's — en/em dashes vs hyphens, curly
     vs straight quotes — so equality means the same words."""
 
     text = (title or "").casefold()
@@ -201,12 +201,12 @@ def _normalize_title(title):
 
 
 def _pick_tmdb_match(title, year, year_filtered, title_only):
-    """Choose the TMDb search result for a Letterboxd film.
+    """Choose the TMDB search result for a Letterboxd film.
 
     An exact (normalized) title among the year-filtered results wins;
     otherwise the title-only search's exact match with the nearest year,
     accepted within two years — or at any distance when it is the only
-    exact match, since TMDb and Letterboxd years can drift far apart
+    exact match, since TMDB and Letterboxd years can drift far apart
     (The Men Who Tread on the Tiger's Tail: 1945 vs 1952). Only then
     the year-filtered head, which matched through an alternative title
     in the right year (Waking Ned Devine → Waking Ned). Taking that
@@ -237,11 +237,11 @@ def _pick_tmdb_match(title, year, year_filtered, title_only):
 
 def letterboxd_import_task(user_id, films):
     """Network phase of a Letterboxd import: match each film to the library
-    or to TMDb, then hand the resolved list to apply_letterboxd_import on
+    or to TMDB, then hand the resolved list to apply_letterboxd_import on
     the sql queue.
 
     Runs on the user-request queue since resolving unowned films means
-    TMDb searches; nothing here writes to the database.
+    TMDB searches; nothing here writes to the database.
     """
 
     with app.app_context():
@@ -338,7 +338,7 @@ def apply_letterboxd_import(user_id, films):
     Mirrors Letterboxd's own importer semantics: an entry updates the
     existing review with the same film and watched date instead of
     duplicating it, so re-importing the same export is idempotent. Movies
-    created here are enriched afterwards through the standard TMDb
+    created here are enriched afterwards through the standard TMDB
     refresh pipeline.
     """
 
@@ -453,7 +453,7 @@ def apply_letterboxd_import(user_id, films):
             db.session.commit()
 
             # Enrich the newly created movies through the standard two-phase
-            # refresh pipeline (TMDb fetch on the request queue, database
+            # refresh pipeline (TMDB fetch on the request queue, database
             # apply back on this queue)
 
             for movie_id in created_movie_ids:
@@ -579,7 +579,7 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
 
 def _plex_tmdb_id(entry, headers):
-    """Resolve a Plex history entry to a TMDb id via its metadata Guid
+    """Resolve a Plex history entry to a TMDB id via its metadata Guid
     list, cached in Redis since rating keys are stable."""
 
     rating_key = entry.get("ratingKey")
@@ -588,7 +588,7 @@ def _plex_tmdb_id(entry, headers):
     cache_key = f"fitzflix:plex:tmdb:{rating_key}"
     cached = current_app.redis.get(cache_key)
     if cached is not None:
-        # An empty value means known-unresolvable (no TMDb guid)
+        # An empty value means known-unresolvable (no TMDB guid)
         return int(cached) if cached else None
 
     tmdb_id = None
@@ -686,7 +686,7 @@ def plex_history_poll():
             tmdb_id = _plex_tmdb_id(entry, headers)
             if tmdb_id is None:
                 current_app.logger.info(
-                    f"Plex history entry '{entry.get('title')}' has no TMDb "
+                    f"Plex history entry '{entry.get('title')}' has no TMDB "
                     f"guid; ignoring"
                 )
                 continue
@@ -717,7 +717,7 @@ def review_task(user_id, title, rating):
     with app.app_context():
         try:
             # A title alone can be ambiguous, since the Netflix export has no
-            # year; if multiple movies share this title, fall through to TMDb,
+            # year; if multiple movies share this title, fall through to TMDB,
             # which resolves the year, rather than guessing with .first()
 
             movie_matches = Movie.query.filter_by(title=title).all()
@@ -730,7 +730,7 @@ def review_task(user_id, title, rating):
                 if len(movie_matches) > 1:
                     current_app.logger.warning(
                         f"'{title}' matches {len(movie_matches)} movies in the "
-                        f"library; resolving via TMDb"
+                        f"library; resolving via TMDB"
                     )
 
             if not movie:

@@ -1,6 +1,6 @@
 """Credential redaction for the application log.
 
-TMDb, Plex, Sonarr and Radarr all take their credentials as a query
+TMDB, Plex, Sonarr and Radarr all take their credentials as a query
 parameter, so any logged URL — most often a requests HTTPError's message
 inside a traceback — carries the key with it. A single logging.Filter on
 the app logger scrubs every record before any handler (file, mail,

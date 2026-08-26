@@ -1,8 +1,8 @@
 <p>Hello,</p>
 <p/>
-<p>The movie '{{ movie.title }} ({{ movie.year }})' matched the TMDb record for '{{ canonical_title }} ({{ canonical_year }})', but it wasn't renamed because '{{ duplicate.title }} ({{ duplicate.year }})' already has that name. These two library entries appear to be the same movie.</p>
+<p>The movie '{{ movie.title }} ({{ movie.year }})' matched the TMDB record for '{{ canonical_title }} ({{ canonical_year }})', but it wasn't renamed because '{{ duplicate.title }} ({{ duplicate.year }})' already has that name. These two library entries appear to be the same movie.</p>
 <p/>
-<p>Go <a href="{{ url_for("main.movie", movie_id=movie.id, _external=True) }}">here</a> to review the new movie, and refresh its TMDb data to merge the two entries:</p>
+<p>Go <a href="{{ url_for("main.movie", movie_id=movie.id, _external=True) }}">here</a> to review the new movie, and refresh its TMDB data to merge the two entries:</p>
 <p/>
 <p>{{ url_for("main.movie", movie_id=movie.id, _external=True) }}</p>
 <p/>

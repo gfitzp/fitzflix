@@ -1,4 +1,4 @@
-"""Duplicate-movie detection on the Library Maintenance page: grouping by shared TMDb
+"""Duplicate-movie detection on the Library Maintenance page: grouping by shared TMDB
 id, oldest-record-wins ordering, and the one-click merge enqueue.
 """
 
@@ -81,4 +81,4 @@ def test_merge_enqueues_refresh_for_each_duplicate(app, admin_client):
 
 def test_maintenance_shows_empty_state_without_duplicates(app, admin_client):
     page = admin_client.get("/maintenance").get_data(as_text=True)
-    assert "No two movies share a TMDb id." in page
+    assert "No two movies share a TMDB id." in page

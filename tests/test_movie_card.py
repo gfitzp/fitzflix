@@ -1,5 +1,5 @@
 """The poster popover's card (#45c): the /movie_card fragment for
-library records and bare TMDb ids, the tile-side actions and their
+library records and bare TMDB ids, the tile-side actions and their
 batched /movie_states hydration (the Aug 2026 revision moved the
 ladder and watchlist toggle out of the card and the badges in), and
 the data-card-url wiring on the gallery surfaces."""
@@ -182,7 +182,7 @@ def test_movie_states_estimates_record_less_tmdb_ids(app, admin_client):
     """A tmdb id with no local record — most of a filmography page —
     answers with an estimate from the shared source's tmdb lane,
     scored from the cached enriched payload with nothing persisted to
-    the database; ids TMDb can't supply stay at the empty state."""
+    the database; ids TMDB can't supply stay at the empty state."""
 
     from app.models import Movie
     from app.recommendations import PROFILE_KEY
@@ -326,15 +326,15 @@ def test_gallery_tiles_carry_the_actions(app, admin_client):
 
 
 def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
-    """A film with no local record renders from TMDb — informational
-    only, linking to the TMDb log page."""
+    """A film with no local record renders from TMDB — informational
+    only, linking to the TMDB log page."""
 
     import app.main.discover as discover
-    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDbDetails
+    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
@@ -424,15 +424,15 @@ def test_tile_watchlist_toggle_round_trips_as_json(app, admin_client):
 def test_tile_watchlist_add_creates_the_record_for_a_tmdb_film(
     app, admin_client, monkeypatch
 ):
-    """Banking a record-less rail film from its tile posts to the TMDb
+    """Banking a record-less rail film from its tile posts to the TMDB
     log route, which creates the record and answers the same JSON."""
 
     import app.main.discover as discover
-    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDbDetails
+    from tests.test_reviews import JAWS_2_DETAILS, FakeTMDBDetails
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     token = csrf_token_from(admin_client.get("/review/tmdb/579").get_data(as_text=True))

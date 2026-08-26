@@ -28,7 +28,7 @@ def binding(ext, award_q, label, kind, year=None):
 
 
 def test_refresh_parses_batches_and_replaces(app, monkeypatch):
-    """IMDb-matched and TMDb-fallback films both resolve, duplicate
+    """IMDb-matched and TMDB-fallback films both resolve, duplicate
     statements dedupe, label-service misses drop, and films the
     response no longer lists have their stale rows wiped."""
 
@@ -36,7 +36,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
 
     with app.app_context():
         by_imdb = make_movie("Awarded via IMDb", 1954, imdb_id="tt0047296")
-        by_tmdb = make_movie("Awarded via TMDb", 1927, tmdb_id=901)
+        by_tmdb = make_movie("Awarded via TMDB", 1927, tmdb_id=901)
         unlisted = make_movie("Formerly Awarded", 1999, imdb_id="tt0000001")
         db.session.add(
             MovieAward(
@@ -107,7 +107,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
 def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
     """Award statements naming a library film as their "for work" —
     the craft categories person items hold — attribute to the film
-    through its own ids (IMDb batch first, TMDb fallback) and merge
+    through its own ids (IMDb batch first, TMDB fallback) and merge
     without duplicating what the film items already list: year-less
     film rows still suppress their dated person copies, but a win
     lands when only the nomination is on record."""
@@ -195,7 +195,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
             ]
         assert "P4947" in query and '"857"' in query
         return [
-            # The IMDb-less film resolves through the TMDb batch
+            # The IMDb-less film resolves through the TMDB batch
             binding(
                 "857",
                 "Q131520",

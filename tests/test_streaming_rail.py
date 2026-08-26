@@ -107,8 +107,8 @@ ENRICHED = {
 }
 
 
-class FakeTMDb:
-    """Canned TMDb response."""
+class FakeTMDB:
+    """Canned TMDB response."""
 
     def __init__(self, payload):
         self.payload = payload
@@ -134,13 +134,13 @@ def install_rail_fakes(app, monkeypatch, discover_calls=None):
         if "/discover/movie" in url:
             if discover_calls is not None:
                 discover_calls.append(params or {})
-            return FakeTMDb({"results": DISCOVER_ITEMS})
+            return FakeTMDB({"results": DISCOVER_ITEMS})
         for tmdb_id, payload in ENRICHED.items():
             if url.endswith(f"/movie/{tmdb_id}"):
-                return FakeTMDb(payload)
+                return FakeTMDB(payload)
         if "/watch/providers" in url:
-            return FakeTMDb({"results": {}})
-        return FakeTMDb({"results": []})
+            return FakeTMDB({"results": {}})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
@@ -185,17 +185,17 @@ def test_provider_pool_queries_and_caches(app, monkeypatch):
 
 
 def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
-    """TMDb deletes films whose credit rows linger on person pages, so a
+    """TMDB deletes films whose credit rows linger on person pages, so a
     filmography keeps offering an id the movie endpoint 404s. The miss
     is cached as a null payload: later calls answer None from Redis
-    without re-asking TMDb."""
+    without re-asking TMDB."""
 
     from app import streaming_rail
 
     calls = []
 
     class Gone:
-        """A TMDb response for a deleted movie id."""
+        """A TMDB response for a deleted movie id."""
 
         status_code = 404
 
@@ -294,7 +294,7 @@ def test_recompute_task_stores_rail_payloads(app, monkeypatch):
 
 
 def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
-    """Rail films found on TMDb alone get review-only records and the
+    """Rail films found on TMDB alone get review-only records and the
     standard refresh enqueued, so the shared score source can estimate
     their tiles like any catalogued film's — instead of /movie_states
     answering their tmdb ids with the empty state."""

@@ -93,7 +93,7 @@ def _movie_rating_key(movie):
 
     The guid filter is exact and cheap where the server supports it;
     the fallback is a title search with each candidate verified — by
-    its TMDb Guid when the movie has a TMDb id, by year otherwise —
+    its TMDB Guid when the movie has a TMDB id, by year otherwise —
     so a remake or a same-named short can't be played by mistake.
     """
 

@@ -1,5 +1,5 @@
 """The credit filmography at /library/movie?credit= shows the person's
-entire TMDb career — owned films with quality badges, seen films, and
+entire TMDB career — owned films with quality badges, seen films, and
 films with no local record at all — and the movie library page badges
 each film's quality by upgrade eligibility."""
 
@@ -22,7 +22,7 @@ def make_cast(person, movie, character="Self", order=0):
 
 
 def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
-    """With no TMDb key configured the filmography still lists every
+    """With no TMDB key configured the filmography still lists every
     locally credited film, owned or not."""
 
     with app.app_context():
@@ -52,7 +52,7 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
 
 
 def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
-    """TMDb's credit list fills in films with no local record; local rows
+    """TMDB's credit list fills in films with no local record; local rows
     carry their badges and the unknown films link to the review page."""
 
     import app.main.library as library
@@ -80,7 +80,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
         make_cast(person, seen)
         db.session.commit()
 
-    class FakeTMDb:
+    class FakeTMDB:
         def __init__(self, payload):
             self.payload = payload
 
@@ -92,7 +92,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -118,7 +118,7 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "name": "Career Actor",
                 "profile_path": "/career.jpg",
@@ -144,14 +144,14 @@ def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):
     assert "Bluray-1080p" not in page
     assert 'text-bg-info me-1">Seen' not in page
     assert "bi-heart-fill" not in page
-    # No local record at all: listed from TMDb, linking to the review form
+    # No local record at all: listed from TMDB, linking to the review form
     assert "Career Unknown Film" in page
     assert "/review/tmdb/200" in page
     assert "The Cameo" in page
 
     # The synopsis lives in the poster popover now (#45d): tiles are
     # armed with data-card-url — by movie_id for records, tmdb_id
-    # for the record-less TMDb credits — and every tile carries the
+    # for the record-less TMDB credits — and every tile carries the
     # actions, keyed the same way
 
     assert "A cameo-laden curiosity from 1999." not in page
@@ -196,7 +196,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
         ),
     )
 
-    class FakeTMDb:
+    class FakeTMDB:
         def __init__(self, payload):
             self.payload = payload
 
@@ -208,7 +208,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -226,7 +226,7 @@ def test_filmography_badges_recommended_owned_films(app, admin_client, monkeypat
                     ]
                 }
             )
-        return FakeTMDb({"name": "Ranked Actor"})
+        return FakeTMDB({"name": "Ranked Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -274,7 +274,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
         make_cast(person, owned_wanted)
         db.session.commit()
 
-    class FakeTMDb:
+    class FakeTMDB:
         def __init__(self, payload):
             self.payload = payload
 
@@ -286,7 +286,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -304,7 +304,7 @@ def test_filmography_owned_rows_show_seen_and_watchlist(app, admin_client, monke
                     ]
                 }
             )
-        return FakeTMDb({"name": "Funnel Actor"})
+        return FakeTMDB({"name": "Funnel Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -329,11 +329,11 @@ def test_filmography_serves_people_without_local_credit_rows(
     app, admin_client, monkeypatch
 ):
     """A person from a not-in-library film's cast has no TMDBCredit row;
-    their filmography still renders, with the name and career from TMDb."""
+    their filmography still renders, with the name and career from TMDB."""
 
     import app.main.library as library
 
-    class FakeTMDb:
+    class FakeTMDB:
         def __init__(self, payload):
             self.payload = payload
 
@@ -345,7 +345,7 @@ def test_filmography_serves_people_without_local_credit_rows(
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -357,7 +357,7 @@ def test_filmography_serves_people_without_local_credit_rows(
                     ]
                 }
             )
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "name": "Uncredited Wanderer",
                 "profile_path": "/wanderer.jpg",
@@ -372,7 +372,7 @@ def test_filmography_serves_people_without_local_credit_rows(
 
     page = admin_client.get("/library/movie?credit=808080").get_data(as_text=True)
     assert "Uncredited Wanderer" in page
-    # The header portrait and biography come from the same TMDb person
+    # The header portrait and biography come from the same TMDB person
     # lookup; a living person's born line carries their current age
     assert "/w185/wanderer.jpg" in page
     assert "Born March 3, 1970 in Butte, Montana, USA (age" in page
@@ -383,7 +383,7 @@ def test_filmography_serves_people_without_local_credit_rows(
 
 
 def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
-    """A director's TMDb career renders: key crew credits become rows,
+    """A director's TMDB career renders: key crew credits become rows,
     share a row with acting credits on the same film, non-key jobs stay
     out, and owned crew films attach their local record through
     MovieCrew."""
@@ -408,7 +408,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
         )
         db.session.commit()
 
-    class FakeTMDb:
+    class FakeTMDB:
         def __init__(self, payload):
             self.payload = payload
 
@@ -420,7 +420,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -472,7 +472,7 @@ def test_filmography_includes_key_crew_credits(app, admin_client, monkeypatch):
                     ],
                 }
             )
-        return FakeTMDb({"name": "Career Director"})
+        return FakeTMDB({"name": "Career Director"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -524,7 +524,7 @@ def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monke
         ),
     )
 
-    class FakeTMDb:
+    class FakeTMDB:
         def raise_for_status(self):
             pass
 
@@ -532,7 +532,7 @@ def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monke
             return {"name": "Cached Actor"}
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-    monkeypatch.setattr(library, "tmdb_get", lambda url, **kwargs: FakeTMDb())
+    monkeypatch.setattr(library, "tmdb_get", lambda url, **kwargs: FakeTMDB())
 
     page = admin_client.get("/library/movie?credit=848484").get_data(as_text=True)
     assert "Old Cache Film (1990)" in page
@@ -540,13 +540,13 @@ def test_filmography_tolerates_pre_crew_cached_payloads(app, admin_client, monke
 
 
 def test_filmography_unknown_person_is_404(app, admin_client):
-    """No local row and no TMDb key to ask: the id can't be resolved."""
+    """No local row and no TMDB key to ask: the id can't be resolved."""
 
     assert admin_client.get("/library/movie?credit=999999999").status_code == 404
 
 
 def test_filmography_person_unknown_to_tmdb_is_404(app, admin_client, monkeypatch):
-    """TMDb errors on the person lookup (no such id), so the page 404s."""
+    """TMDB errors on the person lookup (no such id), so the page 404s."""
 
     import requests
 

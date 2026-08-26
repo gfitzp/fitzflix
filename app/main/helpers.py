@@ -348,7 +348,7 @@ def series_upgradable(series_ids):
 def tv_meta_line(first_year, last_year, seasons, episodes, genres):
     """The TV series meta line — run of years, size of the run, genres
     — shared by the series page and the popover card so both read the
-    same. TMDb only fills the season and episode counts once a show has
+    same. TMDB only fills the season and episode counts once a show has
     ended, so a running series simply shows fewer bits.
     """
 

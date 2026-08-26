@@ -71,7 +71,7 @@
 {% endif %}
 
 {% if episode_results %}
-{# TMDb episode titles: each row lands on its season page.
+{# TMDB episode titles: each row lands on its season page.
    Numbering-suspect series never appear here #}
 <h4>Episodes</h4>
 <div class="list-group mb-4">
@@ -124,7 +124,7 @@
 <p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 {% endif %}
 
-<a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDb</a>
+<a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
 <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.files', q=q) }}">Search filenames</a>
 {% endif %}
 {% endblock %}

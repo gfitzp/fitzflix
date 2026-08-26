@@ -67,7 +67,7 @@
 </div>
 <hr>
 <h5>Streaming Services</h5>
-<p class="small text-muted">Pick the services you subscribe to: movie pages and TMDb search results will show when a film streams on them. This is your setting alone, not the household's. Streaming data by JustWatch.</p>
+<p class="small text-muted">Pick the services you subscribe to: movie pages and TMDB search results will show when a film streams on them. This is your setting alone, not the household's. Streaming data by JustWatch.</p>
 {% if streaming_form.providers.choices %}
 <form action="" method="post">
 	{{ streaming_form.hidden_tag() }}
@@ -88,6 +88,6 @@
 	{{ streaming_form.providers_submit(class_="btn btn-sm btn-warning mt-2") }}
 </form>
 {% else %}
-<p class="text-muted">The provider list couldn't be loaded from TMDb right now; try again later.</p>
+<p class="text-muted">The provider list couldn't be loaded from TMDB right now; try again later.</p>
 {% endif %}
 {% endblock %}

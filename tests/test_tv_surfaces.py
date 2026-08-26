@@ -127,7 +127,7 @@ def test_filmography_shows_television_section(app, admin_client, monkeypatch):
         db.session.commit()
         series_id = series.id
 
-        # Day-cached payloads stand in for TMDb: the route reads the
+        # Day-cached payloads stand in for TMDB: the route reads the
         # cache before ever touching the network
         app.redis.set(
             "fitzflix:tmdb:person:4886:details", json.dumps({"name": "Peter Falk"})
@@ -168,7 +168,7 @@ def test_filmography_television_tiles_open_the_series_popover(
 ):
     """The Television tiles hand their facts to the series popover the
     way the film tiles do: each poster arms a /tv_card fetch — by
-    series id when owned, by TMDb id when not — and the In-library
+    series id when owned, by TMDB id when not — and the In-library
     badge no longer sits under the poster, since the card carries it.
     """
 
@@ -226,7 +226,7 @@ def test_filmography_television_tiles_open_the_series_popover(
 
     assert "In library" not in page
 
-    # Owned series arm the card by series id, unowned ones by TMDb id
+    # Owned series arm the card by series id, unowned ones by TMDB id
 
     with app.app_context():
         lagging_id = TVSeries.query.filter_by(tmdb_id=2041).one().id
@@ -319,7 +319,7 @@ def test_tv_card_badge_tracks_the_seasons(app, admin_client):
 
 def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypatch):
     """A person's unowned television credit still gets a card: keyed by
-    TMDb id with no local row, it renders from TMDb and badges nothing,
+    TMDB id with no local row, it renders from TMDB and badges nothing,
     the way the film card's tmdb lane does."""
 
     import app.main.discover as discover
@@ -387,10 +387,10 @@ def test_tv_library_posters_open_the_series_popover(app, admin_client):
 
 def test_series_lists_title_by_tmdb_name_and_year(app, admin_client):
     """The TV Library and TV shopping list name a series the way every
-    other surface does — its TMDb name, not the folder title the files
+    other surface does — its TMDB name, not the folder title the files
     were imported under. The first-air year rides along because the
     library holds three series called "Doctor Who" and the year is what
-    tells them apart. A series TMDb doesn't know keeps its folder
+    tells them apart. A series TMDB doesn't know keeps its folder
     title, which already carries whatever disambiguation it has.
     """
 
@@ -413,14 +413,14 @@ def test_series_lists_title_by_tmdb_name_and_year(app, admin_client):
         assert "Avatar: The Last Airbender (2005)" in page, path
 
         # The folder title is gone from the heading — it survives only
-        # where the page has no TMDb name to show
+        # where the page has no TMDB name to show
 
         assert "Avatar - The Last Airbender" not in page, path
         assert "Home Movies Reel (1987)" in page, path
 
 
 def test_file_activity_card_names_the_series_from_tmdb(app, admin_client):
-    """The File Activity card's series link reads the TMDb name too —
+    """The File Activity card's series link reads the TMDB name too —
     it asked for a field TV rows have never had, so it always showed
     the folder title."""
 

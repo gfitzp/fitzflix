@@ -134,7 +134,7 @@ def invalidate_people_ranking():
     """Drop the /people page's cached rankings (Aug 2026): the ranked
     list of every credited person is a full aggregation over the cast
     and crew tables, so it's held in Redis and rebuilt only after a
-    credit write — the TMDb apply methods call this."""
+    credit write — the TMDB apply methods call this."""
 
     redis = current_app.redis
     keys = [PEOPLE_RANKING_KEY.format(role=role) for role in ("cast", "crew", "all")]
@@ -142,9 +142,9 @@ def invalidate_people_ranking():
 
 
 def tmdb_get(url, **kwargs):
-    """GET a TMDb API resource through a shared rate limiter.
+    """GET a TMDB API resource through a shared rate limiter.
 
-    TMDb rate-limits at roughly 40-50 requests per second per IP
+    TMDB rate-limits at roughly 40-50 requests per second per IP
     (https://developer.themoviedb.org/docs/rate-limiting). A Redis counter
     keyed on the current second is shared by every worker and web process,
     so their combined request rate stays capped at
@@ -166,11 +166,11 @@ def tmdb_get(url, **kwargs):
 
 
 def tmdb_objects(entries, owner, what):
-    """Yield the dict entries of a TMDb credits list, logging and
+    """Yield the dict entries of a TMDB credits list, logging and
     skipping anything else.
 
     The overnight TV refresh of 2026-08-22 failed on 14 of 25 series
-    because TMDb served a bare list where a cast member's role object
+    because TMDB served a bare list where a cast member's role object
     belongs — for a few seconds, and clean again by noon. One malformed
     entry used to abort the whole apply with an AttributeError and no
     record of the shape; now the entry is logged with its fragment and
@@ -182,13 +182,13 @@ def tmdb_objects(entries, owner, what):
             yield entry
         else:
             current_app.logger.warning(
-                f"{owner} TMDb {what} entry is not an object, skipping: "
+                f"{owner} TMDB {what} entry is not an object, skipping: "
                 f"{repr(entry)[:300]}"
             )
 
 
 class TMDBMixin(object):
-    """TMDb fetch/apply methods shared by the Movie and TVSeries models.
+    """TMDB fetch/apply methods shared by the Movie and TVSeries models.
 
     Each refresh is split in half: *_fetch does the network work and
     returns a payload, *_apply writes it to the database — so the
@@ -196,11 +196,11 @@ class TMDBMixin(object):
     """
 
     def tmdb_movie_fetch(self, tmdb_id=None):
-        """Network half of a TMDb movie refresh: search (when no id is
+        """Network half of a TMDB movie refresh: search (when no id is
         given) and pull the movie details. Writes nothing to the database,
         so concurrent fetches are safe; returns the details payload for
         tmdb_movie_apply, or None with no match. Artwork isn't stored —
-        the templates hotlink TMDb's image CDN."""
+        the templates hotlink TMDB's image CDN."""
 
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
@@ -240,7 +240,7 @@ class TMDBMixin(object):
             except requests.exceptions.HTTPError:
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
-                    "Fitzflix - TMDb ID not found",
+                    "Fitzflix - TMDB ID not found",
                     sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                     recipients=[admin_user.email],
                     text_body=render_template(
@@ -263,7 +263,7 @@ class TMDBMixin(object):
         return tmdb_info or None
 
     def tmdb_movie_apply(self, tmdb_info):
-        """Database half of a TMDb movie refresh: replace this movie's TMDb
+        """Database half of a TMDB movie refresh: replace this movie's TMDB
         fields and associations with the fetched payload. No network calls
         here — artwork is already on disk — so it belongs on the
         single-worker sql queue, serialized against other database work."""
@@ -340,7 +340,7 @@ class TMDBMixin(object):
         self.tmdb_tagline = tmdb_info.get("tagline")
         self.tmdb_title = tmdb_info.get("title")
 
-        # Rename this movie to TMDb's canonical title and year, unless a
+        # Rename this movie to TMDB's canonical title and year, unless a
         # different movie record already holds that name: title + year is
         # unique, so renaming onto it would fail the whole commit. The two
         # records end up sharing a tmdb_id, so refreshing either movie will
@@ -356,7 +356,7 @@ class TMDBMixin(object):
             current_app.logger.warning(
                 f"{self} not renamed to '{canonical_title} ({canonical_year})': "
                 f"{duplicate} already has that name; refresh either movie "
-                f"with TMDb id {tmdb_info.get('id')} to merge them"
+                f"with TMDB id {tmdb_info.get('id')} to merge them"
             )
             admin_user = User.query.filter(User.admin == True).first()
             send_email(
@@ -573,20 +573,20 @@ class TMDBMixin(object):
         return self
 
     def tmdb_movie_query(self, tmdb_id=None):
-        """Fetch from TMDb and apply to the database in one step, for
+        """Fetch from TMDB and apply to the database in one step, for
         callers outside the split refresh pipeline (e.g. review_task
         creating a movie inline)."""
 
         return self.tmdb_movie_apply(self.tmdb_movie_fetch(tmdb_id))
 
     def tmdb_movie_clear(self):
-        """Detach this film from TMDb: drop the id, every fetched field,
+        """Detach this film from TMDB: drop the id, every fetched field,
         and every association tmdb_movie_apply creates, then mark the
         record ignored so no refresh path guesses a new id from the title.
 
-        For films TMDb has no record of and never will — a home movie, or
-        an id TMDb has since deleted. Title and year are the film's own
-        library identity, not TMDb's, and stay untouched.
+        For films TMDB has no record of and never will — a home movie, or
+        an id TMDB has since deleted. Title and year are the film's own
+        library identity, not TMDB's, and stay untouched.
         """
 
         MovieCast.query.filter_by(movie_id=self.id).delete()
@@ -631,7 +631,7 @@ class TMDBMixin(object):
         return self
 
     def tmdb_tv_fetch(self, tmdb_id=None):
-        """Network half of a TMDb TV refresh; see tmdb_movie_fetch."""
+        """Network half of a TMDB TV refresh; see tmdb_movie_fetch."""
 
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
@@ -673,7 +673,7 @@ class TMDBMixin(object):
             except requests.exceptions.HTTPError:
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email(
-                    "Fitzflix - TMDb ID not found",
+                    "Fitzflix - TMDB ID not found",
                     sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                     recipients=[admin_user.email],
                     text_body=render_template(
@@ -694,7 +694,7 @@ class TMDBMixin(object):
             tmdb_info = r.json()
 
             # Episode payloads: the base payload lists the seasons;
-            # fetch each one's episode block in appended batches (TMDb
+            # fetch each one's episode block in appended batches (TMDB
             # caps append_to_response at 20). A failed batch is logged
             # and skipped — the apply side only touches seasons present
             # in the payload, so a miss leaves that season's stored
@@ -732,7 +732,7 @@ class TMDBMixin(object):
         return tmdb_info or None
 
     def tmdb_tv_apply(self, tmdb_info):
-        """Database half of a TMDb TV refresh; see tmdb_movie_apply."""
+        """Database half of a TMDB TV refresh; see tmdb_movie_apply."""
 
         if not tmdb_info:
             return self
@@ -898,7 +898,7 @@ class TMDBMixin(object):
         # per-row existence queries: after the bulk delete only payload
         # duplicates could collide with the unique constraints. Keys are
         # folded the way utf8mb4_general_ci compares — unaccented,
-        # caseless, trailing-space-blind — because TMDb payloads really
+        # caseless, trailing-space-blind — because TMDB payloads really
         # do carry both 'Self - Bee farmer' and 'Self - Bee Farmer' for
         # one person, distinct to Python but a 1062 duplicate to MySQL.
 
@@ -1012,7 +1012,7 @@ class TMDBMixin(object):
                 row.tmdb_still_path = ep.get("still_path")
                 row.tmdb_data_as_of = datetime.now(timezone.utc)
 
-            # A stored slot TMDb no longer lists in this season was
+            # A stored slot TMDB no longer lists in this season was
             # renumbered or removed upstream — drop it rather than let
             # it mislabel
 
@@ -1023,11 +1023,11 @@ class TMDBMixin(object):
         return self
 
     def tmdb_tv_clear(self):
-        """Detach this series from TMDb; see tmdb_movie_clear.
+        """Detach this series from TMDB; see tmdb_movie_clear.
 
         Also drops the stored episode rows: without an id there is
         nothing to refresh them from, and a season list left behind from
-        a deleted TMDb entry would go stale forever (#207).
+        a deleted TMDB entry would go stale forever (#207).
         """
 
         TVCast.query.filter_by(tv_id=self.id).delete()
@@ -1433,7 +1433,7 @@ class User(UserMixin, db.Model):
 
 
 class UserStreamingProvider(db.Model):
-    """One streaming service on a user's profile, from TMDb's
+    """One streaming service on a user's profile, from TMDB's
     watch-provider registry (the underlying data is JustWatch's). The
     name and logo are copied at pick time so displays survive registry
     outages."""
@@ -1522,7 +1522,7 @@ class UserMovieReview(db.Model):
 
 
 class Movie(db.Model, TMDBMixin, Utilities):
-    """A film: local identity, TMDb enrichment, Criterion details, and
+    """A film: local identity, TMDB enrichment, Criterion details, and
     shopping-cart state.
     """
 
@@ -1557,8 +1557,8 @@ class Movie(db.Model, TMDBMixin, Utilities):
     tmdb_vote_count = db.Column(db.Integer)
     tmdb_data_as_of = db.Column(db.DateTime)
 
-    # "TMDb has no record of this film, and never will" — a home movie, or
-    # an id TMDb has since deleted. Distinct from a plain NULL tmdb_id,
+    # "TMDB has no record of this film, and never will" — a home movie, or
+    # an id TMDB has since deleted. Distinct from a plain NULL tmdb_id,
     # which only means "not matched yet" and invites a title search on the
     # next refresh; this flag tells every refresh path to leave the record
     # alone. Cleared by supplying an id by hand.
@@ -1671,7 +1671,7 @@ class Movie(db.Model, TMDBMixin, Utilities):
 
 
 class TVSeries(db.Model, TMDBMixin):
-    """A TV series and its TMDb enrichment."""
+    """A TV series and its TMDB enrichment."""
 
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(220), nullable=False, unique=True, index=True)
@@ -1773,11 +1773,11 @@ class TVSeries(db.Model, TMDBMixin):
 
 
 class TVEpisode(db.Model):
-    """One TMDb episode of a TV series: the season/episode slot's
+    """One TMDB episode of a TV series: the season/episode slot's
     title, overview, air date, runtime, and still.
 
     Joined from File.season/File.episode at render time; a missing row
-    is normal (year-style seasons, custom-numbered specials, series TMDb
+    is normal (year-style seasons, custom-numbered specials, series TMDB
     doesn't know) and must surface as today's number-only display, never
     an error. Where File.edition is set, it outranks this title.
     """
@@ -2387,7 +2387,7 @@ class RefQuality(db.Model):
 
 
 class RefTMDBCertification(db.Model, TMDBMixin):
-    """Lookup table of per-country TMDb certifications (G, PG-13, ...)."""
+    """Lookup table of per-country TMDB certifications (G, PG-13, ...)."""
 
     id = db.Column(db.Integer, primary_key=True)
     country = db.Column(db.String(8))
@@ -2402,7 +2402,7 @@ class RefTMDBCertification(db.Model, TMDBMixin):
 
 
 class TMDBMovieCollection(db.Model, TMDBMixin):
-    """A TMDb collection a movie belongs to."""
+    """A TMDB collection a movie belongs to."""
 
     id = db.Column(db.Integer, primary_key=True)
     tmdb_backdrop_path = db.Column(db.String(64))
@@ -2414,7 +2414,7 @@ class TMDBMovieCollection(db.Model, TMDBMixin):
 
 
 class TMDBCredit(db.Model, TMDBMixin):
-    """A person from TMDb credits, shared by the cast and crew join rows."""
+    """A person from TMDB credits, shared by the cast and crew join rows."""
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
@@ -2502,7 +2502,7 @@ class MovieCopref(db.Model):
 
     Adjusted-cosine similarity over ML-32M's 32 million ratings, with
     co-rater shrinkage — "people who loved A disproportionately loved
-    B", the taste signal content features can't see. Keyed by TMDb ids
+    B", the taste signal content features can't see. Keyed by TMDB ids
     (portable across record merges), positive similarities only, both
     directions stored so anchor-side lookups are one indexed query.
     Rebuilt only when a new MovieLens snapshot is adopted, via `flask
@@ -2522,10 +2522,10 @@ class MovieCopref(db.Model):
 
 
 class CatalogExclusion(db.Model):
-    """A TMDb id the catalog loaders must never auto-create again.
+    """A TMDB id the catalog loaders must never auto-create again.
 
     Wikidata's Criterion spine set occasionally lists a film that
-    doesn't really exist — an unfinished work carrying a stale TMDb id
+    doesn't really exist — an unfinished work carrying a stale TMDB id
     (Eisenstein's Ivan the Terrible Part III was the first found).
     Deleting the bogus Movie record isn't enough, since the next full
     refresh would recreate it; `flask catalog exclude` deletes the
@@ -2592,7 +2592,7 @@ class UserFrameScore(db.Model):
 
 
 class TVCast(db.Model):
-    """Join row: a credit's acting role on a TV series, from TMDb's
+    """Join row: a credit's acting role on a TV series, from TMDB's
     aggregate credits — one row per distinct character, with the
     series-wide billing order and how many episodes the role spans."""
 
@@ -2610,7 +2610,7 @@ class TVCast(db.Model):
 
 
 class TVCrew(db.Model):
-    """Join row: a credit's crew role on a TV series, from TMDb's
+    """Join row: a credit's crew role on a TV series, from TMDB's
     aggregate credits — one row per distinct job."""
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2627,7 +2627,7 @@ class TVCrew(db.Model):
 
 
 class TMDBGenre(db.Model, TMDBMixin):
-    """A TMDb genre associated with a library title."""
+    """A TMDB genre associated with a library title."""
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(32))
@@ -2637,7 +2637,7 @@ class TMDBGenre(db.Model, TMDBMixin):
 
 
 class TMDBKeyword(db.Model, TMDBMixin):
-    """A TMDb keyword associated with a library title."""
+    """A TMDB keyword associated with a library title."""
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
@@ -2647,7 +2647,7 @@ class TMDBKeyword(db.Model, TMDBMixin):
 
 
 class TMDBNetwork(db.Model, TMDBMixin):
-    """A TMDb network associated with a series."""
+    """A TMDB network associated with a series."""
 
     id = db.Column(db.Integer, primary_key=True)
     tmdb_logo_path = db.Column(db.String(64))
@@ -2659,7 +2659,7 @@ class TMDBNetwork(db.Model, TMDBMixin):
 
 
 class TMDBProductionCompany(db.Model, TMDBMixin):
-    """A TMDb production company associated with a library title."""
+    """A TMDB production company associated with a library title."""
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
@@ -2671,7 +2671,7 @@ class TMDBProductionCompany(db.Model, TMDBMixin):
 
 
 class TMDBProductionCountry(db.Model, TMDBMixin):
-    """A TMDb production country associated with a library title."""
+    """A TMDB production country associated with a library title."""
 
     id = db.Column(db.String(2), primary_key=True)
     name = db.Column(db.String(128))
@@ -2681,7 +2681,7 @@ class TMDBProductionCountry(db.Model, TMDBMixin):
 
 
 class TMDBSpokenLanguage(db.Model, TMDBMixin):
-    """A TMDb spoken language associated with a library title."""
+    """A TMDB spoken language associated with a library title."""
 
     id = db.Column(db.String(2), primary_key=True)
     name = db.Column(db.String(128))
@@ -2691,7 +2691,7 @@ class TMDBSpokenLanguage(db.Model, TMDBMixin):
 
 
 class TMDBSeason(db.Model, TMDBMixin):
-    """A TMDb season summary associated with a series."""
+    """A TMDB season summary associated with a series."""
 
     id = db.Column(db.Integer, primary_key=True)
     air_date = db.Column(db.DateTime)

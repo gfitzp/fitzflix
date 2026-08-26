@@ -305,7 +305,7 @@ def register(app):
 
     @tv.command()
     def validate():
-        """Re-verify TMDb episode titles against Plex's agent titles now
+        """Re-verify TMDB episode titles against Plex's agent titles now
         instead of waiting for the nightly run."""
 
         from flask import current_app
@@ -325,9 +325,9 @@ def register(app):
     @catalog.command()
     @click.argument("movie_id", type=int)
     def exclude(movie_id):
-        """Delete a bogus catalog record and bar its TMDb id from ever
+        """Delete a bogus catalog record and bar its TMDB id from ever
         being auto-created again — for Wikidata junk like an unfinished
-        film carrying a stale TMDb id. Refuses records with files or
+        film carrying a stale TMDB id. Refuses records with files or
         diary rows: those are real library data, not catalog junk."""
 
         from app import db
@@ -346,7 +346,7 @@ def register(app):
             return
         if movie.tmdb_id is None:
             click.echo(
-                f"'{title}' has no TMDb id, so the catalog loaders can't "
+                f"'{title}' has no TMDB id, so the catalog loaders can't "
                 f"recreate it; deleting the record only"
             )
         elif not CatalogExclusion.query.filter_by(tmdb_id=movie.tmdb_id).first():
@@ -356,7 +356,7 @@ def register(app):
         click.echo(
             f"Deleted '{title}'"
             + (
-                f" and excluded TMDb id {movie.tmdb_id} from catalog loads"
+                f" and excluded TMDB id {movie.tmdb_id} from catalog loads"
                 if movie.tmdb_id
                 else ""
             )

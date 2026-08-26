@@ -1,10 +1,10 @@
-"""TMDb episode-title validation.
+"""TMDB episode-title validation.
 
-TMDb's TV numbering usually mirrors the TVDB aired order Sonarr used
+TMDB's TV numbering usually mirrors the TVDB aired order Sonarr used
 to number the library's files, but diverges on some shows — and a
 mislabeled episode title is worse than none. Before any surface shows
 tv_episode titles, each series earns a per-series verdict here: its
-TMDb titles are compared against the titles Plex's agents gave the
+TMDB titles are compared against the titles Plex's agents gave the
 very same files (matched by Part-file basename, never by title), and
 a series whose titles disagree is flagged numbering-suspect so
 surfaces can render it plain.

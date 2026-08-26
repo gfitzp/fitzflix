@@ -1035,7 +1035,7 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
 
 
 def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
-    """A movie's TMDb apply rewrites file paths and can merge records, so
+    """A movie's TMDB apply rewrites file paths and can merge records, so
     it must wait for any import chain holding one of the title's locks."""
 
     from app import db
@@ -1067,7 +1067,7 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
 
 
 def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
-    """When a TMDb id points at an existing movie, the apply will merge
+    """When a TMDB id points at an existing movie, the apply will merge
     records — so a lock held on the *target* movie's files defers it."""
 
     from app import db
@@ -1128,7 +1128,7 @@ def test_cron_table_refreshes_streaming_availability_nightly(app):
 def test_apply_tmdb_refresh_saves_the_payload_when_apply_raises(app, monkeypatch):
     """A payload whose apply raises is written beside the log, gzipped
     JSON named for the record, so a transient upstream glitch (the
-    2026-08-22 malformed aggregate credits) can be examined after TMDb
+    2026-08-22 malformed aggregate credits) can be examined after TMDB
     has gone back to serving clean data."""
 
     import glob

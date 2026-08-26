@@ -1,7 +1,7 @@
 """Shared fixtures: an isolated app wired to SQLite, Redis DB 9, and temp dirs.
 
 The suite never touches the production database, Redis DB 0, the mail server,
-or any external service: TMDb/Sonarr/Radarr point at an unroutable local port
+or any external service: TMDB/Sonarr/Radarr point at an unroutable local port
 so calls fail fast, and AWS is unconfigured. Reference data (qualities and
 feature types) mirrors the production rows exactly.
 """
@@ -307,7 +307,7 @@ def incoming_dir():
 
 @pytest.fixture
 def fake_tmdb(monkeypatch):
-    """A TMDb that responds successfully with no matches, instead of the
+    """A TMDB that responds successfully with no matches, instead of the
     unroutable default — for tests asserting on log output, where the
     connection-refused warning would be noise."""
 

@@ -38,7 +38,7 @@ class FakePlex:
                 "type": "movie",
             }
         # shows: {tmdb_id: (title, year)} — TV items, whose tmdb guids
-        # are TMDb TV-series ids
+        # are TMDB TV-series ids
         for tmdb_id, (title, year) in dict(shows).items():
             self.items[f"tv{tmdb_id}"] = {
                 "ids": [tmdb_id],
@@ -308,7 +308,7 @@ def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
 
 
 def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
-    """A show's tmdb guid is a TMDb TV-series id — it must not become
+    """A show's tmdb guid is a TMDB TV-series id — it must not become
     a bare Movie row on the Fitzflix watchlist (The Flight Attendant,
     Severance)."""
 

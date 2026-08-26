@@ -7,7 +7,7 @@ similarity table those signals live in: adjusted-cosine similarity
 by co-rater count so a handful of shared fans can't fake a strong link.
 MovieLens is the sanctioned source — the Netflix Prize dataset was
 withdrawn in 2010 and carries no external ids, while GroupLens's ML-32M
-is research-licensed and maps straight to TMDb ids via its links.csv.
+is research-licensed and maps straight to TMDB ids via its links.csv.
 
 The build covers the WHOLE MovieLens universe above a ratings floor,
 not just the films Fitzflix currently knows (Glenn's call, Aug 2026):
@@ -93,7 +93,7 @@ def build_copref_table(dataset_dir):
             user_count[user_id] = user_count.get(user_id, 0) + 1
             film_count[ml_id] = film_count.get(ml_id, 0) + 1
 
-    # links.csv occasionally maps two MovieLens entries to one TMDb id
+    # links.csv occasionally maps two MovieLens entries to one TMDB id
     # (splits and re-releases); the first (oldest) entry keeps the tmdb
     # identity so the pair rows stay unique
 

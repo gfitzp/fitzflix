@@ -1,6 +1,6 @@
 """The landing page's "Streaming on your services" rail.
 
-Candidates come from TMDb's discover endpoint — shared per-provider
+Candidates come from TMDB's discover endpoint — shared per-provider
 pools (popular, acclaimed, and newly streaming sorts) plus taste-shaped
 queries built from each user's stored profile — so discover acts as a
 candidate generator, never as display truth: its provider and
@@ -13,7 +13,7 @@ produced it) alongside its top contributing features.
 Films already in the library or in the user's diary are excluded — the
 rail recommends what to watch on services already paid for, never what
 to buy (that preference is physical media). The discover data and the
-availability data are JustWatch's via TMDb, so the rail carries the
+availability data are JustWatch's via TMDB, so the rail carries the
 mandatory attribution wherever it renders.
 """
 
@@ -234,7 +234,7 @@ def _taste_queries(profile, provider_ids):
 
 
 def _excluded_tmdb_ids(user_id):
-    """TMDb ids the rail must never recommend: films with a local
+    """TMDB ids the rail must never recommend: films with a local
     main-feature file, films already in this user's diary (owned or
     review-only records alike), and films they've waved off."""
 
@@ -307,12 +307,12 @@ def enriched_movie(tmdb_id):
         payload = r.json() or {}
     except HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
-            # TMDb deletes films whose credit rows linger on person
+            # TMDB deletes films whose credit rows linger on person
             # pages, so a filmography can keep offering an id the movie
             # endpoint no longer answers. Cache the miss as a null
             # payload — readers treat it as "nothing here" — so each
             # render doesn't re-ask.
-            current_app.logger.info(f"TMDb movie {int(tmdb_id)} is gone (404)")
+            current_app.logger.info(f"TMDB movie {int(tmdb_id)} is gone (404)")
             current_app.redis.set(
                 cache_key, json.dumps(None), ex=ENRICHED_CACHE_SECONDS
             )
@@ -502,11 +502,11 @@ def ensure_rail_records(items):
     """A real movie record for every rail film, so the shared score
     source can estimate them like any owned or listed title.
 
-    Rail films found on TMDb alone have no record for /movie_states to
+    Rail films found on TMDB alone have no record for /movie_states to
     map their tile through, which left their ladders blank while films
     with records showed estimates. Each gets a review-only record here —
     through the same shared creation door the review and watchlist
-    surfaces walk — and anything never stamped by the standard TMDb
+    surfaces walk — and anything never stamped by the standard TMDB
     refresh gets one enqueued, after which the resolver scores it on
     the first tile view and the nightly recompute folds it in."""
 

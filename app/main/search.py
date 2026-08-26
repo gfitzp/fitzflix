@@ -1,5 +1,5 @@
 """Local search (the routes.py split): the library search page, the
-navbar type-ahead JSON, and the TMDb lookup page."""
+navbar type-ahead JSON, and the TMDB lookup page."""
 
 import traceback
 
@@ -54,7 +54,7 @@ def _movie_search_results(wildcard, limit=50):
     """Movies whose titles match, each with its best owned copy.
 
     Only films with a local main-feature file appear: review-only
-    records (a diary entry for an unowned film) belong to the TMDb
+    records (a diary entry for an unowned film) belong to the TMDB
     search, not the library search."""
 
     upgrade_threshold = _upgrade_threshold()
@@ -119,7 +119,7 @@ def _movie_search_results(wildcard, limit=50):
 
 
 def _episode_search_results(wildcard, limit=12):
-    """Episodes whose TMDb titles match, each linking into its season
+    """Episodes whose TMDB titles match, each linking into its season
     page. Numbering-suspect series are excluded — a matched title on a
     misnumbered series would send the user to the wrong slot."""
 
@@ -444,7 +444,7 @@ def search_json():
 @bp.route("/search/tmdb")
 @login_required
 def search_tmdb():
-    """Look a title up on TMDb, to confirm what exists beyond the library."""
+    """Look a title up on TMDB, to confirm what exists beyond the library."""
 
     q = (request.args.get("q") or "").strip()
     movie_matches = []
@@ -453,7 +453,7 @@ def search_tmdb():
     streaming_attribution = False
 
     if q and not current_app.config["TMDB_API_KEY"]:
-        error = "TMDB_API_KEY is not configured, so TMDb can't be searched."
+        error = "TMDB_API_KEY is not configured, so TMDB can't be searched."
 
     elif q:
         params = {"api_key": current_app.config["TMDB_API_KEY"], "query": q}
@@ -484,9 +484,9 @@ def search_tmdb():
 
         except Exception:
             current_app.logger.warning(traceback.format_exc())
-            error = "TMDb could not be reached; try again in a moment."
+            error = "TMDB could not be reached; try again in a moment."
 
-        # Annotate which results are already in the library, by TMDb id.
+        # Annotate which results are already in the library, by TMDB id.
         # "In library" means a local main-feature file exists — a
         # review-only record (a logged unowned film) doesn't count.
         # Each owned match also carries the shopping list's verdict, so
@@ -568,7 +568,7 @@ def search_tmdb():
         for match in movie_matches:
             record_id = record_ids.get(match["tmdb_id"])
             # The row's star ladder posts to the movie route when any
-            # record exists (file or not), the TMDb log route otherwise
+            # record exists (file or not), the TMDB log route otherwise
             match["record_id"] = record_id
             match["seen"] = record_id in seen_ids
             match["watchlisted"] = record_id in watchlisted_ids
@@ -607,7 +607,7 @@ def search_tmdb():
 
     return render_template(
         "search_tmdb.html",
-        title=f"TMDb results for '{q}'" if q else "TMDb search",
+        title=f"TMDB results for '{q}'" if q else "TMDB search",
         q=q,
         movie_matches=movie_matches,
         tv_matches=tv_matches,

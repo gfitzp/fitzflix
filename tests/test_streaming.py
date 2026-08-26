@@ -1,6 +1,6 @@
-"""Streaming availability via TMDb's JustWatch-licensed watch-provider
+"""Streaming availability via TMDB's JustWatch-licensed watch-provider
 data: the cached registry and per-title lookups, the Profile picker,
-and the per-user surfaces (movie pages, TMDb search) with the
+and the per-user surfaces (movie pages, TMDB search) with the
 mandatory JustWatch attribution."""
 
 import json
@@ -11,8 +11,8 @@ from datetime import datetime
 from tests.factories import make_movie, make_movie_file
 
 
-class FakeTMDb:
-    """Canned TMDb response."""
+class FakeTMDB:
+    """Canned TMDB response."""
 
     def __init__(self, payload):
         self.payload = payload
@@ -92,7 +92,7 @@ def test_provider_registry_fetches_once_and_sorts(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "results": [
                     {**MAX, "display_priorities": {"US": 2}},
@@ -120,7 +120,7 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb({"results": {}})
+        return FakeTMDB({"results": {}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
@@ -327,7 +327,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "results": [
                         {
@@ -339,7 +339,7 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDb({"results": []})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
@@ -371,7 +371,7 @@ def test_search_results_without_matches_carry_no_attribution(
 
     def fake_tmdb_get(url, **kwargs):
         if url.endswith("/search/movie"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "results": [
                         {
@@ -383,7 +383,7 @@ def test_search_results_without_matches_carry_no_attribution(
                     ]
                 }
             )
-        return FakeTMDb({"results": []})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
@@ -404,7 +404,7 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
     import app.main.discover as discover
 
     def fake_tmdb_get(url, **kwargs):
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "title": "Unowned Reviewable",
                 "release_date": "1999-09-09",
@@ -517,7 +517,7 @@ def test_unowned_film_with_nothing_shows_the_negative_badge(
 
 
 def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
-    """A 404 is TMDb's answer (stale or wrong tmdb id), not an outage:
+    """A 404 is TMDB's answer (stale or wrong tmdb id), not an outage:
     it caches as an empty payload instead of re-querying per view."""
 
     import requests
@@ -553,7 +553,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
@@ -623,7 +623,7 @@ def test_filmography_badges_unowned_films_on_your_services(
         """Person details and a two-film career."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -641,7 +641,7 @@ def test_filmography_badges_unowned_films_on_your_services(
                     ]
                 }
             )
-        return FakeTMDb({"name": "Streaming Actor"})
+        return FakeTMDB({"name": "Streaming Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -674,7 +674,7 @@ def test_filmography_badges_unowned_films_on_your_services(
     # availability — logo, rent suffix, and the mandatory credit
 
     def fake_details_get(url, **kwargs):
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "title": "Filmography Unowned",
                 "release_date": "1999-09-09",
@@ -724,7 +724,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
         """Person details and a one-film career."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -735,7 +735,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
                     ]
                 }
             )
-        return FakeTMDb({"name": "Deferred Actor"})
+        return FakeTMDB({"name": "Deferred Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -768,7 +768,7 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
@@ -832,7 +832,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(streaming, "tmdb_get", fake_tmdb_get)
@@ -850,7 +850,7 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
 
 def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypatch):
     """The watchlist and the Criterion catalog answer from the cache
-    alone: an uncached film costs no TMDb call during the render (fifty
+    alone: an uncached film costs no TMDB call during the render (fifty
     of them stalled the page four seconds before Aug 2026) — it's
     handed to one background warm job instead."""
 
@@ -879,7 +879,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
 
     def fake_tmdb_get(url, **kwargs):
         calls.append(url)
-        return FakeTMDb({"results": {"US": {"flatrate": [NETFLIX]}}})
+        return FakeTMDB({"results": {"US": {"flatrate": [NETFLIX]}}})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     for module in (streaming, discover, library):

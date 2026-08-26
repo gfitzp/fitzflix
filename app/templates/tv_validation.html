@@ -8,7 +8,7 @@
 	</ol>
 </nav>
 <h3>TV episode titles</h3>
-<p class="small text-muted">Each series' TMDb episode titles compared against the titles Plex's agents gave the very same files, matched by filename. A series below {{ "%.0f"|format(suspect_below * 100) }}% agreement (with at least {{ min_compared }} comparisons) is numbering-suspect: its episode titles stay hidden rather than risk mislabeling. Series without enough overlap are unverified and trusted.</p>
+<p class="small text-muted">Each series' TMDB episode titles compared against the titles Plex's agents gave the very same files, matched by filename. A series below {{ "%.0f"|format(suspect_below * 100) }}% agreement (with at least {{ min_compared }} comparisons) is numbering-suspect: its episode titles stay hidden rather than risk mislabeling. Series without enough overlap are unverified and trusted.</p>
 {% if entries %}
 <div class="table-responsive">
 	<table class="table table-sm align-middle">
@@ -48,7 +48,7 @@
 			<tr>
 				<td colspan="5" class="small text-muted">
 					{% for example in entry.examples %}
-					<div>S{{ "%02d"|format(example.season) }}E{{ "%02d"|format(example.episode) }}: Plex says &ldquo;{{ example.plex }}&rdquo;, TMDb says &ldquo;{{ example.tmdb }}&rdquo;</div>
+					<div>S{{ "%02d"|format(example.season) }}E{{ "%02d"|format(example.episode) }}: Plex says &ldquo;{{ example.plex }}&rdquo;, TMDB says &ldquo;{{ example.tmdb }}&rdquo;</div>
 					{% endfor %}
 				</td>
 			</tr>

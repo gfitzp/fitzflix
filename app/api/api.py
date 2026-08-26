@@ -85,7 +85,7 @@ def plex_webhook(token):
             tmdb_id = int(match.group(1))
     if tmdb_id is None:
         current_app.logger.info(
-            f"Plex scrobble of '{metadata.get('title')}' has no TMDb guid; ignoring"
+            f"Plex scrobble of '{metadata.get('title')}' has no TMDB guid; ignoring"
         )
         return "", 204
 

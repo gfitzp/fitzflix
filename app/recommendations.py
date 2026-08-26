@@ -142,7 +142,7 @@ SCORES_KEY = "fitzflix:recs:scores:{user_id}"
 PATCH_SCORES_KEY = "fitzflix:recs:scores:patch:{user_id}"
 PATCH_SCORES_TTL = 60 * 60 * 48
 
-# The shared source's TMDb-keyed lane: scores for films with no local
+# The shared source's TMDB-keyed lane: scores for films with no local
 # record at all, computed from their cached enriched payloads (the
 # award prior excepted — award rows are local) and held in their own
 # overlay. Nothing ever lands in the database for these films; the
@@ -183,8 +183,8 @@ def collect_features(movie_ids):
     """(class, key, label) feature tuples per movie id, bulk-queried so
     profile builds and scoring runs never walk per-movie relationships.
 
-    Keys are stable and portable: genre/actor/director keys embed TMDb
-    ids, so the filmography markers can score cached TMDb payloads
+    Keys are stable and portable: genre/actor/director keys embed TMDB
+    ids, so the filmography markers can score cached TMDB payloads
     against the same profile.
     """
 
@@ -611,7 +611,7 @@ def _tmdb_copref(user_id, tmdb_id):
     """Co-preference for one film from its own side of the pair table:
     its stored neighbors intersected with the user's weighted films —
     the same entries compute_user_recommendations builds anchor-side,
-    without fetching every anchor's full neighbor list. TMDb-keyed
+    without fetching every anchor's full neighbor list. TMDB-keyed
     throughout, so record-less films carry the signal too."""
 
     if not tmdb_id:
@@ -645,7 +645,7 @@ def single_movie_score(user_id, movie, profile):
     taste plus co-preference plus the award prior — so films outside
     the stored ranking (unowned records, sub-cut candidates, taste
     mismatches) can still carry an estimated rating. None until the
-    film's TMDb data has landed: a record mid-refresh has only its
+    film's TMDB data has landed: a record mid-refresh has only its
     decade to score with, which would read as a taste mismatch and
     estimate misleadingly low."""
 
@@ -707,7 +707,7 @@ def local_candidates(user_id):
 
 
 def scoreable_records(user_id):
-    """File-less movie records with refreshed TMDb data the user hasn't
+    """File-less movie records with refreshed TMDB data the user hasn't
     logged or waved off — catalog and watchlist records whose pages can
     show an estimated rating from the nightly score map."""
 
@@ -735,7 +735,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     (None, [], {}) for a user with no diary rows.
 
     The score map covers every scoreable unlogged film — owned
-    candidates AND file-less records with TMDb data — with the full
+    candidates AND file-less records with TMDB data — with the full
     recipe, before the ranking's positives-only cut, so estimated
     ratings can render anywhere."""
 
@@ -785,7 +785,7 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         profile["marker_bar"] = round(baseline[index], 4)
 
     # Co-preference: anchors are the user's own weighted films, matched
-    # into the similarity table by TMDb id; candidates collect their
+    # into the similarity table by TMDB id; candidates collect their
     # top-neighbor term the same way the evaluation measures it
 
     tmdb_of = dict(
@@ -1027,7 +1027,7 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
     with the result patched back into the map, so the next surface to
     ask (a tile batch, the movie page, the rate drive) reads the
     identical number instead of recomputing its own. None for films
-    that can't be scored yet (no profile, or TMDb data still landing).
+    that can't be scored yet (no profile, or TMDB data still landing).
     Batch callers pass their already-fetched `scores` map to skip the
     per-film Redis read."""
 
@@ -1045,18 +1045,18 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
 
 
 def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
-    """The shared source's TMDb-keyed lane: the score for a film that
+    """The shared source's TMDB-keyed lane: the score for a film that
     may not exist locally at all.
 
     A film with a local record answers through the movie-id lane —
     the full recipe against the stored map. A record-less film scores
-    from its cached enriched TMDb payload in the same portable feature
+    from its cached enriched TMDB payload in the same portable feature
     key space (plus tmdb-keyed co-preference; the award prior needs
-    local rows, so it sits out), held in a TMDb-keyed overlay so every
+    local rows, so it sits out), held in a TMDB-keyed overlay so every
     surface reads one number without the database growing. The moment
     the film gains a record — a watchlist add, a log, an import — the
     movie-id lane takes over. None when the film can't be scored: no
-    profile, or TMDb unreachable with nothing cached."""
+    profile, or TMDB unreachable with nothing cached."""
 
     movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
     if movie is not None:
@@ -1107,7 +1107,7 @@ def coarse_interest_score(profile, genre_ids, year, person_affinity=0.0):
     """The might-interest markers' coarse score, computable from any
     payload that carries genre ids and a year: matched genre affinities
     soft-averaged, the release decade, and an optional affinity for a
-    person the film features. No TMDb calls, nothing stored."""
+    person the film features. No TMDB calls, nothing stored."""
 
     affinities = profile.get("affinities", {}) if profile else {}
     score = person_affinity * FEATURE_CLASS_WEIGHTS["actor"]

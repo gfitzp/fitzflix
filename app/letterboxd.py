@@ -2,7 +2,7 @@
 diary, hands-free.
 
 The feed is Letterboxd's advertised account surface (their real API is
-invite-gated): the latest ~50 diary/review items, each carrying a TMDb
+invite-gated): the latest ~50 diary/review items, each carrying a TMDB
 id, the watched date, the rewatch flag, the like, the half-star rating
 when one was given, and the review text. Ingest is a merge, never a
 blind append — the centerpiece rule is that a feed item COMPLETES the
@@ -55,7 +55,7 @@ def parse_letterboxd_feed(xml_text):
     """The feed's diary entries as plain dicts, oldest first.
 
     Only letterboxd-watch and letterboxd-review items count (lists and
-    anything else are skipped), and only when they carry a TMDb id —
+    anything else are skipped), and only when they carry a TMDB id —
     without one there is nothing safe to match. Review text is the
     description's paragraphs minus the poster image and the "Watched
     on …" boilerplate.

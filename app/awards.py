@@ -1,9 +1,9 @@
 """Film awards from Wikidata.
 
 Award wins (P166) and nominations (P1411) for the library's films,
-matched through the IMDb (P345) or TMDb (P4947) ids Fitzflix already
+matched through the IMDb (P345) or TMDB (P4947) ids Fitzflix already
 stores — Wikidata carries both. Wikidata is the sanctioned source:
-TMDb has no awards API, IMDb's is paid-license only. Access follows
+TMDB has no awards API, IMDb's is paid-license only. Access follows
 Wikidata's guidelines like the Criterion spine lookup does: a
 descriptive User-Agent with a contact address, batched VALUES queries
 a few hundred ids at a time, and a pause between requests. Coverage
@@ -58,7 +58,7 @@ AWARDS_ERROR_PAUSE_SECONDS = 10.0
 AWARDS_MAX_CONSECUTIVE_FAILURES = 5
 
 # One query shape serves both id systems: {id_prop} is the Wikidata
-# property the external ids match against (P345 = IMDb, P4947 = TMDb)
+# property the external ids match against (P345 = IMDb, P4947 = TMDB)
 
 AWARDS_QUERY = """
 SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
@@ -238,7 +238,7 @@ def _merge_person_awards(rows):
 def refresh_person_awards():
     """Backfill for-work craft awards, in the film pass's own batches.
 
-    The same IMDb-first/TMDb-fallback id maps as refresh_movie_awards,
+    The same IMDb-first/TMDB-fallback id maps as refresh_movie_awards,
     but the query walks from each film into award statements that name
     it as their "for work" — the craft categories person items hold.
     Runs AFTER refresh_movie_awards in the weekly task: the film pass
@@ -315,7 +315,7 @@ def refresh_movie_awards():
     """Refresh every film's award rows from Wikidata, in polite batches.
 
     Films with an IMDb id match through P345; the remainder fall back
-    to their TMDb id through P4947. A failed batch logs and moves on —
+    to their TMDB id through P4947. A failed batch logs and moves on —
     the weekly cadence self-heals partial refreshes.
     """
 

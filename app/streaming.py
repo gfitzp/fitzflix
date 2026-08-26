@@ -1,6 +1,6 @@
-"""Streaming availability via TMDb's watch-provider endpoints.
+"""Streaming availability via TMDB's watch-provider endpoints.
 
-The underlying data is licensed from JustWatch, and TMDb's terms make
+The underlying data is licensed from JustWatch, and TMDB's terms make
 attribution mandatory: every surface that shows it must carry a
 "Streaming data by JustWatch" credit, or API access can be revoked.
 Availability is cached per title, refreshed nightly by the
@@ -10,7 +10,7 @@ cluster and the first page view of the day stalled behind 50 inline
 fetches under the rate limiter), and displays are customized to each
 user's chosen services —
 a per-user Profile setting, never site-wide. The payload carries no
-deep links; the only outbound link is the film's TMDb watch page.
+deep links; the only outbound link is the film's TMDB watch page.
 """
 
 import json
@@ -39,8 +39,8 @@ AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
 
 def provider_registry():
-    """US movie watch providers from TMDb's registry, sorted by display
-    priority and cached for a day; [] without an API key or when TMDb
+    """US movie watch providers from TMDB's registry, sorted by display
+    priority and cached for a day; [] without an API key or when TMDB
     is unreachable."""
 
     if not current_app.config["TMDB_API_KEY"]:
@@ -82,12 +82,12 @@ def provider_registry():
 
 def title_availability(tmdb_id, refresh=False):
     """The film's US watch-provider payload {link, flatrate, ads, rent,
-    buy}, cached for CACHE_SECONDS; None while unknown (no key, TMDb
+    buy}, cached for CACHE_SECONDS; None while unknown (no key, TMDB
     down). refresh skips the cache read — the nightly task's way of
     re-fetching a title whose entry is still live.
 
     A film with no US providers caches an empty payload, so absence
-    doesn't re-query TMDb on every page view.
+    doesn't re-query TMDB on every page view.
     """
 
     if tmdb_id is None or not current_app.config["TMDB_API_KEY"]:
@@ -106,7 +106,7 @@ def title_availability(tmdb_id, refresh=False):
         r.raise_for_status()
         region = (r.json().get("results") or {}).get(WATCH_REGION) or {}
     except requests.exceptions.HTTPError as e:
-        # A 404 is TMDb's answer, not an outage — the id has no watch
+        # A 404 is TMDB's answer, not an outage — the id has no watch
         # record (a stale or wrong tmdb id) — so cache it as empty
         # rather than re-querying on every page view
 
@@ -199,9 +199,9 @@ def warm_title_availability(tmdb_ids):
 
 def refresh_availability():
     """Nightly task (Aug 2026): re-fetch availability for every film
-    with a TMDb id, so the pages that read it — the watchlist, the
+    with a TMDB id, so the pages that read it — the watchlist, the
     Criterion catalog, filmographies — always answer from a full cache
-    and never block on TMDb. Whole-library cost is a few thousand
+    and never block on TMDB. Whole-library cost is a few thousand
     requests, minutes under the rate limiter, and each entry's two-day
     TTL restarts, so one missed night still serves yesterday's data."""
 
@@ -223,7 +223,7 @@ def refresh_availability():
 
 
 def user_provider_ids(user):
-    """The TMDb provider ids of the user's chosen services."""
+    """The TMDB provider ids of the user's chosen services."""
 
     return {row.provider_id for row in user.streaming_providers}
 
@@ -282,7 +282,7 @@ def rental_matches(availability, provider_ids):
 
 def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
     """The template payload for one film: the user's matches and the
-    TMDb watch-page link, or None when the user picked no services (the
+    TMDB watch-page link, or None when the user picked no services (the
     surfaces stay quiet for them). negative=True keeps the payload when
     nothing matched, so unowned-film pages can say "not on your
     services" instead of nothing — and only those pages also list where

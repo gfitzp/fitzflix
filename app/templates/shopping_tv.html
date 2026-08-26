@@ -38,7 +38,7 @@
 		</a>
 	</div>
 	<div class="flex-grow-1 w-100">
-		{# TMDb name plus first-air year, like the TV Library page #}
+		{# TMDB name plus first-air year, like the TV Library page #}
 		<h5 class="mt-2 mt-sm-0"><a href="{{ url_for('main.tv', series_id=tv.id) }}">{% if tv.tmdb_name %}{{ tv.tmdb_name }}{% if tv.first_air_year %} ({{ tv.first_air_year }}){% endif %}{% else %}{{ tv.title }}{% endif %}</a></h5>
 		{% if tv.seasons %}
 			<ul class="list-group col-12 col-md-8 col-lg-4 ps-0 pl-sm-3">

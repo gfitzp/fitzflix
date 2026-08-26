@@ -34,7 +34,7 @@ def test_compute_flags_shifted_series_and_trusts_agreeing_ones(app):
             file = make_tv_file(good, 1, e, "DVD")
             plex_titles[file.basename] = f"Case {e}"
 
-        # Every slot's Plex title is the NEXT episode's TMDb title —
+        # Every slot's Plex title is the NEXT episode's TMDB title —
         # the off-by-one shape of a numbering divergence. Distinct
         # wording per episode: numbered titles ("Part 1"/"Part 2")
         # fuzzy-match each other, a known detection limit

@@ -249,7 +249,7 @@ def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
 
 def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
     """A wrong search hit must never dress the wrong film's poster over
-    the right title: when TMDb's credited director disagrees with the
+    the right title: when TMDB's credited director disagrees with the
     Channel's, the film stores unmatched."""
 
     import app.criterion_now as criterion_now
@@ -278,7 +278,7 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
 
 
 def test_director_match_survives_romanization_differences(app, monkeypatch):
-    """TMDb credited 'Mabel Cheung Yuen-Ting' for An Autumn's Tale but
+    """TMDB credited 'Mabel Cheung Yuen-Ting' for An Autumn's Tale but
     the Channel says 'Mabel Cheung' — a fuller romanization on either
     side, reversed name order, or hyphen differences must still match."""
 
@@ -312,7 +312,7 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
 
 def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
     """Without a director on both sides the Starring line stands in:
-    one scraped name among TMDb's top billing keeps the match, a total
+    one scraped name among TMDB's top billing keeps the match, a total
     miss degrades to a plain card. A cast miss alone must never veto a
     film whose director agrees — the enriched cast is only top billing."""
 
@@ -415,7 +415,7 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
     import app.criterion_now as criterion_now
     import app.main.discover as discover
 
-    # The TMDb log route fetches film details up front; feed it the
+    # The TMDB log route fetches film details up front; feed it the
     # airing film so the first tap can create the record
 
     class FakeDetails:
@@ -470,12 +470,12 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
     assert "credit=103" in body
     assert "credit=104" not in body
 
-    # The TMDb synopsis rides on the card
+    # The TMDB synopsis rides on the card
 
     assert "A reporter has himself committed to crack a murder." in body
 
     # The unlogged film previews the engine's estimate, posting to the
-    # TMDb log route (no record exists yet)
+    # TMDB log route (no record exists yet)
 
     assert 'title="Estimated' in body
     assert 'action="/review/tmdb/33667"' in body
@@ -505,7 +505,7 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
     assert f'action="/movie/{movie_id}"' in body
     assert 'title="Estimated' not in body
 
-    # A ladder post still aimed at the TMDb route forwards with method
+    # A ladder post still aimed at the TMDB route forwards with method
     # and body intact (307), landing in the movie route's toggle-off
 
     response = admin_client.post(
@@ -608,7 +608,7 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
         )
 
     # 45 of the 101 minutes remain: about 56 minutes in; no record
-    # yet, so the toggle shows Add and posts to the TMDb log route
+    # yet, so the toggle shows Add and posts to the TMDB log route
 
     seed_now(45)
     body = admin_client.get("/").get_data(as_text=True)

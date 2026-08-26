@@ -10,8 +10,8 @@ from app.models import TMDBSeason, TVEpisode
 from tests.factories import make_tv_episode, make_tv_series
 
 
-class FakeTMDb:
-    """A scripted TMDb: answers the base series call and season-batch
+class FakeTMDB:
+    """A scripted TMDB: answers the base series call and season-batch
     calls, recording every append_to_response it was asked for."""
 
     def __init__(self, season_count):
@@ -77,7 +77,7 @@ def test_fetch_batches_season_appends_in_twenties(app, monkeypatch):
     with app.app_context():
         series = make_tv_series("Doctor Who (1963)", tmdb_id=121)
         monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
-        fake = FakeTMDb(season_count=25)
+        fake = FakeTMDB(season_count=25)
         import app.models
 
         monkeypatch.setattr(app.models.requests, "get", fake.get)
@@ -367,7 +367,7 @@ def test_episodes_cascade_with_their_series(app):
 
 
 def test_apply_skips_malformed_credit_entries(app, caplog):
-    """The 2026-08-22 overnight refresh: TMDb briefly served a bare list
+    """The 2026-08-22 overnight refresh: TMDB briefly served a bare list
     where a cast member's role object belongs, and one such entry aborted
     the whole apply. A malformed role, job, or person now logs its
     fragment and is skipped; everything well-formed still lands."""

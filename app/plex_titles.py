@@ -86,11 +86,11 @@ def sync_plex_episode_titles():
             .filter(File.edition != "")
         }
 
-        # No TMDb-title fill here, deliberately (reverted):
-        # writing TMDb titles into agent-blank episodes would feed them
+        # No TMDB-title fill here, deliberately (reverted):
+        # writing TMDB titles into agent-blank episodes would feed them
         # straight back into tv_validation's comparison corpus, where
-        # they'd count as independent agreement — TMDb validated
-        # against TMDb. Plex's titles stay purely the agent's, so the
+        # they'd count as independent agreement — TMDB validated
+        # against TMDB. Plex's titles stay purely the agent's, so the
         # validation verdicts stay honest.
 
         if not desired:

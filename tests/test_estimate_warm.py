@@ -1,5 +1,5 @@
 """The nightly estimate pre-warming task: affinity people's careers
-and the TMDb charts warmed into the enrichment cache under a fetch
+and the TMDB charts warmed into the enrichment cache under a fetch
 budget, rolling cursors, the month-long TTL, and the pre-scored tmdb
 overlay that lets tiles paint estimates without waiting."""
 
@@ -38,7 +38,7 @@ NIGHTLY_PROFILE = {
 }
 
 
-class FakeTMDb:
+class FakeTMDB:
     def __init__(self, payload):
         self.payload = payload
 
@@ -60,14 +60,14 @@ def install_warm_fakes(app, monkeypatch, fetched):
 
     def fake_tmdb_get(url, params=None, timeout=None):
         if "/person/9001/movie_credits" in url:
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [{"id": 700001}, {"id": 700002}],
                     "crew": [{"id": 700003, "job": "Director"}],
                 }
             )
         if "/person/9002/movie_credits" in url:
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [],
                     "crew": [
@@ -78,15 +78,15 @@ def install_warm_fakes(app, monkeypatch, fetched):
                 }
             )
         if url.endswith("/movie/popular"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {"results": [{"id": 700010}, {"id": 700011}], "total_pages": 1}
             )
         if url.endswith("/movie/top_rated"):
-            return FakeTMDb({"results": [{"id": 700020}], "total_pages": 1})
+            return FakeTMDB({"results": [{"id": 700020}], "total_pages": 1})
         for tmdb_id in (700001, 700002, 700003, 700004, 700010, 700011, 700020):
             if url.endswith(f"/movie/{tmdb_id}"):
                 fetched.append(tmdb_id)
-                return FakeTMDb(
+                return FakeTMDB(
                     {
                         "id": tmdb_id,
                         "title": f"Warm Film {tmdb_id}",
@@ -97,7 +97,7 @@ def install_warm_fakes(app, monkeypatch, fetched):
                         "credits": {"cast": [], "crew": []},
                     }
                 )
-        return FakeTMDb({"results": []})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(estimate_warm, "tmdb_get", fake_tmdb_get)

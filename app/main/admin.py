@@ -490,11 +490,11 @@ def maintenance():
         )
         return redirect(url_for("main.maintenance"))
 
-    # Form to update the TMDb data for the entire library, both movies and TV shows
+    # Form to update the TMDB data for the entire library, both movies and TV shows
 
     tmdb_refresh_form = TMDBRefreshForm()
     if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
-        # Records detached from TMDb (#207) are left out: refresh_tmdb_info
+        # Records detached from TMDB (#207) are left out: refresh_tmdb_info
         # would decline them anyway, and a title search is exactly what
         # detaching them was meant to prevent
 
@@ -509,7 +509,7 @@ def maintenance():
             .all()
         )
 
-        # On the user-request queue: each job is a TMDb API call plus
+        # On the user-request queue: each job is a TMDB API call plus
         # artwork downloads, and thousands of them would starve the single
         # sql worker of import work for the whole run
 
@@ -529,7 +529,7 @@ def maintenance():
                 description=f"Refreshing TMDB data for '{tv.title}'",
             )
 
-        flash("Refreshing TMDb information for entire library", "info")
+        flash("Refreshing TMDB information for entire library", "info")
         return redirect(url_for("main.maintenance"))
 
     sync_form = SyncAWSStorageForm()
@@ -577,7 +577,7 @@ def maintenance():
         flash("Manually scanning import directory for files", "info")
         return redirect(url_for("main.maintenance"))
 
-    # Form to merge a group of movies that share a TMDb id: each duplicate
+    # Form to merge a group of movies that share a TMDB id: each duplicate
     # is fed through refresh_tmdb_info, whose merge path (serialized with
     # the import pipeline by title locks) moves files and reviews to the
     # oldest record and deletes the duplicate
@@ -591,7 +591,7 @@ def maintenance():
             .all()
         )
         if len(group) < 2:
-            flash("No duplicates found for that TMDb id.", "danger")
+            flash("No duplicates found for that TMDB id.", "danger")
 
         else:
             canonical = group[0]
@@ -650,7 +650,7 @@ def maintenance():
 @login_required
 @admin_required
 def tv_title_validation():
-    """Per-series episode-title verdicts: how well TMDb's
+    """Per-series episode-title verdicts: how well TMDB's
     titles agree with Plex's for the same files, suspects first."""
 
     from app.tv_validation import MIN_COMPARED, SUSPECT_BELOW, validation_report
@@ -814,7 +814,7 @@ def subtitle_triage(file_id):
 
 
 def _duplicate_movie_groups():
-    """Movies sharing a TMDb id, each group oldest-first.
+    """Movies sharing a TMDB id, each group oldest-first.
 
     The oldest record is the one refresh_tmdb_info keeps when merging, so
     the first movie in each group is the survivor.

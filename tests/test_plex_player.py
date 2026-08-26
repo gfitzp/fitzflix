@@ -1,5 +1,5 @@
 """Remote playback on each user's own device (Plex Companion):
-ratingKey resolution by TMDb guid with a verified title-search
+ratingKey resolution by TMDB guid with a verified title-search
 fallback, the empty-play-queue guard, the exact hand-off the player
 was validated with, per-user targeting, the play route, the popover
 card's button, and the Profile page's probe-and-save device flow."""
@@ -173,7 +173,7 @@ def test_each_user_plays_on_their_own_device(app, monkeypatch, server_config):
 
 def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, server_config):
     """When the guid filter misses, the title search only accepts a
-    candidate whose metadata carries the movie's own TMDb guid."""
+    candidate whose metadata carries the movie's own TMDB guid."""
 
     fake = FakePlex(
         search_hits=[

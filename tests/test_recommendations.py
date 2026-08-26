@@ -376,8 +376,8 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
         make_cast(person, owned)
         db.session.commit()
 
-    class FakeTMDb:
-        """Canned TMDb response."""
+    class FakeTMDB:
+        """Canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
@@ -394,7 +394,7 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
         """Person-details and movie-credits payloads without the network."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -421,7 +421,7 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
                     ]
                 }
             )
-        return FakeTMDb({"name": "Marker Actor"})
+        return FakeTMDB({"name": "Marker Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -465,8 +465,8 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         make_cast(person, owned)
         db.session.commit()
 
-    class FakeTMDb:
-        """Canned TMDb response."""
+    class FakeTMDB:
+        """Canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
@@ -483,7 +483,7 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         """Minimal person + credits payloads."""
 
         if url.endswith("/movie_credits"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "cast": [
                         {
@@ -495,7 +495,7 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDb({"name": "Profileless Actor"})
+        return FakeTMDB({"name": "Profileless Actor"})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(library, "tmdb_get", fake_tmdb_get)
@@ -689,7 +689,7 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(app, admin_client):
 
 
 def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
-    """Unowned TMDb search matches run the filmography markers' coarse
+    """Unowned TMDB search matches run the filmography markers' coarse
     scorer, minus the person term: on-profile films badge, off-profile
     films don't, and owned matches never do."""
 
@@ -732,8 +732,8 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
         ),
     )
 
-    class FakeTMDb:
-        """Canned TMDb response."""
+    class FakeTMDB:
+        """Canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
@@ -750,7 +750,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
         """Search results: a strong match, a non-match, an owned match."""
 
         if url.endswith("/search/movie"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "results": [
                         {
@@ -774,7 +774,7 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDb({"results": []})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)
@@ -1266,7 +1266,7 @@ def test_single_movie_score_matches_the_stored_recipe(app):
         live = single_movie_score(user_id, pick, profile)
         assert live == pytest.approx(item["score"], abs=1e-4)
 
-        # A record whose TMDb data hasn't landed can't be scored — its
+        # A record whose TMDB data hasn't landed can't be scored — its
         # near-empty feature list would read as a taste mismatch
 
         bare = make_movie("Recipe Bare", 1993, tmdb_id=714)
@@ -1372,7 +1372,7 @@ def test_resolved_tmdb_score_covers_record_less_films(app):
         assert Movie.query.filter_by(tmdb_id=991001).first() is None
 
         # The overlay answers repeats even after the payload cache
-        # expires; a film TMDb can't supply at all stays unscored
+        # expires; a film TMDB can't supply at all stays unscored
 
         app.redis.delete("fitzflix:tmdb:movie:991001:enriched")
         assert resolved_tmdb_score(app.redis, user_id, 991001, profile) == score
@@ -1427,7 +1427,7 @@ def test_recompute_drops_the_patch_overlay(app):
 def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client):
     """An unowned refreshed record missing from the stored ranking is
     scored live at render, so a LOW guess can warn off a watchlist add;
-    a record still waiting on its TMDb refresh shows no guess."""
+    a record still waiting on its TMDB refresh shows no guess."""
 
     import json as jsonlib
     from datetime import datetime
@@ -1622,8 +1622,8 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
         ),
     )
 
-    class FakeTMDb:
-        """Canned TMDb response."""
+    class FakeTMDB:
+        """Canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
@@ -1640,7 +1640,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
         """One film over the bar, one merely genre-matched."""
 
         if url.endswith("/search/movie"):
-            return FakeTMDb(
+            return FakeTMDB(
                 {
                     "results": [
                         {
@@ -1661,7 +1661,7 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
                     ]
                 }
             )
-        return FakeTMDb({"results": []})
+        return FakeTMDB({"results": []})
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(search, "tmdb_get", fake_tmdb_get)

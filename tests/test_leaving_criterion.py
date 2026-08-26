@@ -1,5 +1,5 @@
 """The leaving-Criterion shelf: the sanctioned scrape of the official
-leaving page, TMDb matching, the monthly refresh task, and the
+leaving page, TMDB matching, the monthly refresh task, and the
 taste-ranked landing-page shelf with its shopping-list urgency badge."""
 
 import json
@@ -93,7 +93,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
     whose credits name the scraped director — Bas Devos's "Here"
     (2023), not "Right Here, Right Now" (the Aug 2026 shelf mistake).
     A candidate with no director credited passes on an exact title
-    and year; a director TMDb can't corroborate leaves the film
+    and year; a director TMDB can't corroborate leaves the film
     unmatched; and the director-aware cache key is its own."""
 
     import app.leaving_criterion as leaving_criterion
@@ -215,7 +215,7 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
             len([c for c in calls if "/search/movie" in c]) == 2
         )  # with year, then without
 
-        # TMDb credits "Regarding Soon" to Richard Sylvarnes where
+        # TMDB credits "Regarding Soon" to Richard Sylvarnes where
         # Criterion says Hal Hartley: the one exact title-and-year
         # result still passes, director disagreement notwithstanding
         assert (
@@ -223,10 +223,10 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
             == 366144
         )
 
-        # No director credited on TMDb: the exact title and year carry it
+        # No director credited on TMDB: the exact title and year carry it
         assert leaving_criterion.match_tmdb_id("Opera No. 1", 1994, "Jane Doe") == 555
 
-        # Criterion dates Hal Hartley's "Ambition" 1991, TMDb 1992: the
+        # Criterion dates Hal Hartley's "Ambition" 1991, TMDB 1992: the
         # year search finds nothing, the year-less fallback reads a
         # second page, and only the exact-title candidate there costs
         # a credits call — none of the twenty strangers on page one

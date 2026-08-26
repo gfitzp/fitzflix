@@ -1,5 +1,5 @@
 """Poster management (the routes.py split): the per-movie and per-file
-picker pages, custom artwork uploads, TMDb gallery picks, and the
+picker pages, custom artwork uploads, TMDB gallery picks, and the
 library-folder copies Plex reads."""
 
 import io
@@ -295,10 +295,10 @@ def _remove_file_poster(file):
 
 
 def _tmdb_poster_gallery(tmdb_id):
-    """The TMDb poster gallery for a movie, cached for a day.
+    """The TMDB poster gallery for a movie, cached for a day.
 
     Returns the /movie/{id}/images posters list, or None when the gallery
-    is unavailable (no TMDb id, no API key, or the fetch failed).
+    is unavailable (no TMDB id, no API key, or the fetch failed).
     """
 
     if not tmdb_id:
@@ -325,14 +325,14 @@ def _tmdb_poster_gallery(tmdb_id):
 
 
 def _fetch_tmdb_poster(poster_path):
-    """Download a TMDb poster and wrap it like a form upload, so a picked
+    """Download a TMDB poster and wrap it like a form upload, so a picked
     poster flows through the exact same pipeline as an uploaded one.
 
     Returns (file_storage, error_message).
     """
 
     if not re.fullmatch(r"/[A-Za-z0-9]+\.(?:jpg|jpeg|png)", poster_path or ""):
-        return None, "That isn't a TMDb poster path."
+        return None, "That isn't a TMDB poster path."
     try:
         r = requests.get(
             f"{current_app.config['TMDB_IMAGE_URL']}/original{poster_path}",
@@ -341,7 +341,7 @@ def _fetch_tmdb_poster(poster_path):
         r.raise_for_status()
     except Exception:
         current_app.logger.error(traceback.format_exc())
-        return None, "Couldn't download that poster from TMDb."
+        return None, "Couldn't download that poster from TMDB."
     return (
         FileStorage(
             stream=io.BytesIO(r.content), filename=os.path.basename(poster_path)
@@ -369,7 +369,7 @@ def _poster_gallery_context(posters):
 @bp.route("/movie/<int:movie_id>/poster", methods=["GET", "POST"])
 @login_required
 def movie_poster(movie_id):
-    """Poster picker: choose from the TMDb gallery or upload an image."""
+    """Poster picker: choose from the TMDB gallery or upload an image."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
@@ -413,7 +413,7 @@ def movie_poster(movie_id):
         if error:
             flash(error, "danger")
             return redirect(url_for("main.movie_poster", movie_id=movie.id))
-        flash(f"Set the poster for '{title}' from TMDb", "success")
+        flash(f"Set the poster for '{title}' from TMDB", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     posters, languages, active_language = _poster_gallery_context(
@@ -446,8 +446,8 @@ def movie_poster(movie_id):
 def file_poster(file_id):
     """The poster picker's file-scoped twin: one file's custom poster.
 
-    The TMDb gallery appears for movie files; TV files get the upload form
-    only, since TMDb season/episode artwork isn't wired up.
+    The TMDB gallery appears for movie files; TV files get the upload form
+    only, since TMDB season/episode artwork isn't wired up.
     """
 
     file = File.query.filter_by(id=file_id).first_or_404()
@@ -505,7 +505,7 @@ def file_poster(file_id):
         if error:
             flash(error, "danger")
             return redirect(url_for("main.file_poster", file_id=file.id))
-        flash(f"Set the poster for '{file.basename}' from TMDb", "success")
+        flash(f"Set the poster for '{file.basename}' from TMDB", "success")
         return redirect(url_for("main.file", file_id=file.id))
 
     posters, languages, active_language = _poster_gallery_context(

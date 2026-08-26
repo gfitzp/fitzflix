@@ -1,7 +1,7 @@
-"""Detaching a record from TMDb (#207).
+"""Detaching a record from TMDB (#207).
 
 A NULL tmdb_id means "not matched yet" and every refresh path answers it
-with a title search; tmdb_ignored means "TMDb has nothing to match" and
+with a title search; tmdb_ignored means "TMDB has nothing to match" and
 every refresh path has to leave the record alone. These tests pin both
 halves: the clear methods empty the record, and the refresh pair, the
 nightly sweep and the bulk refresh all decline it afterwards.
@@ -33,7 +33,7 @@ def csrf_token_from(page_html):
 
 
 def enriched_movie():
-    """A film carrying the full spread of TMDb enrichment."""
+    """A film carrying the full spread of TMDB enrichment."""
 
     movie = make_movie(
         "Pompeii The Last Day",
@@ -69,7 +69,7 @@ def enriched_movie():
 
 
 def enriched_series():
-    """A series carrying TMDb enrichment, cast and stored episodes."""
+    """A series carrying TMDB enrichment, cast and stored episodes."""
 
     series = make_tv_series(
         "Rifftrax",
@@ -116,7 +116,7 @@ def test_movie_clear_empties_every_tmdb_field_and_association(app):
         assert MovieCast.query.filter_by(movie_id=movie_id).count() == 0
         assert MovieCrew.query.filter_by(movie_id=movie_id).count() == 0
 
-        # The film's own library identity is not TMDb's to take away
+        # The film's own library identity is not TMDB's to take away
 
         assert stored.title == "Pompeii The Last Day"
         assert stored.year == 2003
@@ -236,7 +236,7 @@ def test_bulk_refresh_leaves_ignored_records_alone(app, admin_client):
         "/maintenance",
         data={
             "csrf_token": csrf_token_from(page),
-            "tmdb_refresh": "Refresh TMDb Info",
+            "tmdb_refresh": "Refresh TMDB Info",
         },
         follow_redirects=True,
     )
@@ -293,7 +293,7 @@ def test_remove_button_detaches_the_series(app, admin_client):
         follow_redirects=True,
     )
 
-    assert "Removed the TMDb ID" in response.get_data(as_text=True)
+    assert "Removed the TMDB ID" in response.get_data(as_text=True)
 
     with app.app_context():
         stored = db.session.get(TVSeries, series_id)
@@ -371,7 +371,7 @@ def test_blank_lookup_on_a_detached_series_stays_detached(app, admin_client):
         follow_redirects=True,
     )
 
-    assert "Enter a TMDb ID to refresh this series" in response.get_data(as_text=True)
+    assert "Enter a TMDB ID to refresh this series" in response.get_data(as_text=True)
     assert app.sql_queue.count == 0
 
     with app.app_context():
@@ -397,7 +397,7 @@ def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
         follow_redirects=True,
     )
 
-    assert "Enter a TMDb ID to refresh this movie" in response.get_data(as_text=True)
+    assert "Enter a TMDB ID to refresh this movie" in response.get_data(as_text=True)
     assert app.sql_queue.count == 0
 
     with app.app_context():

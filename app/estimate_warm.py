@@ -1,9 +1,9 @@
 """Nightly estimate pre-warming for the shared score source's tmdb lane.
 
-Glenn's call (Aug 2026): the TMDb API costs nothing but latency, so
+Glenn's call (Aug 2026): the TMDB API costs nothing but latency, so
 spend a nightly budget warming the enriched payloads tomorrow's
 browsing will want — the filmographies of the people his taste
-profile ranks highest, plus TMDb's popular and top-rated charts — and
+profile ranks highest, plus TMDB's popular and top-rated charts — and
 pre-score everything into the tmdb overlay, so tiles paint estimates
 instantly instead of filling on the fly.
 
@@ -58,7 +58,7 @@ WARM_FETCH_BUDGET = 2000
 WARM_TTL = 30 * 86400
 
 # Affinity people warmed per user per night, and chart pages consumed
-# per chart per night; TMDb stops paging charts at 500
+# per chart per night; TMDB stops paging charts at 500
 
 WARM_PEOPLE = 40
 CHART_PAGES_PER_NIGHT = 10
@@ -126,7 +126,7 @@ def person_film_ids(person_id):
 
 
 def chart_page_ids(chart, page):
-    """(tmdb ids, total pages) for one page of a TMDb chart."""
+    """(tmdb ids, total pages) for one page of a TMDB chart."""
 
     try:
         r = tmdb_get(
@@ -165,7 +165,7 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
         )
         mapping = {}
         for tmdb_id, payload in zip(chunk, payloads):
-            # A cached null is a deleted TMDb id — present so it isn't
+            # A cached null is a deleted TMDB id — present so it isn't
             # re-fetched, but nothing to score
             data = json.loads(payload) if payload else None
             if not data:

@@ -24,12 +24,12 @@
 			{{ poster_remove_form.hidden_tag() }}
 			{{ poster_remove_form.poster_remove_submit(class_="btn btn-sm btn-outline-danger") }}
 		</form>
-		<p class="small text-muted text-center mt-1 mb-0" style="max-width: 250px;">Deletes the custom artwork and reverts to the TMDb poster.</p>
+		<p class="small text-muted text-center mt-1 mb-0" style="max-width: 250px;">Deletes the custom artwork and reverts to the TMDB poster.</p>
 		{% endif %}
 	</div>
 	<div class="col-md">
 		<h3>{{ title }}</h3>
-		<p class="text-muted">Pick a poster from the TMDb gallery below, or upload your own image to be this {{ "file's" if file is defined and file else "movie's" }} definitive poster.</p>
+		<p class="text-muted">Pick a poster from the TMDB gallery below, or upload your own image to be this {{ "file's" if file is defined and file else "movie's" }} definitive poster.</p>
 		<div class="col-md-6 px-0">
 			<form method="post" enctype="multipart/form-data">
 				<fieldset {% if not upload_enabled %}disabled{% endif %}>
@@ -47,9 +47,9 @@
 	</div>
 </div>
 <hr>
-<h3>Posters from TMDb</h3>
+<h3>Posters from TMDB</h3>
 {% if posters is none %}
-	<p class="small text-muted">No TMDb gallery is available{% if movie and not movie.tmdb_id %} — this movie has no TMDb id{% endif %}.</p>
+	<p class="small text-muted">No TMDB gallery is available{% if movie and not movie.tmdb_id %} — this movie has no TMDB id{% endif %}.</p>
 {% else %}
 	<ul class="nav nav-pills mb-3">
 		<li class="nav-item">
@@ -73,7 +73,7 @@
 				{{ poster_select_form.poster_path(value=poster.file_path) }}
 				{{ poster_select_form.poster_select_submit(class_="btn btn-sm btn-outline-primary mt-1", disabled=not upload_enabled) }}
 			</form>
-			{% if is_default %}<div><span class="badge text-bg-primary">TMDb default</span></div>{% endif %}
+			{% if is_default %}<div><span class="badge text-bg-primary">TMDB default</span></div>{% endif %}
 		</div>
 		{% endfor %}
 	</div>

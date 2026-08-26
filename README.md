@@ -19,11 +19,11 @@ Files named like these…
 
 <img width="1215" alt="Screen Shot 2022-05-31 at 12 15 25 PM" src="https://user-images.githubusercontent.com/10539597/171221742-e41c84d5-3c3b-47a0-9847-16cdfd65d8b4.png">
 
-…and show associated information from TMDb:
+…and show associated information from TMDB:
 
 <img width="1208" alt="Screen Shot 2022-05-31 at 11 53 15 AM" src="https://user-images.githubusercontent.com/10539597/171219470-d5d819a0-aa6e-4dc7-a09e-3aa97881936a.png">
 
-It supports reviewing films to help keep track of what you've seen. Reviews interoperate with [Letterboxd](https://letterboxd.com) in both directions: the My Movie Reviews page imports a Letterboxd account-export zip as-is — combining `diary.csv` (watch dates), `ratings.csv`, `reviews.csv`, `likes/films.csv`, and `watchlist.csv` into review and watchlist records, matching films against the library or TMDb (films you've seen but don't own are created as review-only records), and merging idempotently so re-importing a newer export updates rather than duplicates — and the export button emails a CSV in the [Letterboxd import format](https://letterboxd.com/about/importing-data/), ready to upload to Letterboxd's importer. Exports default to only the entries added or edited since the last export, with a checkbox for a full export.
+It supports reviewing films to help keep track of what you've seen. Reviews interoperate with [Letterboxd](https://letterboxd.com) in both directions: the My Movie Reviews page imports a Letterboxd account-export zip as-is — combining `diary.csv` (watch dates), `ratings.csv`, `reviews.csv`, `likes/films.csv`, and `watchlist.csv` into review and watchlist records, matching films against the library or TMDB (films you've seen but don't own are created as review-only records), and merging idempotently so re-importing a newer export updates rather than duplicates — and the export button emails a CSV in the [Letterboxd import format](https://letterboxd.com/about/importing-data/), ready to upload to Letterboxd's importer. Exports default to only the entries added or edited since the last export, with a checkbox for a full export.
 
 Ongoing sync is hands-free: enter a Letterboxd username on the Profile page and Fitzflix polls that account's public RSS feed twice an hour, merging each diary entry or review into the local diary by its feed id — new watches add rows, edited reviews update in place, and a bare Plex-recorded watch of the same film is *completed* with the Letterboxd verdict (rating, review text, like, rewatch flag, spoiler flag) rather than duplicated, so one viewing stays one row no matter how many systems report it. Reviews keep Letterboxd's inline formatting (`<i>`, `<b>`, and friends render as formatting, never as visible tags), likes are stored verbatim (a sub-three-star guilty pleasure keeps its heart), and feed-synced rows are excluded from the CSV export so the two directions never ping-pong. The CSV import remains the backfill path for history older than the feed's ~50-item window.
 
@@ -40,7 +40,7 @@ And makes a great shopping list for searching for films that aren't as good as t
 
 ## How to use
 
-Drop video files into the import directory (`IMPORT_DIR`, by default `../fitzflix/import` relative to the application). Fitzflix watches that directory and automatically processes each file it finds: it parses the filename to identify the movie or TV episode, looks up the canonical title on TMDb, strips non-native-language audio and subtitle tracks, sorts the file into a Plex-compatible folder hierarchy under the library directory, and (if configured) uploads the original to AWS S3 for archival.
+Drop video files into the import directory (`IMPORT_DIR`, by default `../fitzflix/import` relative to the application). Fitzflix watches that directory and automatically processes each file it finds: it parses the filename to identify the movie or TV episode, looks up the canonical title on TMDB, strips non-native-language audio and subtitle tracks, sorts the file into a Plex-compatible folder hierarchy under the library directory, and (if configured) uploads the original to AWS S3 for archival.
 
 Before importing, Fitzflix confirms the file is completely copied: a file whose size is still changing waits, a Matroska or MP4 file whose container reports truncation (a partial copy, even a stalled one) waits until it's structurally complete, and formats that can't be probed wait until they haven't been modified for a couple of minutes. When copying files in manually over a slow or unreliable connection, the most reliable approach is still to copy to a temporary name the importer ignores — a dot-prefixed name like `.Movie (2021) - [Bluray-1080p].mkv` or a non-video extension like `.partial` — and rename it into place once the copy finishes; the watcher and the hourly sweep both skip dotfiles, so the rename is what makes the file visible, and a half-copied file can never be picked up.
 
@@ -89,7 +89,7 @@ Season `00` marks a special, which is filed into the show's `Specials` folder:
 
 ### After import
 
-Fitzflix tracks every file's quality, so the library pages show the best copy you own of each title, and the shopping list pages show which titles could be upgraded (e.g. a full screen DVD that could be replaced with a widescreen Blu-ray). Movies are matched to TMDb for artwork, cast and crew, and review tracking; the file detail page lets you set default audio/subtitle tracks, strip unwanted tracks, transcode with HandBrake, and manage the AWS archive copy. Track scanning also records each file's video format, bitrate, and HDR format — including the Dolby Vision flavor (profile 5, 7, 8.1, …) parsed from MediaInfo, badged on the file page.
+Fitzflix tracks every file's quality, so the library pages show the best copy you own of each title, and the shopping list pages show which titles could be upgraded (e.g. a full screen DVD that could be replaced with a widescreen Blu-ray). Movies are matched to TMDB for artwork, cast and crew, and review tracking; the file detail page lets you set default audio/subtitle tracks, strip unwanted tracks, transcode with HandBrake, and manage the AWS archive copy. Track scanning also records each file's video format, bitrate, and HDR format — including the Dolby Vision flavor (profile 5, 7, 8.1, …) parsed from MediaInfo, badged on the file page.
 
 ### Using Fitzflix on a phone
 
@@ -100,7 +100,7 @@ Fitzflix installs as a web app for shopping trips: open it in the phone's browse
 
 ## Reviews, the watchlist, and the rating drive
 
-Every film page carries a quick-answer rating ladder — **Not interested** (zero stars) through **Loved it** (five) — plus an optional review text and watch date; a rating of three stars or more automatically flags the film as liked. Until you rate a film, the ladder previews the engine's **estimated rating** for you in paler gold, at full fractional precision (a 3.75 estimate fills the fourth star three-quarters); your own taps stay whole-star, while imported Letterboxd ratings can carry halves and display that way. Rating twice on the same day edits that day's verdict in place rather than logging a phantom rewatch; the newest diary entry's rating is a film's standing verdict everywhere. Log entries default to date-less (Plex watches carry real timestamps; films seen elsewhere usually don't), with the date field there when it's known. Films you haven't got can be logged too, from their TMDb page — a review-only record is created and enriched through the normal TMDb refresh.
+Every film page carries a quick-answer rating ladder — **Not interested** (zero stars) through **Loved it** (five) — plus an optional review text and watch date; a rating of three stars or more automatically flags the film as liked. Until you rate a film, the ladder previews the engine's **estimated rating** for you in paler gold, at full fractional precision (a 3.75 estimate fills the fourth star three-quarters); your own taps stay whole-star, while imported Letterboxd ratings can carry halves and display that way. Rating twice on the same day edits that day's verdict in place rather than logging a phantom rewatch; the newest diary entry's rating is a film's standing verdict everywhere. Log entries default to date-less (Plex watches carry real timestamps; films seen elsewhere usually don't), with the date field there when it's known. Films you haven't got can be logged too, from their TMDB page — a review-only record is created and enriched through the normal TMDB refresh.
 
 Each user also has a **watchlist**: any movie page (owned or not) has an add/remove toggle, the My Watchlist page shows everything as a poster gallery with streaming availability, Radarr request buttons, and per-film removal, and logging a film — by hand, from Plex, or via a Letterboxd import — removes it automatically. Watchlisted films influence the recommendation shelves (below) without blocking them, and feed the taste profile as a mild interest signal.
 
@@ -108,11 +108,11 @@ The **Rate Films** page is a Netflix-style rating drive for seeding taste data: 
 
 Fitzflix is gallery-first: the landing shelves and rails, the movie library, filmographies, local search's movie results, the watchlist, the Criterion spine catalog, the leaving-Criterion pages, and the suggestion strips all show films as poster walls. Every poster carries a **hover card**: hovering (or tapping, on a phone) pops a compact card with the film's credits, synopsis, availability badges, the live rating ladder (your verdict, or the engine's estimate until you have one), and a watchlist toggle. On a phone the poster tap only toggles the card — tap anywhere else to close it, and open the film's page through the card's title. Everything on the card acts in place without leaving the page, and rating or banking a film from a card never disturbs the rating drive's "Since you liked…" strip — only rating the featured film (or a film on its own page) steers the drive.
 
-Search results, TMDb results, filmographies, and movie pages all wear per-user **funnel badges** along the way: *Might interest you* (taste profile) → *On your watchlist* (intent) → *Seen* (diary).
+Search results, TMDB results, filmographies, and movie pages all wear per-user **funnel badges** along the way: *Might interest you* (taste profile) → *On your watchlist* (intent) → *Seen* (diary).
 
 ## Discovery: the landing page and the recommendation engine
 
-The landing page is built around "what should we watch tonight": a **library shelf** of twelve owned films picked from a taste-ranked pool so that nothing repeats within roughly a month, a **Watch it again** shelf of old favorites not seen in two years or more, a **streaming shelf** of films on the services you've picked (see below), and — for Criterion Channel subscribers — an **On Criterion24/7 now** card showing what the Channel's 24/7 feed is airing this minute (scraped from [whatsonnow.criterionchannel.com](https://whatsonnow.criterionchannel.com) by a poller that re-checks right as each film ends; the card carries the TMDb poster and rating ladder on a director-verified match, filmography-linked credits, and Watch Live/More links) plus a **Leaving the Criterion Channel** shelf of the month's departures with a full inventory page behind it. Watchlisted films pin into the shelves (capped, so discovery keeps the majority of the cards), each day's cards shuffle to day-stable positions, and a runtime filter ("only films that fit your evening") trims every shelf at once. Each card says *why* it was picked.
+The landing page is built around "what should we watch tonight": a **library shelf** of twelve owned films picked from a taste-ranked pool so that nothing repeats within roughly a month, a **Watch it again** shelf of old favorites not seen in two years or more, a **streaming shelf** of films on the services you've picked (see below), and — for Criterion Channel subscribers — an **On Criterion24/7 now** card showing what the Channel's 24/7 feed is airing this minute (scraped from [whatsonnow.criterionchannel.com](https://whatsonnow.criterionchannel.com) by a poller that re-checks right as each film ends; the card carries the TMDB poster and rating ladder on a director-verified match, filmography-linked credits, and Watch Live/More links) plus a **Leaving the Criterion Channel** shelf of the month's departures with a full inventory page behind it. Watchlisted films pin into the shelves (capped, so discovery keeps the majority of the cards), each day's cards shuffle to day-stable positions, and a runtime filter ("only films that fit your evening") trims every shelf at once. Each card says *why* it was picked.
 
 The engine behind it is content-based and deliberately free of ML runtime dependencies: a nightly job (1:45 AM) builds a per-user taste profile from that user's own diary — likes, chosen watches, rewatches, and mean-centered star ratings, spread across genre, decade, language, director, actor, cinematographer, composer, writer, editor, and keyword features with Bayesian shrinkage — and scores every owned, unwatched film against it. Three quality signals ride on top:
 
@@ -124,11 +124,11 @@ The engine behind it is content-based and deliberately free of ML runtime depend
 
 ## Streaming availability
 
-Each user picks their streaming services on their Profile page (any provider TMDb's registry knows). Movie pages, TMDb search results, filmographies, the watchlist, and the streaming shelf then show provider-logo badges for films streamable on *your* services — rentals shown only for unowned films, digital purchase never (buying happens on physical media in this house). Availability data comes from JustWatch via TMDb, day-cached per title, and every surface that shows it carries the required "Streaming data by JustWatch" credit.
+Each user picks their streaming services on their Profile page (any provider TMDB's registry knows). Movie pages, TMDB search results, filmographies, the watchlist, and the streaming shelf then show provider-logo badges for films streamable on *your* services — rentals shown only for unowned films, digital purchase never (buying happens on physical media in this house). Availability data comes from JustWatch via TMDB, day-cached per title, and every surface that shows it carries the required "Streaming data by JustWatch" credit.
 
 ## Browsing: people and the Criterion Collection
 
-The **People** page (Library → People) is a browsable grid of everyone credited across the library's films — filterable by cast, crew, or both, defaulting to cast — and every name links to a filmography page showing the person's entire TMDb career with library badges on the films you own. Key crew roles (director, writer, cinematographer, composer, editor) are first-class: they appear in search with dominant-role badges ("Director · 41 films"), and multi-role credit lines read in closing-credits order.
+The **People** page (Library → People) is a browsable grid of everyone credited across the library's films — filterable by cast, crew, or both, defaulting to cast — and every name links to a filmography page showing the person's entire TMDB career with library badges on the films you own. Key crew roles (director, writer, cinematographer, composer, editor) are first-class: they appear in search with dominant-role badges ("Director · 41 films"), and multi-role credit lines read in closing-credits order.
 
 The **Criterion Collection** page lists the entire spine catalog from Wikidata (~1,350 releases), not just the library: owned films show whether the copy is *settled* (disc owned, file matching the release's format) or wearing an amber quality badge that means "go find the Criterion version"; unowned releases are watchlistable and show a Criterion Channel badge when currently streamable; box-set members sort at their set's spine. Filters: all releases / in library / owned & settled. Full Wikidata refreshes also create library records for spine films Fitzflix has never seen, so the whole catalog stays first-class permanently.
 
@@ -165,7 +165,7 @@ Fitzflix can record movie watches straight from Plex. Every watch bumps the movi
 
    `https://<fitzflix host>/api/plex/webhook/<PLEX_WEBHOOK_TOKEN>`
 
-Plex can't send credentials with webhooks, so the secret in the URL is the authentication — the endpoint answers 404 to anything else. Only movie `media.scrobble` events are recorded (a scrobble fires when Plex considers the item watched, at about 90% played); play/pause/rating events and TV episodes are ignored. Movies are matched to the library by their TMDb guid, covering both the current Plex Movie agent and the legacy TMDb agent.
+Plex can't send credentials with webhooks, so the secret in the URL is the authentication — the endpoint answers 404 to anything else. Only movie `media.scrobble` events are recorded (a scrobble fires when Plex considers the item watched, at about 90% played); play/pause/rating events and TV episodes are ignored. Movies are matched to the library by their TMDB guid, covering both the current Plex Movie agent and the legacy TMDB agent.
 
 ### History poller (self-healing backstop; no Plex Pass needed)
 
@@ -208,7 +208,7 @@ Leaving the field blank removes the device (and the play buttons with it).
 
 **Remote households:** the server side already works from anywhere (`PLEX_PLAYER_SERVER_URI` is public HTTPS) — the only requirement is that the *Fitzflix server can reach the device's port 32500*, which a device in another house normally isn't. A VPN solves it: with something like [Tailscale](https://tailscale.com) (which has a native Apple TV app) on both the device and the Fitzflix server, the user enters their device's VPN address as their playback device and everything works identically. Don't port-forward 32500 to the internet — Companion has no authentication of its own.
 
-Films are matched to the Plex library by TMDb guid (with a guid-verified title search as fallback), so no Plex-side configuration is needed beyond the above. If playback fails with a message about an empty play queue or an unretrievable container, the usual cause is a `PLEX_PLAYER_SERVER_URI` the device can't actually reach — re-test it from a device on the same network as the player.
+Films are matched to the Plex library by TMDB guid (with a guid-verified title search as fallback), so no Plex-side configuration is needed beyond the above. If playback fails with a message about an empty play queue or an unretrievable container, the usual cause is a `PLEX_PLAYER_SERVER_URI` the device can't actually reach — re-test it from a device on the same network as the player.
 
 ## System requirements
 
@@ -239,7 +239,7 @@ At startup, Fitzflix logs a warning for any configured binary or directory it ca
 
 ### Optional services
 
-- **TMDb API key** (`TMDB_API_KEY`) — canonical titles, artwork, cast/crew, and review metadata
+- **TMDB API key** (`TMDB_API_KEY`) — canonical titles, artwork, cast/crew, and review metadata
 - **AWS S3** (`AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY`, `AWS_SQS_URL`) — offsite archival of original files in Glacier Deep Archive
 - **SMTP server** (`MAIL_SERVER` and related settings) — error notifications and password-reset emails
 - **Sonarr** (`SONARR_URL`, `SONARR_API_KEY`)
@@ -255,7 +255,7 @@ SECRET_KEY=<long random string>
 SQLALCHEMY_DATABASE_URI=mysql+pymysql://fitzflix:<password>@localhost/fitzflix
 REDIS_URL=redis://localhost:6379
 MEDIA_LOCATION=/path/to/media
-TMDB_API_KEY=<your TMDb API key>
+TMDB_API_KEY=<your TMDB API key>
 ```
 
 ### Notable settings
@@ -310,15 +310,15 @@ Background work is split across six Redis queues; the supervisor config and the 
 | `fitzflix-import` | Importing new files: parsing, stripping non-native tracks, sorting into the library |
 | `fitzflix-file-operation` | Per-file operations: S3 uploads and downloads, Matroska property edits, carrying localized files from staging into the library |
 | `fitzflix-transcode` | HandBrake transcodes (CPU-heavy; usually one worker) |
-| `fitzflix-sql` | Database writes, including the database half of TMDb refreshes — run exactly one worker so they're serialized |
-| `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling, and the network half of TMDb refreshes |
+| `fitzflix-sql` | Database writes, including the database half of TMDB refreshes — run exactly one worker so they're serialized |
+| `fitzflix-user-request` | Jobs triggered from the web UI and CLI: manual scans, S3 sync, SQS polling, and the network half of TMDB refreshes |
 | `fitzflix-maintenance` | Scheduled application upkeep — nightly log rotation and backups, recommendation recomputes, awards and Criterion refreshes, availability cache warming — one worker |
 
 Transcoded copies are tracked as **derived files**: every Handbrake output gets a database record linked to its library original (`flask transcodes adopt` sweeps up any untracked copies already on the transcoded tree), the file's page lists its copies, and deleting or replacing an original removes its derived copies with it — rows and physical files both. Derived files live outside the File table by design, so they can never appear in quality rankings, the shopping lists, or the import's replace logic.
 
 Every file moving through the pipeline leaves an ordered **trail** — Localizing → Moving into the library → Cataloging → Archiving to S3, plus remuxes, transcodes, and restores — shown on the **Pipeline Activity** page (linked from Library Maintenance) as per-stage status chips (green done, blue running, gray queued, amber waiting-to-retry, red failed), refreshed every five seconds. Trails come from job-lifecycle hooks around the queues and workers, so they track deferred retries and failures without any task instrumentation, and linger for three days.
 
-A TMDb refresh runs in two phases: the API queries happen on `fitzflix-user-request` (safe to run several at once, since nothing touches the database), and the fetched payload is then applied — record updates, file renames, duplicate merges — on the single-worker `fitzflix-sql` queue, so database writes never run concurrently. All TMDb API traffic flows through a shared Redis rate limiter capped at `TMDB_REQUESTS_PER_SECOND` (default 10) across every process, keeping Fitzflix well under [TMDb's ~40–50 requests/second limit](https://developer.themoviedb.org/docs/rate-limiting). Poster and cast artwork isn't stored locally at all — the pages hotlink [TMDb's image CDN](https://developer.themoviedb.org/docs/image-basics) directly (base URL configurable via `TMDB_IMAGE_URL`), and the service worker's cross-origin caching keeps recently viewed artwork available offline.
+A TMDB refresh runs in two phases: the API queries happen on `fitzflix-user-request` (safe to run several at once, since nothing touches the database), and the fetched payload is then applied — record updates, file renames, duplicate merges — on the single-worker `fitzflix-sql` queue, so database writes never run concurrently. All TMDB API traffic flows through a shared Redis rate limiter capped at `TMDB_REQUESTS_PER_SECOND` (default 10) across every process, keeping Fitzflix well under [TMDB's ~40–50 requests/second limit](https://developer.themoviedb.org/docs/rate-limiting). Poster and cast artwork isn't stored locally at all — the pages hotlink [TMDB's image CDN](https://developer.themoviedb.org/docs/image-basics) directly (base URL configurable via `TMDB_IMAGE_URL`), and the service worker's cross-origin caching keeps recently viewed artwork available offline.
 
 ## Running Manually
 
@@ -386,8 +386,8 @@ Run from the project root with the venv activated. Each command queues a backgro
 | `flask scan` | Scan the import directory for files to import (the directory is also watched continuously; this forces a scan) |
 | `flask sync` | Prune files from AWS S3 storage that are no longer in the library |
 | `flask sqs` | Poll AWS SQS for completed Glacier restores and download them |
-| `flask refresh tmdb` | Refresh TMDb metadata for every matched movie and TV series |
-| `flask refresh tmdb movie <tmdb_id>` / `flask refresh tmdb tv <tmdb_id>` | Refresh TMDb metadata for a single title |
+| `flask refresh tmdb` | Refresh TMDB metadata for every matched movie and TV series |
+| `flask refresh tmdb movie <tmdb_id>` / `flask refresh tmdb tv <tmdb_id>` | Refresh TMDB metadata for a single title |
 | `flask refresh file <file_id>` | Rescan one file's audio/subtitle track metadata |
 | `flask refresh criterion` | Refresh Criterion Collection data from Wikidata (also runs automatically on the 18th of each month, after Criterion's mid-month announcements) |
 | `flask recs recompute` | Rebuild every user's taste profile and stored recommendations now, instead of waiting for the nightly 1:45 AM run |
@@ -398,7 +398,7 @@ Run from the project root with the venv activated. Each command queues a backgro
 | `flask recs evaluate` | Leave-one-out ranking metrics for the engine — the measuring stick for any scoring change |
 | `flask triage backfill` | Queue subtitle-triage inspection aids for every existing candidate file |
 
-Criterion data comes from [Wikidata](https://www.wikidata.org): each movie is matched by TMDb id (falling back to title and year) to pick up its spine number and a direct link to its film page at criterion.com. Box sets are supported too — a film released only inside a set (say, a Godzilla Showa-era or Olympic-films collection) takes its set's spine number, and the set title is filled in automatically when one hasn't been entered by hand. The refresh is additive for anything hand-set — it never clears spine numbers or overwrites hand-curated set titles, and in-print/disc-owned flags stay whatever they've been set to — and a full refresh also creates library records for spine releases Fitzflix has never seen, so newly announced titles join the Criterion catalog page automatically.
+Criterion data comes from [Wikidata](https://www.wikidata.org): each movie is matched by TMDB id (falling back to title and year) to pick up its spine number and a direct link to its film page at criterion.com. Box sets are supported too — a film released only inside a set (say, a Godzilla Showa-era or Olympic-films collection) takes its set's spine number, and the set title is filled in automatically when one hasn't been entered by hand. The refresh is additive for anything hand-set — it never clears spine numbers or overwrites hand-curated set titles, and in-print/disc-owned flags stay whatever they've been set to — and a full refresh also creates library records for spine releases Fitzflix has never seen, so newly announced titles join the Criterion catalog page automatically.
 
 ## AWS infrastructure
 
@@ -476,7 +476,7 @@ Everything needed to rebuild Fitzflix on a fresh machine derives from three thin
    ```
 
    then bring the schema up to the current code with `flask db upgrade` (a no-op unless the code is newer than the dump).
-5. **Restore the custom posters**: copy the bucket's `custom-posters/` prefix back to `app/static/custom/` (e.g. `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`). TMDb artwork doesn't need restoring — it's hotlinked from TMDb's image CDN and never stored locally.
+5. **Restore the custom posters**: copy the bucket's `custom-posters/` prefix back to `app/static/custom/` (e.g. `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`). TMDB artwork doesn't need restoring — it's hotlinked from TMDB's image CDN and never stored locally.
 6. **Mount the NAS volumes** (see the SMB notes: pin the NAS hostname in `/etc/hosts`, and `protocol_vers_map`/signing settings in `/etc/nsmb.conf`), and recreate the staging directory on local disk.
 7. **Start the workers** via supervisor and confirm the System page's health card is green. Scheduled jobs re-register themselves on startup; Redis needs no restoration — the only Redis-resident data of consequence (recommendation rankings, availability caches) rebuilds itself within a day, or immediately via the `flask recs` commands.
 8. **Only if the NAS was also lost**: the localized library can be rebuilt from the untouched archives — the S3 sync task queues Bulk restores for every rank-1 file missing locally, and `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of everything at once.
@@ -495,11 +495,11 @@ Discs sometimes carry a forced-subtitle track (the translations burned over fore
 
 ### Custom posters
 
-Any movie or file can carry custom artwork: the poster picker on a movie page shows TMDb's full poster gallery (grouped by language, with TMDb's default highlighted) for one-click selection, or accepts an upload. Custom posters live under `app/static/custom/`, are mirrored to the S3 bucket by the nightly backup, and can be removed with one click to fall back to the library's precedence rules.
+Any movie or file can carry custom artwork: the poster picker on a movie page shows TMDB's full poster gallery (grouped by language, with TMDB's default highlighted) for one-click selection, or accepts an upload. Custom posters live under `app/static/custom/`, are mirrored to the S3 bucket by the nightly backup, and can be removed with one click to fall back to the library's precedence rules.
 
 ### Rejected files
 
-Files that can't be imported — an unparseable filename, an unrecognized quality tag, or a file that fails processing — are moved into a subfolder of `REJECTS_DIR` named for the reason they were rejected, so the folder name tells you what to fix. The `/rejects` page (linked from the Library Maintenance page) lists them for triage: one click re-imports a file (moving it back to the import directory, where it's picked up automatically) or deletes it. The Library Maintenance page also surfaces movies that share a TMDb id, with a one-click merge that moves the duplicates' files and reviews to the oldest record. Active and queued jobs can be watched on the `/queue` page.
+Files that can't be imported — an unparseable filename, an unrecognized quality tag, or a file that fails processing — are moved into a subfolder of `REJECTS_DIR` named for the reason they were rejected, so the folder name tells you what to fix. The `/rejects` page (linked from the Library Maintenance page) lists them for triage: one click re-imports a file (moving it back to the import directory, where it's picked up automatically) or deletes it. The Library Maintenance page also surfaces movies that share a TMDB id, with a one-click merge that moves the duplicates' files and reviews to the oldest record. Active and queued jobs can be watched on the `/queue` page.
 
 ### Updating
 
@@ -542,7 +542,7 @@ venv/bin/python -m pytest
 
 The suite is fully isolated from a running installation: it uses a temporary
 SQLite database, Redis database 9 (the app uses database 0), temporary media
-directories, and no external services — TMDb, Sonarr, Radarr, AWS, and mail
+directories, and no external services — TMDB, Sonarr, Radarr, AWS, and mail
 are all stubbed or unreachable by configuration. The only requirements beyond
 `requirements-dev.txt` are a local Redis server. It's safe to run while the real
 application is up, and takes about half a minute; run it after dependency

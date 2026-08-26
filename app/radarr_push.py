@@ -22,7 +22,7 @@ import requests
 
 from flask import current_app
 
-# The hour-cached set of TMDb ids Radarr manages, for request badges;
+# The hour-cached set of TMDB ids Radarr manages, for request badges;
 # refreshed immediately after every push or withdrawal
 
 RADARR_IDS_KEY = "fitzflix:radarr:tmdb_ids"
@@ -60,7 +60,7 @@ def _radarr(method, path, payload=None):
 
 
 def radarr_tmdb_ids(refresh=False):
-    """The TMDb ids Radarr currently manages, hour-cached. Returns an
+    """The TMDB ids Radarr currently manages, hour-cached. Returns an
     empty set (logged) when Radarr can't be reached — badges degrade,
     buttons still work."""
 

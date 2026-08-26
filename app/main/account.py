@@ -473,7 +473,7 @@ def history():
         ):
             # A Letterboxd account export, imported as-is: diary, ratings,
             # reviews, and film likes. Parsing is local and fast; matching
-            # unowned films needs TMDb, so that runs as a task
+            # unowned films needs TMDB, so that runs as a task
 
             films = parse_letterboxd_export(data)
             if films:

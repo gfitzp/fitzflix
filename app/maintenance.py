@@ -1500,7 +1500,7 @@ def health_probe():
 
         if config["TMDB_API_KEY"]:
             probe(
-                "TMDb",
+                "TMDB",
                 lambda: _probe_http(
                     f"{config['TMDB_API_URL']}/configuration",
                     params={"api_key": config["TMDB_API_KEY"]},

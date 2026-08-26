@@ -3,7 +3,7 @@
    cast, and what's on the shelf — fetched on hover (or first tap) and
    injected into the same Bootstrap popover as the film card by the
    script in base.html, which finds either by the shared .poster-card
-   class. Served for library records and bare TMDb ids alike, so a
+   class. Served for library records and bare TMDB ids alike, so a
    person's unowned television credits get a card too.
 
    Same shape as _movie_card.html with the facts TV actually has: the
@@ -12,7 +12,7 @@
    season still has an episode worth upgrading, green once every
    season is settled) beside a plain count of what's owned. Three
    things the film card carries are deliberately absent: streaming
-   availability (title_availability only asks TMDb's /movie endpoint),
+   availability (title_availability only asks TMDB's /movie endpoint),
    the watchlist badge, and the Apple TV play button — all film-keyed
    here, so the card would be guessing. #}
 {% from "_availability_badges.html" import library_badge %}

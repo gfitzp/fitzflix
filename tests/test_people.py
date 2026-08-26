@@ -229,7 +229,7 @@ def test_people_nav_link_present(admin_client):
 
 def test_film_count_ties_break_on_last_name(app, admin_client):
     """Equal film counts sort by surname (the name's last token), not by
-    first name — TMDb has no sort-name field, so the token stands in."""
+    first name — TMDB has no sort-name field, so the token stands in."""
 
     with app.app_context():
         movies = [make_movie(f"Tie Film {n}", 1960 + n) for n in range(2)]
@@ -244,7 +244,7 @@ def test_film_count_ties_break_on_last_name(app, admin_client):
 
 def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
     """The browse page reads a Redis-held ranking — the full cast and
-    crew aggregation ran twice a visit before Aug 2026 — and a TMDb
+    crew aggregation ran twice a visit before Aug 2026 — and a TMDB
     credit apply drops it, so a newly imported film's people surface
     on the next view."""
 
@@ -278,7 +278,7 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
 
 
 def test_tmdb_apply_invalidates_the_people_ranking(app):
-    """A credit write through the TMDb apply path clears the cached
+    """A credit write through the TMDB apply path clears the cached
     rankings for every role."""
 
     from app.models import PEOPLE_RANKING_KEY

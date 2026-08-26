@@ -4,7 +4,7 @@
    class-based type-ahead script binds to both. The results pages render
    it again on the heading row, pre-filled and without the type-ahead
    (Glenn's consistency pass), so a fruitless search can be retried in
-   place; the TMDb page's copy submits back to /search/tmdb. #}
+   place; the TMDB page's copy submits back to /search/tmdb. #}
 <form class="form-inline flex-nowrap {{ extra_classes }}" action="{{ action or url_for('main.search') }}" method="get" autocomplete="off" role="search">
 	<div class="position-relative" style="width: {{ width }};">
 		<input class="form-control form-control-sm w-100{% if typeahead %} global-search-input{% endif %}" type="search" name="q" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}"{% if value %} value="{{ value }}"{% endif %}>

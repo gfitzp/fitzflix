@@ -90,7 +90,7 @@
 		{{ tile_actions(url_for('main.review_tmdb', tmdb_id=row.tmdb_id), tmdb_id=row.tmdb_id) }}
 		{% endif %}
 		{% else %}
-		{# Wikidata knows this release but not its TMDb id, so there's
+		{# Wikidata knows this release but not its TMDB id, so there's
 		   nothing to link or look up — a plain spine tile #}
 		<div>
 			{{ poster_image(none, row.title) }}

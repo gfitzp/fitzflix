@@ -47,7 +47,7 @@ def health_env(app, monkeypatch):
 
     def fake_probe_http(url, **kwargs):
         for service, marker in (
-            ("TMDb", "tmdb"),
+            ("TMDB", "tmdb"),
             ("Sonarr", "sonarr"),
             ("Radarr", "radarr"),
         ):
@@ -80,21 +80,21 @@ def test_alert_lifecycle(health_env):
     # Healthy: results recorded, no email
     assert health_env.run() == []
     probes = {p["service"]: p for p in maintenance.probe_health(health_env.redis)}
-    assert set(probes) == {"TMDb", "Sonarr", "Radarr"}
+    assert set(probes) == {"TMDB", "Sonarr", "Radarr"}
     assert all(p["ok"] for p in probes.values())
 
     # One failure is gated, two consecutive failures alert
-    health_env.failing.add("TMDb")
+    health_env.failing.add("TMDB")
     assert health_env.run() == []
     emails = health_env.run()
     assert len(emails) == 1
-    assert "TMDb has failed 2 consecutive probes" in emails[0]["body"]
+    assert "TMDB has failed 2 consecutive probes" in emails[0]["body"]
 
     # While alerted: silent
     assert health_env.run() == []
 
     # After the daily reminder key expires: re-alert
-    health_env.redis.delete("fitzflix:health:alerted:probe:TMDb")
+    health_env.redis.delete("fitzflix:health:alerted:probe:TMDB")
     reminders = health_env.run()
     assert len(reminders) == 1
     assert "consecutive probes" in reminders[0]["body"]
@@ -106,7 +106,7 @@ def test_alert_lifecycle(health_env):
     assert "Recovered:" in recoveries[0]["body"]
     assert "all clear" in recoveries[0]["subject"]
     assert not health_env.redis.hgetall("fitzflix:health:issues")
-    assert not health_env.redis.exists("fitzflix:health:alerted:probe:TMDb")
+    assert not health_env.redis.exists("fitzflix:health:alerted:probe:TMDB")
 
     # And a healthy run after recovery is silent again
     assert health_env.run() == []

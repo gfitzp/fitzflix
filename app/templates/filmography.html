@@ -21,7 +21,7 @@
 		{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
 		{% if bio and bio.biography %}
 		{# Clamped to a few lines; the toggle only appears when there's
-		   more. pre-line keeps TMDb's paragraph breaks #}
+		   more. pre-line keeps TMDB's paragraph breaks #}
 		<p class="small text-muted mt-2 mb-0" id="person-biography" style="white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ bio.biography }}</p>
 		<button type="button" class="btn btn-link btn-sm p-0" id="person-biography-toggle" style="display: none;">Show more</button>
 		<script>
@@ -43,7 +43,7 @@
 </div>
 <hr>
 {% if tmdb_unavailable %}
-<div class="alert alert-warning" role="alert">TMDb couldn't be reached, so this list only shows films with local records.</div>
+<div class="alert alert-warning" role="alert">TMDB couldn't be reached, so this list only shows films with local records.</div>
 {% endif %}
 {# The filmography as a poster gallery (#45d): the poster popover
    carries each film's synopsis, credits, availability, and badges
@@ -86,7 +86,7 @@
    the cast, and the In-library badge, so the tile keeps only what
    identifies the show in THIS career — title and this person's roles.
    Owned series link to their pages; TV has no review flow, so unowned
-   tiles stay unlinked (the TMDb-row rule) and hang their popover on a
+   tiles stay unlinked (the TMDB-row rule) and hang their popover on a
    plain div, and there are no tile actions — ladders and watchlists
    are film concepts #}
 <hr>

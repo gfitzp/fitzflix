@@ -1,4 +1,4 @@
-"""The poster picker pages: the TMDb gallery with its language filter, and
+"""The poster picker pages: the TMDB gallery with its language filter, and
 uploads and gallery picks flowing through the shared custom-poster pipeline.
 """
 
@@ -65,7 +65,7 @@ def poster_pipeline(monkeypatch):
 
 @pytest.fixture
 def tmdb_image_cdn(monkeypatch):
-    """A fake TMDb image CDN serving PNG bytes for any poster path."""
+    """A fake TMDB image CDN serving PNG bytes for any poster path."""
 
     import app.main.posters as posters
 
@@ -132,7 +132,7 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
     page = admin_client.get(f"/movie/{movie_id}/poster?language=all").get_data(
         as_text=True
     )
-    assert page.count("TMDb default") == 1
+    assert page.count("TMDB default") == 1
     # The badge and the thicker border sit on the default poster's card
     default_card = re.search(r'<img src="[^"]*/w185/english\.jpg"[^>]*>', page).group(0)
     assert "border-primary" in default_card
@@ -143,12 +143,12 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
 
 def test_picker_without_tmdb_id_offers_upload_only(app, admin_client):
     with app.app_context():
-        movie = make_movie("No TMDb Film", 1980)
+        movie = make_movie("No TMDB Film", 1980)
         db.session.commit()
         movie_id = movie.id
 
     page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
-    assert "no TMDb id" in page
+    assert "no TMDB id" in page
     assert 'id="custom-poster"' in page  # the upload form is still there
 
 
@@ -235,7 +235,7 @@ def test_bad_poster_path_is_rejected_before_any_fetch(
         },
         follow_redirects=True,
     )
-    assert "isn&#39;t a TMDb poster path" in response.get_data(as_text=True)
+    assert "isn&#39;t a TMDB poster path" in response.get_data(as_text=True)
     assert tmdb_image_cdn == []
     assert poster_pipeline["saved"] == []
 

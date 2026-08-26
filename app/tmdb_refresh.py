@@ -1,6 +1,6 @@
-"""The TMDb refresh pair (the strangler split from app.videos).
+"""The TMDB refresh pair (the strangler split from app.videos).
 
-refresh_tmdb_info fetches a record's canonical TMDb payload on the
+refresh_tmdb_info fetches a record's canonical TMDB payload on the
 network queue; apply_tmdb_refresh applies it on the single-worker sql
 queue — record updates, file renames, duplicate merges, and the
 untouched-key handoff in S3. find_or_create_tmdb_movie is the shared
@@ -32,13 +32,13 @@ from app.models import File, Movie, TVSeries, User, UserMovieReview
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
-    """(movie, created): the record for a TMDb film — reusing an existing
+    """(movie, created): the record for a TMDB film — reusing an existing
     row by tmdb id, or a colliding canonical title+year record, before
     creating a review-only one. The movie may have appeared since the
     caller's redirect check (an import or a concurrent log). Callers
-    commit and, when created, enqueue the standard TMDb refresh.
+    commit and, when created, enqueue the standard TMDB refresh.
 
-    The caller's live TMDb payload (details) primes the display fields
+    The caller's live TMDB payload (details) primes the display fields
     — title, date, overview, poster, runtime — so the movie page the
     redirect lands on isn't bare while the queued refresh completes;
     tmdb_data_as_of stays unset until the full refresh stamps it.
@@ -103,7 +103,7 @@ def _movie_refresh_lock_resources(*movies):
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
-    """Network phase of a TMDb refresh: query TMDb, then hand the payload
+    """Network phase of a TMDB refresh: query TMDB, then hand the payload
     to apply_tmdb_refresh on the sql queue.
 
     This phase runs on the user-request queue, where several jobs may run
@@ -121,18 +121,18 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                     # e.g. merged into another record by an earlier job in
                     # a bulk refresh
                     current_app.logger.warning(
-                        f"Movie id {id} no longer exists, skipping TMDb refresh"
+                        f"Movie id {id} no longer exists, skipping TMDB refresh"
                     )
                     return False
                 if movie.tmdb_ignored:
-                    # Deliberately detached from TMDb; a fetch here would
+                    # Deliberately detached from TMDB; a fetch here would
                     # search by title and re-attach a wrong id
                     current_app.logger.info(
-                        f"{movie} is marked as having no TMDb match, "
-                        f"skipping TMDb refresh"
+                        f"{movie} is marked as having no TMDB match, "
+                        f"skipping TMDB refresh"
                     )
                     return False
-                description = f"Updating '{movie.title} ({movie.year})' with TMDb data"
+                description = f"Updating '{movie.title} ({movie.year})' with TMDB data"
                 current_app.logger.info(f"tmdb_id: {tmdb_id}")
                 tmdb_info = movie.tmdb_movie_fetch(tmdb_id)
 
@@ -140,14 +140,14 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                 tv_show = TVSeries.query.filter_by(id=id).first()
                 if tv_show is None:
                     current_app.logger.warning(
-                        f"TV series id {id} no longer exists, skipping TMDb refresh"
+                        f"TV series id {id} no longer exists, skipping TMDB refresh"
                     )
                     return False
 
                 if tv_show.tmdb_ignored:
                     current_app.logger.info(
-                        f"{tv_show} is marked as having no TMDb match, "
-                        f"skipping TMDb refresh"
+                        f"{tv_show} is marked as having no TMDB match, "
+                        f"skipping TMDB refresh"
                     )
                     return False
 
@@ -160,7 +160,7 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                     ).first()
                     if existing_series:
                         tv_show = existing_series
-                description = f"Updating '{tv_show.title}' with TMDb data"
+                description = f"Updating '{tv_show.title}' with TMDB data"
                 tmdb_info = tv_show.tmdb_tv_fetch(tmdb_id)
 
             else:
@@ -199,7 +199,7 @@ def save_failed_payload(library, id, tmdb_payload):
     """Write a payload whose apply raised beside the log, so a transient
     upstream glitch can be examined after the fact.
 
-    The 2026-08-22 overnight TV refresh failed on 14 series because TMDb
+    The 2026-08-22 overnight TV refresh failed on 14 series because TMDB
     served malformed aggregate credits for a few seconds; by the time
     anyone looked, the live payloads were clean again and the bad shape
     was gone — the apply had logged only the traceback. The dump is
@@ -219,7 +219,7 @@ def save_failed_payload(library, id, tmdb_payload):
             target.write(zlib.decompress(tmdb_payload))
     except Exception:
         current_app.logger.warning(
-            f"Could not save the failed TMDb payload to {path}: "
+            f"Could not save the failed TMDB payload to {path}: "
             f"{traceback.format_exc()}"
         )
         return None
@@ -229,7 +229,7 @@ def save_failed_payload(library, id, tmdb_payload):
 def apply_tmdb_refresh(
     library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
 ):
-    """Database phase of a TMDb refresh: apply a payload fetched by
+    """Database phase of a TMDB refresh: apply a payload fetched by
     refresh_tmdb_info, rewrite file paths, and merge duplicate records.
 
     Runs on the single-worker sql queue so refreshes are serialized
@@ -237,7 +237,7 @@ def apply_tmdb_refresh(
     additionally hold the affected titles' locks for the duration, so
     they can't interleave with an import of the same title. With
     notify_if_missing (used for new imports), an email goes out if the
-    movie still has no TMDb match after the payload is applied.
+    movie still has no TMDB match after the payload is applied.
     """
 
     # Filename plumbing lives in app.importing; lazy so the module
@@ -258,15 +258,15 @@ def apply_tmdb_refresh(
                 movie = Movie.query.filter_by(id=id).first()
                 if movie is None:
                     current_app.logger.warning(
-                        f"Movie id {id} no longer exists, skipping TMDb refresh"
+                        f"Movie id {id} no longer exists, skipping TMDB refresh"
                     )
                     return False
 
                 if movie.tmdb_ignored:
-                    # Detached from TMDb after this payload was fetched
+                    # Detached from TMDB after this payload was fetched
                     current_app.logger.info(
-                        f"{movie} is marked as having no TMDb match, "
-                        f"discarding the fetched TMDb payload"
+                        f"{movie} is marked as having no TMDB match, "
+                        f"discarding the fetched TMDB payload"
                     )
                     return False
 
@@ -285,7 +285,7 @@ def apply_tmdb_refresh(
                         .first()
                     )
 
-                # This task rewrites file paths and — when the TMDb id
+                # This task rewrites file paths and — when the TMDB id
                 # reveals a duplicate — merges two movie records, so it must
                 # not interleave with a localization chain holding one of
                 # these titles' locks. Take every lock an import of either
@@ -303,7 +303,7 @@ def apply_tmdb_refresh(
                         sleep_duration = random.randint(5, 15)
                         current_app.logger.warning(
                             f"'{movie.title} ({movie.year})' A file is locked "
-                            f"by another task, returning the TMDb refresh to "
+                            f"by another task, returning the TMDB refresh to "
                             f"the queue after {sleep_duration} minutes"
                         )
                         current_app.sql_queue.enqueue_in(
@@ -321,7 +321,7 @@ def apply_tmdb_refresh(
                             result_ttl=86400,
                             description=(
                                 f"Updating '{movie.title} ({movie.year})' "
-                                f"with TMDb data"
+                                f"with TMDB data"
                             ),
                         )
                         return False
@@ -338,7 +338,7 @@ def apply_tmdb_refresh(
                 if notify_if_missing and movie.tmdb_id == None:
                     admin_user = User.query.filter(User.admin == True).first()
                     send_email_async(
-                        "Fitzflix - Added a movie without a TMDb ID",
+                        "Fitzflix - Added a movie without a TMDB ID",
                         sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
                         recipients=[admin_user.email],
                         text_body=render_template(
@@ -468,7 +468,7 @@ def apply_tmdb_refresh(
                         current_app.logger.error(
                             f"'{f.basename}' (file #{f.id}) not renamed to "
                             f"'{new_relative}': {detail}. Delete one copy, "
-                            f"then re-assign the TMDb id."
+                            f"then re-assign the TMDB id."
                         )
                         admin_user = User.query.filter(User.admin == True).first()
                         send_email_async(
@@ -479,13 +479,13 @@ def apply_tmdb_refresh(
                                 f"Renaming '{f.basename}' (file #{f.id}) to "
                                 f"'{new_relative}' was refused: {detail}.\n\n"
                                 f"Delete one of the copies, then re-assign "
-                                f"the TMDb id to finish the rename."
+                                f"the TMDB id to finish the rename."
                             ),
                             html_body=(
                                 f"<p>Renaming '{f.basename}' (file #{f.id}) "
                                 f"to '{new_relative}' was refused: {detail}."
                                 f"</p><p>Delete one of the copies, then "
-                                f"re-assign the TMDb id to finish the "
+                                f"re-assign the TMDB id to finish the "
                                 f"rename.</p>"
                             ),
                         )
@@ -601,14 +601,14 @@ def apply_tmdb_refresh(
                 tv_show = TVSeries.query.filter_by(id=id).first()
                 if tv_show is None:
                     current_app.logger.warning(
-                        f"TV series id {id} no longer exists, skipping TMDb refresh"
+                        f"TV series id {id} no longer exists, skipping TMDB refresh"
                     )
                     return False
 
                 if tv_show.tmdb_ignored:
                     current_app.logger.info(
-                        f"{tv_show} is marked as having no TMDb match, "
-                        f"discarding the fetched TMDb payload"
+                        f"{tv_show} is marked as having no TMDB match, "
+                        f"discarding the fetched TMDB payload"
                     )
                     return False
 
@@ -632,7 +632,7 @@ def apply_tmdb_refresh(
             current_app.logger.error(
                 traceback.format_exc()
                 + (
-                    f"TMDb payload that failed to apply saved to {saved}"
+                    f"TMDB payload that failed to apply saved to {saved}"
                     if saved
                     else ""
                 )
@@ -649,7 +649,7 @@ def apply_tmdb_refresh(
 
 
 def refresh_in_production_tv():
-    """Nightly sweep: re-enqueue the standard TMDb refresh for
+    """Nightly sweep: re-enqueue the standard TMDB refresh for
     every series still in production, so new episodes and season counts
     stay current without a manual bulk refresh.
 
@@ -682,7 +682,7 @@ def refresh_in_production_tv():
             )
 
         current_app.logger.info(
-            f"Queued TMDb refreshes for {len(series)} in-production TV series"
+            f"Queued TMDB refreshes for {len(series)} in-production TV series"
         )
         return len(series)
 
