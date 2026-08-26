@@ -1,4 +1,5 @@
 {% from "_rating_ladder.html" import rating_ladder %}
+{% from "_availability_badges.html" import library_badge %}
 {# The Criterion24/7 now-playing card as a fragment: the home
    page includes it at render time and re-fetches it from
    main.criterion_now once a minute while visible, so an open tab
@@ -10,7 +11,7 @@
 <hr>
 {# The Criterion24/7 now-playing card: one film, scraped from
    whatsonnow.criterionchannel.com by the self-scheduling poller. The
-   poster is a direct TMDb link when the film matched; the card links
+   poster is a direct TMDB link when the film matched; the card links
    into the log page on a match and out to criterionchannel.com
    otherwise #}
 <h4>On Criterion24/7 now</h4>
@@ -31,7 +32,12 @@
 	</div>
 	<div>
 		<h5 class="mb-1"><a href="{{ card_href }}" class="text-decoration-none text-body">{{ now_playing.title }}{% if now_playing.year %} ({{ now_playing.year }}){% endif %}</a></h5>
-		{# Credit ids from the verified TMDb match are person ids, so
+		{# "You own this" (#160): the standard In-library badge, in its
+		   universal amber/green upgradable colours (#191) #}
+		{% if now_playing.ladder.upgradable is not none %}
+		<div class="mb-1">{{ library_badge(now_playing.ladder.upgradable) }}</div>
+		{% endif %}
+		{# Credit ids from the verified TMDB match are person ids, so
 		   director and billed cast link to their filmography pages;
 		   an unmatched film falls back to the Channel's plain text #}
 		{% if now_playing.directors %}
@@ -45,7 +51,7 @@
 		<p class="mb-1 small text-muted">Starring {{ now_playing.starring }}</p>
 		{% endif %}
 		{% if now_playing.overview %}
-		{# The TMDb synopsis, clamped to four lines — enough to know
+		{# The TMDB synopsis, clamped to four lines — enough to know
 		   what the film is about at a glance without swallowing the
 		   card (the More link carries the full description) #}
 		<p class="mb-1 small" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ now_playing.overview }}</p>
@@ -54,7 +60,7 @@
 		{# The star row: the viewer's own verdict, or the engine's
 		   estimate in paler gold until there is one. Taps post live to
 		   the movie route once a record exists; before that, to the
-		   TMDb log route, whose first tap creates the record (and which
+		   TMDB log route, whose first tap creates the record (and which
 		   307-forwards ladder posts once it exists). The watchlist
 		   toggle posts the same way; the shared scope lets a
 		   rating that clears the list entry sync the toggle's face #}

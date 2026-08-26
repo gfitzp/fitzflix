@@ -5,7 +5,7 @@ page for its 24/7 feed: the current film's title, a More link to the
 film's info page, and a server-rendered countdown to the next film
 (complete with a literal </snap> typo, so parsing stays lenient). A
 poller scrapes it, follows the More link for the "Directed by X • YYYY
-• Country" and "Starring …" lines, matches the film to TMDb by title
+• Country" and "Starring …" lines, matches the film to TMDB by title
 and year for a directly-linked poster, and stores the lot in Redis.
 
 The poller is self-scheduling: each run re-enqueues itself for just
@@ -128,7 +128,7 @@ def parse_film_info(page_html):
 
 def _person_matches(scraped, credited_name):
     """True when a scraped name plausibly names the same person as one
-    TMDb credit. Containment must run both ways — TMDb often carries a
+    TMDB credit. Containment must run both ways — TMDB often carries a
     fuller romanization ('Mabel Cheung Yuen-Ting') than the Channel's
     'Mabel Cheung' — and two shared name tokens also count, which
     covers reversed name order and hyphen differences."""
@@ -147,12 +147,12 @@ def _person_matches(scraped, credited_name):
 def matched_film(title, info):
     """(tmdb_id, poster_path) for the airing film, or (None, None).
 
-    Title-and-year search, then the match is verified against TMDb's
+    Title-and-year search, then the match is verified against TMDB's
     credited directors when both sides know one — a wrong search hit
     must degrade to a plain card, never dress the wrong film's poster
     over the right title. Without a director on both sides, the
     Channel's Starring line stands in: at least one scraped name must
-    appear among TMDb's top billing. The director stays the sole
+    appear among TMDB's top billing. The director stays the sole
     verifier when it is available — the enriched cast stops at
     TOP_BILLING_CUTOFF, so a cast miss alone must never veto a film
     whose director agrees."""
@@ -182,7 +182,7 @@ def matched_film(title, info):
     if info["director"] and credited:
         if not any(_person_matches(info["director"], name) for name in credited):
             current_app.logger.warning(
-                f"Criterion24/7: TMDb {tmdb_id} credits "
+                f"Criterion24/7: TMDB {tmdb_id} credits "
                 f"{', '.join(credited)} but the Channel says "
                 f"'{info['director']}' — treating as unmatched"
             )
@@ -192,7 +192,7 @@ def matched_film(title, info):
             _person_matches(scraped, name) for scraped in scraped_stars for name in cast
         ):
             current_app.logger.warning(
-                f"Criterion24/7: TMDb {tmdb_id} bills {', '.join(cast)} "
+                f"Criterion24/7: TMDB {tmdb_id} bills {', '.join(cast)} "
                 f"but the Channel says '{info['starring']}' — "
                 f"treating as unmatched"
             )
@@ -226,8 +226,8 @@ def poll_criterion_now():
                     except Exception:
                         current_app.logger.warning(traceback.format_exc())
 
-                # A year is enough to try TMDb; the poster comes as a
-                # direct TMDb link on a verified match, and the card
+                # A year is enough to try TMDB; the poster comes as a
+                # direct TMDB link on a verified match, and the card
                 # renders plain otherwise — never a loud guess
 
                 tmdb_id, poster_path = matched_film(title, info)
@@ -355,7 +355,7 @@ def criterion_now_card(user):
     payload = enriched_movie(tmdb_id) if tmdb_id else None
 
     # How far into the film we are: derived STATELESSLY as the
-    # predicted end minus the TMDb runtime, so it's right even when
+    # predicted end minus the TMDB runtime, so it's right even when
     # the heartbeat revived a dead chain mid-film and nobody saw the
     # start. Unknown runtime (or an unmatched film) shows nothing —
     # never a guess. "About", because Criterion pads between films.
@@ -397,7 +397,7 @@ def criterion_now_card(user):
 
 def _credited_people(payload):
     """{directors, cast} as [{id, name}] from an enriched payload —
-    credit ids are TMDb person ids, so the card's names can link to
+    credit ids are TMDB person ids, so the card's names can link to
     filmography pages; empty lists on an unmatched film leave the
     scraped text lines to render plain."""
 
@@ -425,7 +425,7 @@ def _ladder_state_for(user, tmdb_id, payload):
 
     # Routes imports this module at startup, so its helpers load lazily
 
-    from app.main.helpers import _latest_review_row
+    from app.main.helpers import _latest_review_row, library_upgradable
     from app.models import Movie, UserMovieStatus, UserWatchlist
     from app.recommendations import (
         estimated_rating,
@@ -442,6 +442,9 @@ def _ladder_state_for(user, tmdb_id, payload):
         "estimated": None,
         # The card's watchlist toggle reads its face from here
         "on_watchlist": False,
+        # In-library badge (#160): None = not owned, else the amber/green
+        # upgradable verdict the movie page's badge wears
+        "upgradable": None,
     }
     if not tmdb_id:
         return state
@@ -450,6 +453,7 @@ def _ladder_state_for(user, tmdb_id, payload):
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie is not None:
         state["movie_id"] = movie.id
+        state["upgradable"] = library_upgradable(movie)
         state["on_watchlist"] = (
             UserWatchlist.query.filter_by(
                 user_id=int(user.id), movie_id=movie.id
