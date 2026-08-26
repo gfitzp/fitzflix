@@ -3,16 +3,7 @@
 {% from "_poster_tile.html" import tile_actions %}
 
 {% block app_content %}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">Pick something to watch</h2>
-	<div class="col-12 col-sm-auto mt-2">
-		{# Log any film, owned or not — the search leads to the TMDb log page #}
-		<form class="form-inline float-sm-right mb-2" action="{{ url_for('main.search_tmdb') }}" method="get">
-			<input type="search" name="q" class="form-control form-control-sm me-2" placeholder="Log a film&hellip;" aria-label="Search TMDb for a film to log">
-			<button type="submit" class="btn btn-sm btn-primary">Search</button>
-		</form>
-	</div>
-</div>
+<h2 class="mt-n2">Pick something to watch</h2>
 <hr>
 {% if recs or rail or minutes %}
 {# The runtime filter is a view on the already-computed rails: the
