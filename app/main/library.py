@@ -1606,9 +1606,13 @@ def movie(movie_id):
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
         # A blank id asks TMDb to search by title and takes the first hit,
         # which on an already-matched film silently re-points it at some
-        # other movie. Only offer that for a film with nothing to lose.
+        # other movie. Only offer that for a film with nothing to lose —
+        # and a detached film has something to lose: the detachment
+        # itself, which promised "not until you enter one by hand".
 
-        if tmdb_lookup_form.tmdb_id.data is None and movie.tmdb_id is not None:
+        if tmdb_lookup_form.tmdb_id.data is None and (
+            movie.tmdb_id is not None or movie.tmdb_ignored
+        ):
             flash(
                 "Enter a TMDb ID to refresh this movie, or use "
                 "'Remove TMDB ID' to detach it from TMDb",
@@ -1617,10 +1621,12 @@ def movie(movie_id):
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         # An id entered by hand is a deliberate re-match: it undoes a
-        # previous removal
+        # previous removal. Only an actual id clears the flag — a blank
+        # submit can't reach here on a detached record, per the guard
 
-        movie.tmdb_ignored = False
-        db.session.commit()
+        if tmdb_lookup_form.tmdb_id.data is not None:
+            movie.tmdb_ignored = False
+            db.session.commit()
 
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user
@@ -2273,9 +2279,13 @@ def tv(series_id):
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
         # A blank id asks TMDb to search by title and takes the first hit,
         # which on an already-matched series silently re-points it at some
-        # other show — the merge reported in #207
+        # other show — the merge reported in #207. A detached series is
+        # guarded too: a blank refresh must not quietly undo the
+        # detachment with a title search.
 
-        if tmdb_lookup_form.tmdb_id.data is None and tv.tmdb_id is not None:
+        if tmdb_lookup_form.tmdb_id.data is None and (
+            tv.tmdb_id is not None or tv.tmdb_ignored
+        ):
             flash(
                 "Enter a TMDb ID to refresh this series, or use "
                 "'Remove TMDB ID' to detach it from TMDb",
@@ -2284,10 +2294,12 @@ def tv(series_id):
             return redirect(url_for("main.tv", series_id=tv.id))
 
         # An id entered by hand is a deliberate re-match: it undoes a
-        # previous removal
+        # previous removal. Only an actual id clears the flag — a blank
+        # submit can't reach here on a detached record, per the guard
 
-        tv.tmdb_ignored = False
-        db.session.commit()
+        if tmdb_lookup_form.tmdb_id.data is not None:
+            tv.tmdb_ignored = False
+            db.session.commit()
 
         # Add a task to the fitzflix-sql queue to check TMDb and update the database;
         # add it to the front of the queue since it's interactively added by the user

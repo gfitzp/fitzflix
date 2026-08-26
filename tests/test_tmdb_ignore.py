@@ -328,3 +328,77 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(app, admin_client):
         if job.func_name == "app.videos.refresh_tmdb_info"
     ]
     assert jobs and jobs[0].args == ("TV Shows", series_id, 110230)
+
+
+def test_tv_clear_invalidates_the_people_ranking(app):
+    """Detaching a series deletes its TVCast/TVCrew rows, and the /people
+    rankings aggregate TV credits too — so the cached rankings have to go
+    the way the movie clear already sends them."""
+
+    from app.models import PEOPLE_RANKING_KEY
+
+    with app.app_context():
+        series = enriched_series()
+        db.session.commit()
+        for role in ("cast", "crew", "all"):
+            app.redis.set(PEOPLE_RANKING_KEY.format(role=role), "[]")
+        series.tmdb_tv_clear()
+        db.session.commit()
+
+    for role in ("cast", "crew", "all"):
+        assert app.redis.get(PEOPLE_RANKING_KEY.format(role=role)) is None
+
+
+def test_blank_lookup_on_a_detached_series_stays_detached(app, admin_client):
+    """A detached record has tmdb_id NULL, so the matched-record guard
+    alone let a blank refresh clear tmdb_ignored and run the very title
+    search detaching was meant to prevent. The flag only clears for an
+    id entered by hand."""
+
+    with app.app_context():
+        series = make_tv_series("Home Movies Reel", tmdb_ignored=True)
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/tv/{series_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "tmdb_id": "",
+            "lookup_submit": "Refresh TMDB Data",
+        },
+        follow_redirects=True,
+    )
+
+    assert "Enter a TMDb ID to refresh this series" in response.get_data(as_text=True)
+    assert app.sql_queue.count == 0
+
+    with app.app_context():
+        assert db.session.get(TVSeries, series_id).tmdb_ignored is True
+
+
+def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
+    """The movie route's copy of the same guard."""
+
+    with app.app_context():
+        movie = make_movie("Family Reunion Tape", 1994, tmdb_ignored=True)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "tmdb_id": "",
+            "lookup_submit": "Refresh TMDB Data",
+        },
+        follow_redirects=True,
+    )
+
+    assert "Enter a TMDb ID to refresh this movie" in response.get_data(as_text=True)
+    assert app.sql_queue.count == 0
+
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).tmdb_ignored is True

@@ -1032,6 +1032,7 @@ class TMDBMixin(object):
 
         TVCast.query.filter_by(tv_id=self.id).delete()
         TVCrew.query.filter_by(tv_id=self.id).delete()
+        invalidate_people_ranking()
 
         for episode in self.episodes.all():
             db.session.delete(episode)
