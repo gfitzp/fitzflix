@@ -586,7 +586,9 @@ def test_a_lapped_difficulty_replays_least_recently_seen_first(app, admin_client
     assert [deal() for _ in range(6)] == first_lap
 
 
-def test_rotation_retires_played_frames_before_merely_old_ones(app, admin_client):
+def test_rotation_retires_played_frames_before_merely_old_ones(
+    app, admin_client, monkeypatch
+):
     """A frame the game has already dealt is spent: the nightly pass
     retires it ahead of an older frame nobody has seen, and forgets
     its token once it has left the pool (#200)."""
@@ -614,8 +616,8 @@ def test_rotation_retires_played_frames_before_merely_old_ones(app, admin_client
     oldest, played = tokens[0], tokens[-1]
 
     with app.app_context():
-        app.config["FRAME_POOL_SIZE"] = 3
-        app.config["FRAME_POOL_ROTATE"] = 1
+        monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 3)
+        monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
         # Deal until the youngest frame comes up, so it lands in the
         # user's dealt record while the others stay unseen
         keys = set()

@@ -483,7 +483,7 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
 
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kw: ExplodingClient())
 
-    app.config["AWS_BUCKET"] = "test-bucket"
+    monkeypatch.setitem(app.config, "AWS_BUCKET", "test-bucket")
 
     with app.app_context():
         with pytest.raises(OSError):
@@ -666,7 +666,7 @@ def test_a_leftover_mountpoint_is_not_an_available_share(app, tmp_path, monkeypa
     assert os.path.ismount(str(leftover)) is False
 
     with app.app_context():
-        app.config["LIBRARY_DIR"] = str(volumes)
+        monkeypatch.setitem(app.config, "LIBRARY_DIR", str(volumes))
 
         assert share_available(path) is False
 
@@ -686,7 +686,7 @@ def test_a_mounted_share_is_available(app, tmp_path, monkeypatch):
     monkeypatch.setattr(maintenance.os.path, "ismount", lambda path: True)
 
     with app.app_context():
-        app.config["LIBRARY_DIR"] = str(volumes)
+        monkeypatch.setitem(app.config, "LIBRARY_DIR", str(volumes))
 
         assert share_available(str(mounted / "A Film (1999)" / "a.mkv")) is True
 
@@ -706,7 +706,7 @@ def test_a_library_off_the_volumes_root_needs_no_mountpoint(app, tmp_path, monke
     assert os.path.ismount(str(library / "Movies")) is False
 
     with app.app_context():
-        app.config["LIBRARY_DIR"] = str(library)
+        monkeypatch.setitem(app.config, "LIBRARY_DIR", str(library))
 
         assert share_available(str(library / "Movies" / "a.mkv")) is True
 
@@ -723,7 +723,7 @@ def test_a_share_that_is_gone_entirely_is_still_unavailable(app, tmp_path, monke
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
 
     with app.app_context():
-        app.config["LIBRARY_DIR"] = str(volumes)
+        monkeypatch.setitem(app.config, "LIBRARY_DIR", str(volumes))
 
         assert share_available(str(volumes / "Movies" / "a.mkv")) is False
 
