@@ -1,28 +1,40 @@
+{# Each section is a plain table — email clients don't do flexbox —
+   with the film's artwork leading the row (custom poster or TMDB
+   rendition, absolute URLs; no artwork just drops the image, no
+   placeholder). Notes ride under the title except in the library
+   section, whose header already says everything. #}
+{% macro film_table(items, show_note=true) -%}
+<table cellpadding="0" cellspacing="0" border="0" role="presentation">
+{% for item in items %}
+	<tr>
+		<td style="padding: 6px 12px 6px 0; vertical-align: top;">
+			{% if item.poster %}<a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}"><img src="{{ item.poster }}" alt="{{ item.title }} ({{ item.year }}) poster" width="60" style="display: block; border-radius: 4px;"></a>{% endif %}
+		</td>
+		<td style="padding: 6px 0; vertical-align: middle;">
+			<a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}"><strong>{{ item.title }}</strong> ({{ item.year }})</a>
+			{% if show_note %}<br>{{ item.note }}{% endif %}
+		</td>
+	</tr>
+{% endfor %}
+</table>
+{%- endmacro %}
 <p>Hello {{ user.email }},</p>
 <p>There are new ways to watch films on your watchlist:</p>
 {% if events.local %}
 <p><strong>Added to the library</strong></p>
-<ul>
-{% for item in events.local %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a></li>
-{% endfor %}</ul>
+{{ film_table(events.local, show_note=false) }}
 {% endif %}
 {% if events.streaming %}
 <p><strong>Now streaming on your services</strong></p>
-<ul>
-{% for item in events.streaming %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
-{% endfor %}</ul>
+{{ film_table(events.streaming) }}
 {% endif %}
 {% if events.rent %}
 <p><strong>Newly available to rent</strong></p>
-<ul>
-{% for item in events.rent %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
-{% endfor %}</ul>
+{{ film_table(events.rent) }}
 {% endif %}
 {% if events.leaving %}
 <p><strong>Leaving the Criterion Channel</strong></p>
-<ul>
-{% for item in events.leaving %}	<li><a href="{{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}">{{ item.title }} ({{ item.year }})</a> &mdash; {{ item.note }}</li>
-{% endfor %}</ul>
+{{ film_table(events.leaving) }}
 {% endif %}
 <p>Streaming data by JustWatch.</p>
 <p>You're receiving this digest because availability alerts are switched on in your profile. To stop them, <a href="{{ url_for("main.profile", _external=True) }}">turn the alerts off here</a>.</p>

@@ -21,7 +21,7 @@ CRITERION = {
 EMPTY = {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
 
 
-def watchlist_movie(app, title, tmdb_id, email=MEMBER_EMAIL, owned=False):
+def watchlist_movie(app, title, tmdb_id, email=MEMBER_EMAIL, owned=False, **kwargs):
     """A committed movie on the given user's watchlist; its movie id."""
 
     from app import db
@@ -29,7 +29,7 @@ def watchlist_movie(app, title, tmdb_id, email=MEMBER_EMAIL, owned=False):
 
     with app.app_context():
         user = User.query.filter_by(email=email).one()
-        movie = make_movie(title, 2020, tmdb_id=tmdb_id)
+        movie = make_movie(title, 2020, tmdb_id=tmdb_id, **kwargs)
         if owned:
             make_movie_file(movie, "Bluray-1080p")
         db.session.add(UserWatchlist(user_id=user.id, movie_id=movie.id))
@@ -114,7 +114,7 @@ def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
     try:
-        movie_id = watchlist_movie(app, "Debut", 9002)
+        movie_id = watchlist_movie(app, "Debut", 9002, tmdb_poster_path="/debut.jpg")
         subscribe(app, 8, "Netflix", email=MEMBER_EMAIL)
         plant_availability(app, 9002, EMPTY)
         run_task(app, monkeypatch)
@@ -129,6 +129,13 @@ def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
         assert "Now on Netflix" in sent[0]["text_body"]
         assert "Debut (2020)" in sent[0]["text_body"]
         assert "Now on Netflix" in sent[0]["html_body"]
+
+        # The HTML digest leads each film with its artwork — TMDB's
+        # w154 rendition here, since the record has no custom poster
+
+        poster_url = app.config["TMDB_IMAGE_URL"] + "/w154/debut.jpg"
+        assert poster_url in sent[0]["html_body"]
+        assert poster_url not in sent[0]["text_body"]
 
         with app.app_context():
             from app.availability_alerts import recent_availability

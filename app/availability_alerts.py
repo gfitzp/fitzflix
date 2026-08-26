@@ -41,7 +41,7 @@ import json
 from collections import defaultdict
 from datetime import date, timedelta
 
-from flask import current_app, render_template
+from flask import current_app, render_template, url_for
 from sqlalchemy.orm import contains_eager
 from werkzeug.local import LocalProxy
 
@@ -246,6 +246,24 @@ def _provider_labels(provider_ids, names):
     )
 
 
+def _poster_url(movie):
+    """An absolute artwork URL for the digest email, mirroring the
+    tile macro's source order: the custom poster (served off this
+    site, so it needs the external static URL) first, else TMDB's
+    hosted rendition; None with no artwork at all — the template
+    drops the image cell rather than shipping a placeholder."""
+
+    if movie.custom_poster:
+        return url_for(
+            "static",
+            filename=f"custom/movie/{movie.id}/w342/{movie.custom_poster}",
+            _external=True,
+        )
+    if movie.tmdb_poster_path:
+        return current_app.config["TMDB_IMAGE_URL"] + "/w154" + movie.tmdb_poster_path
+    return None
+
+
 def _send_digest(user, events):
     """One batched digest mail for one user's events — never a mail
     per film. The subject leads with the availability count; a digest
@@ -307,7 +325,12 @@ def notify_watchlist_availability():
             events = {"local": [], "streaming": [], "rent": [], "leaving": []}
             for movie in by_user[user.id]:
                 title = movie.tmdb_title or movie.title
-                item = {"title": title, "year": movie.year, "movie_id": movie.id}
+                item = {
+                    "title": title,
+                    "year": movie.year,
+                    "movie_id": movie.id,
+                    "poster": _poster_url(movie),
+                }
 
                 # Owned beats streaming beats renting, the watchlist
                 # bucket order: a film that just arrived locally never
@@ -363,6 +386,7 @@ def notify_watchlist_availability():
                                 "title": movie.tmdb_title or movie.title,
                                 "year": movie.year,
                                 "movie_id": movie.id,
+                                "poster": _poster_url(movie),
                                 "note": (
                                     "Leaving the Criterion Channel " f"{departs_label}"
                                 ),
