@@ -4,6 +4,7 @@ pipeline trails."""
 
 import os
 import shutil
+import time
 
 
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from app.main.forms import (
     SyncAWSStorageForm,
     QualityFilterForm,
     TMDBRefreshForm,
+    TMDBTriageForm,
     TrackMetadataScanForm,
 )
 from app.models import (
@@ -633,6 +635,7 @@ def maintenance():
         title="Library Maintenance",
         rejected_count=len(_rejected_files()),
         subtitle_triage_count=len(forced_subtitle_candidates()),
+        tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
         tv_suspect_count=sum(1 for e in validation_report() if e["suspect"]),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
@@ -661,6 +664,113 @@ def tv_title_validation():
         entries=validation_report(),
         min_compared=MIN_COMPARED,
         suspect_below=SUSPECT_BELOW,
+    )
+
+
+def _tmdb_unmatched():
+    """The records still sitting at a NULL tmdb_id without the ignored
+    flag — the rows the TMDB triage page (#226) exists to empty, and
+    the population the maintenance page's bulk refresh would otherwise
+    answer with a blind title search."""
+
+    movies = (
+        Movie.query.filter(Movie.tmdb_id.is_(None), Movie.tmdb_ignored.isnot(True))
+        .order_by(Movie.title.asc())
+        .all()
+    )
+    series = (
+        TVSeries.query.filter(
+            TVSeries.tmdb_id.is_(None), TVSeries.tmdb_ignored.isnot(True)
+        )
+        .order_by(TVSeries.title.asc())
+        .all()
+    )
+    return movies, series
+
+
+@bp.route("/maintenance/tmdb", methods=["GET", "POST"])
+@login_required
+@admin_required
+def tmdb_triage():
+    """Triage records with no TMDB match (#226): every movie and series
+    still at a NULL tmdb_id without the ignored flag, with per-row
+    actions — flag it as unmatchable through the Remove button's clear
+    path, or match it to an id entered by hand. Every action removes a
+    row, so the list is naturally self-emptying; a newly imported
+    record only appears here if its title search missed."""
+
+    form = TMDBTriageForm()
+    if form.validate_on_submit() and (form.flag_submit.data or form.lookup_submit.data):
+        record = None
+        library = None
+        if form.movie_id.data:
+            record = db.session.get(Movie, form.movie_id.data)
+            library = "Movies"
+        elif form.series_id.data:
+            record = db.session.get(TVSeries, form.series_id.data)
+            library = "TV Shows"
+
+        # A record that gained an id (or the flag) since the page
+        # rendered has left the list — never flag a matched record
+
+        if record is None or record.tmdb_id is not None or record.tmdb_ignored:
+            flash("That record isn't awaiting TMDB triage.", "warning")
+            return redirect(url_for("main.tmdb_triage"))
+
+        display = (
+            f"{record.title} ({record.year})" if library == "Movies" else record.title
+        )
+
+        if form.flag_submit.data:
+            if library == "Movies":
+                record.tmdb_movie_clear()
+            else:
+                record.tmdb_tv_clear()
+            db.session.commit()
+            flash(
+                f"Flagged '{display}' as unmatchable; no refresh will "
+                f"search TMDB for it again",
+                "success",
+            )
+            return redirect(url_for("main.tmdb_triage"))
+
+        if form.tmdb_id.data is None:
+            flash(f"Enter a TMDB ID to match '{display}'.", "warning")
+            return redirect(url_for("main.tmdb_triage"))
+
+        # The movie/TV pages' by-hand match, minus their redirect
+        # gymnastics: enqueue the refresh at the front of the queue and
+        # give it a moment to apply so the row is gone on reload. If
+        # the id already belongs to another record, the refresh's merge
+        # path folds this one into it
+
+        refresh_job = current_app.sql_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=(library, record.id, form.tmdb_id.data),
+            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+            description=f"Refreshing TMDB data for '{display}'",
+            at_front=True,
+        )
+        waited_seconds = 0
+        while refresh_job.result is None and waited_seconds < 10:
+            time.sleep(1)
+            waited_seconds = waited_seconds + 1
+        if refresh_job.result:
+            flash(f"Matched '{display}' to TMDB id {form.tmdb_id.data}", "success")
+        else:
+            flash(
+                f"Still refreshing TMDB data for '{display}' — reload in " f"a moment",
+                "info",
+            )
+        return redirect(url_for("main.tmdb_triage"))
+
+    movies, series = _tmdb_unmatched()
+    return render_template(
+        "tmdb_triage.html",
+        title="Unmatched TMDB records",
+        movies=movies,
+        series=series,
+        triage_form=TMDBTriageForm(),
     )
 
 

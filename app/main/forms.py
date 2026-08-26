@@ -165,6 +165,21 @@ class TMDBRemoveForm(FlaskForm):
     remove_submit = SubmitField("Remove TMDB ID")
 
 
+class TMDBTriageForm(FlaskForm):
+    """The TMDB triage page (#226): per unmatched record, either flag
+    it as unmatchable — the Remove button's path, so no refresh ever
+    guesses an id from the title — or match it to an id entered by
+    hand. One hidden id rides per row, movie or series."""
+
+    movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
+    series_id = IntegerField(
+        widget=HiddenInput(), validators=[Optional()], default=None
+    )
+    tmdb_id = IntegerField("TMDB ID", validators=[Optional()])
+    flag_submit = SubmitField("Flag as unmatchable")
+    lookup_submit = SubmitField("Match")
+
+
 class TMDBRefreshForm(FlaskForm):
     """Maintenance page: refresh TMDB data for the whole library."""
 

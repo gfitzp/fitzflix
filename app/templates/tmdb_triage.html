@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% macro triage_row(record, kind) %}
+{# One unmatched record's row: enough to decide without leaving —
+   title, year, file count, date added — plus the two actions and a
+   search hand-off. The search link opens the site's own TMDB search,
+   whose results carry the id-bearing rows this page's Match field
+   wants; the hidden id names the record, movie or series. #}
+<tr>
+	<td>
+		<a href="{{ url_for('main.movie', movie_id=record.id) if kind == 'movie' else url_for('main.tv', series_id=record.id) }}">{{ record.title }}</a>
+	</td>
+	<td>{{ record.year if kind == 'movie' else '' }}</td>
+	{% set file_count = record.files.count() %}
+	<td{% if not file_count %} class="text-danger"{% endif %}>{{ file_count }}</td>
+	<td class="text-nowrap">{{ record.date_created.strftime("%b %-d, %Y") if record.date_created }}</td>
+	<td><a href="{{ url_for('main.search_tmdb', q=record.title) }}">Search TMDB</a></td>
+	<td class="text-nowrap">
+		<form action="" method="post" class="d-inline-flex align-items-center" style="gap: .25rem;">
+			{{ triage_form.csrf_token }}
+			{% if kind == 'movie' %}
+			<input type="hidden" name="movie_id" value="{{ record.id }}">
+			{% else %}
+			<input type="hidden" name="series_id" value="{{ record.id }}">
+			{% endif %}
+			<input type="number" name="tmdb_id" class="form-control form-control-sm" style="width: 7rem;" placeholder="TMDB ID" aria-label="TMDB ID">
+			<button type="submit" name="lookup_submit" value="Match" class="btn btn-sm btn-primary">Match</button>
+			<button type="submit" name="flag_submit" value="Flag as unmatchable" class="btn btn-sm btn-outline-danger">Flag as unmatchable</button>
+		</form>
+	</td>
+</tr>
+{% endmacro %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+{% if movies or series %}
+<p class="text-muted">{{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id you enter and refreshes the record; <b>Flag as unmatchable</b> marks it so no refresh path ever guesses an id from its title again. A record with zero files may just want deleting from its own page instead.</p>
+{% if movies %}
+<h4>Movies</h4>
+<table class="table table-sm mt-2 mb-4 align-middle">
+	<thead class="table-light">
+		<tr>
+			<th scope="col">Title</th>
+			<th scope="col">Year</th>
+			<th scope="col">Files</th>
+			<th scope="col">Added</th>
+			<th scope="col"></th>
+			<th scope="col"></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for movie in movies %}
+		{{ triage_row(movie, 'movie') }}
+		{% endfor %}
+	</tbody>
+</table>
+{% endif %}
+{% if series %}
+<h4>TV series</h4>
+<table class="table table-sm mt-2 align-middle">
+	<thead class="table-light">
+		<tr>
+			<th scope="col">Title</th>
+			<th scope="col"></th>
+			<th scope="col">Files</th>
+			<th scope="col">Added</th>
+			<th scope="col"></th>
+			<th scope="col"></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for tv in series %}
+		{{ triage_row(tv, 'series') }}
+		{% endfor %}
+	</tbody>
+</table>
+{% endif %}
+{% else %}
+<p class="lead">Every record is matched or flagged &mdash; nothing to triage.</p>
+<p class="text-muted">A newly imported record only lands here if its TMDB title search misses.</p>
+{% endif %}
+{% endblock %}
