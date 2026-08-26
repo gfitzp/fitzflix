@@ -96,10 +96,10 @@ def test_parse_letterboxd_export_merges_per_film(app):
 
 
 def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
-    page = admin_client.get("/history").get_data(as_text=True)
+    page = admin_client.get("/profile").get_data(as_text=True)
 
     response = admin_client.post(
-        "/history",
+        "/profile",
         data={
             "csrf_token": csrf_token_from(page),
             "upload_submit": "Import Reviews",
@@ -290,9 +290,9 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
 
     monkeypatch.setattr(account, "send_email", fake_send_email)
 
-    page = admin_client.get("/history").get_data(as_text=True)
+    page = admin_client.get("/profile").get_data(as_text=True)
     response = admin_client.post(
-        "/history",
+        "/profile",
         data={
             "csrf_token": csrf_token_from(page),
             "export_submit": "Export Reviews",
@@ -352,12 +352,12 @@ def capture_sent_attachments(monkeypatch):
 
 
 def export_reviews(client, token, full=False):
-    """POST the History page's export form."""
+    """POST the Profile page's export form (on Profile since #215)."""
 
     data = {"csrf_token": token, "export_submit": "Export Reviews"}
     if full:
         data["full_export"] = "y"
-    return client.post("/history", data=data)
+    return client.post("/profile", data=data)
 
 
 def exported_titles(attachments):
@@ -410,7 +410,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
         db.session.commit()
 
     sent = capture_sent_attachments(monkeypatch)
-    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+    token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
 
     # The first-ever export has no baseline, so the default covers everything
 
@@ -480,7 +480,7 @@ def test_full_export_checkbox_exports_everything(app, admin_client, monkeypatch)
         db.session.commit()
 
     sent = capture_sent_attachments(monkeypatch)
-    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+    token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
     export_reviews(admin_client, token)
 
     # Nothing new since, but the checkbox re-exports the lot
@@ -513,7 +513,7 @@ def test_incremental_export_with_nothing_new_sends_no_email(
         db.session.commit()
 
     sent = capture_sent_attachments(monkeypatch)
-    token = csrf_token_from(admin_client.get("/history").get_data(as_text=True))
+    token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
     export_reviews(admin_client, token)
     assert len(sent) == 1
 
@@ -521,7 +521,7 @@ def test_incremental_export_with_nothing_new_sends_no_email(
         baseline = db.session.get(User, user_id).date_reviews_exported
 
     response = admin_client.post(
-        "/history",
+        "/profile",
         data={"csrf_token": token, "export_submit": "Export Reviews"},
         follow_redirects=True,
     )
@@ -537,11 +537,11 @@ def test_incremental_export_with_nothing_new_sends_no_email(
 
 
 def test_legacy_json_lines_upload_still_works(app, admin_client):
-    page = admin_client.get("/history").get_data(as_text=True)
+    page = admin_client.get("/profile").get_data(as_text=True)
 
     legacy = b'{"name": "Old Import Film", "rating": 3.5}\n'
     response = admin_client.post(
-        "/history",
+        "/profile",
         data={
             "csrf_token": csrf_token_from(page),
             "upload_submit": "Import Reviews",
@@ -1437,9 +1437,9 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
 
     monkeypatch.setattr(account, "send_email", fake_send_email)
 
-    page = admin_client.get("/history").get_data(as_text=True)
+    page = admin_client.get("/profile").get_data(as_text=True)
     admin_client.post(
-        "/history",
+        "/profile",
         data={
             "csrf_token": csrf_token_from(page),
             "export_submit": "Export Reviews",
@@ -1669,7 +1669,10 @@ def test_review_edit_refuses_letterboxd_rows(app, admin_client):
     assert response.status_code == 302
     assert "/history" in response.headers["Location"]
 
-    page = admin_client.get("/history").get_data(as_text=True)
+    # A feed-only diary renders no forms at all (the ladder is
+    # read-only and the import/export forms live on Profile now), so
+    # the session's csrf token comes from a page that has one
+    page = admin_client.get("/profile").get_data(as_text=True)
     response = admin_client.post(
         f"/review/{row_id}/edit",
         data={"csrf_token": csrf_token_from(page), "quick_rating": "1"},
@@ -1842,3 +1845,20 @@ def test_history_orders_by_day_then_time_then_title(app, admin_client):
         "Zebra Untimed",
         "Yesterday Film",  # the previous day, whatever its time
     ]
+
+
+def test_history_forms_moved_per_215(app, admin_client):
+    """#215: the History header carries only the title — the Log a film
+    box sits above the diary rows scoped to movies, and the import /
+    export forms live on the Profile page instead."""
+
+    page = admin_client.get("/history").get_data(as_text=True)
+    assert 'name="upload_submit"' not in page
+    assert 'name="export_submit"' not in page
+    assert 'name="scope" value="movies"' in page
+    assert "Log a film" in page
+
+    profile = admin_client.get("/profile").get_data(as_text=True)
+    assert 'name="upload_submit"' in profile
+    assert 'name="export_submit"' in profile
+    assert "Review Import &amp; Export" in profile

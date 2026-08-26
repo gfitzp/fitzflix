@@ -147,4 +147,33 @@
 	</div>
 	{{ alerts_form.alerts_submit(class_="btn btn-sm btn-warning mt-2") }}
 </form>
+<hr>
+{# The review import / export forms, moved from History (#215):
+   account-level plumbing, not part of reading the diary #}
+<h5>Review Import &amp; Export</h5>
+<div class="row my-2">
+	<div class="col-md-4">
+		<p class="mb-1">Import reviews</p>
+		<form action="" enctype="multipart/form-data" method="post">
+			{{ review_upload_form.hidden_tag() }}
+			{{ review_upload_form.file(class_="form-control form-control-sm mb-2", accept=".zip,.json,.txt") }}
+			{{ review_upload_form.upload_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		<p class="small text-muted mt-1">A Letterboxd account export zip imports the diary, ratings, reviews, and likes; the legacy JSON-lines ratings file works too.</p>
+	</div>
+	<div class="col-md-4">
+		<p class="mb-1">Export reviews</p>
+		<form action="" method="post">
+			{{ review_export_form.hidden_tag() }}
+			{# Unchecked, the export covers only entries logged or updated
+			   since the last export #}
+			<div class="form-check mb-2 small">
+				{{ review_export_form.full_export(class_="form-check-input") }}
+				{{ review_export_form.full_export.label(class_="form-check-label") }}
+			</div>
+			{{ review_export_form.export_submit(class_="btn btn-sm btn-warning") }}
+		</form>
+		<p class="small text-muted mt-1">Emails your reviews as a Letterboxd-format CSV. Unchecked, only entries logged or updated since your last export are included, so each file uploads to Letterboxd without duplicates.</p>
+	</div>
+</div>
 {% endblock %}

@@ -228,6 +228,218 @@ def review_edit(review_id):
     )
 
 
+def _review_export_response(review_export_form):
+    """The review-export POST: build the Letterboxd-format CSV and email
+    it to the user. Lives on the Profile page since #215 (History held
+    the form before that). Returns a response once the form has
+    submitted, None otherwise."""
+
+    if not (
+        review_export_form.export_submit.data
+        and review_export_form.validate_on_submit()
+    ):
+        return None
+
+    # Create the header columns for the CSV, per the Letterboxd import
+    # format (https://letterboxd.com/about/importing-data/)
+
+    csv_export = [
+        [
+            "tmdbID",
+            "imdbID",
+            "Title",
+            "Year",
+            "Rating",
+            "WatchedDate",
+            "Rewatch",
+            "Review",
+        ]
+    ]
+
+    # Compile the list of this user's reviews for export. By default
+    # only entries added or edited since the last export are included,
+    # so each Letterboxd upload contains exactly the new rows; the
+    # "Full export" checkbox exports everything. New rows are detected
+    # by id rather than date_watched, which can be backdated past the
+    # last export
+
+    export_query = (
+        UserMovieReview.query.join(
+            Movie, (Movie.id == UserMovieReview.movie_id)
+        ).filter(UserMovieReview.user_id == int(current_user.id))
+        # Rows that came FROM the Letterboxd feed never export back
+        # to Letterboxd — they are already there, and the
+        # round-trip would duplicate them
+        .filter(UserMovieReview.letterboxd_guid.is_(None))
+    )
+
+    last_exported_at = current_user.date_reviews_exported
+    incremental = (
+        not review_export_form.full_export.data and last_exported_at is not None
+    )
+    if incremental:
+        export_query = export_query.filter(
+            db.or_(
+                UserMovieReview.id > (current_user.last_export_review_id or 0),
+                UserMovieReview.date_updated > last_exported_at,
+            )
+        )
+
+    review_export = export_query.order_by(
+        UserMovieReview.date_watched.desc(),
+        UserMovieReview.date_reviewed.desc(),
+        UserMovieReview.rating.desc(),
+    ).all()
+
+    if not review_export:
+        if incremental:
+            flash("Nothing logged or updated since your last export", "info")
+        else:
+            flash("No entries to export", "info")
+        return redirect(url_for("main.profile"))
+    for r in review_export:
+        # Letterboxd accepts ratings of 0.5-5 and calendar dates only,
+        # so unrated reviews export a blank rating and watched
+        # timestamps are truncated to YYYY-MM-DD
+
+        rating = ""
+        if r.modified_rating:
+            rating = (
+                int(r.modified_rating)
+                if r.modified_rating == int(r.modified_rating)
+                else r.modified_rating
+            )
+        # Rewatch per the Letterboxd spec: Yes/No, blank when unknown
+        # (rows that predate the flag)
+
+        rewatch = "" if r.rewatch is None else ("Yes" if r.rewatch else "No")
+        csv_export.append(
+            [
+                r.movie.tmdb_id,
+                r.movie.imdb_id,
+                r.movie.title,
+                r.movie.year,
+                rating,
+                r.date_watched.strftime("%Y-%m-%d") if r.date_watched else "",
+                rewatch,
+                r.review or "",
+            ]
+        )
+
+    current_app.logger.debug(csv_export)
+
+    # Write out the CSV file in memory, no need to write it out to disk
+
+    f = io.StringIO()
+    review_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+    for review in csv_export:
+        review_writer.writerow(review)
+
+    # Send an email to the user with the CSV file as an attachment;
+    # incremental files are named for their cutoff so exports since
+    # different dates are distinguishable in the inbox
+
+    if incremental:
+        filename = f"reviews-since-{last_exported_at.strftime('%Y-%m-%d')}.csv"
+    else:
+        filename = "reviews.csv"
+
+    send_email(
+        "Fitzflix - Your movie reviews",
+        sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
+        recipients=[current_user.email],
+        text_body=render_template("email/reviews.txt", user=current_user),
+        html_body=render_template("email/reviews.html", user=current_user),
+        # Attach as UTF-8 bytes: a str payload makes the email
+        # package fall back to raw-unicode-escape, which mangles
+        # curly quotes into literal \\u2019 sequences in the file
+        attachments=[
+            (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
+        ],
+    )
+
+    # Advance the export bookkeeping: either mode leaves Letterboxd
+    # current through this moment
+
+    current_user.date_reviews_exported = datetime.now()
+    current_user.last_export_review_id = (
+        db.session.query(db.func.max(UserMovieReview.id))
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .scalar()
+    )
+    db.session.commit()
+
+    if incremental:
+        count = len(review_export)
+        flash(
+            f"Emailed {count} new or updated entr{'y' if count == 1 else 'ies'}"
+            f" to {current_user.email}",
+            "success",
+        )
+    else:
+        flash(f"Emailed your reviews to {current_user.email}", "success")
+
+    # Discard the in-memory CSV file
+
+    f.close()
+
+    return redirect(url_for("main.profile"))
+    return redirect(url_for("main.profile"))
+
+
+def _review_upload_response(review_upload_form):
+    """The review-import POST: a Letterboxd account export zip, or the
+    legacy JSON-lines ratings file. On Profile since #215, like the
+    export. Returns a response once the form has submitted, None
+    otherwise."""
+
+    if not (
+        review_upload_form.upload_submit.data
+        and review_upload_form.validate_on_submit()
+    ):
+        return None
+
+    upload = request.files["file"]
+    data = upload.read()
+
+    if data[:4] == b"PK\x03\x04" or (upload.filename or "").lower().endswith(".zip"):
+        # A Letterboxd account export, imported as-is: diary, ratings,
+        # reviews, and film likes. Parsing is local and fast; matching
+        # unowned films needs TMDB, so that runs as a task
+
+        films = parse_letterboxd_export(data)
+        if films:
+            current_app.request_queue.enqueue(
+                "app.videos.letterboxd_import_task",
+                args=(current_user.id, films),
+                job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                description=f"Matching {len(films)} Letterboxd film(s)",
+            )
+            flash(f"Importing Letterboxd data for {len(films)} films", "info")
+        else:
+            flash("No importable films found in that Letterboxd export", "warning")
+
+    else:
+        # Legacy JSON-lines ratings file, one film per line
+
+        for rating in data.splitlines():
+            if not rating.strip():
+                continue
+            movie_rating = json.loads(rating)
+            if movie_rating["rating"] >= 0:
+                current_app.sql_queue.enqueue(
+                    "app.videos.review_task",
+                    args=(
+                        current_user.id,
+                        movie_rating["name"],
+                        movie_rating["rating"],
+                    ),
+                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                    description=f"Reviewing {movie_rating['name']}",
+                )
+    return redirect(url_for("main.profile"))
+
+
 @bp.route("/history", methods=["GET", "POST"])
 @login_required
 def history():
@@ -319,205 +531,6 @@ def history():
         int(rating_summary[2] or 0),
     )
 
-    # Form to request an export of all of this user's movie reviews as a CSV file
-
-    review_export_form = ReviewExportForm()
-    if (
-        review_export_form.export_submit.data
-        and review_export_form.validate_on_submit()
-    ):
-        # Create the header columns for the CSV, per the Letterboxd import
-        # format (https://letterboxd.com/about/importing-data/)
-
-        csv_export = [
-            [
-                "tmdbID",
-                "imdbID",
-                "Title",
-                "Year",
-                "Rating",
-                "WatchedDate",
-                "Rewatch",
-                "Review",
-            ]
-        ]
-
-        # Compile the list of this user's reviews for export. By default
-        # only entries added or edited since the last export are included,
-        # so each Letterboxd upload contains exactly the new rows; the
-        # "Full export" checkbox exports everything. New rows are detected
-        # by id rather than date_watched, which can be backdated past the
-        # last export
-
-        export_query = (
-            UserMovieReview.query.join(
-                Movie, (Movie.id == UserMovieReview.movie_id)
-            ).filter(UserMovieReview.user_id == int(current_user.id))
-            # Rows that came FROM the Letterboxd feed never export back
-            # to Letterboxd — they are already there, and the
-            # round-trip would duplicate them
-            .filter(UserMovieReview.letterboxd_guid.is_(None))
-        )
-
-        last_exported_at = current_user.date_reviews_exported
-        incremental = (
-            not review_export_form.full_export.data and last_exported_at is not None
-        )
-        if incremental:
-            export_query = export_query.filter(
-                db.or_(
-                    UserMovieReview.id > (current_user.last_export_review_id or 0),
-                    UserMovieReview.date_updated > last_exported_at,
-                )
-            )
-
-        review_export = export_query.order_by(
-            UserMovieReview.date_watched.desc(),
-            UserMovieReview.date_reviewed.desc(),
-            UserMovieReview.rating.desc(),
-        ).all()
-
-        if not review_export:
-            if incremental:
-                flash("Nothing logged or updated since your last export", "info")
-            else:
-                flash("No entries to export", "info")
-            return redirect(url_for("main.history"))
-        for r in review_export:
-            # Letterboxd accepts ratings of 0.5-5 and calendar dates only,
-            # so unrated reviews export a blank rating and watched
-            # timestamps are truncated to YYYY-MM-DD
-
-            rating = ""
-            if r.modified_rating:
-                rating = (
-                    int(r.modified_rating)
-                    if r.modified_rating == int(r.modified_rating)
-                    else r.modified_rating
-                )
-            # Rewatch per the Letterboxd spec: Yes/No, blank when unknown
-            # (rows that predate the flag)
-
-            rewatch = "" if r.rewatch is None else ("Yes" if r.rewatch else "No")
-            csv_export.append(
-                [
-                    r.movie.tmdb_id,
-                    r.movie.imdb_id,
-                    r.movie.title,
-                    r.movie.year,
-                    rating,
-                    r.date_watched.strftime("%Y-%m-%d") if r.date_watched else "",
-                    rewatch,
-                    r.review or "",
-                ]
-            )
-
-        current_app.logger.debug(csv_export)
-
-        # Write out the CSV file in memory, no need to write it out to disk
-
-        f = io.StringIO()
-        review_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
-        for review in csv_export:
-            review_writer.writerow(review)
-
-        # Send an email to the user with the CSV file as an attachment;
-        # incremental files are named for their cutoff so exports since
-        # different dates are distinguishable in the inbox
-
-        if incremental:
-            filename = f"reviews-since-{last_exported_at.strftime('%Y-%m-%d')}.csv"
-        else:
-            filename = "reviews.csv"
-
-        send_email(
-            "Fitzflix - Your movie reviews",
-            sender=("Fitzflix", current_app.config["SERVER_EMAIL"]),
-            recipients=[current_user.email],
-            text_body=render_template("email/reviews.txt", user=current_user),
-            html_body=render_template("email/reviews.html", user=current_user),
-            # Attach as UTF-8 bytes: a str payload makes the email
-            # package fall back to raw-unicode-escape, which mangles
-            # curly quotes into literal \\u2019 sequences in the file
-            attachments=[
-                (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
-            ],
-        )
-
-        # Advance the export bookkeeping: either mode leaves Letterboxd
-        # current through this moment
-
-        current_user.date_reviews_exported = datetime.now()
-        current_user.last_export_review_id = (
-            db.session.query(db.func.max(UserMovieReview.id))
-            .filter(UserMovieReview.user_id == int(current_user.id))
-            .scalar()
-        )
-        db.session.commit()
-
-        if incremental:
-            count = len(review_export)
-            flash(
-                f"Emailed {count} new or updated entr{'y' if count == 1 else 'ies'}"
-                f" to {current_user.email}",
-                "success",
-            )
-        else:
-            flash(f"Emailed your reviews to {current_user.email}", "success")
-
-        # Discard the in-memory CSV file
-
-        f.close()
-
-        return redirect(url_for("main.history"))
-
-    review_upload_form = ReviewUploadForm()
-    if (
-        review_upload_form.upload_submit.data
-        and review_upload_form.validate_on_submit()
-    ):
-        upload = request.files["file"]
-        data = upload.read()
-
-        if data[:4] == b"PK\x03\x04" or (upload.filename or "").lower().endswith(
-            ".zip"
-        ):
-            # A Letterboxd account export, imported as-is: diary, ratings,
-            # reviews, and film likes. Parsing is local and fast; matching
-            # unowned films needs TMDB, so that runs as a task
-
-            films = parse_letterboxd_export(data)
-            if films:
-                current_app.request_queue.enqueue(
-                    "app.videos.letterboxd_import_task",
-                    args=(current_user.id, films),
-                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                    description=f"Matching {len(films)} Letterboxd film(s)",
-                )
-                flash(f"Importing Letterboxd data for {len(films)} films", "info")
-            else:
-                flash("No importable films found in that Letterboxd export", "warning")
-
-        else:
-            # Legacy JSON-lines ratings file, one film per line
-
-            for rating in data.splitlines():
-                if not rating.strip():
-                    continue
-                movie_rating = json.loads(rating)
-                if movie_rating["rating"] >= 0:
-                    current_app.sql_queue.enqueue(
-                        "app.videos.review_task",
-                        args=(
-                            current_user.id,
-                            movie_rating["name"],
-                            movie_rating["rating"],
-                        ),
-                        job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                        description=f"Reviewing {movie_rating['name']}",
-                    )
-        return redirect(url_for("main.history"))
-
     # Unrated viewings — Plex watches, unrated imports — preview the
     # engine's estimate in their ladder until Glenn's own stars land,
     # through the shared score source like every other surface
@@ -542,8 +555,6 @@ def history():
     return render_template(
         "history.html",
         title="My History",
-        review_export_form=review_export_form,
-        review_upload_form=review_upload_form,
         reviews=reviews.items,
         estimates=estimates,
         next_url=next_url,
@@ -778,9 +789,24 @@ def profile():
         alerts_form.notify_availability.data = current_user.notify_availability
         alerts_form.notify_rentals.data = current_user.notify_rentals
 
+    # The review import / export forms, moved here from History (#215)
+    # — account-level plumbing rather than something to pass on the way
+    # to the diary
+
+    review_export_form = ReviewExportForm()
+    export_response = _review_export_response(review_export_form)
+    if export_response is not None:
+        return export_response
+    review_upload_form = ReviewUploadForm()
+    upload_response = _review_upload_response(review_upload_form)
+    if upload_response is not None:
+        return upload_response
+
     return render_template(
         "profile.html",
         title="Profile",
+        review_export_form=review_export_form,
+        review_upload_form=review_upload_form,
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         plex_form=plex_form,

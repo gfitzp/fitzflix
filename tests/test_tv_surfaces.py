@@ -597,3 +597,64 @@ def test_a_tied_worst_copy_prefers_the_upgradable_episode(app):
         db.session.commit()
 
         assert series_upgradable([series.id]) == {series.id: True}
+
+
+def test_tv_library_search_narrows_by_title_and_episode_info(app, admin_client):
+    """The TV library's own search (#210): show titles, TMDB names,
+    TMDB episode titles, and the file names carrying the SxxEyy slots
+    all match — this library alone, never movies."""
+
+    import re
+
+    from tests.factories import make_movie, make_movie_file, make_tv_episode
+
+    with app.app_context():
+        by_title = make_tv_series("Quincke's Casebook")
+        make_tv_file(by_title, 1, 1, "SDTV")
+        by_tmdb_name = make_tv_series("Folder Name Only", tmdb_name="Quincke Files")
+        make_tv_file(by_tmdb_name, 1, 1, "SDTV")
+        by_episode_title = make_tv_series("Anthology Hour")
+        make_tv_file(by_episode_title, 2, 3, "SDTV")
+        make_tv_episode(by_episode_title, 2, 3, title="The Quincke Emergency Broadcast")
+        unrelated = make_tv_series("Unrelated Show")
+        make_tv_file(unrelated, 1, 1, "SDTV")
+        # A movie sharing the term must never leak into the TV library
+        movie = make_movie("Quincke The Movie", 1999)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/library/tv?q=quincke").get_data(as_text=True)
+    assert "TV series matching &#39;quincke&#39;" in page
+    assert "Quincke&#39;s Casebook" in page
+    assert "Quincke Files" in page
+    assert "Anthology Hour" in page
+    assert "Unrelated Show" not in page
+    assert "Quincke The Movie" not in page
+    assert "3 series match" in page
+
+    # The SxxEyy slot in the file name counts as episode info
+
+    page = admin_client.get("/library/tv?q=S02E03").get_data(as_text=True)
+    assert "Anthology Hour" in page
+    assert "Quincke&#39;s Casebook" not in page
+
+    # The search box posts and redirects into ?q=
+
+    plain = admin_client.get("/library/tv").get_data(as_text=True)
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', plain).group(1)
+    response = admin_client.post(
+        "/library/tv",
+        data={
+            "csrf_token": token,
+            "search_query": "quincke",
+            "search_submit": "Search",
+        },
+    )
+    assert response.status_code == 302
+    assert "q=quincke" in response.headers["Location"]
+
+    # No matches offers the whole library back
+
+    page = admin_client.get("/library/tv?q=zzzzzz").get_data(as_text=True)
+    assert "No TV series or episodes match" in page
+    assert "Show the whole TV library" in page

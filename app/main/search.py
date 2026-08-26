@@ -447,6 +447,12 @@ def search_tmdb():
     """Look a title up on TMDB, to confirm what exists beyond the library."""
 
     q = (request.args.get("q") or "").strip()
+
+    # scope=movies skips the TV search entirely — the History page's
+    # "Log a film" box arrives this way (#215), and the diary only
+    # ever logs movies
+
+    movies_only = request.args.get("scope") == "movies"
     movie_matches = []
     tv_matches = []
     error = None
@@ -458,10 +464,10 @@ def search_tmdb():
     elif q:
         params = {"api_key": current_app.config["TMDB_API_KEY"], "query": q}
         try:
-            for url, bucket, title_key, date_key in (
-                ("/search/movie", movie_matches, "title", "release_date"),
-                ("/search/tv", tv_matches, "name", "first_air_date"),
-            ):
+            searches = [("/search/movie", movie_matches, "title", "release_date")]
+            if not movies_only:
+                searches.append(("/search/tv", tv_matches, "name", "first_air_date"))
+            for url, bucket, title_key, date_key in searches:
                 r = tmdb_get(
                     current_app.config["TMDB_API_URL"] + url,
                     params=params,

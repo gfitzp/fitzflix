@@ -2,9 +2,24 @@
 
 {% block app_content %}
 <div class="row mt-n2 mb-n2 d-flex">
-	<h2 class="col-12 mb-n1">{{ title }}</h2>
+	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
+	<div class="col-12 col-sm-auto mt-2">
+		{# The TV library's own search (#210): show titles and episode
+		   info, this library alone — the movie library's grammar #}
+		<form class="form-inline float-sm-right mb-2 d-flex" action="" method="post">
+			{{ library_search_form.hidden_tag() }}
+			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
+			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
+		</form>
+	</div>
 </div>
 <hr>
+{% if q and not series %}
+<p class="lead">No TV series or episodes match &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
+<p class="text-muted"><a href="{{ url_for('main.tv_library') }}">Show the whole TV library</a> instead.</p>
+{% elif q %}
+<p class="small text-muted">{{ series|length }} series match{{ "es" if series|length == 1 }} &mdash; <a href="{{ url_for('main.tv_library') }}">show the whole TV library</a> instead.</p>
+{% endif %}
 {% if series %}
 {% for tv in series %}
 <div class="d-flex" id="{{ tv.id }}" style="scroll-margin-top: 60px;">

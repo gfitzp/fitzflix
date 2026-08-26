@@ -920,3 +920,60 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
             UserWatchlist.query.filter_by(user_id=user_id, movie_id=created_id).first()
             is None
         )
+
+
+def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
+    """#215: scope=movies (the History page's Log a film hand-off)
+    never queries or renders TV results — the diary only logs movies."""
+
+    import app.main.search as search
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._payload
+
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                {
+                    "results": [
+                        {
+                            "id": 900,
+                            "title": "Scoped Movie",
+                            "release_date": "1990-01-01",
+                        }
+                    ]
+                }
+            )
+        return FakeResponse(
+            {
+                "results": [
+                    {"id": 901, "name": "Scoped Show", "first_air_date": "1991-01-01"}
+                ]
+            }
+        )
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb?q=scoped&scope=movies").get_data(as_text=True)
+    assert "Scoped Movie" in page
+    assert "Scoped Show" not in page
+    assert "TV shows on TMDB" not in page
+    assert all(url.endswith("/search/movie") for url in calls)
+
+    # Without the scope, both searches run as before
+
+    calls.clear()
+    page = admin_client.get("/search/tmdb?q=scoped").get_data(as_text=True)
+    assert "Scoped Show" in page
+    assert any(url.endswith("/search/tv") for url in calls)

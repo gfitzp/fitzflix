@@ -1976,10 +1976,15 @@ def movie_files(movie_id):
     return render_template("movie_files.html", title=title, movie=movie, files=files)
 
 
-@bp.route("/library/tv")
+@bp.route("/library/tv", methods=["GET", "POST"])
 @login_required
 def tv_library():
-    """Show the worst quality in each season for each TV show in the library."""
+    """Show the worst quality in each season for each TV show in the library.
+
+    ?q= narrows the listing within the TV library alone (#210): series
+    whose title matches, plus series carrying an episode whose TMDB
+    title or file name matches — so a half-remembered episode finds
+    its show."""
 
     # Subquery to get the number of episodes we have for in each season,
     # and the worst quality for each season
@@ -2052,13 +2057,45 @@ def tv_library():
             }
         )
 
+    q = request.args.get("q", None, type=str)
+
+    # The search box posts and redirects into ?q=, the movie library's
+    # grammar, so a search is a bookmarkable URL
+
+    library_search_form = LibrarySearchForm()
+    if library_search_form.validate_on_submit():
+        return redirect(
+            url_for("main.tv_library", q=library_search_form.search_query.data or None)
+        )
+
+    series_query = TVSeries.query.join(File, (File.series_id == TVSeries.id)).distinct()
+    if q:
+        # Spaces become wildcards like the movie library's search, and
+        # episode info matches too: TMDB episode titles, and the file
+        # names that carry the SxxEyy slots
+
+        like = f"%{q.replace(' ', '%')}%"
+        episode_title_match = db.session.query(TVEpisode.series_id).filter(
+            TVEpisode.title.ilike(like)
+        )
+        episode_file_match = (
+            db.session.query(File.series_id)
+            .filter(File.series_id.isnot(None))
+            .filter(db.or_(File.plex_title.ilike(like), File.basename.ilike(like)))
+        )
+        series_query = series_query.filter(
+            db.or_(
+                TVSeries.title.ilike(like),
+                TVSeries.tmdb_name.ilike(like),
+                TVSeries.id.in_(episode_title_match),
+                TVSeries.id.in_(episode_file_match),
+            )
+        )
+
     tv = []
-    for series in (
-        TVSeries.query.join(File, (File.series_id == TVSeries.id))
-        .distinct()
-        .order_by(db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc())
-        .all()
-    ):
+    for series in series_query.order_by(
+        db.func.regexp_replace(TVSeries.title, "^(The|A|An) ", "").asc()
+    ).all():
         tv.append(
             {
                 "id": series.id,
@@ -2075,7 +2112,13 @@ def tv_library():
             }
         )
 
-    return render_template("library_tv.html", title="TV Library", series=tv)
+    return render_template(
+        "library_tv.html",
+        title=f"TV series matching '{q}'" if q else "TV Library",
+        series=tv,
+        q=q,
+        library_search_form=library_search_form,
+    )
 
 
 def restore_cost_estimate(files, bulk=False):
