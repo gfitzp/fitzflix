@@ -1,26 +1,19 @@
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
 {% from "_rating_ladder.html" import rating_ladder %}
-{% from "_search_form.html" import global_search_form %}
 
 {% block app_content %}
-{# The same box as the local results page — right-aligned on the
-   heading row like the index page's log-a-film form — but submitting
-   straight back to TMDb; no type-ahead, since the suggestions only
-   know the library #}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
-	<div class="col-12 col-sm-auto mt-2">
-		{{ global_search_form("float-sm-right mb-2", action=url_for('main.search_tmdb'), value=q, placeholder="Search TMDb", width="min(20rem, 100%)", typeahead=False) }}
-	</div>
-</div>
+{# No search box of its own (#188): a new search starts from the
+   navbar's Search library field, whose results page offers the
+   "Look up on TMDB" hand-off that lands here #}
+<h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if error %}
 <div class="alert alert-warning" role="alert">{{ error }}</div>
 {% endif %}
 
 {% if movie_matches %}
-<h4>Movies on TMDb</h4>
+<h4>Movies on TMDB</h4>
 <div class="list-group mb-4">
 	{% for match in movie_matches %}
 	{# Poster and title link — owned matches to their movie page,
@@ -45,7 +38,7 @@
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
 				{# The live star ladder, like the history rows: a
-				   record's ladder posts to its movie route, a bare TMDb
+				   record's ladder posts to its movie route, a bare TMDB
 				   result's to the log route whose first tap creates the
 				   record; the /movie_states hydration paints the verdict
 				   or the shared source's estimate — the tmdb lane, so
@@ -94,7 +87,7 @@
 {% endif %}
 
 {% if tv_matches %}
-<h4>TV shows on TMDb</h4>
+<h4>TV shows on TMDB</h4>
 <div class="list-group mb-4">
 	{% for match in tv_matches %}
 	{# Owned series open their page; there's no TV log page, so unowned
@@ -132,7 +125,7 @@
 {% endif %}
 
 {% if q and not error and not movie_matches and not tv_matches %}
-<p class="lead">TMDb has no matches for &lsquo;<strong>{{ q }}</strong>&rsquo; either.</p>
+<p class="lead">TMDB has no matches for &lsquo;<strong>{{ q }}</strong>&rsquo; either.</p>
 {% endif %}
 
 {% if streaming_attribution %}

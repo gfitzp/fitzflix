@@ -98,7 +98,7 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
     """A review-only record (a logged unowned film) stays out of the
-    library search — it belongs to the TMDb search instead."""
+    library search — it belongs to the TMDB search instead."""
 
     with app.app_context():
         build_library(app)
@@ -222,7 +222,7 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
 
 
 def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
-    """The funnel on TMDb results: a seen film badges Seen and never
+    """The funnel on TMDB results: a seen film badges Seen and never
     might-interest (even review-only records, whose watch already feeds
     the profile); a watchlisted unowned record badges the watchlist."""
 
@@ -301,7 +301,7 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
 
 
 def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
-    """An owned TMDb match that sits in the stored recommendations
+    """An owned TMDB match that sits in the stored recommendations
     carries the might-interest badge next to its library badge."""
 
     import json
@@ -465,7 +465,7 @@ def test_search_json_type_ahead(app, admin_client):
 
 
 def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch):
-    """TMDb results the library already has link to their pages; the rest
+    """TMDB results the library already has link to their pages; the rest
     are explicitly marked not in the library."""
 
     with app.app_context():
@@ -541,7 +541,7 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
 def test_search_tmdb_library_badges_wear_shopping_colors(
     app, admin_client, monkeypatch
 ):
-    """Every In-library badge on the TMDb results page is colored, the
+    """Every In-library badge on the TMDB results page is colored, the
     way the movie page's and the popover's are (#191) — never the
     colorless badge it used to render. Films take the shopping list's
     answer; series take their seasons', where a physical-media copy is
@@ -615,17 +615,16 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
 
 
 def test_results_pages_carry_prefilled_search_boxes(app, admin_client):
-    """Both results pages re-offer the search box pre-filled, so a
-    fruitless query can be reworked in place instead of round-tripping
-    through the navbar; the TMDb page's box submits back to TMDb."""
+    """The library results page re-offers the search box pre-filled, so
+    a fruitless query can be reworked in place; the TMDB page carries no
+    box of its own (#188) — a new search starts from the navbar."""
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert 'value="jaws"' in page
 
     page = admin_client.get("/search/tmdb?q=jaws").get_data(as_text=True)
-    assert 'action="/search/tmdb"' in page
-    assert 'value="jaws"' in page
-    assert 'placeholder="Search TMDb"' in page
+    assert 'action="/search/tmdb"' not in page
+    assert 'placeholder="Search TMDB"' not in page
 
 
 def test_search_tmdb_without_api_key_explains(app, admin_client):
@@ -727,7 +726,7 @@ def test_exact_title_match_outranks_substring_matches(app, admin_client):
 
 
 def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
-    """Each TMDb movie result row carries a live star ladder like the
+    """Each TMDB movie result row carries a live star ladder like the
     history rows: a record's ladder posts to its movie route and
     hydrates by movie id, a bare result's posts to the log route and
     hydrates by tmdb id — riding the shared source's tmdb lane; a
