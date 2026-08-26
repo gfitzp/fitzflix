@@ -11,3 +11,4 @@ app.db
 .pytest_cache/
 .claude/launch.json
 app/frame_pool/
+.claude
