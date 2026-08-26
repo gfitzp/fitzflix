@@ -1,6 +1,6 @@
 """The discovery surfaces (the routes.py split): the landing rails, the
-rating drive, the TMDB log page, the poster popover cards (film and
-series), the watchlist, and the Radarr hand-off."""
+Recommendations page, the TMDB log page, the poster popover cards (film
+and series), the watchlist, and the Radarr hand-off."""
 
 import os
 import traceback
@@ -29,7 +29,6 @@ from app import db
 from app.main.forms import (
     MovieReviewForm,
     RadarrForm,
-    RateFilmForm,
     WatchlistForm,
 )
 from app.models import (
@@ -87,12 +86,8 @@ from app.streaming import (
     user_provider_ids,
     user_streaming,
 )
-from app.elicitation import (
-    mark_unseen,
-    next_films,
-    set_last_response,
-    suggestions_after_rating,
-)
+from app.elicitation import set_last_response
+from app.rec_shelves import build_shelves, parse_criteria, replacement_film
 from app.criterion_now import criterion_now_card, is_criterion_subscriber
 from app.radarr_push import (
     RadarrError,
@@ -1623,154 +1618,76 @@ def radarr_request():
     return dest
 
 
-@bp.route("/rate", methods=["GET", "POST"])
+@bp.route("/recommendations")
 @login_required
-def rate():
-    """The rating drive: library films offered one at a time to deepen
-    the taste profile — rate it, want it, or no opinion, and
-    every answer steers what's offered next."""
+def recommendations():
+    """The Recommendations page (#235): shelves of unseen films keyed
+    by shared criteria — genres, keywords, awards won, people — each
+    anchored by two films the user has expressed interest in. Every
+    reload draws a fresh set of shelves; acting on a suggestion swaps
+    just that film through the tile endpoint below. This page replaced
+    the old /rate drive."""
 
-    form = RateFilmForm()
-    if form.validate_on_submit() and form.movie_id.data:
-        movie = Movie.query.filter_by(id=form.movie_id.data).first_or_404()
-        title = (
-            f"{movie.tmdb_title if movie.tmdb_title else movie.title} "
-            f"({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title and movie.tmdb_release_date else movie.year})"
+    shelves = []
+    for shelf in build_shelves(current_user):
+        wanted = shelf["anchor_ids"] + shelf["movie_ids"]
+        movies = {
+            movie.id: movie for movie in Movie.query.filter(Movie.id.in_(wanted or [0]))
+        }
+        anchors = [
+            movies[movie_id] for movie_id in shelf["anchor_ids"] if movie_id in movies
+        ]
+        films = [
+            movies[movie_id] for movie_id in shelf["movie_ids"] if movie_id in movies
+        ]
+        if len(anchors) < 2 or not films:
+            continue
+        shelves.append(
+            {
+                "criteria_param": ",".join(key for key, _ in shelf["criteria"]),
+                "labels": [label for _, label in shelf["criteria"]],
+                "anchors": anchors,
+                "movies": films,
+            }
         )
-        # The quick-answer ladder maps one tap onto whole stars — the ✕
-        # is the not-interested flag, never a review: the film
-        # leaves the drive and every recommendation surface, and steers
-        # the next picks away like "no opinion" does. 3+ stars
-        # auto-flag liked (Glenn's rule: liked means a positive verdict)
 
-        quick_present, quick_rating = _quick_rating()
-        if quick_present and quick_rating is None:
-            flash("That rating didn't make sense", "warning")
-            return redirect(url_for("main.rate"))
-        if quick_present and quick_rating == 0:
-            if _mark_not_interested(current_user.id, movie.id):
-                set_last_response(
-                    current_app.redis, current_user.id, movie.id, "not_interested"
-                )
-                _enqueue_profile_recompute()
-                flash(f"Got it — '{title}' won't be recommended", "info")
-            else:
-                flash(
-                    f"You've logged '{title}' — the lowest rating for a "
-                    f"seen film is 1 star",
-                    "warning",
-                )
-        elif quick_present:
-            rating = quick_rating
-            # An elicited rating is an ordinary diary row with no watch
-            # date — the film was seen sometime before Fitzflix. A
-            # same-day repeat (a replayed submit) corrects today's row
-            # instead of logging a second one
-            if _same_day_rerate(current_user.id, movie.id, rating) is None:
-                db.session.add(
-                    UserMovieReview(
-                        user_id=current_user.id,
-                        movie_id=movie.id,
-                        liked=rating >= 3,
-                        date_watched=None,
-                        date_reviewed=datetime.now(),
-                        rewatch=False,
-                        **star_rating_fields(rating),
-                    )
-                )
-            clear_watchlist(current_user.id, movie.id)
-            clear_not_interested(current_user.id, movie.id)
-            db.session.commit()
-            # A positive answer unlocks the "since you liked…" strip
-            set_last_response(
-                current_app.redis,
-                current_user.id,
-                movie.id,
-                "rated",
-                positive=rating >= 3,
-            )
-            _enqueue_profile_recompute()
-            flash(f"Rated '{title}' {rating:g} out of 5", "success")
-        elif form.watchlist_submit.data:
-            # The featured card's own watchlist button — it moves the
-            # session along. Banking a SUGGESTED film happens in its
-            # poster popover (#45c), whose card posts never touch the
-            # steering
-            if not UserWatchlist.query.filter_by(
-                user_id=int(current_user.id), movie_id=movie.id
-            ).first():
-                db.session.add(
-                    UserWatchlist(user_id=current_user.id, movie_id=movie.id)
-                )
-                db.session.commit()
-            set_last_response(current_app.redis, current_user.id, movie.id, "watchlist")
-            flash(f"Added '{title}' to your watchlist", "success")
-        elif form.unseen_submit.data:
-            mark_unseen(current_user.id, movie.id)
-            set_last_response(current_app.redis, current_user.id, movie.id, "unseen")
-            flash(f"Noted — no opinion on '{title}'", "info")
-        return redirect(url_for("main.rate"))
-
-    # Only the featured card shows — what comes next stays a mystery,
-    # the carrot for answering. A positive rating earns the "since you
-    # liked…" strip first (the reward keeps its best picks), and the
-    # card then takes the most informative film left over
-
-    anchor_id, suggested_ids = suggestions_after_rating(current_user.id)
-    queue = next_films(current_user.id, count=1, exclude=suggested_ids)
-    featured_id = queue[0] if queue else None
-    wanted_ids = [featured_id] + suggested_ids + [anchor_id]
-    movies = {
-        m.id: m
-        for m in Movie.query.filter(
-            Movie.id.in_([movie_id for movie_id in wanted_ids if movie_id] or [0])
-        )
-    }
-    featured = movies.get(featured_id)
-    suggestions = [movies[movie_id] for movie_id in suggested_ids if movie_id in movies]
-    anchor = movies.get(anchor_id)
-
-    # The featured card shows the engine's estimate in the star row
-    # (Glenn chose consistency over the original keep-the-
-    # elicitation-unanchored rule), read through the shared resolver
-    # like every other estimate surface
-
-    featured_estimated = None
-    if featured is not None:
-        profile = stored_profile(current_app.redis, current_user.id)
-        score = resolved_score(current_app.redis, current_user.id, featured, profile)
-        if score is not None:
-            featured_estimated = estimated_rating(profile, score)
-    directors = []
-    top_cast = []
-    if featured:
-        # (credit id, name) pairs so the names link to filmography pages
-        directors = list(
-            db.session.query(TMDBCredit.id, TMDBCredit.name)
-            .join(MovieCrew, MovieCrew.credit_id == TMDBCredit.id)
-            .filter(MovieCrew.movie_id == featured.id)
-            .filter(MovieCrew.job == "Director")
-            .distinct()
-        )
-        # The same billing cutoff the taste engine counts as "starring"
-        top_cast = list(
-            db.session.query(TMDBCredit.id, TMDBCredit.name)
-            .join(MovieCast, MovieCast.credit_id == TMDBCredit.id)
-            .filter(MovieCast.movie_id == featured.id)
-            .order_by(MovieCast.billing_order.asc())
-            .limit(TOP_BILLING_CUTOFF)
-        )
+    has_history = (
+        db.session.query(UserMovieReview.id)
+        .filter(UserMovieReview.user_id == int(current_user.id))
+        .first()
+        is not None
+    )
 
     return render_template(
-        "rate.html",
-        title="Rate Films",
-        form=form,
-        featured=featured,
-        featured_estimated=featured_estimated,
-        suggestions=suggestions,
-        anchor=anchor,
-        directors=directors,
-        top_cast=top_cast,
+        "recommendations.html",
+        title="Recommendations",
+        shelves=shelves,
+        has_history=has_history,
+    )
+
+
+@bp.route("/recommendations/tile")
+@login_required
+def recommendations_tile():
+    """One replacement tile for a Recommendations shelf slot: the next
+    eligible film matching the shelf's criteria that isn't already on
+    the page. ?criteria= carries the shelf's comma-joined feature keys
+    and ?exclude= the movie ids currently showing; 204 means the
+    criteria set is exhausted and the slot should close up."""
+
+    criteria = parse_criteria(request.args.get("criteria"))
+    if criteria is None:
+        abort(400)
+    exclude = [
+        int(part)
+        for part in (request.args.get("exclude") or "").split(",")
+        if part.strip().isdigit()
+    ]
+    movie_id = replacement_film(current_user, criteria, exclude)
+    if movie_id is None:
+        return "", 204
+    return render_template(
+        "_recommendation_tile.html", movie=db.session.get(Movie, movie_id)
     )
 
 

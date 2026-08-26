@@ -1,0 +1,14 @@
+{# One Recommendations shelf tile (#235): the shared poster grammar
+   with the popover armed and the live actions underneath. Rendered by
+   the page for each suggestion and by /recommendations/tile for a
+   replacement, so a swapped-in film is markup-identical to the ones
+   around it. data-suggestion-cell is what the page's replacement
+   script keys on. #}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
+<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell" data-suggestion-cell>
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		{{ poster_image(movie_poster_src(movie) | trim, movie.title ~ ' (' ~ movie.year ~ ')') }}
+		<h6 class="mb-1">{{ movie.title }} ({{ movie.year }})</h6>
+	</a>
+	{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
+</div>

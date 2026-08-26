@@ -93,7 +93,7 @@
 {# The pool has frames, just none this difficulty can serve — Easy
    before the user has rated any pooled films #}
 <p class="lead">No frames to serve on this difficulty yet.</p>
-<p class="text-muted">Easy only deals films you've rated &mdash; rate a few on the <a href="{{ url_for('main.rate') }}">Rate Films</a> page, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
+<p class="text-muted">Easy only deals films you've rated &mdash; rate a few from the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or your <a href="{{ url_for('main.movie_library') }}">library</a>, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
 {% else %}
 <p class="lead">The frame pool is still empty.</p>
 <p class="text-muted">Frames are extracted nightly from the library{% if current_user.admin %} &mdash; or start a fill now with <code>flask frames refresh</code>{% endif %}. Check back soon.</p>

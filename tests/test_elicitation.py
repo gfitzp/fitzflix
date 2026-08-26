@@ -1,6 +1,6 @@
-"""The rating drive at /rate: candidate pool exclusions, information-
-value ranking, adjacency steering from the last response, and the four
-response actions."""
+"""The "since you liked…" strip and the live rating ladder: candidate
+pool exclusions, adjacency-ranked suggestions after a positive movie-
+page rating, and the ladder's background posts."""
 
 import re
 
@@ -11,7 +11,6 @@ from tests.test_recommendations import (
     admin_id,
     genre,
     log_watch,
-    make_cast,
     make_person,
 )
 
@@ -44,10 +43,8 @@ def make_candidate(title, year, genre_row=None, director=None):
 
 
 def test_candidates_exclude_declared_states(app):
-    from app.elicitation import (
-        elicitation_candidates,
-        mark_unseen,
-    )
+    from app.elicitation import elicitation_candidates
+    from app.models import UserMovieStatus
 
     with app.app_context():
         user_id = admin_id()
@@ -57,281 +54,48 @@ def test_candidates_exclude_declared_states(app):
         wanted = make_candidate("Elicit Wanted", 1992)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
         unseen = make_candidate("Elicit Unseen", 1993)
+        db.session.flush()
+        # A "No Opinion" row from the retired /rate drive still
+        # excludes its film while fresh
+        db.session.add(
+            UserMovieStatus(user_id=user_id, movie_id=unseen.id, kind="unseen")
+        )
         db.session.commit()
-
-        mark_unseen(user_id, unseen.id)
 
         assert elicitation_candidates(user_id) == [eligible.id]
 
 
 def test_unseen_mark_expires_after_two_years(app):
-    """ "Haven't seen it" wears off: a mark older than the
-    resurface bar stops excluding the film from the drive, and
-    re-marking a resurfaced film resets the clock on the same row for
-    another term."""
+    """ "Haven't seen it" wears off: a mark older than the resurface
+    bar stops excluding the film, in case the user has seen it (or
+    remembered a verdict) since."""
 
     from datetime import datetime, timedelta
 
     from app.elicitation import (
         UNSEEN_RESURFACE_YEARS,
         elicitation_candidates,
-        mark_unseen,
     )
     from app.models import UserMovieStatus
 
     with app.app_context():
         user_id = admin_id()
         film = make_candidate("Unseen Expiry", 1972)
-        db.session.commit()
+        db.session.flush()
         film_id = film.id
+        row = UserMovieStatus(user_id=user_id, movie_id=film_id, kind="unseen")
+        db.session.add(row)
+        db.session.commit()
 
-        mark_unseen(user_id, film_id)
         assert film_id not in elicitation_candidates(user_id)
 
         # Age the mark past the bar: the film resurfaces
 
-        row = UserMovieStatus.query.filter_by(
-            user_id=user_id, movie_id=film_id, kind="unseen"
-        ).one()
         row.date_added = datetime.now() - timedelta(
             days=UNSEEN_RESURFACE_YEARS * 365.25 + 30
         )
         db.session.commit()
         assert film_id in elicitation_candidates(user_id)
-
-        # "Still haven't seen it" rests it for another term — one row,
-        # fresh clock, excluded again
-
-        mark_unseen(user_id, film_id)
-        rows = UserMovieStatus.query.filter_by(
-            user_id=user_id, movie_id=film_id, kind="unseen"
-        ).all()
-        assert len(rows) == 1
-        assert rows[0].date_added > datetime.now() - timedelta(days=1)
-        assert film_id not in elicitation_candidates(user_id)
-
-
-def test_information_scores_prefer_unrated_reach(app):
-    """Films whose features are well represented in the library but
-    thin in the diary outrank films the profile already knows."""
-
-    from app.elicitation import information_scores
-    from app.recommendations import collect_features
-
-    with app.app_context():
-        comedy = genre(35, "Comedy")
-        drama = genre(18, "Drama")
-        auteur = make_person(777001, "Unrated Auteur")
-
-        known = make_candidate("Info Known Comedy", 1990, genre_row=comedy)
-        fresh = [
-            make_candidate(
-                f"Info Fresh Drama {n}", 1990, genre_row=drama, director=auteur
-            )
-            for n in range(3)
-        ]
-        db.session.commit()
-
-        candidates = [known.id] + [movie.id for movie in fresh]
-        features = collect_features(candidates)
-        profile = {"affinities": {"genre:35": {"count": 3, "score": 0.5}}}
-        scores = information_scores(candidates, features, profile)
-
-        assert all(scores[movie.id] > scores[known.id] for movie in fresh)
-
-
-def test_adjacency_steers_toward_the_rated_films_neighborhood(app):
-    """After rating a film, its director's other film jumps the queue."""
-
-    from app.elicitation import next_films, set_last_response
-
-    with app.app_context():
-        user_id = admin_id()
-        western = genre(37, "Western")
-        shared = make_person(777002, "Anchor Director")
-        other = make_person(777003, "Other Director")
-
-        anchor = make_candidate(
-            "Adjacent Anchor", 1960, genre_row=western, director=shared
-        )
-        log_watch(user_id, anchor, rating=5)
-
-        similar = make_candidate(
-            "Adjacent Similar", 1961, genre_row=western, director=shared
-        )
-        unrelated = make_candidate(
-            "Adjacent Unrelated", 1962, genre_row=western, director=other
-        )
-        db.session.commit()
-
-        set_last_response(app.redis, user_id, anchor.id, "rated")
-        queue = next_films(user_id, count=2)
-        assert queue == [similar.id, unrelated.id]
-
-
-def test_rate_page_actions_flow(app, admin_client):
-    """The three answers (Skip was removed): a rating writes a
-    date-less diary row and the film leaves the pool; watchlist and
-    No Opinion both retire the film from the drive."""
-
-    from app.elicitation import elicitation_candidates
-
-    with app.app_context():
-        user_id = admin_id()
-        first = make_candidate("Drive First", 1980)
-        second = make_candidate("Drive Second", 1981)
-        third = make_candidate("Drive Third", 1982)
-        db.session.commit()
-        ids = (first.id, second.id, third.id)
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Rate Films" in page
-    token = csrf_token_from(page)
-
-    # Rate: an ordinary diary row, with no watch date, liked auto-set
-
-    response = admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(ids[0]), "quick_rating": "4"},
-    )
-    assert response.status_code == 302
-    with app.app_context():
-        review = UserMovieReview.query.filter_by(user_id=user_id, movie_id=ids[0]).one()
-        assert float(review.rating) == 4.0
-        assert review.liked is True
-        assert review.date_watched is None
-        assert review.date_reviewed is not None
-        assert ids[0] not in elicitation_candidates(user_id)
-
-    # Watchlist: files the film as unseen-but-wanted
-
-    admin_client.post(
-        "/rate",
-        data={
-            "csrf_token": token,
-            "movie_id": str(ids[1]),
-            "watchlist_submit": "Add to Watchlist",
-        },
-    )
-    with app.app_context():
-        assert (
-            UserWatchlist.query.filter_by(user_id=user_id, movie_id=ids[1]).first()
-            is not None
-        )
-        assert ids[1] not in elicitation_candidates(user_id)
-
-    # No Opinion retires the film too
-
-    admin_client.post(
-        "/rate",
-        data={
-            "csrf_token": token,
-            "movie_id": str(ids[2]),
-            "unseen_submit": "No Opinion",
-        },
-    )
-    with app.app_context():
-        assert elicitation_candidates(user_id) == []
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Nothing left to offer right now." in page
-
-
-def test_quick_answer_buttons_map_to_whole_stars(app, admin_client):
-    """The one-tap ladder writes ordinary date-less diary rows — Loved
-    it = 5 (positive, steers), Didn't like it = 2 (not positive) —
-    while ✕ (0) writes the not-interested FLAG, never a review,
-    and nonsense values write nothing."""
-
-    from app.elicitation import elicitation_candidates, last_response
-
-    with app.app_context():
-        user_id = admin_id()
-        loved = make_candidate("Quick Loved", 1980)
-        shunned = make_candidate("Quick Shunned", 1981)
-        disliked = make_candidate("Quick Disliked", 1982)
-        untouched = make_candidate("Quick Untouched", 1983)
-        db.session.commit()
-        loved_id, shunned_id = loved.id, shunned.id
-        disliked_id, untouched_id = disliked.id, untouched.id
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    token = csrf_token_from(page)
-    for label in (
-        "Not interested",
-        "Hated it",
-        "Didn&#39;t like it",
-        "Liked it",
-        "Really liked it",
-        "Loved it",
-    ):
-        assert label in page
-
-    # The 1–5 buttons are single outline-star glyphs (the gold
-    # fill is a CSS overlay) in one row, labels in titles
-
-    assert page.count("&#9734;") == 5
-
-    response = admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(loved_id), "quick_rating": "5"},
-    )
-    assert response.status_code == 302
-    with app.app_context():
-        review = UserMovieReview.query.filter_by(
-            user_id=user_id, movie_id=loved_id
-        ).one()
-        assert float(review.rating) == 5.0
-        assert review.liked is True
-        assert review.date_watched is None
-        assert last_response(app.redis, user_id)["positive"] is True
-
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(shunned_id), "quick_rating": "0"},
-    )
-    with app.app_context():
-        from app.models import UserMovieStatus
-
-        assert (
-            UserMovieReview.query.filter_by(
-                user_id=user_id, movie_id=shunned_id
-            ).first()
-            is None
-        )
-        flag = UserMovieStatus.query.filter_by(
-            user_id=user_id, movie_id=shunned_id, kind="not_interested"
-        ).one()
-        assert flag is not None
-        last = last_response(app.redis, user_id)
-        assert last["action"] == "not_interested"
-        assert last["positive"] is False
-        assert shunned_id not in elicitation_candidates(user_id)
-
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(disliked_id), "quick_rating": "2"},
-    )
-    with app.app_context():
-        review = UserMovieReview.query.filter_by(
-            user_id=user_id, movie_id=disliked_id
-        ).one()
-        assert float(review.rating) == 2.0
-        assert review.liked is False
-
-    # A nonsense value writes nothing
-
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(untouched_id), "quick_rating": "7"},
-    )
-    with app.app_context():
-        assert (
-            UserMovieReview.query.filter_by(
-                user_id=user_id, movie_id=untouched_id
-            ).first()
-            is None
-        )
 
 
 def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
@@ -476,9 +240,10 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
 
 
 def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
-    """A ladder tap in a suggestion's poster popover (#45c) rates that
-    film but leaves the drive anchored where it was — only rating the
-    FEATURED film moves the session along (Glenn's rule, Aug 2026)."""
+    """A ladder tap on a suggestion's poster tile (from_card) rates
+    that film but leaves the strip anchored where it was — only a
+    rating on the film's own page moves the session along (Glenn's
+    rule, Aug 2026)."""
 
     import json
 
@@ -514,14 +279,14 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
         ),
     )
 
-    page = admin_client.get("/rate").get_data(as_text=True)
+    page = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
     token = csrf_token_from(page)
     admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(anchor_id), "quick_rating": "4"},
+        f"/movie/{anchor_id}",
+        data={"csrf_token": token, "quick_rating": "4"},
     )
 
-    strip = admin_client.get("/rate").get_data(as_text=True)
+    strip = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
     assert "Chain Similar (1961)" in strip
 
     # The card's ladder posts to the suggestion's own movie route with
@@ -548,167 +313,6 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
         last = last_response(app.redis, user_id)
         assert last["movie_id"] == anchor_id
         assert last["positive"] is True
-
-
-def test_rate_page_shows_featured_details_only(app, admin_client):
-    """One card at a time — what's next stays a mystery, the carrot
-    for answering."""
-
-    with app.app_context():
-        western = genre(37, "Western")
-        director = make_person(777004, "Featured Director")
-        featured = make_movie(
-            "Drive Featured",
-            1956,
-            tmdb_runtime=119,
-            tmdb_overview="A searcher searches.",
-        )
-        make_movie_file(featured, "Bluray-1080p")
-        featured.genres.append(western)
-        db.session.add(
-            MovieCrew(
-                movie_id=featured.id,
-                credit_id=director.id,
-                department="Directing",
-                job="Director",
-            )
-        )
-        lead = make_person(777104, "Leading Lady")
-        second = make_person(777105, "Second Banana")
-        make_cast(second, featured, character="The Pal", order=1)
-        make_cast(lead, featured, character="The Lead", order=0)
-        # Lower-information companions must stay hidden
-        for n in range(3):
-            make_candidate(f"Drive Filler {n}", 1990)
-        db.session.commit()
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Drive Featured (1956)" in page
-    assert "119 min" in page
-    assert "Western" in page
-    assert "A searcher searches." in page
-
-    # Director and cast names link to their filmography pages, cast in
-    # billing order under the synopsis
-
-    assert (
-        'Directed by <a href="/library/movie?credit=777004" '
-        'class="link-secondary text-secondary">Featured Director</a>' in page
-    )
-    assert (
-        'Starring <a href="/library/movie?credit=777104" '
-        'class="link-secondary text-secondary">Leading Lady</a>, '
-        '<a href="/library/movie?credit=777105" '
-        'class="link-secondary text-secondary">Second Banana</a>' in page
-    )
-    assert "Up next" not in page
-    assert "Drive Filler" not in page
-
-
-def test_positive_rating_earns_suggestions(app, admin_client):
-    """A ≥3.5 rating surfaces up to three taste-adjacent unseen films —
-    bankable to the watchlist without moving the drive along — while a
-    sour rating earns nothing."""
-
-    import json
-
-    from app.elicitation import last_response
-
-    with app.app_context():
-        user_id = admin_id()
-        western = genre(37, "Western")
-        auteur = make_person(777005, "Suggestion Director")
-        anchor = make_candidate(
-            "Suggest Anchor", 1960, genre_row=western, director=auteur
-        )
-        similar = make_candidate(
-            "Suggest Similar", 1961, genre_row=western, director=auteur
-        )
-        # An unrelated candidate that shares nothing with the anchor
-        # (different genre AND decade) can never join the strip
-        drama = genre(18, "Drama")
-        make_candidate("Suggest Unrelated", 1999, genre_row=drama)
-        db.session.commit()
-        anchor_id, similar_id = anchor.id, similar.id
-
-    # A taste profile so score_movie has something to work with
-
-    app.redis.set(
-        f"fitzflix:recs:profile:{user_id}",
-        json.dumps(
-            {
-                "affinities": {
-                    "genre:37": {
-                        "class": "genre",
-                        "label": "Western",
-                        "count": 3,
-                        "score": 0.5,
-                    }
-                },
-                "movies": 3,
-            }
-        ),
-    )
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    token = csrf_token_from(page)
-
-    response = admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(anchor_id), "quick_rating": "4"},
-    )
-    assert response.status_code == 302
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Since you liked Suggest Anchor" in page
-    assert "Suggest Similar (1961)" in page
-    strip = page[page.index("Since you liked") :]
-    assert "Suggest Unrelated" not in strip
-
-    # Suggested posters carry the popover card (#45c) instead of
-    # inline forms — banking happens in the card, which posts to the
-    # suggestion's own movie route with the from_card marker
-
-    assert f'data-card-url="/movie_card?movie_id={similar_id}"' in strip
-    assert "want_suggestion_submit" not in page
-
-    # Banking the suggestion through its card adds it to the watchlist
-    # WITHOUT moving the steering — the strip stays anchored, minus
-    # the banked film
-
-    response = admin_client.post(
-        f"/movie/{similar_id}",
-        data={
-            "csrf_token": token,
-            "from_card": "1",
-            "add_watchlist_submit": "Add to Watchlist",
-        },
-        headers={"X-Requested-With": "card"},
-    )
-    assert response.status_code == 200
-    assert response.get_json() == {"on_watchlist": True}
-    with app.app_context():
-        assert (
-            UserWatchlist.query.filter_by(user_id=user_id, movie_id=similar_id).first()
-            is not None
-        )
-        assert last_response(app.redis, user_id)["movie_id"] == anchor_id
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Suggest Similar (1961)" not in page
-
-    # A sour rating earns no strip
-
-    with app.app_context():
-        sour = make_candidate("Suggest Sour", 1962, genre_row=genre(37, "Western"))
-        db.session.commit()
-        sour_id = sour.id
-    admin_client.post(
-        "/rate",
-        data={"csrf_token": token, "movie_id": str(sour_id), "quick_rating": "2"},
-    )
-    page = admin_client.get("/rate").get_data(as_text=True)
-    assert "Since you liked" not in page
 
 
 def test_movie_page_x_flags_and_never_reviews(app, admin_client):
@@ -1011,48 +615,6 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         "estimated": None,
         "on_watchlist": False,
     }
-
-
-def test_rate_featured_card_shows_the_estimate(app, admin_client):
-    """The featured card's star row previews the engine's estimate from
-    the nightly score map (Glenn chose consistency over keeping
-    the elicitation unanchored)."""
-
-    import json as jsonlib
-
-    from app.recommendations import PROFILE_KEY, SCORES_KEY
-
-    with app.app_context():
-        user_id = admin_id()
-        featured = make_candidate("Estimate Featured", 1990)
-        db.session.commit()
-        featured_id = featured.id
-
-    app.redis.set(
-        SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(featured_id): 9.0})
-    )
-    app.redis.set(
-        PROFILE_KEY.format(user_id=user_id),
-        jsonlib.dumps(
-            {
-                "affinities": {},
-                "movies": 3,
-                "calibration": {
-                    "scores": [0.0, 1.0, 2.0, 3.0],
-                    "stars": [1.0, 2.0, 4.0, 4.5],
-                },
-            }
-        ),
-    )
-
-    page = admin_client.get("/rate").get_data(as_text=True)
-
-    # The 4.5 estimate fills four stars and half of the fifth
-
-    assert page.count("star estimated") == 5
-    assert page.count("estimated est-partial") == 1
-    assert "fill-50" in page
-    assert "Estimated 4.5 for you" in page
 
 
 def test_half_star_ratings_render_a_partial_fill(app, admin_client):

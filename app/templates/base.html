@@ -73,7 +73,7 @@
 					<a class="nav-link" href="{{ url_for('main.watchlist') }}">My Watchlist</a>
 				</li>
 				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.rate') }}">Rate Films</a>
+					<a class="nav-link" href="{{ url_for('main.recommendations') }}">Recommendations</a>
 				</li>
 				<li class="nav-item">
 					<a class="nav-link" href="{{ url_for('main.name_that_frame') }}">Name that Frame</a>
@@ -799,6 +799,11 @@
 					);
 					invalidateCard(actions);
 				}
+				// Pages that react to a tile's verdict changing — the
+				// Recommendations page swaps the acted-on tile for a
+				// fresh suggestion — listen for this
+				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
+					{bubbles: true, detail: state}));
 			}).catch(function() {
 				form.submit();
 			});
@@ -1035,6 +1040,10 @@
 						cell.remove();
 					}
 				}
+				// The Recommendations page swaps a banked suggestion
+				// for a fresh one on this event, like a rating's
+				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
+					{bubbles: true, detail: state}));
 			}).catch(function() {
 				form.submit();
 			});

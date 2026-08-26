@@ -1,22 +1,14 @@
-"""Taste elicitation: the engine behind the /rate drive.
+"""The "since you liked…" strip: taste-scored suggestions after a
+positive rating.
 
-Netflix-onboarding-style: present library films the user hasn't
-logged, gather ratings as ordinary diary rows, and let every response
-steer what's offered next — a rating pulls taste-adjacent films
-forward (shared directors, genres, decades), "No Opinion" (never saw
-it, or no memory of a verdict) steers away from the same neighborhood
-and rests the film for a couple of years, and a watchlist add files
-the film as unseen-but-wanted.
-
-Candidates rank by INFORMATION VALUE: how much a rating would teach
-the taste profile. A feature's value is its reach across the unrated
-library damped by the diary evidence the profile already holds for
-it, so an unrated director with a dozen films on the shelf surfaces
-before yet another film from a genre the profile knows cold.
+What's left of the old /rate elicitation drive (retired for the
+Recommendations page, #235): the session's last-response marker and
+the enjoyment picks it unlocks on the just-rated film's movie page —
+unseen candidates sharing features with the anchor, ranked by the
+taste profile's score plus a class-weighted adjacency bonus.
 """
 
 import json
-import math
 
 from datetime import datetime, timedelta
 
@@ -34,65 +26,33 @@ from app.recommendations import (
 
 LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
-# "No Opinion" lives in user_movie_status, so a cache flush can't
-# forget it (#45b). The last response steers the next picks for an
-# hour — long enough for a session, short enough that tomorrow starts
-# fresh
+# The last response unlocks the strip for an hour — long enough for
+# a session, short enough that tomorrow starts fresh
 
 LAST_TTL_SECONDS = 3600
 
-# "No Opinion" wears off, mirroring the Watch Again shelf's
-# staleness bar: after this many years the mark stops excluding the
-# film from the drive, in case the user has seen it (or remembered a
-# verdict) since and can now rate it. Re-marking resets the clock;
-# the drive's information-value ranking decides when a resurfaced
-# film actually reappears. Only "unseen" expires — "not interested"
-# is permanent. (The stored kind stays "unseen" from the button's
-# "Haven't Seen It" era — 241 rows predate the rename.)
+# The retired drive's "No Opinion" marks still exclude their films
+# while fresh, and wear off after this many years — the user may have
+# seen the film (or remembered a verdict) since. Only "unseen"
+# expires; "not interested" is permanent.
 
 UNSEEN_RESURFACE_YEARS = 2
 
-# How strongly the last response bends the ranking: a rating pulls
-# similar films forward, while "no opinion" and "not interested"
-# nudge the neighborhood away; watchlist adds don't steer
+# How strongly a positive rating's adjacency pulls similar films
+# forward in the suggestion strip
 
 ADJACENCY_WEIGHT = 2.0
-UNSEEN_STEER_WEIGHT = -0.5
-
-UP_NEXT_COUNT = 3
 
 # After a positive rating, up to this many taste-scored suggestions
-# appear ("since you liked X…") — enjoyment picks, unlike the drive's
-# own information-value ranking
+# appear ("since you liked X…")
 
 SUGGESTION_COUNT = 3
 
 
-def mark_unseen(user_id, movie_id):
-    """Record that the user has no opinion on this film — never saw
-    it, or no memory of a verdict — putting it out of the drive
-    for UNSEEN_RESURFACE_YEARS (they can always rate it from its movie
-    page). Re-marking always resets the clock, so answering a
-    resurfaced film with "still no opinion" rests it for another term
-    instead of letting it boomerang back every session."""
-
-    exists = UserMovieStatus.query.filter_by(
-        user_id=int(user_id), movie_id=int(movie_id), kind="unseen"
-    ).first()
-    if exists is None:
-        db.session.add(
-            UserMovieStatus(user_id=int(user_id), movie_id=int(movie_id), kind="unseen")
-        )
-    else:
-        exists.date_added = datetime.now()
-    db.session.commit()
-
-
 def set_last_response(redis, user_id, movie_id, action, positive=False):
-    """Remember the session's last response, which steers the next
-    picks: action is one of rated / watchlist / unseen /
-    not_interested, and a positive rating also unlocks the suggestion
-    strip."""
+    """Remember the session's last response: action is one of rated /
+    watchlist / not_interested, and a positive rating also unlocks the
+    suggestion strip on that film's movie page."""
 
     redis.set(
         LAST_KEY.format(user_id=int(user_id)),
@@ -111,11 +71,11 @@ def last_response(redis, user_id):
 
 
 def elicitation_candidates(user_id):
-    """Movie ids eligible for the drive: local full-feature films the
-    user hasn't logged, minus watchlisted films (declared unseen-but-
-    wanted) and films marked "No Opinion" within the resurface bar
-    (older marks expire) — not-interested films are already out
-    of local_candidates."""
+    """Movie ids the suggestion strip may offer: local full-feature
+    films the user hasn't logged, minus watchlisted films (declared
+    unseen-but-wanted) and films marked "No Opinion" within the
+    resurface bar (older marks expire) — not-interested films are
+    already out of local_candidates."""
 
     watchlisted = {
         movie_id
@@ -138,33 +98,6 @@ def elicitation_candidates(user_id):
     ]
 
 
-def information_scores(candidates, features, profile):
-    """movie_id -> how much rating the film would teach the profile.
-
-    Each feature contributes its class weight times the square root of
-    its reach (how many candidate films carry it — damped, or broad
-    genres would drown everything) divided by the diary evidence the
-    profile already holds for it. Fresh features on well-represented
-    people and genres score highest.
-    """
-
-    affinities = (profile or {}).get("affinities", {})
-    reach = {}
-    for movie_id in candidates:
-        for _, key, _ in features.get(movie_id, []):
-            reach[key] = reach.get(key, 0) + 1
-
-    scores = {}
-    for movie_id in candidates:
-        total = 0.0
-        for cls, key, _ in features.get(movie_id, []):
-            weight = FEATURE_CLASS_WEIGHTS.get(cls, 0.0)
-            evidence = (affinities.get(key) or {}).get("count", 0)
-            total += weight * math.sqrt(reach.get(key, 0)) / (1.0 + evidence)
-        scores[movie_id] = total
-    return scores
-
-
 def adjacency_scores(candidates, features, anchor_features):
     """movie_id -> feature overlap with the anchor film, class-weighted."""
 
@@ -177,50 +110,6 @@ def adjacency_scores(candidates, features, anchor_features):
             if key in anchor_keys
         )
     return scores
-
-
-def next_films(user_id, count=1 + UP_NEXT_COUNT, exclude=()):
-    """The next films to offer, most informative first, steered by the
-    last response. Deterministic for a given state, so a reload shows
-    the same card — every answer changes the state and the picks.
-    `exclude` keeps the card from doubling as one of the suggestion
-    strip's enjoyment picks."""
-
-    candidates = [
-        movie_id
-        for movie_id in elicitation_candidates(user_id)
-        if movie_id not in set(exclude)
-    ]
-    if not candidates:
-        return []
-    redis = current_app.redis
-    profile = stored_profile(redis, user_id)
-    last = last_response(redis, user_id)
-
-    feature_ids = list(candidates)
-    anchor_id = last["movie_id"] if last else None
-    if anchor_id is not None and anchor_id not in candidates:
-        feature_ids.append(anchor_id)
-    features = collect_features(feature_ids)
-
-    scores = information_scores(candidates, features, profile)
-    if anchor_id is not None:
-        direction = {
-            "rated": ADJACENCY_WEIGHT,
-            "unseen": UNSEEN_STEER_WEIGHT,
-            "not_interested": UNSEEN_STEER_WEIGHT,
-        }.get(last["action"], 0.0)
-        if direction:
-            adjacency = adjacency_scores(
-                candidates, features, features.get(anchor_id, [])
-            )
-            for movie_id in candidates:
-                scores[movie_id] += direction * adjacency.get(movie_id, 0.0)
-
-    ranked = sorted(
-        candidates, key=lambda movie_id: scores.get(movie_id, 0.0), reverse=True
-    )
-    return ranked[:count]
 
 
 def suggestions_after_rating(user_id, exclude=(), count=SUGGESTION_COUNT):

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">Recommendations</h2>
+<hr>
+{% if shelves %}
+<p class="small text-muted">Shelves of films you haven't seen &mdash; on your shelf or streaming on your services &mdash; keyed by what your diary and watchlist say you're into. Rate a film, add it to your watchlist, or wave it off with the &#10005;, and its spot refills; reload the page for a fresh set of shelves.</p>
+{% for shelf in shelves %}
+<div data-shelf data-criteria="{{ shelf.criteria_param }}">
+	{% if not loop.first %}<hr>{% endif %}
+	{# First character upcased by hand — the capitalize filter would
+	   lowercase the names in "films directed by Sidney Lumet" #}
+	{% set heading = shelf.labels | join(' · ') %}
+	<h4>{{ heading[:1] | upper }}{{ heading[1:] }}</h4>
+	{# The caption names the shelf's evidence, per #235: the criteria
+	   and the two anchor films that prove the interest #}
+	<p class="small text-muted mb-2">Based on your interest in {{ shelf.labels | join(' and ') }}
+		and <a href="{{ url_for('main.movie', movie_id=shelf.anchors[0].id) }}">{{ shelf.anchors[0].title }} ({{ shelf.anchors[0].year }})</a>
+		and <a href="{{ url_for('main.movie', movie_id=shelf.anchors[1].id) }}">{{ shelf.anchors[1].title }} ({{ shelf.anchors[1].year }})</a></p>
+	<div class="row">
+		{% for movie in shelf.movies %}
+		{% include "_recommendation_tile.html" %}
+		{% endfor %}
+	</div>
+</div>
+{% endfor %}
+<script>
+	// The refill loop (#235): acting on a suggestion — a rating, a
+	// watchlist add, a ✕ — swaps just that tile for the next film
+	// matching the shelf's criteria. The tile's live posts already
+	// repaint the widgets; base.html announces each success with a
+	// fitzflix:tile-state event, and this listener answers only for
+	// tiles inside a shelf. Undo gestures (removing a rating, undoing
+	// ✕, dropping a watchlist add) never swap the tile.
+	(function() {
+		var TILE_URL = {{ url_for('main.recommendations_tile') | tojson }};
+		var STATES_URL = {{ url_for('main.movie_states') | tojson }};
+
+		function shownIds() {
+			var ids = [];
+			document.querySelectorAll("[data-suggestion-cell] [data-state-movie]").forEach(function(el) {
+				ids.push(el.getAttribute("data-state-movie"));
+			});
+			return ids;
+		}
+
+		function hydrate(cell) {
+			var actions = cell.querySelector("[data-state-movie]");
+			var id = actions && actions.getAttribute("data-state-movie");
+			if (!id) return;
+			fetch(STATES_URL + "?movie_ids=" + id, {credentials: "same-origin"})
+				.then(function(response) {
+					if (!response.ok) throw new Error("state fetch failed");
+					return response.json();
+				})
+				.then(function(payload) {
+					var state = payload.movies[id];
+					if (!state) return;
+					var row = cell.querySelector(".star-row");
+					if (row) paintLadder(row, state);
+					syncWatchlistForm(cell.querySelector("[data-card-watchlist]"), state.on_watchlist);
+				})
+				.catch(function() {});
+		}
+
+		function replaceCell(shelf, cell) {
+			var params = "criteria=" + encodeURIComponent(shelf.getAttribute("data-criteria"))
+				+ "&exclude=" + shownIds().join(",");
+			fetch(TILE_URL + "?" + params, {credentials: "same-origin"})
+				.then(function(response) {
+					if (response.status === 204) return null;
+					if (!response.ok) throw new Error("tile fetch failed");
+					return response.text();
+				})
+				.then(function(html) {
+					if (html === null) {
+						// The criteria set is spent — the slot closes up
+						cell.remove();
+						return;
+					}
+					var holder = document.createElement("div");
+					holder.innerHTML = html.trim();
+					var fresh = holder.firstElementChild;
+					if (!fresh) {
+						cell.remove();
+						return;
+					}
+					cell.replaceWith(fresh);
+					hydrate(fresh);
+				})
+				.catch(function() {});
+		}
+
+		document.addEventListener("fitzflix:tile-state", function(event) {
+			var cell = event.target.closest("[data-suggestion-cell]");
+			if (!cell) return;
+			var state = event.detail || {};
+			var acted = (typeof state.rating === "number" && state.rating > 0)
+				|| !!state.flagged || !!state.on_watchlist;
+			if (!acted) return;
+			var shelf = cell.closest("[data-criteria]");
+			if (!shelf) return;
+			// A beat's pause so the tap's repaint lands before the swap
+			window.setTimeout(function() { replaceCell(shelf, cell); }, 700);
+		});
+	})();
+</script>
+{% elif has_history %}
+<p class="lead">Not enough overlapping interest to build shelves yet.</p>
+<p class="text-muted">Shelves appear once a few films you've rated, liked, watched, or watchlisted share genres, keywords, awards, or people with films you haven't seen &mdash; keep logging from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above and check back.</p>
+{% else %}
+<p class="lead">Log a few films to get recommendations.</p>
+<p class="text-muted">Rate, like, or just mark films you've watched &mdash; from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above &mdash; and this page will build shelves of unseen films around what you're into.</p>
+{% endif %}
+{% endblock %}

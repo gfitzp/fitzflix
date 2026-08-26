@@ -317,17 +317,6 @@ class RadarrForm(FlaskForm):
     radarr_remove_submit = SubmitField("Remove from Radarr")
 
 
-class RateFilmForm(FlaskForm):
-    """The rating drive's response card: the quick-answer ladder plus
-    want it, or no opinion (never saw it, or no memory of a verdict —
-    the field keeps its unseen_submit name from the "Haven't Seen It"
-    era)."""
-
-    movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
-    watchlist_submit = SubmitField("Add to Watchlist")
-    unseen_submit = SubmitField("No Opinion")
-
-
 class ReviewExportForm(FlaskForm):
     """History page: email the Letterboxd-format review export. The default
     export covers only entries added or edited since the last export; the
