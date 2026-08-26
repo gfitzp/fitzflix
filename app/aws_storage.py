@@ -1393,8 +1393,8 @@ def mark_archive_stale(file_id, reason=""):
         return False
 
     current_app.logger.warning(
-        f"'{file.basename}' its S3 archive is now stale ({reason}); "
-        f"queued for repair, which will run once the file is readable again"
+        f"The S3 archive for '{file.basename}' is now stale ({reason}); "
+        f"marked for repair, which will run once the file is readable again"
     )
     return True
 

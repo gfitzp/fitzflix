@@ -31,6 +31,7 @@ as long as its lossless twin outranks the DD+ Atmos 5.1, and analyzing
 it — by this task or by hand in Plex — will not change that.
 """
 
+import hashlib
 import os
 import traceback
 from datetime import timedelta
@@ -319,7 +320,14 @@ def analyze_plex_media(file_paths, retries=0):
                 sorted(wanted - analyzed),
                 retries=retries + 1,
                 job_timeout=1800,
-                job_id=retry_job_id("analyze_plex_media", unmatched[0], retries + 1),
+                # Keyed on the whole batch, not its first basename (#242):
+                # two distinct batches sharing a first file must not
+                # dedupe into one retry
+                job_id=retry_job_id(
+                    "analyze_plex_media",
+                    hashlib.sha256("|".join(unmatched).encode()).hexdigest()[:16],
+                    retries + 1,
+                ),
                 result_ttl=86400,
                 description=f"Re-analyzing {len(unmatched)} file(s) in Plex",
             )
