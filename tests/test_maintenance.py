@@ -665,3 +665,36 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
         f"failed to remount {stub}: still dead — share is mounted at {duplicate}"
         in (actions)
     )
+
+
+def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
+    """#239. An NFS device reads `host:/export/Share` with the share
+    name literal rather than URL-encoded; the smb-only match couldn't
+    see an NFS-mounted duplicate at all, so heal_mounts would keep
+    remounting into the void — the exact failure #233 fixed for SMB."""
+
+    import subprocess as subprocess_module
+
+    import app.maintenance as maintenance
+
+    output = _mount_output(
+        "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)",
+        "192.168.1.175:/volume1/TV Shows on /Volumes/TV Shows-1 "
+        "(nfs, nodev, nosuid, mounted by server)",
+        "192.168.1.175:/volume1/Movies on /Volumes/Movies (nfs, nodev, nosuid)",
+    )
+    monkeypatch.setattr(
+        maintenance.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess_module.CompletedProcess(
+            command, 0, stdout=output, stderr=""
+        ),
+    )
+
+    assert maintenance.share_mounted_elsewhere("TV Shows", "/Volumes/TV Shows") == [
+        "/Volumes/TV Shows-1"
+    ]
+
+    # The share already on its canonical path is not its own duplicate
+
+    assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []

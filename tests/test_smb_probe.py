@@ -726,3 +726,61 @@ def test_a_share_that_is_gone_entirely_is_still_unavailable(app, tmp_path, monke
         app.config["LIBRARY_DIR"] = str(volumes)
 
         assert share_available(str(volumes / "Movies" / "a.mkv")) is False
+
+
+def test_the_sweep_asks_each_share_before_opening_its_files(app, monkeypatch):
+    """#237: a WEDGED share — still in the mount table, hanging
+    syscalls — would stall the sweep's first os.open until the job
+    timeout killed it, losing the rest of the sweep, the recheck, and
+    the history write. Each share is health-checked once, through
+    volume_alive's watchdog, and a share that doesn't answer means its
+    files are never opened at all."""
+
+    from app import db, smb_probe
+    from app.maintenance import smb_handle_sweep
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Wedged Share Film", 2021)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+
+        def boom(path):
+            raise AssertionError(f"probed '{path}' on a share that never answered")
+
+        monkeypatch.setattr(smb_probe, "share_responsive", lambda path: False)
+        monkeypatch.setattr(smb_probe, "probe_path", boom)
+
+        assert smb_handle_sweep() is True
+        assert smb_probe.recorded_state() == {}
+
+
+def test_recheck_skips_a_wedged_share_without_probing(app, monkeypatch, tmp_path):
+    """#237, the recheck half: a recorded failure on a share that
+    doesn't answer the watchdog is skipped — record untouched, file
+    never opened — instead of hanging on the probe."""
+
+    from app import smb_probe
+
+    path = str(tmp_path / "Movies" / "on-a-wedged-share.mkv")
+
+    with app.app_context():
+        smb_probe.record_result(failure(path), context="mkvpropedit_task")
+
+        def boom(p):
+            raise AssertionError(f"probed '{p}' on a share that never answered")
+
+        monkeypatch.setattr(smb_probe, "share_responsive", lambda p: False)
+        monkeypatch.setattr(smb_probe, "probe_path", boom)
+
+        report = smb_probe.recheck()
+
+        assert report.gone == []
+        assert report.healed == []
+        assert report.still_failing == []
+        assert [result["path"] for result in report.skipped] == [path]
+        assert "not responding" in report.skipped[0]["message"]
+
+        # The record — and the first_seen it carries — must survive
+
+        assert path in smb_probe.recorded_state()

@@ -493,7 +493,11 @@ def share_mounted_elsewhere(share, mount):
     remount would land where it was asked to.
 
     Only network mounts are considered. A local disk that happens to
-    parse out of `mount` is not ours to unmount.
+    parse out of `mount` is not ours to unmount. SMB devices read
+    `//user@host/Share` with the share name URL-encoded; NFS devices
+    read `host:/export/Share` with it literal (#239 — the session
+    collapse that motivated this was induced while testing NFS, whose
+    duplicates the smb-only match couldn't see).
     """
 
     try:
@@ -506,9 +510,15 @@ def share_mounted_elsewhere(share, mount):
         # `//server@host/TV%20Shows on /Volumes/TV Shows-1 (smbfs, ...)`.
         # rsplit on the options, so a path containing " (" survives
         device, separator, path = line.rsplit(" (", 1)[0].partition(" on ")
-        if not separator or not device.startswith("//"):
+        if not separator:
             continue
-        if unquote(device.rsplit("/", 1)[-1]) == share and path != mount:
+        if device.startswith("//"):
+            name = unquote(device.rsplit("/", 1)[-1])
+        elif ":" in device and device.partition(":")[2].startswith("/"):
+            name = device.partition(":")[2].rstrip("/").rsplit("/", 1)[-1]
+        else:
+            continue
+        if name == share and path != mount:
             elsewhere.append(path)
 
     return elsewhere
@@ -1350,6 +1360,7 @@ def smb_handle_sweep():
             probe_path,
             recheck,
             record_result,
+            share_responsive,
             share_root,
             unmounted,
         )
@@ -1362,6 +1373,16 @@ def smb_handle_sweep():
         not_local = 0
         offline_shares = set()
 
+        # Each share is health-checked ONCE, through volume_alive's
+        # watchdog, before any of its files is opened (#237): an
+        # unmounted share fails the probes fast, but a WEDGED one —
+        # still in the mount table, hanging syscalls — would stall the
+        # sweep's very next os.open until the job timeout killed it,
+        # losing the rest of the sweep, the recheck, and the history
+        # write while occupying the maintenance queue for the hour
+
+        share_alive = {}
+
         for i, file in enumerate(files):
             if job and i % 500 == 0:
                 job.meta["description"] = "Probing library files for lost SMB handles"
@@ -1369,6 +1390,14 @@ def smb_handle_sweep():
                 job.save_meta()
 
             path = library_path(file)
+            share = share_root(path)
+            if share not in share_alive:
+                share_alive[share] = share_responsive(path)
+                if not share_alive[share]:
+                    offline_shares.add(share)
+            if not share_alive[share]:
+                continue
+
             result = probe_path(path)
             record_result(result, context="nightly sweep")
 
@@ -1393,8 +1422,8 @@ def smb_handle_sweep():
 
         for share in sorted(offline_shares):
             current_app.logger.error(
-                f"SMB sweep: '{share}' is not mounted, so none of its files "
-                f"were probed"
+                f"SMB sweep: '{share}' is not mounted or not responding, so "
+                f"none of its files were probed"
             )
 
         for file in broken:

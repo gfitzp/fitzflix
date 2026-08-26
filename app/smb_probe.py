@@ -202,6 +202,26 @@ def share_available(path):
         return False
 
 
+def share_responsive(path):
+    """Whether the share behind a path answers within a timeout AND is
+    really mounted.
+
+    share_available asks "is it there"; this adds "will touching it
+    hang" (#237). A WEDGED share — still in the mount table, hanging
+    syscalls — stalls the very next os.open until the caller's job
+    timeout kills it, so anything about to probe many files must ask
+    this once per share first, through volume_alive's watchdog thread.
+    A path outside /Volumes answers from a plain (and safe) statvfs.
+    """
+
+    # Imported here rather than at module scope, like mountpoint_ok
+    # above: maintenance pulls in the app factory
+
+    from app.maintenance import volume_alive
+
+    return volume_alive(share_root(path))
+
+
 def unmounted(result):
     """Whether an ENOENT means the share is gone, not the file.
 
@@ -462,18 +482,39 @@ def recheck():
     record untouched. Every file on an unmounted share reports ENOENT at
     once, and mistaking that for departure would drop the entire record —
     including durations that exist nowhere else — the moment a recheck
-    happened to run mid-remount.
+    happened to run mid-remount. Each share is health-checked ONCE,
+    through a watchdog, before any of its files is probed (#237): a
+    wedged share hangs the very open the probe would make, so asking
+    the file directly is what must not happen.
     """
 
     healed = []
     still_failing = []
     gone = []
     skipped = []
+    responsive = {}
 
     for path, entry in recorded_state().items():
         if _entry_state(entry) == HEALED:
             healed.append(_healed_result(path, entry))
             forget(path)
+            continue
+
+        share = share_root(path)
+        if share not in responsive:
+            responsive[share] = share_responsive(path)
+        if not responsive[share]:
+            skipped.append(
+                {
+                    "path": path,
+                    "ok": False,
+                    "stage": "share",
+                    "errno": None,
+                    "message": "share not mounted or not responding",
+                    "first_seen": entry.get("first_seen"),
+                    "share": share,
+                }
+            )
             continue
 
         result = probe_path(path)
