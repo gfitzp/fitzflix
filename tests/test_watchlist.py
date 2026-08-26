@@ -367,8 +367,8 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
 
     from app.models import Movie
 
-    class FakeTMDb:
-        """Canned TMDb response."""
+    class FakeTMDB:
+        """Canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
@@ -384,7 +384,7 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
     def fake_tmdb_get(url, params=None, **kwargs):
         """Movie details for the unowned film."""
 
-        return FakeTMDb(
+        return FakeTMDB(
             {
                 "title": "Wanted Unknown",
                 "release_date": "1999-09-09",
@@ -700,10 +700,10 @@ def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
 
 
 def test_movie_page_not_interested_toggle(app, admin_client):
-    """An unowned, unlogged record offers Not Interested (#45b):
-    marking flags the film, clears any watchlist entry, and suppresses
-    the funnel; undoing restores it. Owned films never see the button —
-    the rating ladder's zero stars is their channel."""
+    """The ladder's \u2715 is the one disinterest channel (#184 removed
+    the standalone buttons): a zero quick-rating flags an unowned,
+    unlogged film and clears its watchlist entry, a second zero unflags
+    it, and the buttons render nowhere."""
 
     import re
 
@@ -714,18 +714,17 @@ def test_movie_page_not_interested_toggle(app, admin_client):
     with app.app_context():
         record = make_movie("Refusable Record", 1994, tmdb_id=9320)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=record.id))
-        owned = make_movie("Owned Unrefusable", 1995)
-        make_movie_file(owned, "Bluray-1080p")
         db.session.commit()
-        record_id, owned_id = record.id, owned.id
+        record_id = record.id
 
     page = admin_client.get(f"/movie/{record_id}").get_data(as_text=True)
-    assert 'name="not_interested_submit"' in page
+    assert 'name="not_interested_submit"' not in page
+    assert 'name="interested_submit"' not in page
     token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     admin_client.post(
         f"/movie/{record_id}",
-        data={"csrf_token": token, "not_interested_submit": "Not Interested"},
+        data={"csrf_token": token, "quick_rating": "0"},
     )
     with app.app_context():
         assert (
@@ -742,12 +741,12 @@ def test_movie_page_not_interested_toggle(app, admin_client):
 
     page = admin_client.get(f"/movie/{record_id}").get_data(as_text=True)
     assert "won&#39;t be recommended" in page or "won't be recommended" in page
-    assert 'name="interested_submit"' in page
+    assert 'name="interested_submit"' not in page
     assert "Might interest you" not in page
 
     admin_client.post(
         f"/movie/{record_id}",
-        data={"csrf_token": token, "interested_submit": "Undo Not Interested"},
+        data={"csrf_token": token, "quick_rating": "0"},
     )
     with app.app_context():
         assert (
@@ -756,11 +755,6 @@ def test_movie_page_not_interested_toggle(app, admin_client):
             ).first()
             is None
         )
-
-    # Owned films use the ladder's zero stars, not this button
-
-    page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
-    assert 'name="not_interested_submit"' not in page
 
 
 def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
@@ -810,7 +804,7 @@ def test_watchlist_availability_filter(app, admin_client):
         both = make_movie("Filter Both Film", 1994, tmdb_id=9404)
         # Fetched, and carried by nobody the user subscribes to
         nowhere = make_movie("Filter Nowhere Film", 1995, tmdb_id=9405)
-        # No TMDb id at all: known-negative, never pending
+        # No TMDB id at all: known-negative, never pending
         untracked = make_movie("Filter Untracked Film", 1996)
         for movie in (
             owned,

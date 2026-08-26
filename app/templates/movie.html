@@ -120,7 +120,7 @@
 {% endif %}
 <hr>
 {# Radarr request eligibility for the Find menu: admin, Radarr
-   configured, unowned, and TMDb-known #}
+   configured, unowned, and TMDB-known #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
 	{% if plex_playable %}
@@ -182,7 +182,7 @@
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
 		{% endif %}
 		{% if movie.tmdb_id %}
-		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDb" style="height: 30px;"></a>
+		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDB" style="height: 30px;"></a>
 		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 		{% else %}
 		<a href="https://letterboxd.com/search/{{ movie.title|urlencode }} {{ movie.year }}/" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
@@ -217,20 +217,11 @@
 		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
 		{% endif %}
 	</form>
-	{# Not interested (#45b): unowned, unlogged films only — waves the
-	   film off every recommendation surface without a diary row; owned
-	   films say it with the ladder's zero stars instead #}
+	{# Not interested (#45b, buttons removed per #184): the ladder's
+	   &#10005; toggle is the one way to declare disinterest — the note
+	   just surfaces the standing verdict #}
 	{% if refused %}
-	<form action="" method="post" class="d-inline">
-		{{ not_interested_form.csrf_token }}
-		<button type="submit" name="interested_submit" value="Undo Not Interested" class="btn btn-sm btn-outline-secondary">Undo Not Interested</button>
-	</form>
 	<span class="small text-muted ms-1">This film won't be recommended.</span>
-	{% elif not films and not review %}
-	<form action="" method="post" class="d-inline">
-		{{ not_interested_form.csrf_token }}
-		<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
-	</form>
 	{% endif %}
 	{# The ad-hoc Radarr hand-off lives on the Find menu now; the
 	   badge stays behind so a standing request reads at a glance #}
@@ -254,14 +245,14 @@
 		{% if movie.tmdb_id %}
 		<form action="" method="post" class="mt-2">
 			{{ tmdb_remove_form.hidden_tag() }}
-			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDb ID from this movie? Its TMDb details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
+			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDB ID from this movie? Its TMDB details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
 		</form>
 		{% endif %}
 		{# tmdb_data_as_of lags tmdb_id on a just-created record: the page
 		   renders immediately after a watchlist add or log, while the
 		   enrichment refresh is still in the queue #}
 		{% if movie.tmdb_id and movie.tmdb_data_as_of %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% elif movie.tmdb_id %}<em class="small">TMDB data refreshing&hellip;</em>{% endif %}
-		{% if movie.tmdb_ignored %}<em class="small text-muted">Detached from TMDb — enter an ID above to match it again</em>{% endif %}
+		{% if movie.tmdb_ignored %}<em class="small text-muted">Detached from TMDB — enter an ID above to match it again</em>{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
@@ -299,7 +290,7 @@
 	</div>
 	<div class="col-sm-4">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.movie_poster', movie_id=movie.id) }}" role="button">Change poster&hellip;</a>
-		<p class="small text-muted mt-1 mb-0">Pick from the TMDb gallery or upload an image.</p>
+		<p class="small text-muted mt-1 mb-0">Pick from the TMDB gallery or upload an image.</p>
 	</div>
 </div>
 {% endblock %}

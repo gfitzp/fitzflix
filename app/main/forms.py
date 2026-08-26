@@ -108,9 +108,9 @@ class MovieReviewForm(FlaskForm):
 
 
 class TMDBLookupForm(FlaskForm):
-    """Movie page: refresh or re-point a title's TMDb data.
+    """Movie page: refresh or re-point a title's TMDB data.
 
-    A blank id means "search TMDb by title" — useful for a record that
+    A blank id means "search TMDB by title" — useful for a record that
     has never been matched, destructive for one that has, so the routes
     refuse a blank submit when an id is already stored (#207).
     """
@@ -120,9 +120,9 @@ class TMDBLookupForm(FlaskForm):
 
 
 class TMDBRemoveForm(FlaskForm):
-    """Movie and TV pages: detach a record from TMDb for good.
+    """Movie and TV pages: detach a record from TMDB for good.
 
-    For titles TMDb has no entry for — home movies, and ids TMDb has
+    For titles TMDB has no entry for — home movies, and ids TMDB has
     deleted out from under a record.
     """
 
@@ -130,9 +130,9 @@ class TMDBRemoveForm(FlaskForm):
 
 
 class TMDBRefreshForm(FlaskForm):
-    """Maintenance page: refresh TMDb data for the whole library."""
+    """Maintenance page: refresh TMDB data for the whole library."""
 
-    tmdb_refresh = SubmitField("Refresh TMDb Info")
+    tmdb_refresh = SubmitField("Refresh TMDB Info")
 
 
 class CriterionForm(FlaskForm):
@@ -211,7 +211,7 @@ class TVShoppingFilterForm(FlaskForm):
 class StreamingProvidersForm(FlaskForm):
     """Profile page: which streaming services this user subscribes to.
 
-    Availability displays (movie pages, TMDb search) are customized to
+    Availability displays (movie pages, TMDB search) are customized to
     these picks per user — explicitly not a site-wide setting.
     """
 
@@ -241,15 +241,6 @@ class RadarrForm(FlaskForm):
     movie_id = IntegerField(widget=HiddenInput(), validators=[Optional()], default=None)
     radarr_request_submit = SubmitField("Request via Radarr")
     radarr_remove_submit = SubmitField("Remove from Radarr")
-
-
-class NotInterestedForm(FlaskForm):
-    """Wave an unowned film off every recommendation surface — or wave
-    it back on. Owned films use the rating ladder's zero stars instead,
-    which writes a real diary verdict."""
-
-    not_interested_submit = SubmitField("Not Interested")
-    interested_submit = SubmitField("Undo Not Interested")
 
 
 class RateFilmForm(FlaskForm):
@@ -404,7 +395,7 @@ class RejectActionForm(FlaskForm):
 
 
 class MovieMergeForm(FlaskForm):
-    """Maintenance page: merge duplicate movies sharing a TMDb id."""
+    """Maintenance page: merge duplicate movies sharing a TMDB id."""
 
     merge_tmdb_id = HiddenField(validators=[DataRequired()])
     merge_submit = SubmitField("Merge")

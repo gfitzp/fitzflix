@@ -32,7 +32,6 @@ from app import db, safe_job_id
 from app.main.forms import (
     CriterionForm,
     FileDeleteForm,
-    NotInterestedForm,
     LibrarySearchForm,
     MKVMergeForm,
     MKVPropEditForm,
@@ -146,13 +145,13 @@ CREW_ROLE_LABELS = {
 
 
 # A multi-role credit line reads in conventional closing-credit order —
-# directed, written, shot, edited, scored — not TMDb payload order
+# directed, written, shot, edited, scored — not TMDB payload order
 
 CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
 
 
 # A TV role that is the person appearing as themselves — "Self",
-# "Self - Host", "Herself (archive footage)" — as TMDb writes them:
+# "Self - Host", "Herself (archive footage)" — as TMDB writes them:
 # the self-word leads the line. Word-bounded so genuine characters
 # that merely contain the letters (Harry Selfridge) survive
 
@@ -160,8 +159,8 @@ SELF_ROLE = re.compile(r"(?:him|her|them)?sel(?:f|ves)\b", re.IGNORECASE)
 
 
 def _tmdb_person_details(person_id):
-    """The person's name, photo, and biographical fields from TMDb, cached
-    for a day; None when there's no API key or TMDb doesn't answer with a
+    """The person's name, photo, and biographical fields from TMDB, cached
+    for a day; None when there's no API key or TMDB doesn't answer with a
     name, which the filmography treats as an unknown person.
     """
 
@@ -197,7 +196,7 @@ def _tmdb_person_details(person_id):
 
 
 def _tmdb_date(value):
-    """A date from TMDb's YYYY-MM-DD strings; None when absent or odd."""
+    """A date from TMDB's YYYY-MM-DD strings; None when absent or odd."""
 
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
@@ -207,7 +206,7 @@ def _tmdb_date(value):
 
 def _person_bio(details):
     """Preformatted born/died lines and biography text for the filmography
-    header, from a TMDb person-details dict. Ages compute against the
+    header, from a TMDB person-details dict. Ages compute against the
     death date when there is one.
     """
 
@@ -270,11 +269,11 @@ def movie_library():
     )
 
     if credit:
-        # Credit ids are TMDb person ids, so the filmography isn't limited
-        # to people with local credit rows: anyone TMDb knows can be
-        # browsed from any cast list. The day-cached TMDb person lookup
+        # Credit ids are TMDB person ids, so the filmography isn't limited
+        # to people with local credit rows: anyone TMDB knows can be
+        # browsed from any cast list. The day-cached TMDB person lookup
         # supplies the biography for everyone; a local credit row backstops
-        # the name and photo when TMDb can't be reached
+        # the name and photo when TMDB can't be reached
 
         person = TMDBCredit.query.filter_by(id=int(credit)).first()
         details = _tmdb_person_details(int(credit)) or {}
@@ -286,12 +285,12 @@ def movie_library():
             abort(404)
         bio = _person_bio(details) if details else None
 
-        # The filmography shows the person's entire TMDb career, whether
+        # The filmography shows the person's entire TMDB career, whether
         # or not a film has any local record. Local rows attach the best
         # owned file through an outer join (the rank condition has to live
         # in the join, not the WHERE clause, or file-less review-only
         # records would be filtered away); the full credit list comes from
-        # TMDb, cached for a day.
+        # TMDB, cached for a day.
 
         best_file_ids = db.session.query(ranked_files.c.id).filter(
             ranked_files.c.rank == 1
@@ -351,7 +350,7 @@ def movie_library():
             .all()
         }
 
-        # The person's full TMDb credit list, cached for a day
+        # The person's full TMDB credit list, cached for a day
 
         tmdb_credits = None
         if current_app.config["TMDB_API_KEY"]:
@@ -387,8 +386,8 @@ def movie_library():
         if isinstance(tmdb_credits, list):
             tmdb_credits = {"cast": tmdb_credits, "crew": []}
 
-        # Merge: one row per film, TMDb credits first (deduped by film,
-        # combining characters), then any local credits TMDb didn't list
+        # Merge: one row per film, TMDB credits first (deduped by film,
+        # combining characters), then any local credits TMDB didn't list
 
         local_by_tmdb_id = {
             entry["movie"].tmdb_id: entry
@@ -398,7 +397,7 @@ def movie_library():
         rows = {}
 
         def credit_row(entry):
-            """The merged filmography row for a TMDb credit entry,
+            """The merged filmography row for a TMDB credit entry,
             created on first sight — cast and crew credits for the same
             film share one row."""
 
@@ -474,7 +473,7 @@ def movie_library():
 
         # "Might interest you" markers: unowned films score at render
         # time from the already-cached credits payload against the
-        # user's stored taste profile (no TMDb calls, nothing
+        # user's stored taste profile (no TMDB calls, nothing
         # persisted); owned unwatched films badge when the nightly
         # recompute ranked them in the stored recommendations, so
         # filmographies agree with the library rail and search pages
@@ -501,7 +500,7 @@ def movie_library():
         # this user's services. Availability is read from the cache the
         # nightly refresh keeps full and never fetched inline (Aug
         # 2026): a career can span hundreds of films and every fetch
-        # shares the app-wide TMDb rate limiter, so a prolific actor's
+        # shares the app-wide TMDB rate limiter, so a prolific actor's
         # page stalled four to six seconds behind fifty fetches — the
         # record-less films the refresh can't cover warm in the
         # background for the next visit
@@ -543,12 +542,12 @@ def movie_library():
                 if matches or rentals:
                     streaming_attribution = True
 
-        # Television credits: the person's TMDb TV career,
+        # Television credits: the person's TMDB TV career,
         # one row per series, day-cached like the film list. Self
         # appearances are dropped — talk-show and awards-night rows
         # would swamp the acting credits (the key-roles-only spirit).
         # Owned series link to their pages; TV has no review flow, so
-        # unowned rows render unlinked (the TMDb-row rule).
+        # unowned rows render unlinked (the TMDB-row rule).
 
         tv_rows = {}
         tv_credits = None
@@ -684,7 +683,7 @@ def movie_library():
 
     elif genre:
         # Genre links on the movie pages land here: the library
-        # filtered to films carrying the TMDb genre, composable with
+        # filtered to films carrying the TMDB genre, composable with
         # the quality dropdown
 
         genre_row = db.session.get(TMDBGenre, int(genre))
@@ -872,9 +871,9 @@ def criterion_collection():
 
     Every release from the Wikidata spine cache renders, not just the
     library's films: owned films keep their settled/amber verdicts,
-    releases the library lacks render like TMDb search rows (their row
+    releases the library lacks render like TMDB search rows (their row
     opens the log page, so they're watchlistable), and the handful of
-    releases Wikidata has no TMDb id for list as plain spine rows. A
+    releases Wikidata has no TMDB id for list as plain spine rows. A
     Criterion Channel badge marks what's streaming there right now.
     """
 
@@ -898,7 +897,7 @@ def criterion_collection():
     ]
 
     # Library rows: best main-feature file per film, for films marked
-    # with Criterion metadata OR matching a release by TMDb id (a film
+    # with Criterion metadata OR matching a release by TMDB id (a film
     # whose record predates its release never got marked, but the
     # catalog knows its spine)
 
@@ -949,11 +948,11 @@ def criterion_collection():
     )
     threshold = _upgrade_threshold()
 
-    # Each library film consumes its catalog release (TMDb id first,
+    # Each library film consumes its catalog release (TMDB id first,
     # title+year fallback — the import's own matching order), so the
     # remainder renders as beyond-the-library rows. A film with both a
     # standalone release and a set membership consumes both through its
-    # shared TMDb id
+    # shared TMDB id
 
     consumed_tmdb = set()
     consumed_title_year = set()
@@ -994,10 +993,10 @@ def criterion_collection():
 
     # The rest of the catalog. Standalone entries precede set entries
     # in the cache, so a film with both keeps its own spine; releases
-    # without a TMDb id render as plain spine rows. Box-set CONTAINER
+    # without a TMDB id render as plain spine rows. Box-set CONTAINER
     # items are redundant: Wikidata gives the set item the spine (and
-    # no TMDb id — TMDb has no set entries) while its member films
-    # arrive separately wearing the set title, so a TMDb-less row whose
+    # no TMDB id — TMDB has no set entries) while its member films
+    # arrive separately wearing the set title, so a TMDB-less row whose
     # spine belongs to a set would just shadow its own members ("#88
     # Ivan the Terrible" between the actual Parts I–III)
 
@@ -1545,48 +1544,20 @@ def movie(movie_id):
         flash(f"Removed '{title}' from your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # Not-interested toggle (#45b): waves an unowned film off every
-    # recommendation surface without fabricating a diary row — owned
-    # films use the ladder's zero stars instead. Marking clears any
-    # watchlist entry (the two contradict), and both directions nudge
-    # the profile recompute since the weights changed
+    # Not-interested state (#45b; the standalone buttons are gone per
+    # #184 — the ladder's ✕ toggle is the only writer now, handled in
+    # the quick-rating branch): read for the ladder's flag and the note
 
-    not_interested_form = NotInterestedForm()
     refused = (
         UserMovieStatus.query.filter_by(
             user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
         ).first()
         is not None
     )
-    if (
-        not_interested_form.not_interested_submit.data
-        and not_interested_form.validate_on_submit()
-    ):
-        if _mark_not_interested(current_user.id, movie.id):
-            _enqueue_profile_recompute()
-            flash(f"Got it — '{title}' won't be recommended", "info")
-        else:
-            flash(
-                f"You've logged '{title}' — the lowest rating for a "
-                f"seen film is 1 star",
-                "warning",
-            )
-        return redirect(url_for("main.movie", movie_id=movie.id))
-    if (
-        not_interested_form.interested_submit.data
-        and not_interested_form.validate_on_submit()
-    ):
-        UserMovieStatus.query.filter_by(
-            user_id=int(current_user.id), movie_id=movie.id, kind="not_interested"
-        ).delete()
-        db.session.commit()
-        _enqueue_profile_recompute()
-        flash(f"'{title}' can be recommended again", "success")
-        return redirect(url_for("main.movie", movie_id=movie.id))
 
     transcode_form = TranscodeForm()
 
-    # Form to detach a movie from TMDb altogether, for a film TMDb has no
+    # Form to detach a movie from TMDB altogether, for a film TMDB has no
     # entry for (#207)
 
     tmdb_remove_form = TMDBRemoveForm()
@@ -1594,17 +1565,17 @@ def movie(movie_id):
         movie.tmdb_movie_clear()
         db.session.commit()
         flash(
-            f"Removed the TMDb ID from '{title}'; it won't be looked up again "
+            f"Removed the TMDB ID from '{title}'; it won't be looked up again "
             f"until you enter one by hand",
             "success",
         )
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # Form to update a movie's information with the latest TMDb data
+    # Form to update a movie's information with the latest TMDB data
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-        # A blank id asks TMDb to search by title and takes the first hit,
+        # A blank id asks TMDB to search by title and takes the first hit,
         # which on an already-matched film silently re-points it at some
         # other movie. Only offer that for a film with nothing to lose —
         # and a detached film has something to lose: the detachment
@@ -1614,8 +1585,8 @@ def movie(movie_id):
             movie.tmdb_id is not None or movie.tmdb_ignored
         ):
             flash(
-                "Enter a TMDb ID to refresh this movie, or use "
-                "'Remove TMDB ID' to detach it from TMDb",
+                "Enter a TMDB ID to refresh this movie, or use "
+                "'Remove TMDB ID' to detach it from TMDB",
                 "warning",
             )
             return redirect(url_for("main.movie", movie_id=movie.id))
@@ -1628,7 +1599,7 @@ def movie(movie_id):
             movie.tmdb_ignored = False
             db.session.commit()
 
-        # Add a task to the fitzflix-sql queue to check TMDb and update the database;
+        # Add a task to the fitzflix-sql queue to check TMDB and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
         refresh_job = current_app.sql_queue.enqueue(
@@ -1639,8 +1610,8 @@ def movie(movie_id):
             at_front=True,
         )
 
-        # See if the requested TMDb ID already exists in the database;
-        # if so, since we're updating this movie with that movie's TMDb data,
+        # See if the requested TMDB ID already exists in the database;
+        # if so, since we're updating this movie with that movie's TMDB data,
         # redirect to that movie's info page
 
         existing_tmdb_movie = Movie.query.filter_by(
@@ -1652,7 +1623,7 @@ def movie(movie_id):
         else:
             movie_id = movie.id
 
-        # Check the status of the refresh job every second. If the TMDb refresh process
+        # Check the status of the refresh job every second. If the TMDB refresh process
         # completed within 10 seconds, redirect to the updated page, otherwise redirect
         # to the existing page and give the user a link to reload the page.
 
@@ -1662,12 +1633,12 @@ def movie(movie_id):
             waited_seconds = waited_seconds + 1
 
         if refresh_job.result:
-            flash(f"Refreshed TMDb data for '{movie.title} ({movie.year})'", "success")
+            flash(f"Refreshed TMDB data for '{movie.title} ({movie.year})'", "success")
 
         else:
             flash(
                 Markup(
-                    "Refreshing TMDb data for '{}' ({}) – <a href='{}'>Reload this page</a>"
+                    "Refreshing TMDB data for '{}' ({}) – <a href='{}'>Reload this page</a>"
                 ).format(
                     movie.title, movie.year, url_for("main.movie", movie_id=movie_id)
                 ),
@@ -1754,7 +1725,7 @@ def movie(movie_id):
     # never shows on a seen film — its watch already feeds the taste
     # profile. Owned films badge when the nightly recompute ranked them
     # in the stored recommendations; unowned records score through the
-    # coarse scorer against the profile-relative bar, like the TMDb
+    # coarse scorer against the profile-relative bar, like the TMDB
     # search results
 
     # The estimated rating (#45a): the shared score source — the stored
@@ -1826,7 +1797,6 @@ def movie(movie_id):
         on_watchlist=on_watchlist,
         might_interest=might_interest,
         estimated_rating=estimated,
-        not_interested_form=not_interested_form,
         refused=refused,
         suggestions=suggestions,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
@@ -2259,25 +2229,25 @@ def tv(series_id):
         )
         return redirect(url_for("main.tv_library"))
 
-    # Form to detach a series from TMDb altogether, for a series TMDb has
-    # no entry for — or an id TMDb has since deleted (#207)
+    # Form to detach a series from TMDB altogether, for a series TMDB has
+    # no entry for — or an id TMDB has since deleted (#207)
 
     tmdb_remove_form = TMDBRemoveForm()
     if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
         tv.tmdb_tv_clear()
         db.session.commit()
         flash(
-            f"Removed the TMDb ID from '{tv.title}'; it won't be looked up "
+            f"Removed the TMDB ID from '{tv.title}'; it won't be looked up "
             f"again until you enter one by hand",
             "success",
         )
         return redirect(url_for("main.tv", series_id=tv.id))
 
-    # Form to update a TV series' information with the latest TMDb data
+    # Form to update a TV series' information with the latest TMDB data
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
-        # A blank id asks TMDb to search by title and takes the first hit,
+        # A blank id asks TMDB to search by title and takes the first hit,
         # which on an already-matched series silently re-points it at some
         # other show — the merge reported in #207. A detached series is
         # guarded too: a blank refresh must not quietly undo the
@@ -2287,8 +2257,8 @@ def tv(series_id):
             tv.tmdb_id is not None or tv.tmdb_ignored
         ):
             flash(
-                "Enter a TMDb ID to refresh this series, or use "
-                "'Remove TMDB ID' to detach it from TMDb",
+                "Enter a TMDB ID to refresh this series, or use "
+                "'Remove TMDB ID' to detach it from TMDB",
                 "warning",
             )
             return redirect(url_for("main.tv", series_id=tv.id))
@@ -2301,7 +2271,7 @@ def tv(series_id):
             tv.tmdb_ignored = False
             db.session.commit()
 
-        # Add a task to the fitzflix-sql queue to check TMDb and update the database;
+        # Add a task to the fitzflix-sql queue to check TMDB and update the database;
         # add it to the front of the queue since it's interactively added by the user
 
         refresh_job = current_app.sql_queue.enqueue(
@@ -2312,8 +2282,8 @@ def tv(series_id):
             at_front=True,
         )
 
-        # See if the requested TMDb ID already exists in the database;
-        # if so, since we're updating this TV series with that show's TMDb data,
+        # See if the requested TMDB ID already exists in the database;
+        # if so, since we're updating this TV series with that show's TMDB data,
         # redirect to that show's info page
 
         existing_tmdb_tv = TVSeries.query.filter_by(
@@ -2325,7 +2295,7 @@ def tv(series_id):
         else:
             tv_id = tv.id
 
-        # Check the status of the refresh job every second. If the TMDb refresh process
+        # Check the status of the refresh job every second. If the TMDB refresh process
         # completed within 10 seconds, redirect to the updated page, otherwise redirect
         # to the existing page and give the user a link to reload the page.
 
@@ -2335,12 +2305,12 @@ def tv(series_id):
             waited_seconds = waited_seconds + 1
 
         if refresh_job.result:
-            flash(f"Refreshed TMDb data for '{tv.title}'", "success")
+            flash(f"Refreshed TMDB data for '{tv.title}'", "success")
 
         else:
             flash(
                 Markup(
-                    "Refreshing TMDb data for '{}' – <a href='{}'>Reload this page</a>"
+                    "Refreshing TMDB data for '{}' – <a href='{}'>Reload this page</a>"
                 ).format(tv.title, url_for("main.tv", series_id=tv_id)),
                 "info",
             )
@@ -3083,7 +3053,7 @@ ROLE_PRECEDENCE = (
 def _ranked_people_query(role, query_text, minimum_films):
     """People with their work counts under the role filter, optionally
     narrowed by a name search, most works first. Ties break on surname:
-    TMDb has no structured sort name, so the last whitespace-separated
+    TMDB has no structured sort name, so the last whitespace-separated
     token stands in for it (wrong for "Jr." suffixes and multi-word
     surnames, fine as a tie-break)."""
 

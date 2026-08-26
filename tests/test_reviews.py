@@ -126,7 +126,7 @@ def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
 
 
 def test_match_task_resolves_library_films_and_hands_off(app):
-    """Films already in the library match without TMDb; with no API key
+    """Films already in the library match without TMDB; with no API key
     configured, unowned films are skipped rather than failing the import."""
 
     from app import db
@@ -567,7 +567,7 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
 
     with app.app_context():
         user_id = User.query.first().id
-        # The review block only renders for TMDb-matched movies
+        # The review block only renders for TMDB-matched movies
         movie = make_movie(
             "Liked but Unrated", 1986, tmdb_data_as_of=datetime(2026, 1, 1)
         )
@@ -595,8 +595,8 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
     assert "star filled" not in page and "star estimated" not in page
 
 
-class FakeTMDbDetails:
-    """A canned TMDb movie-details response."""
+class FakeTMDBDetails:
+    """A canned TMDB movie-details response."""
 
     def __init__(self, payload):
         self._payload = payload
@@ -750,7 +750,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     from app import db
@@ -769,7 +769,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "Horror" in page and "Thriller" in page
     assert ">PG</span>" in page
     # The cast scroller shows every credited actor and everyone links to
-    # a filmography page — the page serves any TMDb person id, so people
+    # a filmography page — the page serves any TMDB person id, so people
     # without local credit rows browse the same as known ones — and
     # deep-billed names (order > 2) appear too
     assert "Roy Scheider" in page
@@ -797,7 +797,7 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
@@ -848,9 +848,10 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
 def test_review_tmdb_not_interested_creates_flagged_record(
     app, admin_client, monkeypatch
 ):
-    """The TMDb log page's Not Interested button (#45b) creates the
-    record and flags it in one step — no diary row, any watchlist entry
-    cleared — so the film leaves every recommendation surface."""
+    """The TMDB log page's ladder \u2715 (#45b; the standalone button
+    left with #184) creates the record and flags it in one step — no
+    diary row, any watchlist entry cleared — so the film leaves every
+    recommendation surface."""
 
     import app.main.discover as discover
 
@@ -864,16 +865,16 @@ def test_review_tmdb_not_interested_creates_flagged_record(
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     monkeypatch.setattr(
-        discover, "tmdb_get", lambda *a, **k: FakeTMDbDetails(JAWS_2_DETAILS)
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
     )
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
-    assert 'name="not_interested_submit"' in page
+    assert 'name="not_interested_submit"' not in page
     response = admin_client.post(
         "/review/tmdb/579",
         data={
             "csrf_token": csrf_token_from(page),
-            "not_interested_submit": "Not Interested",
+            "quick_rating": "0",
         },
     )
     assert response.status_code == 302
@@ -1690,7 +1691,7 @@ def _result(title, year):
 
 def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
     """ "A Close Shave" (1995) must beat the making-of featurette that
-    TMDb ranks first in the year-filtered results."""
+    TMDB ranks first in the year-filtered results."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1716,7 +1717,7 @@ def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
 
 
 def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
-    """The Men Who Tread on the Tiger's Tail: Letterboxd says 1945, TMDb
+    """The Men Who Tread on the Tiger's Tail: Letterboxd says 1945, TMDB
     says 1952 — a lone exact-title match is accepted at any distance."""
 
     from app.videos import _pick_tmdb_match
@@ -1742,7 +1743,7 @@ def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
 
 
 def test_pick_tmdb_match_keeps_alternative_title_head(app):
-    """Waking Ned Devine matched TMDb's "Waking Ned" through an
+    """Waking Ned Devine matched TMDB's "Waking Ned" through an
     alternative title; the year-filtered head remains the fallback."""
 
     from app.videos import _pick_tmdb_match
@@ -1753,7 +1754,7 @@ def test_pick_tmdb_match_keeps_alternative_title_head(app):
 
 
 def test_pick_tmdb_match_normalizes_dashes(app):
-    """Letterboxd's en-dash Star Wars titles equal TMDb's hyphens."""
+    """Letterboxd's en-dash Star Wars titles equal TMDB's hyphens."""
 
     from app.videos import _normalize_title, _pick_tmdb_match
 

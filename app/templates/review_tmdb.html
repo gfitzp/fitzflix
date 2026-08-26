@@ -58,12 +58,6 @@
 			{{ watchlist_form.hidden_tag() }}
 			<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
 		</form>
-		{# Not interested (#45b): waves the film off every recommendation
-		   surface without fabricating a diary row #}
-		<form action="" method="post" class="mt-2 d-inline-block">
-			{{ not_interested_form.csrf_token }}
-			<button type="submit" name="not_interested_submit" value="Not Interested" class="btn btn-sm btn-outline-secondary">Not Interested</button>
-		</form>
 	</div>
 </div>
 <hr>
@@ -85,7 +79,7 @@
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
 		{% endif %}
-		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDb" style="height: 30px;"></a>
+		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDB" style="height: 30px;"></a>
 		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 	</div>
 </div>

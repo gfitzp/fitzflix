@@ -1,5 +1,5 @@
 """The discovery surfaces (the routes.py split): the landing rails, the
-rating drive, the TMDb log page, the poster popover cards (film and
+rating drive, the TMDB log page, the poster popover cards (film and
 series), the watchlist, and the Radarr hand-off."""
 
 import os
@@ -27,7 +27,6 @@ from sqlalchemy.orm import contains_eager, selectinload
 
 from app import db
 from app.main.forms import (
-    NotInterestedForm,
     MovieReviewForm,
     RadarrForm,
     RateFilmForm,
@@ -768,7 +767,7 @@ def movie_card():
             ),
         )
 
-    # No local record: the card renders from TMDb directly
+    # No local record: the card renders from TMDB directly
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
@@ -863,7 +862,7 @@ def tv_card():
         # numbers within them. Season 0 is called Specials there rather
         # than counted as a season, and the card says it the same way —
         # otherwise a show with specials reads as owning more seasons
-        # than TMDb says exist. A series record with no files at all is
+        # than TMDB says exist. A series record with no files at all is
         # a leftover, and badges nothing
 
         season_counts = (
@@ -876,7 +875,7 @@ def tv_card():
         return render_template(
             "_tv_card.html",
             # No year appended: every other TV surface titles a series
-            # by its TMDb name alone, and the meta line opens with the
+            # by its TMDB name alone, and the meta line opens with the
             # run of years anyway
             display_title=series.tmdb_name if series.tmdb_name else series.title,
             href=url_for("main.tv", series_id=series.id),
@@ -900,7 +899,7 @@ def tv_card():
             owned_episodes=sum(count for _, count in season_counts),
         )
 
-    # No local record: the card renders from TMDb directly
+    # No local record: the card renders from TMDB directly
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
@@ -964,11 +963,11 @@ def tv_card():
 # guards against abuse
 MOVIE_STATES_LIMIT = 300
 
-# How many enriched payloads one state batch may FETCH from TMDb for
+# How many enriched payloads one state batch may FETCH from TMDB for
 # the tmdb-keyed lane — sized to cover a whole filmography page in a
 # single hydration pass (fetches run 10 abreast, so ~100 completes in
 # a couple of seconds) while bounding the burst one request can aim
-# at TMDb; cached payloads and overlay hits cost nothing and are
+# at TMDB; cached payloads and overlay hits cost nothing and are
 # never capped
 
 MOVIE_STATES_TMDB_FETCHES = 100
@@ -1091,7 +1090,7 @@ def movie_states():
     # Missing payloads warm in PARALLEL first (the rail's enrichment
     # pattern), so one hydration pass covers a whole career page in a
     # couple of seconds instead of twenty films per reload; the fetch
-    # cap bounds the burst a single request can aim at TMDb, and the
+    # cap bounds the burst a single request can aim at TMDB, and the
     # page itself never waits — hydration is an async fetch after
     # render
 
@@ -1412,7 +1411,7 @@ def radarr_request():
         flash("Radarr isn't configured, so films can't be requested.", "warning")
         return dest
     if not movie.tmdb_id:
-        flash(f"'{title}' has no TMDb id, so Radarr can't look it up.", "warning")
+        flash(f"'{title}' has no TMDB id, so Radarr can't look it up.", "warning")
         return dest
 
     try:
@@ -1597,10 +1596,10 @@ def rate():
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
-    """Review a film that isn't in the library, looked up on TMDb.
+    """Review a film that isn't in the library, looked up on TMDB.
 
     Reviewing creates a review-only movie record — enriched afterwards
-    through the standard TMDb refresh pipeline — so the film shows up in
+    through the standard TMDB refresh pipeline — so the film shows up in
     search and filmographies like any other seen-but-unowned title. Films
     already in the library redirect to their movie page, which has the
     same review form.
@@ -1619,7 +1618,7 @@ def review_tmdb(tmdb_id):
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     if not current_app.config["TMDB_API_KEY"]:
-        flash("TMDB_API_KEY is not configured, so TMDb can't be queried.", "warning")
+        flash("TMDB_API_KEY is not configured, so TMDB can't be queried.", "warning")
         return redirect(url_for("main.history"))
 
     try:
@@ -1634,7 +1633,7 @@ def review_tmdb(tmdb_id):
         r.raise_for_status()
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        flash("TMDb could not be reached; try again in a moment.", "warning")
+        flash("TMDB could not be reached; try again in a moment.", "warning")
         return redirect(url_for("main.history"))
 
     details = r.json()
@@ -1661,7 +1660,7 @@ def review_tmdb(tmdb_id):
         key=lambda person: person.get("order", 99),
     )
 
-    # The filmography page serves any TMDb person id, so every cast member
+    # The filmography page serves any TMDB person id, so every cast member
     # links whether or not they have local credit rows
 
     cast = [
@@ -1678,7 +1677,7 @@ def review_tmdb(tmdb_id):
     release_year = (details.get("release_date") or "")[:4]
     if not film_title or not release_year.isdigit():
         flash(
-            "TMDb has no title or release year for that film yet, so it "
+            "TMDB has no title or release year for that film yet, so it "
             "can't be reviewed.",
             "warning",
         )
@@ -1711,38 +1710,6 @@ def review_tmdb(tmdb_id):
         if _card_fetch():
             return jsonify({"on_watchlist": True})
         flash(f"Added '{film_title} ({year})' to your watchlist", "success")
-        return redirect(url_for("main.movie", movie_id=movie.id))
-
-    # Not interested (#45b): the same record-creating flow as a
-    # watchlist add, but the record gets the suppression flag instead —
-    # waved off every recommendation surface without a diary row
-
-    not_interested_form = NotInterestedForm()
-    if (
-        not_interested_form.not_interested_submit.data
-        and not_interested_form.validate_on_submit()
-    ):
-        movie, created = find_or_create_tmdb_movie(
-            tmdb_id, film_title, year, details=details
-        )
-        if _mark_not_interested(current_user.id, movie.id):
-            if created:
-                current_app.request_queue.enqueue(
-                    "app.videos.refresh_tmdb_info",
-                    args=("Movies", movie.id, tmdb_id),
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    description=(
-                        f"Refreshing TMDB data for '{movie.title} ({movie.year})'"
-                    ),
-                )
-            _enqueue_profile_recompute()
-            flash(f"Got it — '{film_title} ({year})' won't be recommended", "info")
-        else:
-            flash(
-                f"You've logged '{film_title} ({year})' — the lowest "
-                f"rating for a seen film is 1 star",
-                "warning",
-            )
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     # Like the movie page, the date starts blank — a date-less verdict
@@ -1900,6 +1867,5 @@ def review_tmdb(tmdb_id):
         movie=store_lookup,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
         watchlist_form=watchlist_form,
-        not_interested_form=not_interested_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
     )
