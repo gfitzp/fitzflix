@@ -1,7 +1,7 @@
 """evaluate_filename: the naming rules documented in the README's How-to-use
 tables, plus edge cases characterized from current behavior.
 
-These run offline: TMDb is unreachable in TestConfig, so titles and years
+These run offline: TMDB is unreachable in TestConfig, so titles and years
 always come straight from the filename.
 """
 
@@ -240,3 +240,20 @@ def test_bare_name_attaches_to_unique_year_suffixed_series(app):
         make_tv_series("Doctor Who (2005)")
         ambiguous = evaluate_filename("Doctor Who - S01E01 - [DVD].mkv", log=False)
         assert ambiguous["title"] == "Doctor Who"
+
+
+def test_importable_basename_skips_hidden_and_transient_names():
+    """The import sweeps only ever enqueue finished files (#244): hidden
+    names and transfer tools' intermediate artifacts stay invisible —
+    their promotion to the real name is what fires the import."""
+
+    from app import importable_basename
+
+    assert importable_basename("Jaws (1975) - [Bluray-1080p].mkv")
+    assert not importable_basename(".Jaws (1975) - [Bluray-1080p].mkv")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.staged")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.partial")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.part")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.tmp")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.filepart")
+    assert not importable_basename("Jaws (1975) - [Bluray-1080p].mkv.crdownload")

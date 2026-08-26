@@ -53,6 +53,23 @@ def safe_job_id(value):
     return re.sub(r"[^A-Za-z0-9_-]", "_", value)
 
 
+def importable_basename(basename):
+    """Whether an import-directory name is a finished file worth sweeping.
+
+    Hidden names and transfer tools' intermediate artifacts must never
+    become localization jobs (#244: a transient `.mkv.staged` copy was
+    swept into a job of its own, and the restart that killed it left a
+    phantom File Activity row) — the artifact's promotion to its real
+    name fires its own filesystem event when the transfer completes.
+    """
+
+    if basename.startswith("."):
+        return False
+    return not basename.lower().endswith(
+        (".staged", ".partial", ".part", ".tmp", ".filepart", ".crdownload")
+    )
+
+
 def retry_job_id(task, target, *attempt):
     """Name a retry job after the attempt it schedules, not just its target.
 
@@ -200,7 +217,7 @@ def cron_table(config):
         ),
         # Pre-warm estimate payloads nightly, after the recompute has
         # dropped the overlays and the rail's enrichments are cached —
-        # affinity people's careers plus the TMDb charts, pre-scored
+        # affinity people's careers plus the TMDB charts, pre-scored
         # into the tmdb overlay so tiles paint without waiting
         (
             "45 2 * * *",
@@ -226,7 +243,7 @@ def cron_table(config):
             "Refreshing in-production TV series",
         ),
         # Refresh every film's streaming availability nightly, last in
-        # the TMDb-heavy window: the watchlist, Criterion catalog, and
+        # the TMDB-heavy window: the watchlist, Criterion catalog, and
         # filmography pages render from this cache and never fetch
         # inline, so it has to be full before the day starts
         (
@@ -289,7 +306,7 @@ def cron_table(config):
             )
         )
 
-        # Re-verify TMDb episode titles against Plex's agent titles
+        # Re-verify TMDB episode titles against Plex's agent titles
         # nightly, after the 3:45 in-production TV refresh
 
         table.append(
@@ -432,7 +449,7 @@ def check_config(app):
 
     if not app.config["TMDB_API_KEY"]:
         app.logger.warning(
-            "TMDB_API_KEY is not set, TMDb metadata and poster lookups will be skipped"
+            "TMDB_API_KEY is not set, TMDB metadata and poster lookups will be skipped"
         )
 
 
@@ -485,8 +502,8 @@ def create_app(config_class=Config, watch_import_dir=False):
             # Process only those moved files that were previously invisible
 
             if (
-                os.path.basename(event.src_path).startswith(".")
-                and not os.path.basename(event.dest_path).startswith(".")
+                not importable_basename(os.path.basename(event.src_path))
+                and importable_basename(os.path.basename(event.dest_path))
                 and os.path.isfile(event.dest_path)
             ):
                 self.process_new_file(event.dest_path)
@@ -494,9 +511,9 @@ def create_app(config_class=Config, watch_import_dir=False):
         def on_created(self, event):
             """Process a file when it appears in the watched directory."""
 
-            # Process only those files that are not invisible
+            # Process only those files that are not invisible or transient
 
-            if not os.path.basename(event.src_path).startswith(".") and os.path.isfile(
+            if importable_basename(os.path.basename(event.src_path)) and os.path.isfile(
                 event.src_path
             ):
                 self.process_new_file(event.src_path)

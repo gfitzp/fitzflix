@@ -36,7 +36,7 @@ from unidecode import unidecode
 from flask import current_app, render_template
 from werkzeug.local import LocalProxy
 
-from app import db, get_app, retry_job_id, safe_job_id
+from app import db, get_app, importable_basename, retry_job_id, safe_job_id
 from app.aws_storage import aws_upload, untouched_key_still_claimed
 from app.criterion_catalog import (
     assign_criterion_release,
@@ -1603,7 +1603,7 @@ def finalize_localization(
                 except FileNotFoundError:
                     pass
 
-            # TMDb enrichment runs as its own task after the commit, so this
+            # TMDB enrichment runs as its own task after the commit, so this
             # task never waits on the network; it emails if the movie still
             # can't be matched. The fetch runs on the request queue and
             # hands its payload to the sql queue for the database writes.
@@ -1633,7 +1633,7 @@ def finalize_localization(
             # A matched series whose imported slot has no episode row yet
             # gets a refresh — a fresh season may have aired since
             # the last fetch. The membership check keeps a whole-season
-            # batch import to one queued job; slots TMDb simply doesn't
+            # batch import to one queued job; slots TMDB simply doesn't
             # know re-check at most once per import batch.
 
             elif (
@@ -1852,7 +1852,7 @@ def manual_import_task():
             for quality_title in qualities:
                 for file in import_directory_files:
                     if (
-                        (not os.path.basename(file).startswith("."))
+                        importable_basename(os.path.basename(file))
                         and f"[{quality_title}]" in file
                         and os.path.basename(file) not in handled_basenames
                         and os.path.isfile(
@@ -2082,7 +2082,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
         # without the series' year, and either form must land on the
         # record that already owns the show rather than splitting it
         # into a second series. A YEARED name attaches to the
-        # bare-titled record only when the year matches its TMDb
+        # bare-titled record only when the year matches its TMDB
         # first-air year — "Batman (1992)" never lands on the 1966
         # series. A BARE name attaches to a year-suffixed record only
         # when exactly one such record exists.
@@ -2216,7 +2216,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
         if not RefQuality.query.filter_by(quality_title=quality_title).first():
             return False
 
-        # Name the film according to how it's named in TMDb, as a film can have alternate
+        # Name the film according to how it's named in TMDB, as a film can have alternate
         # titles / spellings. For example:
         # A Fistful of Dynamite == Duck, You Sucker
         # Fifth Avenue Girl == 5th Avenue Girl
@@ -2242,7 +2242,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
             r.raise_for_status()
 
         except Exception:
-            # Don't let a TMDb API issue prevent us from importing the file
+            # Don't let a TMDB API issue prevent us from importing the file
 
             current_app.logger.warning(traceback.format_exc())
             tmdb_result = None
@@ -2278,7 +2278,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                     title = m.title
                     year = m.year
 
-                # If not, use the title and year we got from TMDb
+                # If not, use the title and year we got from TMDB
 
                 else:
                     title = tmdb_film.get("title", title)
