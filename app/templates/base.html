@@ -1015,6 +1015,26 @@
 			}).then(function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
 				invalidateCard(form.closest(".poster-actions"));
+				// A surface pairing the toggle with an "On your
+				// watchlist" badge (movie page, TMDB results) marks
+				// their shared wrapper data-watchlist-scope and the
+				// badge keeps up (#187/#183)
+				var scope = form.closest("[data-watchlist-scope]");
+				var badge = scope && scope.querySelector("[data-watchlist-badge]");
+				if (badge) badge.classList.toggle("d-none", !state.on_watchlist);
+				// The watchlist page's own Remove clears its tile in
+				// place and settles the filter counts, using the
+				// bucket the cell rendered with (#187)
+				if (form.hasAttribute("data-watchlist-remove-cell") && !state.on_watchlist) {
+					var cell = form.closest(".poster-cell");
+					if (cell) {
+						["all", cell.getAttribute("data-bucket")].forEach(function(name) {
+							var count = name && document.querySelector('[data-watchlist-count="' + name + '"]');
+							if (count) count.textContent = Math.max(0, parseInt(count.textContent, 10) - 1);
+						});
+						cell.remove();
+					}
+				}
 			}).catch(function() {
 				form.submit();
 			});

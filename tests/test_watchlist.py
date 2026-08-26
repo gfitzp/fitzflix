@@ -74,6 +74,18 @@ def remove_form_fields(page_html, movie_id):
     return MultiDict(fields)
 
 
+def pill_counts(page_html):
+    """The filter pills' counts, keyed by bucket — each count renders
+    in a data-watchlist-count span so a live removal can settle it."""
+
+    return {
+        value: int(count)
+        for value, count in re.findall(
+            r'data-watchlist-count="([^"]+)">(\d+)<', page_html
+        )
+    }
+
+
 def test_movie_page_toggle_adds_and_removes(app, admin_client):
     from app import db
 
@@ -105,11 +117,21 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     user_id = admin_id(app)
     assert entries_for(app, user_id) == [unowned_id]
 
-    # The page now offers removal instead
+    # The page now shows the Remove face — both faces stay in the DOM
+    # for the live toggle (#187), the off one hidden with d-none
 
     page = admin_client.get(f"/movie/{unowned_id}").get_data(as_text=True)
-    assert 'name="remove_watchlist_submit"' in page
-    assert 'name="add_watchlist_submit"' not in page
+    assert "data-card-watchlist" in page
+    assert "d-none" in re.search(
+        r'name="add_watchlist_submit"[^>]*class="([^"]*)"', page
+    ).group(1)
+    assert "d-none" not in re.search(
+        r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', page
+    ).group(1)
+    # The funnel badge is live too: visible now, hidden before the add
+    assert "d-none" not in re.search(
+        r'class="([^"]*)" data-watchlist-badge', page
+    ).group(1)
 
     response = admin_client.post(
         f"/movie/{unowned_id}",
@@ -855,11 +877,13 @@ def test_watchlist_availability_filter(app, admin_client):
         assert title in page
     # The buckets partition the list: 2 + 2 + 1 + 2 = 7, plus the one
     # film still warming
-    assert "All (8)" in page
-    assert "In library (2)" in page
-    assert "On my services (2)" in page
-    assert "For rent (1)" in page
-    assert "Unavailable (2)" in page
+    assert pill_counts(page) == {
+        "all": 8,
+        "local": 2,
+        "services": 2,
+        "rent": 1,
+        "unavailable": 2,
+    }
     assert "still being fetched" not in page
 
     local = admin_client.get("/watchlist?availability=local").get_data(as_text=True)
@@ -911,3 +935,111 @@ def test_watchlist_availability_filter(app, admin_client):
     )
     assert response.status_code == 302
     assert "availability=local" in response.headers["Location"]
+
+
+def test_watchlist_title_and_runtime_filters(app, admin_client):
+    """The title search (#216) and duration filter (#195): both narrow
+    the list before the availability pills count, match the landing
+    page's runtime semantics (unknown runtimes hide only from filtered
+    views), survive the removal redirect, and clear from one link."""
+
+    from app import db
+    from app.models import UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        epic = make_movie("Alpha Epic", 1990, tmdb_runtime=150)
+        brisk = make_movie("Beta Brisk", 1991, tmdb_runtime=90)
+        unknown = make_movie("Gamma Mystery", 1992)
+        renamed = make_movie(
+            "Delta Disk Name", 1993, tmdb_title="Brisk Renamed", tmdb_runtime=100
+        )
+        for movie in (epic, brisk, unknown, renamed):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        brisk_id = brisk.id
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    for title in ("Alpha Epic", "Beta Brisk", "Gamma Mystery", "Brisk Renamed"):
+        assert title in page
+    assert pill_counts(page)["all"] == 4
+    assert ">Clear</a>" not in page
+
+    # The title search matches the display title AND the TMDB title,
+    # case-insensitively, and the pills count the narrowed set
+
+    page = admin_client.get("/watchlist?q=BRISK").get_data(as_text=True)
+    assert "Beta Brisk" in page
+    assert "Brisk Renamed" in page
+    assert "Alpha Epic" not in page
+    assert "Gamma Mystery" not in page
+    assert pill_counts(page)["all"] == 2
+    assert ">Clear</a>" in page
+
+    # The duration filter keeps films that fit, hides unknown runtimes,
+    # says so, and captions each tile with its runtime
+
+    page = admin_client.get("/watchlist?minutes=100").get_data(as_text=True)
+    assert "Beta Brisk" in page
+    assert "Brisk Renamed" in page
+    assert "Alpha Epic" not in page
+    assert "Gamma Mystery" not in page
+    assert "films with unknown runtimes are hidden" in page
+    assert "90 min" in page
+
+    # The filters stack, and a nonsense minutes value is ignored
+
+    page = admin_client.get("/watchlist?q=brisk&minutes=95").get_data(as_text=True)
+    assert "Beta Brisk" in page
+    assert "Brisk Renamed" not in page
+    page = admin_client.get("/watchlist?minutes=0").get_data(as_text=True)
+    assert pill_counts(page)["all"] == 4
+
+    # A search with no matches offers the whole list back
+
+    page = admin_client.get("/watchlist?q=zzzzzz").get_data(as_text=True)
+    assert "No watchlisted films match this search." in page
+    assert "Show all 4 watchlisted films" in page
+
+    # Removal under the filters redirects back INTO them
+
+    page = admin_client.get("/watchlist?q=brisk&minutes=95").get_data(as_text=True)
+    response = admin_client.post(
+        "/watchlist?q=brisk&minutes=95",
+        data=remove_form_fields(page, brisk_id),
+    )
+    assert response.status_code == 302
+    assert "q=brisk" in response.headers["Location"]
+    assert "minutes=95" in response.headers["Location"]
+    assert entries_for(app, user_id) != []
+    assert brisk_id not in entries_for(app, user_id)
+
+
+def test_watchlist_remove_in_place(app, admin_client):
+    """The tile's Remove posts in the background (#187): the form wears
+    data-card-watchlist plus the remove-cell marker, the cell carries
+    its bucket for the pill bookkeeping, and the card-header post gets
+    JSON back instead of a redirect."""
+
+    from app import db
+    from app.models import UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        movie = make_movie("In Place Removal", 1990)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    assert "data-card-watchlist data-watchlist-remove-cell" in page
+    assert 'data-bucket="unavailable"' in page
+
+    response = admin_client.post(
+        "/watchlist",
+        data=remove_form_fields(page, movie_id),
+        headers={"X-Requested-With": "card"},
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {"on_watchlist": False}
+    assert entries_for(app, user_id) == []

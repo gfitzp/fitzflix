@@ -202,31 +202,31 @@
 </div>
 {% include "_streaming_strip.html" %}
 {# The personal funnel: Seen (this user's diary), On your watchlist,
-   Might interest you — seen and might-interest never show together #}
-{% if review or on_watchlist or might_interest %}
+   Might interest you — seen and might-interest never show together.
+   The watchlist badge always renders (d-none when off) so the live
+   toggle (#187) can reveal it without a reload; the wrapping
+   data-watchlist-scope ties badge and toggle together for the JS #}
+<div data-watchlist-scope>
 <div class="mt-1">
 	{% if review %}
 	<span class="badge text-bg-info me-1">Seen{% if review.rating is not none %} &mdash; rated {{ review.rating }}{% endif %}</span>
 	{% endif %}
-	{% if on_watchlist %}
-	<span class="badge text-bg-warning me-1">On your watchlist</span>
-	{% endif %}
+	<span class="badge text-bg-warning me-1{% if not on_watchlist %} d-none{% endif %}" data-watchlist-badge>On your watchlist</span>
 	{% if might_interest %}
 	<span class="badge text-bg-info me-1">Might interest you</span>
 	{% endif %}
 </div>
-{% endif %}
 {# Watchlist: any film can be wanted — unowned ones as the funnel stage
    before the shopping list, owned ones to track which of the library's
-   many films this user specifically means to watch #}
+   many films this user specifically means to watch. Both faces render
+   and data-card-watchlist swaps them in the background (#187) — the
+   route's card branch answers JSON, and any fetch failure falls back
+   to the full post #}
 <div class="mt-2">
-	<form action="" method="post" class="d-inline">
+	<form action="" method="post" class="d-inline" data-card-watchlist>
 		{{ watchlist_form.hidden_tag() }}
-		{% if on_watchlist %}
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary">Remove from Watchlist</button>
-		{% else %}
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary">Add to Watchlist</button>
-		{% endif %}
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
 	</form>
 	{# Not interested (#45b, buttons removed per #184): the ladder's
 	   &#10005; toggle is the one way to declare disinterest — the note
@@ -239,6 +239,7 @@
 	{% if radarr_requestable and in_radarr %}
 	<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
 	{% endif %}
+</div>
 </div>
 <hr>
 <h5>Movie Data</h5>

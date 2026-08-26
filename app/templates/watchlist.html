@@ -7,19 +7,30 @@
 	<div class="col-12 col-sm-auto mt-2">
 		{# The availability filter: all films by default, or one
 		   exclusive bucket — owned, streaming, rent-only, or nowhere
-		   at all — the criterion page's radio grammar, counts included #}
+		   at all — the criterion page's radio grammar, counts included.
+		   Title and runtime (#216/#195) share the form, so one Filter
+		   applies all three; the counts wear data-watchlist-count so a
+		   live tile removal (#187) keeps them honest without a reload #}
 		<form class="float-sm-right mb-2" action="{{ url_for('main.watchlist') }}" method="get">
+			<div class="d-inline-flex align-items-center me-2 mb-2">
+				<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm me-2" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
+				<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
+			</div>
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
 			<div class="form-check form-check-inline">
 				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
-				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} ({{ counts[value] }})</label>
+				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
 			{% endfor %}
 			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
+			{% if q or minutes %}<a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
 		</form>
 	</div>
 </div>
 <hr>
+{% if minutes %}
+<p class="small text-muted">Showing films of {{ minutes }} minutes or less; films with unknown runtimes are hidden.</p>
+{% endif %}
 {% if pending %}
 <p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} aren't shown here yet &mdash; their streaming availability is still being fetched. Check back in a few minutes.</p>
 {% endif %}
@@ -28,17 +39,18 @@
    film's synopsis, credits, availability, and badges (Glenn's Aug
    2026 revision moved the library/provider badges there); the tile
    keeps the actions — the star ladder plus this page's own Remove,
-   which clears the tile on reload, so the standard toggle is skipped #}
+   which clears the tile in place, so the standard toggle is skipped #}
 <div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
+	{# data-bucket feeds the live removal's count bookkeeping (#187) #}
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell" data-bucket="{{ row.bucket or '' }}">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
 			{# The corner folds (#197 + #156/#230's badge) paint here
 			   through the same batched /movie_states hydration as the
 			   star ladders — nothing tile-specific on this page #}
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
-			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</p>
+			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }}){% if minutes %} <span class="text-muted">&middot; {{ movie.tmdb_runtime }} min</span>{% endif %}</p>
 		</a>
 		{# This page pins its whole action cluster — ladder, buttons,
 		   date — to the cell bottom as one .poster-bottom block, so
@@ -74,8 +86,11 @@
 				{% endif %}
 				{# d-flex on the form drops its line-box strut, which
 				   otherwise stretches the neighboring Find group two
-				   pixels past the Remove button #}
-				<form action="" method="post" class="d-flex">
+				   pixels past the Remove button. data-card-watchlist
+				   posts in the background (#187) and
+				   data-watchlist-remove-cell clears the tile in place;
+				   any fetch failure falls back to the full post #}
+				<form action="" method="post" class="d-flex" data-card-watchlist data-watchlist-remove-cell>
 					{{ watchlist_form.csrf_token }}
 					{{ watchlist_form.movie_id(value=movie.id) }}
 					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
@@ -86,9 +101,9 @@
 	</div>
 	{% endfor %}
 </div>
-{% elif availability != "all" and counts["all"] %}
-<p class="lead">No watchlisted films match this filter.</p>
-<p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ counts["all"] }} watchlisted film{{ "s" if counts["all"] != 1 }}</a> instead.</p>
+{% elif total %}
+<p class="lead">No watchlisted films match {% if q or minutes %}this search{% else %}this filter{% endif %}.</p>
+<p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ total }} watchlisted film{{ "s" if total != 1 }}</a> instead.</p>
 {% else %}
 <p class="lead">Nothing on your watchlist yet.</p>
 <p class="text-muted">Add films from their pages &mdash; search TMDB for anything you want to watch, owned or not. Watching a film clears it from the list automatically.</p>

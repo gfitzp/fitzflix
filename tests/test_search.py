@@ -296,8 +296,11 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
     assert page.count('text-bg-info me-1">Seen') == 1
-    assert page.count("On your watchlist") == 1
-    assert page.index("Funnel Wanted (1978)") < page.index("On your watchlist")
+    # Every movie row keeps the badge in the DOM for the live toggle
+    # (#183) — only the watchlisted row's is visible (no d-none)
+    assert page.count('me-1" data-watchlist-badge') == 1
+    assert page.count('me-1 d-none" data-watchlist-badge') == 1
+    assert page.index("Funnel Wanted (1978)") < page.index('me-1" data-watchlist-badge')
 
 
 def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
@@ -779,3 +782,141 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
 
     assert page.count('class="star-btn') == 12
     assert page.count("star-btn x-btn") == 2
+
+
+def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
+    """The results' watchlist toggle (#183): every loggable movie row
+    carries the two-face data-card-watchlist form — a record's aimed at
+    its movie route, a record-less row's at the log route whose add
+    creates the record — and the card-header posts get JSON back."""
+
+    import re
+
+    from app.models import Movie, UserWatchlist
+
+    with app.app_context():
+        wanted = make_movie("Toggle Wanted", 1970, tmdb_id=741)
+        admin = User.query.filter_by(admin=True).first()
+        db.session.add(UserWatchlist(user_id=admin.id, movie_id=wanted.id))
+        db.session.commit()
+        wanted_id = wanted.id
+        user_id = admin.id
+
+    import app.main.discover as discover
+    import app.main.search as search
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._payload
+
+    def fake_search(url, params=None, timeout=None):
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                {
+                    "results": [
+                        {
+                            "id": 741,
+                            "title": "Toggle Wanted",
+                            "release_date": "1970-01-01",
+                        },
+                        {
+                            "id": 742,
+                            "title": "Toggle Unknown",
+                            "release_date": "1971-02-02",
+                        },
+                        {"id": 743, "title": "Toggle Dateless"},
+                    ]
+                }
+            )
+        return FakeResponse({"results": []})
+
+    def fake_details(url, params=None, timeout=None, **kwargs):
+        return FakeResponse(
+            {
+                "title": "Toggle Unknown",
+                "release_date": "1971-02-02",
+                "genres": [],
+                "credits": {"cast": []},
+                "release_dates": {"results": []},
+            }
+        )
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(search, "tmdb_get", fake_search)
+    monkeypatch.setattr(discover, "tmdb_get", fake_details)
+
+    page = admin_client.get("/search/tmdb?q=toggle").get_data(as_text=True)
+
+    # The record's form posts to its movie route wearing the Remove
+    # face; the record-less row's posts to the log route, Add-first; a
+    # dateless result can't be logged, so it gets no toggle at all
+
+    blocks = re.findall(
+        r'<form action="([^"]*)"[^>]*data-card-watchlist>(?:(?!</form>).)*</form>',
+        page,
+        re.DOTALL,
+    )
+    assert blocks == [f"/movie/{wanted_id}", "/review/tmdb/742"]
+    forms = re.findall(
+        r'<form action="[^"]*"[^>]*data-card-watchlist>(?:(?!</form>).)*</form>',
+        page,
+        re.DOTALL,
+    )
+    assert "d-none" in re.search(
+        r'name="add_watchlist_submit"[^>]*class="([^"]*)"', forms[0]
+    ).group(1)
+    assert "d-none" not in re.search(
+        r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', forms[0]
+    ).group(1)
+    assert "d-none" not in re.search(
+        r'name="add_watchlist_submit"[^>]*class="([^"]*)"', forms[1]
+    ).group(1)
+
+    # A card-header add on the record-less row creates the record and
+    # answers JSON, exactly like a poster tile's toggle
+
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    response = admin_client.post(
+        "/review/tmdb/742",
+        data={"csrf_token": token, "add_watchlist_submit": "Add to Watchlist"},
+        headers={"X-Requested-With": "card"},
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {"on_watchlist": True}
+    with app.app_context():
+        created = Movie.query.filter_by(tmdb_id=742).one()
+        created_id = created.id
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=created_id).first()
+            is not None
+        )
+
+    # The follow-up remove still posts to the log route (the form
+    # doesn't know a record appeared) — it 307-forwards to the movie
+    # route, which answers the same JSON grammar
+
+    response = admin_client.post(
+        "/review/tmdb/742",
+        data={"csrf_token": token, "remove_watchlist_submit": "Remove from Watchlist"},
+        headers={"X-Requested-With": "card"},
+    )
+    assert response.status_code == 307
+    assert response.headers["Location"].endswith(f"/movie/{created_id}")
+    response = admin_client.post(
+        f"/movie/{created_id}",
+        data={"csrf_token": token, "remove_watchlist_submit": "Remove from Watchlist"},
+        headers={"X-Requested-With": "card"},
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {"on_watchlist": False}
+    with app.app_context():
+        assert (
+            UserWatchlist.query.filter_by(user_id=user_id, movie_id=created_id).first()
+            is None
+        )

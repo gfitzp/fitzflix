@@ -1262,11 +1262,16 @@ def watchlist():
 
     # The availability filter: default ALL, narrowable to one
     # exclusive bucket of the list — the removal redirect keeps it in
-    # place
+    # place. The title and runtime filters (#216/#195) ride the same
+    # query string and survive the redirect the same way
 
     availability_filter = request.args.get("availability", "all")
     if availability_filter not in WATCHLIST_BUCKETS:
         availability_filter = "all"
+    q = (request.args.get("q") or "").strip()
+    minutes = request.args.get("minutes", type=int)
+    if minutes is not None and minutes < 1:
+        minutes = None
 
     watchlist_form = WatchlistForm()
     if (
@@ -1276,6 +1281,10 @@ def watchlist():
     ):
         clear_watchlist(current_user.id, watchlist_form.movie_id.data)
         db.session.commit()
+        # A background post from the tile (#187) wants JSON state, not
+        # a redirect — the client clears the tile itself
+        if _card_fetch():
+            return jsonify({"on_watchlist": False})
         flash("Removed from your watchlist", "success")
         return redirect(
             url_for(
@@ -1283,6 +1292,8 @@ def watchlist():
                 availability=(
                     availability_filter if availability_filter != "all" else None
                 ),
+                q=q or None,
+                minutes=minutes,
             )
         )
 
@@ -1391,6 +1402,27 @@ def watchlist():
     for row in rows:
         row["bucket"] = watchlist_bucket(row)
 
+    # Title and runtime narrow the list before the buckets count, so
+    # the pills always add up within the current search. Runtime
+    # semantics match the landing page: films that fit the evening,
+    # with unknown runtimes hidden only from filtered views
+
+    total = len(rows)
+    if q:
+        needle = q.lower()
+        rows = [
+            row
+            for row in rows
+            if needle in (row["movie"].tmdb_title or "").lower()
+            or needle in (row["movie"].title or "").lower()
+        ]
+    if minutes:
+        rows = [
+            row
+            for row in rows
+            if row["movie"].tmdb_runtime and row["movie"].tmdb_runtime <= minutes
+        ]
+
     counts = {
         chosen: sum(1 for row in rows if chosen == "all" or row["bucket"] == chosen)
         for chosen in WATCHLIST_BUCKETS
@@ -1404,6 +1436,9 @@ def watchlist():
         title="My Watchlist",
         rows=rows,
         availability=availability_filter,
+        q=q,
+        minutes=minutes,
+        total=total,
         counts=counts,
         # The warming note only matters where unfetched films are
         # actually hidden — every view but ALL and IN LIBRARY

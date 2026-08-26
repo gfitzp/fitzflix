@@ -35,19 +35,28 @@
 			</div>
 			{% endif %}
 			{% if match_url %}</a>{% endif %}
-			<div class="flex-grow-1">
+			<div class="flex-grow-1" data-watchlist-scope>
 				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
 				{# The live star ladder, like the history rows: a
 				   record's ladder posts to its movie route, a bare TMDB
 				   result's to the log route whose first tap creates the
 				   record; the /movie_states hydration paints the verdict
 				   or the shared source's estimate — the tmdb lane, so
-				   record-less results estimate too #}
+				   record-less results estimate too. The watchlist
+				   toggle (#183) rides beside it, aimed the same dual
+				   way — a record-less add creates the record, and the
+				   log route 307-forwards the follow-up remove #}
 				{% if match.record_id or match.year %}
 				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="from_card" value="1">
 					{{ rating_ladder(compact=true, live=true) }}
+				</form>
+				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center ms-2" data-card-watchlist>
+					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+					<input type="hidden" name="from_card" value="1">
+					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
+					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
 				</form>
 				<br/>
 				{% endif %}
@@ -67,9 +76,9 @@
 				{% if match.seen %}
 				<span class="badge text-bg-info me-1">Seen</span>
 				{% endif %}
-				{% if match.watchlisted %}
-				<span class="badge text-bg-warning me-1">On your watchlist</span>
-				{% endif %}
+				{# Always in the DOM (d-none when off) so the live
+				   toggle can reveal it without a reload #}
+				<span class="badge text-bg-warning me-1{% if not match.watchlisted %} d-none{% endif %}" data-watchlist-badge>On your watchlist</span>
 				{% if match.might_interest %}
 				<span class="badge text-bg-info me-1">Might interest you</span>
 				{% endif %}
