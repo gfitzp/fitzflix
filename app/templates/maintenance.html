@@ -52,6 +52,10 @@
 <p class="small text-muted">Unforced subtitle tracks that are far smaller than a same-language sibling in the same file &mdash; the shape of a foreign-parts-only track that should carry the forced flag.</p>
 <a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
 <hr>
+<h3>Lossy files</h3>
+<p class="small text-muted">Files whose first audio track is lossy &mdash; candidates for sourcing a lossless upgrade.</p>
+<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View lossy files</a>
+<hr>
 <h3>TV episode titles</h3>
 <p class="small text-muted">How well each series' TMDb episode titles agree with the titles Plex gave the same files &mdash; a series whose numbering diverges is flagged so episode titles never mislabel.</p>
 <a class="btn btn-sm btn-{{ "warning" if tv_suspect_count else "outline-secondary" }}" href="{{ url_for('main.tv_title_validation') }}" role="button">Review title verdicts <span class="badge text-bg-light">{{ tv_suspect_count }}</span></a>
