@@ -177,11 +177,294 @@ def test_edge_cases(app, filename, expected):
         "Jaws - [DVD].mkv",  # movie without a year
         "totally random file.mkv",  # matches neither format
         "Jaws (1975).mkv",  # no quality tag at all
+        "Jaws (1975) {bogus-123} - [DVD].mkv",  # unknown brace tag kind
+        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # imdb id missing tt prefix
+        "Hamilton {edition-Broadway} - [DVD].mkv",  # yearless needs an id tag
     ],
 )
 def test_rejected_filenames(app, filename):
     with app.app_context():
         assert evaluate_filename(filename, log=False) is False
+
+
+# Plex external-id tags (#155): {tmdb-NNN}, {imdb-ttNNN}, {tvdb-NNN} after
+# the year, in either order with {edition-...}. These run offline, so
+# unresolvable imdb/tvdb tags are kept verbatim; resolution paths are
+# exercised further down with fakes and library records.
+
+ID_TAG_CASES = [
+    (
+        "Hamilton (2025) {tmdb-556574} - [Bluray-1080p].mkv",
+        {
+            "file_path": "Movies/Hamilton (2025) {tmdb-556574}/Hamilton (2025) {tmdb-556574} - [Bluray-1080p].mkv",
+            "plex_title": "Hamilton (2025) {tmdb-556574}",
+            "title": "Hamilton",
+            "year": 2025,
+            "tmdb_id": 556574,
+        },
+    ),
+    (
+        # id tag before the edition tag
+        "Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
+        {
+            "file_path": "Movies/Blade Runner (1982) {tmdb-78} {edition-Final Cut}/Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
+            "plex_title": "Blade Runner (1982) {tmdb-78} {edition-Final Cut}",
+            "edition": "Final Cut",
+            "tmdb_id": 78,
+        },
+    ),
+    (
+        # ...and after it: the library name normalizes to id-then-edition
+        "Blade Runner (1982) {edition-Final Cut} {tmdb-78} - [Bluray-2160p].mkv",
+        {
+            "file_path": "Movies/Blade Runner (1982) {tmdb-78} {edition-Final Cut}/Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
+            "edition": "Final Cut",
+            "tmdb_id": 78,
+        },
+    ),
+    (
+        # An imdb tag that can't be resolved offline stays verbatim
+        "Ran (1985) {imdb-tt0089881} - [Bluray-2160p].mkv",
+        {
+            "file_path": "Movies/Ran (1985) {imdb-tt0089881}/Ran (1985) {imdb-tt0089881} - [Bluray-2160p].mkv",
+            "title": "Ran",
+            "tmdb_id": None,
+        },
+    ),
+    (
+        "Ran (1985) {tvdb-3839} - [Bluray-2160p].mkv",
+        {
+            "file_path": "Movies/Ran (1985) {tvdb-3839}/Ran (1985) {tvdb-3839} - [Bluray-2160p].mkv",
+            "tmdb_id": None,
+        },
+    ),
+    (
+        # Version strings and Full Screen still work alongside a tag
+        "Big Hit (1999) {tmdb-9737} - Fullscreen - Director's Cut [DVD].mkv",
+        {
+            "file_path": "Movies/Big Hit (1999) {tmdb-9737}/Big Hit (1999) {tmdb-9737} - Director's Cut - Full Screen [DVD].mkv",
+            "plex_title": "Big Hit (1999) {tmdb-9737} - Director's Cut",
+            "fullscreen": True,
+        },
+    ),
+    (
+        # Special features file under the tagged movie folder
+        "Jaws (1975) {tmdb-578} - Trailers - Theatrical Trailer [DVD].mkv",
+        {
+            "file_path": "Movies/Jaws (1975) {tmdb-578}/Trailers/Theatrical Trailer.mkv",
+            "plex_title": "Theatrical Trailer",
+            "feature_type_name": "Trailers",
+        },
+    ),
+    (
+        # TV: the tag stays on the show folder, where Plex reads it, and
+        # is stripped from the series title and episode filename
+        "Doctor Who (2005) {tmdb-57243} - S01E01 - [DVD].mkv",
+        {
+            "file_path": "TV Shows/Doctor Who (2005) {tmdb-57243}/Season 01/Doctor Who (2005) - S01E01 - [DVD].mkv",
+            "title": "Doctor Who (2005)",
+            "tmdb_id": 57243,
+            "season": 1,
+            "episode": 1,
+        },
+    ),
+    (
+        "Doctor Who (2005) {tvdb-78804} - S00E01 - The Christmas Invasion [HDTV-1080p].mkv",
+        {
+            "file_path": "TV Shows/Doctor Who (2005) {tvdb-78804}/Specials/Doctor Who (2005) - S00E01 - The Christmas Invasion [HDTV-1080p].mkv",
+            "title": "Doctor Who (2005)",
+            "tmdb_id": None,
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "filename,expected", ID_TAG_CASES, ids=[case[0] for case in ID_TAG_CASES]
+)
+def test_external_id_tags(app, filename, expected):
+    with app.app_context():
+        details = evaluate_filename(filename, log=False)
+    assert details, f"{filename} was rejected"
+    for key, value in expected.items():
+        assert details[key] == value, f"{key}: {details[key]!r} != {value!r}"
+
+
+def test_tmdb_tag_adopts_existing_movie_record(app):
+    """The id names the exact film: naming comes from the record that
+    already owns the tmdb id, not from the filename's spelling — without
+    any network."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie("Duck, You Sucker", 1971, tmdb_id=844)
+        details = evaluate_filename(
+            "A Fistful of Dynamite (1971) {tmdb-844} - [Bluray-1080p].mkv", log=False
+        )
+        assert details["title"] == "Duck, You Sucker"
+        assert details["tmdb_id"] == 844
+        assert details["file_path"] == (
+            "Movies/Duck, You Sucker (1971) {tmdb-844}/"
+            "Duck, You Sucker (1971) {tmdb-844} - [Bluray-1080p].mkv"
+        )
+
+
+def test_imdb_tag_resolves_through_library_record(app):
+    """A matched movie stores its imdb id, so an imdb tag resolves to the
+    canonical tmdb form without TMDB being reachable."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie("Ran", 1985, tmdb_id=11645, imdb_id="tt0089881")
+        details = evaluate_filename(
+            "Ran (1985) {imdb-tt0089881} {edition-Criterion} - [Bluray-2160p].mkv",
+            log=False,
+        )
+        assert details["tmdb_id"] == 11645
+        assert details["file_path"] == (
+            "Movies/Ran (1985) {tmdb-11645} {edition-Criterion}/"
+            "Ran (1985) {tmdb-11645} {edition-Criterion} - [Bluray-2160p].mkv"
+        )
+
+
+def test_yearless_form_resolves_year_from_library(app):
+    """Plex's yearless "Title {tmdb-NNN}" form files under the year the
+    id resolves to."""
+
+    from tests.factories import make_movie
+
+    with app.app_context():
+        make_movie("Hamilton", 2020, tmdb_id=556574)
+        details = evaluate_filename(
+            "Hamilton {tmdb-556574} - [Bluray-1080p].mkv", log=False
+        )
+        assert details["year"] == 2020
+        assert details["file_path"] == (
+            "Movies/Hamilton (2020) {tmdb-556574}/"
+            "Hamilton (2020) {tmdb-556574} - [Bluray-1080p].mkv"
+        )
+
+
+def test_yearless_form_rejected_when_id_unresolvable(app):
+    """No library record and no reachable TMDB leaves no year to file
+    under: reject with a reason, never guess."""
+
+    with app.app_context():
+        details = evaluate_filename(
+            "Hamilton {tmdb-556574} - [Bluray-1080p].mkv", log=False
+        )
+    assert not details
+    assert details is not False
+    assert details.reason == "id not resolvable"
+
+
+def test_unknown_external_id_rejected_loudly(app, fake_tmdb):
+    """/find answering with no results is a loud reject — falling back to
+    a title search could attach the wrong film (#155)."""
+
+    with app.app_context():
+        details = evaluate_filename(
+            "Ran (1985) {imdb-tt9999999} - [Bluray-2160p].mkv", log=False
+        )
+    assert not details
+    assert details is not False
+    assert details.reason == "id not found"
+
+
+def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
+    """A 404 on /movie/<id> for an id the filename itself named is a
+    reject, not the usual tolerated TMDB hiccup."""
+
+    import requests
+
+    import app.models as fitzflix_models
+
+    class NotFoundResponse:
+        status_code = 404
+
+        def json(self):
+            return {"status_message": "not found"}
+
+        def raise_for_status(self):
+            error = requests.exceptions.HTTPError("404")
+            error.response = self
+            raise error
+
+    monkeypatch.setattr(
+        fitzflix_models.requests, "get", lambda *args, **kwargs: NotFoundResponse()
+    )
+
+    with app.app_context():
+        details = evaluate_filename(
+            "Hamilton (2025) {tmdb-999999999} - [Bluray-1080p].mkv", log=False
+        )
+    assert not details
+    assert details is not False
+    assert details.reason == "id not found"
+
+
+def test_tv_tag_adopts_existing_series_record(app):
+    """A series id tag lands the file on the record that owns the id,
+    whatever the filename calls the show."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series("Doctor Who (2005)", tmdb_id=57243)
+        details = evaluate_filename(
+            "Doctor Who {tmdb-57243} - S01E01 - [DVD].mkv", log=False
+        )
+        assert details["title"] == "Doctor Who (2005)"
+        assert details["file_path"] == (
+            "TV Shows/Doctor Who (2005) {tmdb-57243}/Season 01/"
+            "Doctor Who (2005) - S01E01 - [DVD].mkv"
+        )
+
+
+def test_reconstruct_filename_carries_id_tag(app):
+    """An untouched name that came in with an id tag keeps one when
+    reconstructed, upgraded to the record's current tmdb id (#155)."""
+
+    from app.importing import reconstruct_filename
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Hamilton", 2020, tmdb_id=556574)
+        tagged = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            untouched_basename="Hamilton (2025) {tmdb-556574} - [Bluray-1080p].mkv",
+        )
+        assert reconstruct_filename(tagged.id) == (
+            "Hamilton (2020) {tmdb-556574} - [Bluray-1080p].mkv"
+        )
+
+        # A name that came in without a tag doesn't grow one
+
+        plain = make_movie_file(
+            movie, "DVD", untouched_basename="Hamilton (2020) - [DVD].mkv"
+        )
+        assert reconstruct_filename(plain.id) == "Hamilton (2020) - [DVD].mkv"
+
+
+def test_tv_tvdb_tag_resolves_through_library_record(app):
+    """A tvdb tag on a show folder resolves through the series record's
+    stored external ids and normalizes to the tmdb form."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        make_tv_series("Doctor Who (2005)", tmdb_id=57243, tvdb_id=78804)
+        details = evaluate_filename(
+            "Doctor Who (2005) {tvdb-78804} - S01E01 - [DVD].mkv", log=False
+        )
+        assert details["tmdb_id"] == 57243
+        assert details["file_path"] == (
+            "TV Shows/Doctor Who (2005) {tmdb-57243}/Season 01/"
+            "Doctor Who (2005) - S01E01 - [DVD].mkv"
+        )
 
 
 def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):

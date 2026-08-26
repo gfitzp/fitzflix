@@ -318,10 +318,13 @@ def localization_task(
             file_details = evaluate_filename(file_path)
             current_app.logger.info(f"'{basename}' File details: {file_details}")
             if not file_details:
+                reason = getattr(file_details, "reason", None)
                 current_app.logger.error(
-                    f"'{basename}' doesn't match expected naming formats!"
+                    f"'{basename}' rejected: {reason}!"
+                    if reason
+                    else f"'{basename}' doesn't match expected naming formats!"
                 )
-                move_to_rejects(file_path, "incorrect filename")
+                move_to_rejects(file_path, reason or "incorrect filename")
                 return False
 
             # We don't want to process other versions of this video at the same time,
@@ -1608,10 +1611,13 @@ def finalize_localization(
             # can't be matched. The fetch runs on the request queue and
             # hands its payload to the sql queue for the database writes.
 
+            # A filename id tag rides along so the enrichment fetches that
+            # exact title instead of searching by name (#155)
+
             if file.movie_id and movie.tmdb_id == None and not movie.tmdb_ignored:
                 current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
-                    args=("Movies", movie.id, None),
+                    args=("Movies", movie.id, file_details.get("tmdb_id")),
                     kwargs={"notify_if_missing": True},
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     description=(
@@ -1625,7 +1631,7 @@ def finalize_localization(
             ):
                 current_app.request_queue.enqueue(
                     "app.videos.refresh_tmdb_info",
-                    args=("TV Shows", tv_series.id, None),
+                    args=("TV Shows", tv_series.id, file_details.get("tmdb_id")),
                     job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                     description=f"Refreshing TMDB data for '{tv_series.title}'",
                 )
@@ -2042,6 +2048,90 @@ def transcode_task(file_id):
         return True
 
 
+# Plex external-id tags (#155): a movie name or a show-folder name may
+# carry {tmdb-NNN}, {imdb-ttNNN}, or {tvdb-NNN} after the year, in either
+# order with {edition-...}. The id names the exact title, so when present
+# it picks the metadata source instead of a title search.
+
+ID_TAG_BLOCK = r"\{(?:tmdb-\d+|tvdb-\d+|imdb-tt\d+)\}"
+NAME_TAG_BLOCK = rf"(?:{ID_TAG_BLOCK}|\{{edition-[^{{}}]+\}})"
+
+ID_TAG_RE = re.compile(
+    r"\{(?:(?P<source>tmdb|tvdb)-(?P<value>\d+)|imdb-(?P<imdb_value>tt\d+))\}"
+)
+EDITION_TAG_RE = re.compile(r"\{edition-(?P<edition>[^{}]+)\}")
+
+
+def parse_name_tags(tags_text):
+    """Split a name's brace-tag region into its external-id tags and its
+    edition. Returns ([(source, value, raw_text), ...], edition_or_None).
+    """
+
+    id_tags = []
+    for match in ID_TAG_RE.finditer(tags_text or ""):
+        source = match.group("source") or "imdb"
+        value = match.group("value") or match.group("imdb_value")
+        id_tags.append((source, value, match.group(0)))
+    edition_match = EDITION_TAG_RE.search(tags_text or "")
+    return id_tags, edition_match.group("edition") if edition_match else None
+
+
+def preferred_id_tag(id_tags):
+    """tmdb outranks imdb outranks tvdb when a name carries several tags."""
+
+    order = {"tmdb": 0, "imdb": 1, "tvdb": 2}
+    return min(id_tags, key=lambda tag: order[tag[0]], default=None)
+
+
+def resolve_external_id_tag(source, value, kind, log=True):
+    """Resolve an imdb/tvdb tag to a TMDB id via TMDB's /find endpoint,
+    so TMDB stays the single metadata source.
+
+    kind ("movie" or "tv") selects which /find results bucket to read.
+    Returns the TMDB id; False when TMDB answered and knows nothing under
+    that id — the caller must reject the file rather than guess by title;
+    or None when TMDB couldn't be reached, which the caller may tolerate.
+    """
+
+    try:
+        r = tmdb_get(
+            current_app.config["TMDB_API_URL"] + f"/find/{value}",
+            params={
+                "api_key": current_app.config["TMDB_API_KEY"],
+                "external_source": f"{source}_id",
+            },
+        )
+        if log:
+            current_app.logger.debug(r.json())
+        r.raise_for_status()
+        results = r.json().get(f"{kind}_results")
+
+    except Exception as e:
+        response = getattr(e, "response", None)
+        if response is not None and response.status_code == 404:
+            # TMDB answered: no such external id
+            return False
+        current_app.logger.warning(traceback.format_exc())
+        return None
+
+    if not results:
+        return False
+
+    return results[0].get("id") or False
+
+
+class FilenameRejection:
+    """A falsy evaluate_filename result that still names why the file must
+    be rejected, so the reject is loud and lands in a labeled rejects
+    subfolder instead of the generic "incorrect filename" bucket."""
+
+    def __init__(self, reason):
+        self.reason = reason
+
+    def __bool__(self):
+        return False
+
+
 def evaluate_filename(file_path, tmdb_id=None, log=True):
     """Review a file name string and return info about what movie or TV show it is.
 
@@ -2052,10 +2142,21 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
     file_details = {}
     basename = os.path.basename(file_path)
 
-    # Determine if basename matches movie or tv formats
+    # Determine if basename matches movie or tv formats. A movie name may
+    # carry Plex id/edition tags between the year and the dash (#155), and
+    # Plex's yearless "Title {tmdb-NNN}" form is admitted too — but only
+    # with an id tag, so "Title - [Quality].ext" stays rejected
 
-    movie_match = re.search(
-        r"(.+) \((\d{4})\)(?: (\{edition\-(.+)\}) | )\-(?: (.+) | )\[(.+)\]\.(.+)",
+    movie_match = re.match(
+        r"(?P<title>.+) \((?P<year>\d{4})\)"
+        rf"(?P<tags>(?: {NAME_TAG_BLOCK})*)"
+        r" \-(?: (?P<version>.+) | )\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
+        basename,
+    )
+    yearless_movie_match = re.match(
+        r"(?P<title>.+?)"
+        rf"(?P<tags>(?: {NAME_TAG_BLOCK})+)"
+        r" \-(?: (?P<version>.+) | )\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
         basename,
     )
     tv_match = re.search(
@@ -2076,6 +2177,60 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
         media_library = "TV Shows"
         title = tv.group("title")
+
+        # A Plex id tag rides on the show-folder portion of the name
+        # (#155): strip it from the series title, but remember it — the
+        # show folder keeps the tag, since that's where Plex reads it
+
+        series_id_tag = None
+        series_tmdb_id = None
+        title_tags = re.fullmatch(
+            rf"(?P<base>.+?)(?P<tags>(?: {ID_TAG_BLOCK})+)", title
+        )
+        if title_tags:
+            title = title_tags.group("base")
+            series_id_tag = preferred_id_tag(
+                parse_name_tags(title_tags.group("tags"))[0]
+            )
+
+        if series_id_tag:
+            source, value, _ = series_id_tag
+            if source == "tmdb":
+                series_tmdb_id = int(value)
+            else:
+                # A matched series already stores its external ids, so an
+                # imdb/tvdb tag usually resolves without the network
+                existing = (
+                    TVSeries.query.filter(
+                        (TVSeries.tvdb_id == int(value))
+                        if source == "tvdb"
+                        else (TVSeries.imdb_id == value)
+                    )
+                    .filter(TVSeries.tmdb_id != None)
+                    .first()
+                )
+                if existing:
+                    series_tmdb_id = existing.tmdb_id
+                else:
+                    resolved = resolve_external_id_tag(source, value, "tv", log=log)
+                    if resolved is False:
+                        if log:
+                            current_app.logger.error(
+                                f"'{basename}' carries {{{source}-{value}}}, "
+                                f"but TMDB knows no series under that id"
+                            )
+                        return FilenameRejection("id not found")
+                    series_tmdb_id = resolved
+
+            # The id names the exact series: adopt the title of the record
+            # that already owns that id rather than the filename's spelling
+
+            if series_tmdb_id:
+                existing_series = TVSeries.query.filter_by(
+                    tmdb_id=series_tmdb_id
+                ).first()
+                if existing_series:
+                    title = existing_series.title
 
         # Canonicalize against existing records, the
         # movie branch's convention: Sonarr may name a file with or
@@ -2136,6 +2291,15 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
             folder_title = folder_title.strip(" ")
             folder_title = folder_title.strip(".")
 
+        # Tag-in → tag-out: the show folder keeps an id tag the name came
+        # with, normalized to the canonical tmdb form once resolved
+
+        if series_id_tag:
+            folder_tag = (
+                f"{{tmdb-{series_tmdb_id}}}" if series_tmdb_id else series_id_tag[2]
+            )
+            folder_title = f"{folder_title} {folder_tag}"
+
         if season == 0:
             dirname = os.path.join(media_library, folder_title, "Specials")
 
@@ -2187,6 +2351,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
             " ".join(plex_title.split()).strip() if plex_title else None
         )
         file_details["title"] = " ".join(title.split()).strip() if title else None
+        file_details["tmdb_id"] = series_tmdb_id
         file_details["season"] = season
         file_details["episode"] = episode
         file_details["last_episode"] = last_episode
@@ -2199,16 +2364,21 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
             " ".join(extension.split()).strip() if extension else None
         )
 
-    elif movie_match:
-        movie = re.match(
-            r"(?P<title>.+) \((?P<year>\d{4})\)(?: \{edition\-(?P<edition>.+)\} | )\-(?: (?P<version>.+) | )"
-            r"\[(?P<quality_title>.+)\]\.(?P<extension>.+)",
-            basename,
-        )
+    elif movie_match or yearless_movie_match:
+        movie = movie_match or yearless_movie_match
 
         media_library = "Movies"
         title = movie.group("title")
-        year = int(movie.group("year"))
+        year = int(movie.group("year")) if movie_match else None
+
+        id_tags, edition = parse_name_tags(movie.group("tags"))
+        id_tag = preferred_id_tag(id_tags)
+
+        # The yearless Plex form is only meaningful with an id tag; an
+        # edition tag alone doesn't identify the film
+
+        if year is None and id_tag is None:
+            return False
 
         # If the file quality name doesn't match a expected name, then we must reject
 
@@ -2216,40 +2386,105 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
         if not RefQuality.query.filter_by(quality_title=quality_title).first():
             return False
 
+        # An id tag picks the metadata source (#155): a tmdb tag is the id
+        # itself, and imdb/tvdb tags resolve through the library first
+        # (matched movies store their imdb id), then TMDB's /find. An id
+        # TMDB affirmatively doesn't know is a loud reject — falling back
+        # to a title search could attach the wrong film. An explicit
+        # tmdb_id argument (the TMDB-refresh rename path) outranks the tag.
+
+        id_from_tag = False
+        if id_tag and not tmdb_id:
+            source, value, _ = id_tag
+            id_from_tag = True
+            if source == "tmdb":
+                tmdb_id = int(value)
+            else:
+                if source == "imdb":
+                    existing = (
+                        Movie.query.filter_by(imdb_id=value)
+                        .filter(Movie.tmdb_id != None)
+                        .order_by(Movie.date_created.asc())
+                        .first()
+                    )
+                    if existing:
+                        tmdb_id = existing.tmdb_id
+                if not tmdb_id:
+                    resolved = resolve_external_id_tag(source, value, "movie", log=log)
+                    if resolved is False:
+                        if log:
+                            current_app.logger.error(
+                                f"'{basename}' carries {{{source}-{value}}}, "
+                                f"but TMDB knows no movie under that id"
+                            )
+                        return FilenameRejection("id not found")
+                    tmdb_id = resolved
+
         # Name the film according to how it's named in TMDB, as a film can have alternate
         # titles / spellings. For example:
         # A Fistful of Dynamite == Duck, You Sucker
         # Fifth Avenue Girl == 5th Avenue Girl
         # etc.
 
-        try:
-            if tmdb_id:
-                # Only the id, title, and release date are read here, so no
-                # appended blocks are requested
-                params = {
-                    "api_key": current_app.config["TMDB_API_KEY"],
-                }
-                url = "/movie/" + str(tmdb_id)
+        tmdb_result = None
+        m = None
+        if tmdb_id:
+            # A record that already owns this id carries the canonical
+            # title and year — no network needed
+
+            m = (
+                Movie.query.filter_by(tmdb_id=tmdb_id)
+                .order_by(Movie.date_created.asc())
+                .first()
+            )
+
+        if m:
+            if log:
+                current_app.logger.info(f"Existing movie with this TMDB id: {m}")
+            title = m.title
+            year = m.year
+
+        elif tmdb_id or id_tag is None:
+            # With an id tag that couldn't resolve (TMDB unreachable),
+            # never run the title search — it could attach the wrong film
+
+            try:
+                if tmdb_id:
+                    # Only the id, title, and release date are read here, so no
+                    # appended blocks are requested
+                    params = {
+                        "api_key": current_app.config["TMDB_API_KEY"],
+                    }
+                    url = "/movie/" + str(tmdb_id)
+                else:
+                    params = {
+                        "api_key": current_app.config["TMDB_API_KEY"],
+                        "query": title,
+                        "primary_release_year": year,
+                    }
+                    url = "/search/movie"
+                r = tmdb_get(current_app.config["TMDB_API_URL"] + url, params=params)
+                current_app.logger.debug(r.json())
+                r.raise_for_status()
+
+            except Exception as e:
+                # Don't let a TMDB API issue prevent us from importing the
+                # file — except a 404 on an id the filename itself named:
+                # that id doesn't exist, and guessing would be worse
+
+                response = getattr(e, "response", None)
+                if id_from_tag and response is not None and response.status_code == 404:
+                    if log:
+                        current_app.logger.error(
+                            f"'{basename}' carries {{tmdb-{tmdb_id}}}, "
+                            f"but TMDB knows no movie under that id"
+                        )
+                    return FilenameRejection("id not found")
+                current_app.logger.warning(traceback.format_exc())
+                tmdb_result = None
+
             else:
-                params = {
-                    "api_key": current_app.config["TMDB_API_KEY"],
-                    "query": title,
-                    "primary_release_year": year,
-                }
-                url = "/search/movie"
-            r = tmdb_get(current_app.config["TMDB_API_URL"] + url, params=params)
-            current_app.logger.debug(r.json())
-            r.raise_for_status()
-
-        except Exception:
-            # Don't let a TMDB API issue prevent us from importing the file
-
-            current_app.logger.warning(traceback.format_exc())
-            tmdb_result = None
-            pass
-
-        else:
-            tmdb_result = r.json()
+                tmdb_result = r.json()
 
         if tmdb_result:
             if tmdb_id:
@@ -2282,30 +2517,53 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
 
                 else:
                     title = tmdb_film.get("title", title)
-                    release_date = tmdb_film.get("release_date", f"{year}-01-01")
-                    release_date = datetime.strptime(release_date, "%Y-%m-%d")
-                    year = release_date.year
+                    release_date = tmdb_film.get("release_date") or (
+                        f"{year}-01-01" if year else None
+                    )
+                    if release_date:
+                        release_date = datetime.strptime(release_date, "%Y-%m-%d")
+                        year = release_date.year
+
+        # The yearless form has no fallback: without a library record or a
+        # reachable TMDB there is no year to file the movie under
+
+        if year is None:
+            if log:
+                current_app.logger.error(
+                    f"'{basename}' has no year, and its id tag couldn't be "
+                    f"resolved to one"
+                )
+            return FilenameRejection("id not resolvable")
 
         if log:
             current_app.logger.info(f"File: {basename}")
             current_app.logger.info(f"Movie: {title} ({year})")
-        edition = None
+
+        # Tag-in → tag-out: a name that came with an id tag keeps one on
+        # its library paths, normalized to the canonical tmdb form once
+        # resolved, with {edition-...} after it
+
+        if id_tag:
+            id_tag_text = f"{{tmdb-{tmdb_id}}}" if tmdb_id else id_tag[2]
+            display_title = f"{title} ({year}) {id_tag_text}"
+        else:
+            display_title = f"{title} ({year})"
+
         feature_type = None
         special_feature = None
         fullscreen = False
         extension = movie.group("extension")
 
-        if movie.group("edition"):
-            edition = movie.group("edition")
+        if edition:
             version = edition
             dirname = os.path.join(
                 media_library,
-                sanitize_filename(unidecode(f"{title} ({year}) {{edition-{edition}}}")),
+                sanitize_filename(unidecode(f"{display_title} {{edition-{edition}}}")),
             )
 
         else:
             dirname = os.path.join(
-                media_library, sanitize_filename(unidecode(f"{title} ({year})"))
+                media_library, sanitize_filename(unidecode(display_title))
             )
 
         if movie.group("version"):
@@ -2384,36 +2642,36 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
                     # The version string is only "Full Screen"; report the
                     # edition name, not the raw version, as the edition
                     version = edition
-                    plex_title = f"{title} ({year}) {{edition-{edition}}}"
+                    plex_title = f"{display_title} {{edition-{edition}}}"
                 else:
                     version = None
-                    plex_title = f"{title} ({year})"
+                    plex_title = display_title
                 basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
 
             elif fullscreen:
                 version_strings.pop(version_strings.index("Full Screen"))
                 version = " - ".join(version_strings)
                 if edition:
-                    plex_title = f"{title} ({year}) {{edition-{edition}}} - {version}"
+                    plex_title = f"{display_title} {{edition-{edition}}} - {version}"
                 else:
-                    plex_title = f"{title} ({year}) - {version}"
+                    plex_title = f"{display_title} - {version}"
                 basename = f"{plex_title} - Full Screen [{quality_title}].{extension}"
 
             else:
                 version = " - ".join(version_strings)
                 if edition:
-                    plex_title = f"{title} ({year}) {{edition-{edition}}} - {version}"
+                    plex_title = f"{display_title} {{edition-{edition}}} - {version}"
                 else:
-                    plex_title = f"{title} ({year}) - {version}"
+                    plex_title = f"{display_title} - {version}"
                 basename = f"{plex_title} [{quality_title}].{extension}"
 
         else:
             if edition:
                 version = edition
-                plex_title = f"{title} ({year}) {{edition-{edition}}}"
+                plex_title = f"{display_title} {{edition-{edition}}}"
             else:
                 version = None
-                plex_title = f"{title} ({year})"
+                plex_title = display_title
             basename = f"{plex_title} - [{quality_title}].{extension}"
 
         basename = sanitize_filename(unidecode(basename))
@@ -2435,6 +2693,7 @@ def evaluate_filename(file_path, tmdb_id=None, log=True):
         )
         file_details["title"] = " ".join(title.split()).strip() if title else None
         file_details["year"] = year
+        file_details["tmdb_id"] = tmdb_id
         file_details["feature_type_name"] = (
             " ".join(feature_type.split()).strip() if feature_type else None
         )
@@ -2645,16 +2904,23 @@ def reconstruct_filename(file_id):
 
     _, ext = os.path.splitext(f.untouched_basename)
 
-    if m.tmdb_title == None and f.edition != None:
-        beginning = f"{m.title} ({m.year}) {{edition-{f.edition}}} - "
-    elif m.tmdb_title != None and f.edition != None:
-        beginning = (
-            f"{m.tmdb_title} ({m.tmdb_release_date.year}) {{edition-{f.edition}}} - "
-        )
-    elif m.tmdb_title == None:
-        beginning = f"{m.title} ({m.year}) - "
+    if m.tmdb_title == None:
+        beginning = f"{m.title} ({m.year})"
     else:
-        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year}) - "
+        beginning = f"{m.tmdb_title} ({m.tmdb_release_date.year})"
+
+    # Tag-in → tag-out (#155): an untouched name that carried a Plex id
+    # tag keeps one, upgraded to the record's current tmdb id when known
+
+    id_tag = ID_TAG_RE.search(f.untouched_basename)
+    if id_tag:
+        tag_text = f"{{tmdb-{m.tmdb_id}}}" if m.tmdb_id else id_tag.group(0)
+        beginning = f"{beginning} {tag_text}"
+
+    if f.edition != None:
+        beginning = f"{beginning} {{edition-{f.edition}}}"
+
+    beginning = f"{beginning} - "
 
     if f.fullscreen == True:
         ending = f"Full Screen [{q.quality_title}]{ext}"

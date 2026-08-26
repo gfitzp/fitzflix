@@ -1898,6 +1898,9 @@ class File(db.Model):
         "quality_title",
         "extension",
         "feature_type_name",
+        # The TMDB id a filename's Plex id tag resolved to (#155); read by
+        # finalize_localization to route the metadata fetch
+        "tmdb_id",
     }
 
     def __repr__(self):

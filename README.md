@@ -50,13 +50,17 @@ Before importing, Fitzflix confirms the file is completely copied: a file whose 
 Title (Year) - [Quality].ext
 ```
 
-The quality tag must be one of the known quality titles (e.g. `SDTV`, `DVD`, `WEBDL-480p`, `HDTV-720p`, `WEBRip-1080p`, `Bluray-1080p`, `Bluray-2160p Remux`, etc.); files with an unrecognized quality are rejected. A `{edition-...}` tag marks an alternate cut, and a version string between the title and quality can mark a full screen version:
+The quality tag must be one of the known quality titles (e.g. `SDTV`, `DVD`, `WEBDL-480p`, `HDTV-720p`, `WEBRip-1080p`, `Bluray-1080p`, `Bluray-2160p Remux`, etc.); files with an unrecognized quality are rejected. A `{edition-...}` tag marks an alternate cut, and a version string between the title and quality can mark a full screen version.
+
+A Plex external-id tag — `{tmdb-NNN}`, `{imdb-ttNNN}`, or `{tvdb-NNN}` — may follow the year (in either order with `{edition-...}`). The id then picks the exact title on TMDB instead of a name search, and the library folder and filename keep the tag, normalized to its `{tmdb-NNN}` form. With a `{tmdb-NNN}` tag the year may be omitted entirely. An id tag TMDB doesn't recognize rejects the file rather than guessing by title:
 
 | Input filename | Sorted into library as |
 | --- | --- |
 | `Jaws (1975) - [Bluray-1080p].mkv` | `Movies/Jaws (1975)/Jaws (1975) - [Bluray-1080p].mkv` |
 | `Blade Runner (1982) {edition-Final Cut} - [Bluray-2160p].mkv` | `Movies/Blade Runner (1982) {edition-Final Cut}/Blade Runner (1982) {edition-Final Cut} - [Bluray-2160p].mkv` |
 | `The Terminator (1984) - Fullscreen [DVD].mkv` | `Movies/The Terminator (1984)/The Terminator (1984) - Full Screen [DVD].mkv` |
+| `Hamilton (2025) {tmdb-556574} - [Bluray-1080p].mkv` | `Movies/Hamilton (2020) {tmdb-556574}/Hamilton (2020) {tmdb-556574} - [Bluray-1080p].mkv` (title and year corrected from TMDB) |
+| `Ran (1985) {imdb-tt0089881} {edition-Criterion} - [Bluray-2160p].mkv` | `Movies/Ran (1985) {tmdb-11645} {edition-Criterion}/Ran (1985) {tmdb-11645} {edition-Criterion} - [Bluray-2160p].mkv` |
 
 ### Naming movie special features
 
@@ -79,11 +83,12 @@ Adding a special feature type and name after the title files the video in a spec
 Series Title - SxxEyy - Optional Episode Title [Quality].ext
 ```
 
-Season `00` marks a special, which is filed into the show's `Specials` folder:
+Season `00` marks a special, which is filed into the show's `Specials` folder. A Plex external-id tag after the series title identifies the exact series and stays on the show folder, where Plex reads it:
 
 | Input filename | Sorted into library as |
 | --- | --- |
 | `Doctor Who (2005) - S01E01 - [DVD].mkv` | `TV Shows/Doctor Who (2005)/Season 01/Doctor Who (2005) - S01E01 - [DVD].mkv` |
+| `Doctor Who (2005) {tmdb-57243} - S01E01 - [DVD].mkv` | `TV Shows/Doctor Who (2005) {tmdb-57243}/Season 01/Doctor Who (2005) - S01E01 - [DVD].mkv` |
 | `Doctor Who (2005) - S00E01 - The Christmas Invasion [HDTV-1080p].mkv` | `TV Shows/Doctor Who (2005)/Specials/Doctor Who (2005) - S00E01 - The Christmas Invasion [HDTV-1080p].mkv` |
 | `Planet Earth - S01E05-E06 - [Bluray-1080p].mkv` | `TV Shows/Planet Earth/Season 01/Planet Earth - S01E05-E06 - [Bluray-1080p].mkv` |
 

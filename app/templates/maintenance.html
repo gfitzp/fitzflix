@@ -87,7 +87,10 @@
 	</div>
 	{% else %}
 	<div class="alert alert-danger mt-3">
-		<code>{{ filename_test_result.filename }}</code> would be rejected: the name doesn't match the expected formats, or its quality tag isn't a known quality title.
+		<code>{{ filename_test_result.filename }}</code> would be rejected:
+		{%- if filename_test_result.details.reason %} {{ filename_test_result.details.reason }}.
+		{%- else %} the name doesn't match the expected formats, or its quality tag isn't a known quality title.
+		{%- endif %}
 	</div>
 	{% endif %}
 {% endif %}

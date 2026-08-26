@@ -430,6 +430,15 @@ def apply_tmdb_refresh(
                     else:
                         file_details = evaluate_filename(f.untouched_basename)
 
+                    if not file_details:
+                        # e.g. an id tag in the untouched name that no
+                        # longer resolves; leave the file where it is
+                        current_app.logger.warning(
+                            f"'{f.untouched_basename}' no longer evaluates, "
+                            f"skipping its rename"
+                        )
+                        continue
+
                     new_relative = file_details.get("file_path")
                     old_file = os.path.join(
                         current_app.config["LIBRARY_DIR"], f.file_path
