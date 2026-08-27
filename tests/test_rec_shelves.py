@@ -1,7 +1,7 @@
 """The Recommendations page (#235): criteria-keyed shelves anchored by
-two interest films, the eligibility pool (owned or streaming), the
-fresh-per-reload draw, and the tile endpoint that refills a slot after
-a rating, watchlist add, or wave-off."""
+two interest films (or occasionally one, #249), the eligibility pool
+(owned or streaming), the fresh-per-reload draw, and the tile endpoint
+that refills a slot after a rating, watchlist add, or wave-off."""
 
 import json
 import random
@@ -192,8 +192,11 @@ def test_build_shelves_anchors_and_criteria_overlap(app):
             assert label in ("Western films", "the 1960s")
 
 
-def test_build_shelves_needs_two_interest_films(app):
-    """One liked film can't anchor anything — shelves need two."""
+def test_single_holder_genre_or_decade_never_seeds(app):
+    """A lone liked film whose only features are a genre and a decade
+    still anchors nothing — one film is too weak an evidence base for
+    the broad classes; single-anchor shelves (#249) need a specific
+    feature (a person, keyword, or award) or copref coverage."""
 
     with app.app_context():
         user = admin_user(app)
@@ -207,6 +210,42 @@ def test_build_shelves_needs_two_interest_films(app):
         from app.rec_shelves import build_shelves
 
         assert build_shelves(user, rng=random.Random(7)) == []
+
+
+def test_single_anchor_criteria_shelf_from_specific_feature(app):
+    """A director the user has loved exactly once may key a
+    single-anchor shelf (#249): kind criteria, the lone holder as the
+    only anchor, the director as a criterion, and only that director's
+    films suggested."""
+
+    with app.app_context():
+        user = admin_user(app)
+        director = make_person(801249, "Solo Director")
+        only = make_candidate("Solo Anchor", 1961, director=director)
+        log_watch(int(user.id), only, rating=5, liked=True)
+        picks = [
+            make_candidate(f"Solo Pick {n}", 1965 + n, director=director)
+            for n in range(4)
+        ]
+        outsider = make_candidate("Solo Outsider", 1999)
+        db.session.commit()
+        only_id = only.id
+        pick_ids = {movie.id for movie in picks}
+        outsider_id = outsider.id
+
+        from app.rec_shelves import build_shelves
+
+        shelves = build_shelves(user, rng=random.Random(7))
+        assert shelves, "no shelf from a single-holder director seed"
+        shelf = next(
+            s
+            for s in shelves
+            if any(key == "director:801249" for key, _ in s["criteria"])
+        )
+        assert shelf["kind"] == "criteria"
+        assert shelf["anchor_ids"] == [only_id]
+        assert set(shelf["movie_ids"]) <= pick_ids
+        assert outsider_id not in shelf["movie_ids"]
 
 
 def test_recommendations_page_renders_shelves(app, admin_client):
@@ -434,8 +473,12 @@ def test_parse_criteria_copref_key(app):
     from app.rec_shelves import parse_criteria
 
     assert parse_criteria("copref:501:502") == [("copref", (501, 502))]
-    assert parse_criteria("copref:501") is None
+    # A single-anchor shelf's key (#249)
+    assert parse_criteria("copref:501") == [("copref", (501,))]
+    assert parse_criteria("copref:") is None
+    assert parse_criteria("copref:abc") is None
     assert parse_criteria("copref:501:abc") is None
+    assert parse_criteria("copref:501:502:503") is None
     assert parse_criteria("copref:501:502,genre:37") is None
 
 
@@ -479,6 +522,136 @@ def test_copref_shelf_page_render(app, admin_client):
     assert 'data-criteria="copref:501:502"' in page or (
         'data-criteria="copref:502:501"' in page
     )
+
+
+def copref_single_fixture(app, count=4, second_anchor=False):
+    """One liked anchor (tmdb 501) whose neighbor list covers `count`
+    owned candidates (tmdb 601+) with NO partner anchor to pair with —
+    optionally a second pairless anchor (tmdb 502, neighbors 701+).
+    Returns (user, anchor ids, candidate ids)."""
+
+    user = admin_user(app)
+    user_id = int(user.id)
+    anchor_a = make_candidate("Copref Solo A", 1977)
+    anchor_a.tmdb_id = 501
+    log_watch(user_id, anchor_a, rating=5, liked=True)
+    anchor_ids = [anchor_a.id]
+
+    candidates = []
+    for n in range(count):
+        movie = make_candidate(f"Copref Solo Pick {n}", 1984 + n)
+        movie.tmdb_id = 601 + n
+        candidates.append(movie)
+        make_copref(501, movie.tmdb_id, 0.30 - n * 0.02)
+
+    if second_anchor:
+        anchor_b = make_candidate("Copref Solo B", 1996)
+        anchor_b.tmdb_id = 502
+        log_watch(user_id, anchor_b, rating=5, liked=True)
+        anchor_ids.append(anchor_b.id)
+        for n in range(count):
+            movie = make_candidate(f"Copref Solo Other {n}", 2004 + n)
+            movie.tmdb_id = 701 + n
+            candidates.append(movie)
+            make_copref(502, movie.tmdb_id, 0.30 - n * 0.02)
+
+    db.session.commit()
+    return user, anchor_ids, [movie.id for movie in candidates]
+
+
+def test_single_anchor_copref_shelf_for_pairless_anchor(app):
+    """An anchor whose neighborhood pairs with no other anchor may
+    front a single-anchor copref shelf (#249): one anchor id, a
+    copref:{tmdb} key, suggestions from its own neighbor list — and
+    two pairless anchors still yield only ONE single-anchor shelf per
+    load."""
+
+    with app.app_context():
+        user, anchor_ids, candidate_ids = copref_single_fixture(app, second_anchor=True)
+
+        from app.rec_shelves import build_shelves
+
+        shelves = build_shelves(user, rng=random.Random(3))
+        copref = [s for s in shelves if s["kind"] == "copref"]
+        assert len(copref) == 1, "the single-anchor budget is one per load"
+        shelf = copref[0]
+        assert len(shelf["anchor_ids"]) == 1
+        assert shelf["anchor_ids"][0] in anchor_ids
+        key = shelf["criteria"][0][0]
+        assert key in ("copref:501", "copref:502")
+        assert set(shelf["movie_ids"]) <= set(candidate_ids)
+
+
+def test_single_anchor_budget_spans_both_kinds(app):
+    """One load never fronts two single-anchor shelves even when both
+    a pairless copref anchor and a one-holder criteria seed qualify:
+    the copref single draws first and exhausts the budget."""
+
+    with app.app_context():
+        user = admin_user(app)
+        user_id = int(user.id)
+        director = make_person(801250, "Budget Director")
+        anchor = make_candidate("Budget Anchor", 1977, director=director)
+        anchor.tmdb_id = 501
+        log_watch(user_id, anchor, rating=5, liked=True)
+        # Ten candidates carrying BOTH signals, so five copref picks
+        # still leave the director seed enough films for a shelf —
+        # only the budget can block it
+        for n in range(10):
+            movie = make_candidate(f"Budget Pick {n}", 1984 + n, director=director)
+            movie.tmdb_id = 601 + n
+            make_copref(501, movie.tmdb_id, 0.40 - n * 0.02)
+        db.session.commit()
+
+        from app.rec_shelves import build_shelves
+
+        shelves = build_shelves(user, rng=random.Random(3))
+        singles = [s for s in shelves if len(s["anchor_ids"]) == 1]
+        assert len(singles) == 1
+        assert singles[0]["kind"] == "copref"
+        assert [s["kind"] for s in shelves] == ["copref"]
+
+
+def test_single_anchor_copref_tile_refill(app, admin_client):
+    """The tile endpoint refills a single-anchor copref slot from the
+    anchor's own neighbor list and answers 204 once it's spent."""
+
+    with app.app_context():
+        _, _, candidate_ids = copref_single_fixture(app)
+        best, runner_up = candidate_ids[0], candidate_ids[1]
+
+    response = admin_client.get(
+        f"/recommendations/tile?criteria=copref:501&exclude={best}"
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Copref Solo Pick 1" in body
+    assert f'data-state-movie="{runner_up}"' in body
+
+    exclude = ",".join(str(movie_id) for movie_id in candidate_ids)
+    response = admin_client.get(
+        f"/recommendations/tile?criteria=copref:501&exclude={exclude}"
+    )
+    assert response.status_code == 204
+
+
+def test_single_anchor_shelf_page_render(app, admin_client):
+    """A single-anchor copref shelf renders with the singular heading
+    and caption, a centered solo card in the anchor slot, and the
+    one-id criteria key."""
+
+    with app.app_context():
+        copref_single_fixture(app)
+
+    page = admin_client.get("/recommendations").get_data(as_text=True)
+    assert "More like this one" in page
+    assert "Loved by the people who loved it" in page
+    assert 'title="Copref Solo A (1977)"' in page
+    assert 'class="anchor-fan-solo"' in page
+    # The pair classes name only CSS rules here, never a card
+    assert 'class="anchor-fan-back"' not in page
+    assert 'class="anchor-fan-front"' not in page
+    assert 'data-criteria="copref:501"' in page
 
 
 def test_anchors_require_a_rated_or_liked_verdict(app):

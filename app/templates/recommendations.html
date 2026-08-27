@@ -10,8 +10,13 @@
 <div data-shelf data-criteria="{{ shelf.criteria_param }}">
 	{% if not loop.first %}<hr>{% endif %}
 	{% if shelf.kind == "copref" %}
+	{% if shelf.anchors | length == 1 %}
+	<h4>More like this one</h4>
+	<p class="small text-muted mb-2">Loved by the people who loved it &mdash; from thirty-two million MovieLens ratings, not shared features.</p>
+	{% else %}
 	<h4>More like these two</h4>
 	<p class="small text-muted mb-2">Loved by the people who loved both &mdash; from thirty-two million MovieLens ratings, not shared features.</p>
+	{% endif %}
 	{% else %}
 	{# First character upcased by hand — the capitalize filter would
 	   lowercase the names in "films directed by Sidney Lumet" #}
@@ -35,7 +40,9 @@
 				<div class="anchor-fan">
 					{% for anchor in shelf.anchors %}
 					{% set src = movie_poster_src(anchor) | trim %}
-					<a href="{{ url_for('main.movie', movie_id=anchor.id) }}" class="{{ 'anchor-fan-front' if loop.last else 'anchor-fan-back' }}" title="{{ anchor.title }} ({{ anchor.year }})">
+					{# A single-anchor shelf (#249) centers its lone card #}
+					{% set fan_class = 'anchor-fan-solo' if shelf.anchors | length == 1 else ('anchor-fan-front' if loop.last else 'anchor-fan-back') %}
+					<a href="{{ url_for('main.movie', movie_id=anchor.id) }}" class="{{ fan_class }}" title="{{ anchor.title }} ({{ anchor.year }})">
 						{% if src %}
 						<img src="{{ src }}" loading="lazy" alt="{{ anchor.title }} ({{ anchor.year }})">
 						{% else %}

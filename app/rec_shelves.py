@@ -6,7 +6,12 @@ and is fronted by two ANCHOR films the user rated or liked that carry
 every one of them ("Because you liked" must never name a film the
 user hasn't passed a verdict on — Glenn, Aug 26 2026; watchlist adds
 and bare unrated watches still feed the engine's scores, but they
-can't face a shelf). The shelf's suggestions are films the user has never logged or
+can't face a shelf). Occasionally — at most one shelf per load, both
+kinds combined — a shelf fronts a SINGLE anchor instead (#249),
+targeted exactly where the pair rule blocks variety: a copref anchor
+whose neighborhood pairs with no other anchor's, or a specific
+feature (a person, keyword, or award — never a genre or decade) held
+by exactly one rated-or-liked film. The shelf's suggestions are films the user has never logged or
 waved off that carry the same criteria and can actually be watched
 tonight: owned locally, or streaming on one of the user's services
 (record-backed films only, answered from the availability cache the
@@ -78,6 +83,19 @@ MAX_CRITERIA = 4
 
 COPREF_SHELF_COUNT = 2
 COPREF_ANCHOR_POOL = 30
+
+# Single-anchor shelves (#249): at most one per load across both
+# kinds — one film is weaker evidence than two, so these stay
+# occasional. A pairless copref anchor competes in the pair draw with
+# its quality damped (its own-similarity sums run higher than a
+# pair's min-blend, and pairs should still lead most loads), and a
+# one-holder criteria seed may key a shelf only when its class is
+# specific enough that a single loved film is real evidence — a
+# person, a keyword, an award won, never a genre or decade
+
+MAX_SINGLE_ANCHOR_SHELVES = 1
+SINGLE_ANCHOR_DAMP = 0.5
+SINGLE_SEED_CLASSES = frozenset(("keyword", "actor", "award") + tuple(CREW_ROLE_JOBS))
 
 # No class may key more than this many of one load's shelves, so a
 # cast-heavy profile still mixes genres, keywords, and awards in
@@ -332,12 +350,16 @@ def _top_heavy_sample(rng, ranked, count, decay=0.93):
 
 
 def _copref_shelves(interest, pool, rng, count, shown):
-    """Up to `count` copref-pair shelves: two of the user's top-weight
+    """Up to `count` copref shelves: two of the user's top-weight
     interest films whose MovieCopref neighbor lists jointly cover
     enough eligible films. Suggestions rank by min(sim to A, sim to B)
     — a film must sit close to BOTH anchors — and the criteria key
     `copref:{tmdbA}:{tmdbB}` lets the tile endpoint refill slots from
-    the same joint list. Mutates `shown` like the criteria loop does.
+    the same joint list. An anchor that qualifies for NO pair may
+    front a single-anchor shelf instead (#249) — `copref:{tmdbA}`,
+    ranked by similarity to it alone, damped in the draw and capped at
+    MAX_SINGLE_ANCHOR_SHELVES. Mutates `shown` like the criteria loop
+    does.
     """
 
     top = sorted(interest.items(), key=lambda kv: kv[1], reverse=True)[
@@ -366,6 +388,7 @@ def _copref_shelves(interest, pool, rng, count, shown):
         for movie_id in anchors
     }
     pairs = []
+    paired = set()
     for i, first in enumerate(anchors):
         for second in anchors[i + 1 :]:
             joint = neighbors[first] & neighbors[second]
@@ -379,16 +402,31 @@ def _copref_shelves(interest, pool, rng, count, shown):
                 ]
             )
             pairs.append((quality, (first, second, joint)))
+            paired.update((first, second))
+
+    # Pairless anchors — the outlier tastes the intersection rule
+    # shuts out — enter the same draw solo, damped so pairs lead
+    for first in anchors:
+        if first in paired or len(neighbors[first]) < MIN_SHELF_FILMS:
+            continue
+        own = sims[tmdb_of[first]]
+        quality = SINGLE_ANCHOR_DAMP * sum(
+            sorted((own[t] for t in neighbors[first]), reverse=True)[:SHELF_SIZE]
+        )
+        pairs.append((quality, (first, None, neighbors[first])))
 
     shelves = []
     used_anchors = set()
+    singles = 0
     for first, second, joint in _weighted_order(rng, pairs):
         if len(shelves) >= count:
             break
         if first in used_anchors or second in used_anchors:
             continue
+        if second is None and singles >= MAX_SINGLE_ANCHOR_SHELVES:
+            continue
         sims_a = sims[tmdb_of[first]]
-        sims_b = sims[tmdb_of[second]]
+        sims_b = sims[tmdb_of[second]] if second is not None else sims_a
         ranked = sorted(
             (t for t in joint if pool_by_tmdb[t] not in shown),
             key=lambda t: min(sims_a[t], sims_b[t]),
@@ -397,16 +435,22 @@ def _copref_shelves(interest, pool, rng, count, shown):
         if len(ranked) < MIN_SHELF_FILMS:
             continue
         picks = [pool_by_tmdb[t] for t in _top_heavy_sample(rng, ranked, SHELF_SIZE)]
-        key = f"copref:{tmdb_of[first]}:{tmdb_of[second]}"
+        if second is None:
+            key = f"copref:{tmdb_of[first]}"
+            anchor_ids = [first]
+            singles += 1
+        else:
+            key = f"copref:{tmdb_of[first]}:{tmdb_of[second]}"
+            anchor_ids = [first, second]
         shelves.append(
             {
                 "kind": "copref",
                 "criteria": [(key, "loved alongside these")],
-                "anchor_ids": [first, second],
+                "anchor_ids": anchor_ids,
                 "movie_ids": picks,
             }
         )
-        used_anchors.update((first, second))
+        used_anchors.update(anchor_ids)
         shown.update(picks)
     return shelves
 
@@ -415,16 +459,17 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
     """One page load's shelves for a user, freshly drawn.
 
     Each shelf dict carries its kind ("criteria" or "copref"), its
-    criteria [(key, label), ...], its two anchor movie ids, and its
-    suggested movie ids. Anchors come only from films the user rated
-    or liked. Copref-pair shelves draw first (capped at
-    COPREF_SHELF_COUNT); criteria shelves fill the rest: seeds are
-    single features held by at least two anchor-eligible films and
-    enough eligible candidates, and the winning seed's criteria
-    greedily extend with features BOTH anchors share, as long as
-    enough candidates carry the whole set — so anchors and suggestions
-    always overlap on every criterion. Films never repeat across one
-    load's shelves.
+    criteria [(key, label), ...], its anchor movie ids — two, or
+    occasionally one (#249) — and its suggested movie ids. Anchors
+    come only from films the user rated or liked. Copref shelves draw
+    first (capped at COPREF_SHELF_COUNT); criteria shelves fill the
+    rest: seeds are single features held by at least two
+    anchor-eligible films (or by one, when the class is specific
+    enough to carry a single-anchor shelf) and enough eligible
+    candidates, and the winning seed's criteria greedily extend with
+    features every anchor shares, as long as enough candidates carry
+    the whole set — so anchors and suggestions always overlap on
+    every criterion. Films never repeat across one load's shelves.
     """
 
     rng = rng or random.Random()
@@ -435,7 +480,7 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
         for movie_id, weight in user_movie_weights(user_id).items()
         if weight >= ANCHOR_MIN_WEIGHT and movie_id in verdicts
     }
-    if len(interest) < 2:
+    if not interest:
         return []
     pool = eligible_films(user)
     if len(pool) < MIN_SHELF_FILMS:
@@ -464,7 +509,13 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
 
     seed_scores = {}
     for key, holder_ids in holders.items():
-        if len(holder_ids) < 2 or len(carriers.get(key, ())) < MIN_SHELF_FILMS:
+        if len(carriers.get(key, ())) < MIN_SHELF_FILMS:
+            continue
+        # A one-holder seed keys a single-anchor shelf (#249): real
+        # evidence only for specific classes — one loved film says
+        # little about a genre or a decade. SEED_SHRINKAGE already
+        # keeps these underdogs in the draw
+        if len(holder_ids) < 2 and classes[key] not in SINGLE_SEED_CLASSES:
             continue
         score = sum(interest[movie_id] for movie_id in holder_ids) / (
             len(holder_ids) + SEED_SHRINKAGE
@@ -476,12 +527,16 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
 
     scores = stored_scores(current_app.redis, user_id)
     shelves = list(copref_shelves)
+    singles = sum(1 for shelf in copref_shelves if len(shelf["anchor_ids"]) == 1)
     shelves_per_class = {}
     for seed in _weighted_order(rng, [(s, k) for k, s in seed_scores.items()]):
         if len(shelves) >= count:
             break
         cls = classes[seed]
         if shelves_per_class.get(cls, 0) >= MAX_SHELVES_PER_CLASS:
+            continue
+        # The single-anchor budget spans both kinds
+        if len(holders[seed]) < 2 and singles >= MAX_SINGLE_ANCHOR_SHELVES:
             continue
         candidates = carriers[seed] - shown
         if len(candidates) < MIN_SHELF_FILMS:
@@ -521,6 +576,8 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
         )
         shown.update(picks)
         shelves_per_class[cls] = shelves_per_class.get(cls, 0) + 1
+        if len(anchors) == 1:
+            singles += 1
 
     # Build order is not page order: copref shelves draw first only to
     # claim their films, and pinning them to the top would make every
@@ -547,10 +604,11 @@ def _criterion_label(key, label):
 
 def parse_criteria(raw):
     """[(class, value)] from the tile endpoint's comma-joined criteria
-    keys, or None when any key is malformed. A copref pair key
-    (`copref:{tmdbA}:{tmdbB}`) always stands alone — a copref shelf
-    has exactly that one criterion — and parses to
-    ("copref", (tmdbA, tmdbB))."""
+    keys, or None when any key is malformed. A copref key
+    (`copref:{tmdbA}:{tmdbB}`, or `copref:{tmdbA}` for a
+    single-anchor shelf) always stands alone — a copref shelf has
+    exactly that one criterion — and parses to ("copref", (tmdbA,
+    tmdbB)) or ("copref", (tmdbA,))."""
 
     keys = [key for key in (raw or "").split(",") if key]
     if not keys or len(keys) > MAX_CRITERIA:
@@ -559,9 +617,9 @@ def parse_criteria(raw):
         if len(keys) != 1:
             return None
         parts = keys[0].split(":")
-        if len(parts) != 3 or not (parts[1].isdigit() and parts[2].isdigit()):
+        if len(parts) not in (2, 3) or not all(p.isdigit() for p in parts[1:]):
             return None
-        return [("copref", (int(parts[1]), int(parts[2])))]
+        return [("copref", tuple(int(p) for p in parts[1:]))]
     parsed = []
     for key in keys:
         cls, _, value = key.partition(":")
@@ -611,15 +669,16 @@ def _criterion_movie_ids(cls, value):
     return {movie_id for (movie_id,) in rows}
 
 
-def _copref_replacement(user, pair, exclude):
+def _copref_replacement(user, anchors, exclude):
     """The next movie id for a copref shelf's slot: the eligible film
-    most similar to BOTH anchors that isn't already showing."""
+    most similar to EVERY anchor — both of the pair, or the one film
+    of a single-anchor shelf — that isn't already showing."""
 
-    first, second = pair
-    sims = copref_anchor_sims([first, second])
+    sims = copref_anchor_sims(anchors)
+    lists = [sims.get(tmdb_id, {}) for tmdb_id in anchors]
+    shared = set(lists[0]).intersection(*(set(other) for other in lists[1:]))
     joint = {
-        tmdb_id: min(sims[first][tmdb_id], sims[second][tmdb_id])
-        for tmdb_id in set(sims.get(first, ())) & set(sims.get(second, ()))
+        tmdb_id: min(neighbors[tmdb_id] for neighbors in lists) for tmdb_id in shared
     }
     if not joint:
         return None
@@ -639,8 +698,8 @@ def replacement_film(user, criteria, exclude=()):
     """The next movie id for a shelf slot: the best-scored eligible
     film carrying every criterion that isn't already showing — or None
     when the criteria set is exhausted, which closes the slot. Copref
-    shelves rank by joint similarity to their anchor pair instead of
-    the engine score, matching the shelf's own ordering."""
+    shelves rank by joint similarity to their anchors instead of the
+    engine score, matching the shelf's own ordering."""
 
     if criteria and criteria[0][0] == "copref":
         return _copref_replacement(user, criteria[0][1], exclude)

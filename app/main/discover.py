@@ -1623,10 +1623,10 @@ def radarr_request():
 def recommendations():
     """The Recommendations page (#235): shelves of unseen films keyed
     by shared criteria — genres, keywords, awards won, people — each
-    anchored by two films the user has expressed interest in. Every
-    reload draws a fresh set of shelves; acting on a suggestion swaps
-    just that film through the tile endpoint below. This page replaced
-    the old /rate drive."""
+    anchored by two films the user has expressed interest in (or
+    occasionally one, #249). Every reload draws a fresh set of
+    shelves; acting on a suggestion swaps just that film through the
+    tile endpoint below. This page replaced the old /rate drive."""
 
     shelves = []
     for shelf in build_shelves(current_user):
@@ -1640,7 +1640,7 @@ def recommendations():
         films = [
             movies[movie_id] for movie_id in shelf["movie_ids"] if movie_id in movies
         ]
-        if len(anchors) < 2 or not films:
+        if len(anchors) != len(shelf["anchor_ids"]) or not anchors or not films:
             continue
         shelves.append(
             {
