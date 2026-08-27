@@ -1628,12 +1628,19 @@ def recommendations():
     shelves; acting on a suggestion swaps just that film through the
     tile endpoint below. This page replaced the old /rate drive."""
 
+    built = build_shelves(current_user)
+    wanted = {
+        movie_id
+        for shelf in built
+        for movie_id in shelf["anchor_ids"] + shelf["movie_ids"]
+    }
+    movies = {
+        movie.id: movie
+        for movie in Movie.query.filter(Movie.id.in_(list(wanted) or [0]))
+    }
+
     shelves = []
-    for shelf in build_shelves(current_user):
-        wanted = shelf["anchor_ids"] + shelf["movie_ids"]
-        movies = {
-            movie.id: movie for movie in Movie.query.filter(Movie.id.in_(wanted or [0]))
-        }
+    for shelf in built:
         anchors = [
             movies[movie_id] for movie_id in shelf["anchor_ids"] if movie_id in movies
         ]

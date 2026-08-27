@@ -70,7 +70,7 @@ SHELF_CLASSES = ("genre", "keyword", "decade", "actor") + tuple(CREW_ROLE_JOBS)
 # (five suggestions — the anchor slot takes the row's first column),
 # and the floor below which a criteria set isn't worth a shelf
 
-SHELF_COUNT = 5
+SHELF_COUNT = 10
 SHELF_SIZE = 5
 MIN_SHELF_FILMS = 4
 MAX_CRITERIA = 4
@@ -81,7 +81,7 @@ MAX_CRITERIA = 4
 # similar they are to BOTH. Pairs are drawn from the user's top-weight
 # interest films; the cap keeps the pair search quadratic-but-tiny.
 
-COPREF_SHELF_COUNT = 2
+COPREF_SHELF_COUNT = 3
 COPREF_ANCHOR_POOL = 30
 
 # Single-anchor shelves (#249): at most one per load across both
@@ -100,7 +100,7 @@ SINGLE_SEED_CLASSES = frozenset(("keyword", "actor", "award") + tuple(CREW_ROLE_
 # No class may key more than this many of one load's shelves, so a
 # cast-heavy profile still mixes genres, keywords, and awards in
 
-MAX_SHELVES_PER_CLASS = 2
+MAX_SHELVES_PER_CLASS = 3
 
 # The interest bar: on top of the rated-or-liked requirement below, an
 # anchor's diary weight must clear this floor, so a film the user
