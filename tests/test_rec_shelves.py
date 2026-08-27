@@ -595,3 +595,33 @@ def test_shelf_criteria_use_resolved_keyword_casing(app):
             if key == "keyword:18426"
         ]
         assert labels and labels[0] == "“New York City” films"
+
+
+def test_shelf_kinds_mix_positions_across_draws(app):
+    """Copref shelves draw first to claim their films, but never own
+    the top of the page: the final order shuffles, so across reseeded
+    draws both kinds appear in the lead position."""
+
+    with app.app_context():
+        user, _, _ = copref_fixture(app)
+        user_id = int(user.id)
+        western = genre(37, "Western")
+        anchor_a = make_candidate("Mix Anchor A", 1961, genre_row=western)
+        anchor_b = make_candidate("Mix Anchor B", 1963, genre_row=western)
+        log_watch(user_id, anchor_a, rating=5, liked=True)
+        log_watch(user_id, anchor_b, rating=4, liked=True)
+        for n in range(5):
+            make_candidate(f"Mix Pick {n}", 1965 + n, genre_row=western)
+        db.session.commit()
+
+        from app.rec_shelves import build_shelves
+
+        leaders = set()
+        for seed in range(12):
+            shelves = build_shelves(user, rng=random.Random(seed))
+            kinds = {shelf["kind"] for shelf in shelves}
+            assert kinds == {"copref", "criteria"}, "fixture must yield both kinds"
+            leaders.add(shelves[0]["kind"])
+            if leaders == {"copref", "criteria"}:
+                break
+        assert leaders == {"copref", "criteria"}

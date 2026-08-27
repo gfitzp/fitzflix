@@ -521,6 +521,13 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
         )
         shown.update(picks)
         shelves_per_class[cls] = shelves_per_class.get(cls, 0) + 1
+
+    # Build order is not page order: copref shelves draw first only to
+    # claim their films, and pinning them to the top would make every
+    # load open the same way (Glenn, Aug 26 2026) — the kinds mix
+    # randomly down the page instead
+
+    rng.shuffle(shelves)
     return shelves
 
 
