@@ -103,6 +103,7 @@ from app.leaving_criterion import (
     leaving_shelf,
 )
 from app.newly_added import (
+    newly_added_inventory,
     newly_added_shelves,
 )
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
@@ -1403,6 +1404,21 @@ def leaving():
         "leaving.html",
         title="Leaving the Criterion Channel",
         inventory=leaving_inventory(current_user),
+    )
+
+
+@bp.route("/newly-added")
+@login_required
+def newly_added():
+    """The complete newly-added inventory (#246): every recent arrival
+    on every provider's feed, owned and seen included — the shelf's
+    "See more…" destination, with the provider's own page linked from
+    each section."""
+
+    return render_template(
+        "newly_added.html",
+        title="Newly added to streaming",
+        sections=newly_added_inventory(current_user),
     )
 
 

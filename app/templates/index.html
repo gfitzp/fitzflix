@@ -169,11 +169,12 @@
 {% endif %}
 {# The newly-added discovery shelves (#246): one per subscribed
    provider with a stored newly-added feed — Criterion's scrape is
-   the only feed today. "See more…" goes to the provider's own page:
-   there's no in-app inventory, discovery is the whole point #}
+   the only feed today. "See more…" opens the in-app arrival
+   inventory — the complete set with library/Seen/watchlist badges;
+   the provider's own source link lives on that page #}
 {% for ns in new_shelves %}
 <hr>
-<div><h4 id="newly-added-shelf-{{ ns.provider_id }}" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ ns.source }}" target="_blank" rel="noreferrer" class="small">See more&hellip;</a></span></div>
+<div><h4 id="newly-added-shelf-{{ ns.provider_id }}" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ url_for('main.newly_added') }}#newly-added-{{ ns.provider_id }}" class="small">See more&hellip;</a></span></div>
 {% if ns.filtered_out %}
 <p class="text-muted mt-3">Nothing newly added fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}

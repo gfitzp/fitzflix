@@ -35,13 +35,14 @@ from datetime import date, datetime, timedelta
 from flask import current_app, g
 from werkzeug.local import LocalProxy
 
-from app import get_app
+from app import db, get_app
 from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
     fetch_collection_films,
     match_tmdb_id,
     user_film_sets,
 )
+from app.models import File, Movie, UserMovieReview, UserWatchlist
 from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
 
@@ -239,6 +240,114 @@ def newly_added_shelves(user):
             }
         )
     return shelves
+
+
+def newly_added_inventory(user):
+    """[{provider_id, label, source, films, unmatched}] — every
+    provider's complete recent-arrival set for the /newly-added page.
+
+    Unlike the home shelf, nothing is excluded: owned films stay
+    listed with their library badge, seen films stay with their Seen
+    badge, and films the TMDB matcher couldn't resolve trail as plain
+    scraped rows so the inventory is the whole arrival set.
+    Watchlisted films lead, then unowned films by taste score, owned
+    films after — the leaving inventory's order.
+    """
+
+    profile = stored_profile(current_app.redis, user.id)
+    sections = []
+    for provider_id, feed in FEEDS.items():
+        raw = current_app.redis.get(NEWLY_ADDED_KEY.format(provider_id=provider_id))
+        if not raw:
+            continue
+        stored = json.loads(raw)
+        recent = [item for item in stored.get("items", []) if _recent(item)]
+        matched = [item for item in recent if item.get("tmdb_id")]
+        unmatched = [item for item in recent if not item.get("tmdb_id")]
+        if not matched and not unmatched:
+            continue
+        tmdb_ids = [item["tmdb_id"] for item in matched]
+
+        owned = {}
+        seen = set()
+        watchlisted = set()
+        if tmdb_ids:
+            owned = dict(
+                db.session.query(Movie.tmdb_id, Movie.id)
+                .filter(Movie.tmdb_id.in_(tmdb_ids))
+                .filter(Movie.files.any(File.feature_type_id.is_(None)))
+            )
+            seen = {
+                tmdb_id
+                for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+                .join(UserMovieReview, UserMovieReview.movie_id == Movie.id)
+                .filter(Movie.tmdb_id.in_(tmdb_ids))
+                .filter(UserMovieReview.user_id == int(user.id))
+            }
+            watchlisted = {
+                tmdb_id
+                for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+                .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
+                .filter(Movie.tmdb_id.in_(tmdb_ids))
+                .filter(UserWatchlist.user_id == int(user.id))
+            }
+
+        films = []
+        for item in matched:
+            tmdb_id = item["tmdb_id"]
+            if profile:
+                score, contributions = score_movie(_payload_features(item), profile)
+            else:
+                score, contributions = 0.0, []
+            films.append(
+                {
+                    "tmdb_id": tmdb_id,
+                    "title": item.get("title"),
+                    "year": item.get("year"),
+                    "poster_path": item.get("poster_path"),
+                    "runtime": item.get("runtime"),
+                    "overview": item.get("overview"),
+                    "first_seen": item.get("first_seen"),
+                    "movie_id": owned.get(tmdb_id),
+                    "owned": tmdb_id in owned,
+                    "seen": tmdb_id in seen,
+                    "watchlisted": tmdb_id in watchlisted,
+                    "because": [
+                        label
+                        for contribution, label in contributions[:3]
+                        if contribution > 0
+                    ],
+                    "score": round(score, 4),
+                }
+            )
+        films.sort(
+            key=lambda film: (
+                not film["watchlisted"],
+                film["owned"],
+                -film["score"],
+                (film["title"] or "").lower(),
+            )
+        )
+        sections.append(
+            {
+                "provider_id": provider_id,
+                "label": feed["label"],
+                "source": feed["url"],
+                "films": films,
+                "unmatched": sorted(
+                    (
+                        {
+                            "title": film.get("title"),
+                            "year": film.get("year"),
+                            "director": film.get("director"),
+                        }
+                        for film in unmatched
+                    ),
+                    key=lambda film: (film["title"] or "").lower(),
+                ),
+            }
+        )
+    return sections
 
 
 def newly_added_since(tmdb_id, provider_id):

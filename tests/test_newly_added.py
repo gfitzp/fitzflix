@@ -202,9 +202,10 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert "Arrival Stale" not in body
     assert "Arrival Unmatched" not in body
 
-    # "See more…" goes to the provider's own page
+    # "See more…" opens the in-app arrival inventory, at this
+    # provider's section
 
-    assert 'href="https://www.criterionchannel.com/newly-added"' in body
+    assert 'href="/newly-added#newly-added-258"' in body
 
     # The watchlisted arrival sorts first, and the runtime filter
     # applies like everywhere else — including the emptied-not-hidden
@@ -292,3 +293,107 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
     leaving_label = departs.strftime("%B %-d")
     assert f"Criterion Channel &middot; leaving {leaving_label}" in page
     assert f"Criterion Channel &middot; added {label}" not in page
+
+
+def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
+    """Unlike the home shelf, /newly-added excludes nothing: owned and
+    seen films stay listed, unmatched films trail as plain rows, and
+    the section links to the provider's own page. No subscription
+    required — like /leaving, the page renders from the stored feeds
+    alone."""
+
+    from app import db
+    from app.models import UserMovieReview, UserWatchlist
+    from app.videos import star_rating_fields
+
+    # A taste profile but no subscription: the page must still render
+
+    user_id = subscribe_criterion(app)
+    from app.models import UserStreamingProvider
+
+    with app.app_context():
+        UserStreamingProvider.query.delete()
+        db.session.commit()
+
+    today = date.today().isoformat()
+    stale = (date.today() - timedelta(days=40)).isoformat()
+
+    with app.app_context():
+        owned = make_movie("Inventory Owned", 1956, tmdb_id=9502)
+        make_movie_file(owned, "Bluray-1080p")
+
+        seen = make_movie("Inventory Seen", 1956, tmdb_id=9503)
+        db.session.add(
+            UserMovieReview(
+                user_id=user_id, movie_id=seen.id, **star_rating_fields(3.0)
+            )
+        )
+
+        wanted = make_movie("Inventory Wanted", 1956, tmdb_id=9504)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
+        db.session.commit()
+
+    plant_feed(
+        app,
+        [
+            new_item(9501, "Inventory Fresh", first_seen=today),
+            new_item(9502, "Inventory Owned", first_seen=today),
+            new_item(9503, "Inventory Seen", first_seen=today),
+            new_item(9504, "Inventory Wanted", first_seen=today),
+            # Planted on the first run and aged out: neither is news
+            new_item(9505, "Inventory Planted", first_seen=None),
+            new_item(9506, "Inventory Stale", first_seen=stale),
+            {
+                "title": "Inventory Unmatched",
+                "director": "Jane Doe",
+                "year": 1962,
+                "tmdb_id": None,
+                "first_seen": today,
+                "scraped_title": "Inventory Unmatched",
+                "scraped_year": 1962,
+            },
+        ],
+    )
+
+    body = admin_client.get("/newly-added").get_data(as_text=True)
+    assert 'id="newly-added-258"' in body
+    assert "Newly added to the Criterion Channel" in body
+    for title in (
+        "Inventory Fresh",
+        "Inventory Owned",
+        "Inventory Seen",
+        "Inventory Wanted",
+    ):
+        assert f"{title} (1956)" in body
+    assert "Inventory Planted" not in body
+    assert "Inventory Stale" not in body
+
+    # The unmatched film trails as a plain row, and the section links
+    # to the provider's own page
+
+    assert "Also new" in body
+    assert "Inventory Unmatched (1962)" in body
+    assert "Directed by Jane Doe" in body
+    assert 'href="https://www.criterionchannel.com/newly-added"' in body
+
+    # Watchlisted films lead, owned films trail
+
+    assert body.index("Inventory Wanted") < body.index("Inventory Fresh")
+    assert body.index("Inventory Fresh") < body.index("Inventory Owned")
+
+    # The standing nav link reaches the page from anywhere
+
+    assert 'href="/newly-added"' in body
+
+
+def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
+    body = admin_client.get("/newly-added").get_data(as_text=True)
+    assert "Nothing new right now." in body
+
+    # A stored feed whose arrivals all predate tracking or the window
+    # reads the same as no feed
+
+    plant_feed(app, [new_item(9601, "Inventory Quiet", first_seen=None)])
+    body = admin_client.get("/newly-added").get_data(as_text=True)
+    assert "Nothing new right now." in body
+    assert "Inventory Quiet" not in body
