@@ -2647,7 +2647,7 @@ class UserMovieStatus(db.Model):
 
 
 class UserFrameScore(db.Model):
-    """Name that Frame standings, one row per (user, difficulty):
+    """Name That Frame standings, one row per (user, difficulty):
     the running streak and the personal best — persisted here so a
     restart, another device, or a new session can't erase a high
     score the way the original session-cookie streaks could."""

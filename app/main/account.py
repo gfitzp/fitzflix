@@ -597,7 +597,7 @@ def profile():
         flash("Regenerated the API key.", "success")
         return redirect(url_for("main.profile"))
 
-    # Button to wipe the user's Name that Frame standings (Glenn's
+    # Button to wipe the user's Name That Frame standings (Glenn's
     # ask, Aug 27 2026) — the score rows go, the dealt-frames record
     # stays, so a fresh start doesn't replay frames just seen
 
@@ -608,7 +608,7 @@ def profile():
     ):
         UserFrameScore.query.filter_by(user_id=int(current_user.id)).delete()
         db.session.commit()
-        flash("Your Name that Frame scores and statistics have been reset.", "success")
+        flash("Your Name That Frame scores and statistics have been reset.", "success")
         return redirect(url_for("main.profile"))
 
     # Form to map this account to a Plex username, so Plex watches land in

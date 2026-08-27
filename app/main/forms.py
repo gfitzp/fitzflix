@@ -28,7 +28,7 @@ from app.models import User
 
 
 class ResetFrameScoresForm(FlaskForm):
-    """Profile: wipe the user's Name that Frame standings — streaks,
+    """Profile: wipe the user's Name That Frame standings — streaks,
     bests, points, and win rates on every difficulty."""
 
     reset_frames_submit = SubmitField("Reset game scores")
@@ -492,7 +492,7 @@ class FilenameTestForm(FlaskForm):
 
 
 class GuessFrameForm(FlaskForm):
-    """Name that Frame guesses: the hidden token names the
+    """Name That Frame guesses: the hidden token names the
     round, and either a chosen movie id or free text arrives,
     depending on the difficulty."""
 

@@ -301,7 +301,7 @@ def register(app):
 
     @app.cli.group()
     def frames():
-        """Manage the Name that Frame pool."""
+        """Manage the Name That Frame pool."""
         pass
 
     @frames.command()
@@ -314,7 +314,7 @@ def register(app):
         job = current_app.maintenance_queue.enqueue(
             "app.frames.refresh_frame_pool_task",
             job_timeout=3600,
-            description="Refreshing the Name that Frame pool",
+            description="Refreshing the Name That Frame pool",
         )
         click.echo(f"Enqueued frame-pool refresh as {job.id}")
 

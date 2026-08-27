@@ -1,4 +1,4 @@
-"""Name that Frame: the nightly frame pool — pruning, top-up,
+"""Name That Frame: the nightly frame pool — pruning, top-up,
 rotation, and extraction — and the game's four difficulties, the
 fuzzy Siracusa matcher, the Extra Difficult zoom-out rounds, and the
 authenticated frame route."""
@@ -186,7 +186,9 @@ def test_game_round_and_choice_guessing(app, admin_client):
 
     token = seed_frame(app, answer_id)
 
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert f'src="/game/frame/{token}"' in page
     assert "Frame Answer Film (1994)" in page
     # Eight choices, the answer's id among them, and no answer leak
@@ -290,7 +292,9 @@ def test_siracusa_fuzzy_matching(app, admin_client):
         movie_id = movie.id
 
     token = seed_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa&unrated=1").get_data(
+        as_text=True
+    )
     assert 'name="guess"' in page
     assert "The Naked Kiss" not in page  # no answer leak on the round page
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
@@ -363,7 +367,9 @@ def test_rounds_never_repeat_until_the_pool_laps(app, admin_client):
     tokens = {seed_frame(app, movie_id) for movie_id in movie_ids}
 
     def deal():
-        page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+            as_text=True
+        )
         return re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1)
 
     first_lap = [deal() for _ in range(3)]
@@ -395,7 +401,9 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
         answer_id = answer.id
 
     token = seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(difficulty, choice):
@@ -427,7 +435,9 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
 
     # The round page shows the standing best even after the reset
 
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert "Best: 2" in page
 
 
@@ -495,7 +505,9 @@ def test_reveal_offers_the_answer_as_an_action_tile(app, admin_client):
         answer_id = answer.id
 
     token = seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
     body = admin_client.post(
         "/game",
@@ -541,7 +553,9 @@ def test_options_stay_within_the_answers_era(app, admin_client, monkeypatch):
         answer_id = answer.id
 
     seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert "Era Near (1961)" in page
     assert "Era Mid (1964)" in page  # ±2 alone can't fill two slots
     assert "Era Far (1990)" not in page
@@ -593,7 +607,9 @@ def test_a_lapped_difficulty_replays_least_recently_seen_first(app, admin_client
         seed_frame(app, movie_id)
 
     def deal():
-        page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+            as_text=True
+        )
         return re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1)
 
     first_lap = [deal() for _ in range(6)]
@@ -641,7 +657,9 @@ def test_rotation_retires_played_frames_before_merely_old_ones(
         # user's dealt record while the others stay unseen
         keys = set()
         while played not in keys:
-            page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+            page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+                as_text=True
+            )
             keys.add(re.search(r'src="/game/frame/([A-Za-z0-9_-]+)"', page).group(1))
         app.redis.delete(dealt_key(1))
         app.redis.zadd(dealt_key(1), {played: 1})
@@ -830,7 +848,9 @@ def test_options_prefer_shared_cast_then_genre(app, admin_client, monkeypatch):
         answer_id = answer.id
 
     seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert "Ladder Castmate (1961)" in page
     assert "Ladder Genremate (1961)" in page
     assert "Ladder Plain (1961)" not in page
@@ -866,7 +886,9 @@ def test_options_fall_back_to_shared_genre_outside_the_era(
         answer_id = answer.id
 
     seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert "Ladder Far Genremate (1990)" in page
     assert "Ladder Far Plain (1991)" not in page
 
@@ -876,7 +898,9 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
     worth 3 points, Zoom Out widens it to 2, a mid-round miss widens
     it again to the full frame, and a hit there banks 1 — while a
     first-look hit on the next round banks 3. The image route serves
-    the server-side stage's crop, never more."""
+    the server-side stage's crop, never more. The film is rated, so
+    the points stay at their base values — the unrated 2x bonus has
+    its own test."""
 
     import io
     import re
@@ -884,17 +908,27 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
     from PIL import Image
 
     from app import db
-    from app.models import UserFrameScore
+    from app.models import UserFrameScore, UserMovieReview
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
 
     with app.app_context():
         movie = make_movie("Extra Round Film", 2001)
         make_movie_file(movie, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=admin_id(),
+                movie_id=movie.id,
+                liked=True,
+                **star_rating_fields(4.0),
+            )
+        )
         db.session.commit()
         movie_id = movie.id
 
     token = seed_image_frame(app, movie_id, size=(120, 80))
 
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     assert 'name="guess"' in page
     assert 'name="zoom_out"' in page
     assert "3 points" in page
@@ -922,7 +956,7 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
     body = post({"zoom_out": "y"})
     assert "2 points" in body
     assert frame_size("?stage=2") == (72, 48)
-    assert "2 points" in admin_client.get("/game?difficulty=extra").get_data(
+    assert "2 points" in admin_client.get("/game?difficulty=extra&unrated=1").get_data(
         as_text=True
     )
 
@@ -947,7 +981,7 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
     # The next round opens fresh at 3 points; a first-look hit banks
     # all three
 
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     assert "3 points" in page
     body = post({"guess": "extra round film", "guess_submit": "y"})
     assert "(+3 points)" in body
@@ -957,7 +991,7 @@ def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
 
     # The standings badge carries the running total
 
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     assert "Points: 4" in page
 
 
@@ -977,7 +1011,7 @@ def test_extra_difficult_full_frame_miss_ends_the_round(app, admin_client):
         movie_id = movie.id
 
     token = seed_image_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def post(data):
@@ -1012,7 +1046,7 @@ def test_extra_skip_abandons_the_round(app, admin_client):
         movie_id = movie.id
 
     token = seed_image_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     assert "skip=1" in page
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
     admin_client.post(
@@ -1025,7 +1059,7 @@ def test_extra_skip_abandons_the_round(app, admin_client):
         },
     )
 
-    assert "2 points" in admin_client.get("/game?difficulty=extra").get_data(
+    assert "2 points" in admin_client.get("/game?difficulty=extra&unrated=1").get_data(
         as_text=True
     )
     # Zoomed out already: the skip parameter no longer resets the round
@@ -1052,7 +1086,7 @@ def test_extra_give_up_ends_the_round_as_a_miss(app, admin_client):
         movie_id = movie.id
 
     token = seed_image_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     # An untouched round offers Skip, not surrender
@@ -1093,7 +1127,7 @@ def test_extra_give_up_ends_the_round_as_a_miss(app, admin_client):
 
     # The round is over: the next visit deals fresh at three points
 
-    assert "3 points" in admin_client.get("/game?difficulty=extra").get_data(
+    assert "3 points" in admin_client.get("/game?difficulty=extra&unrated=1").get_data(
         as_text=True
     )
 
@@ -1123,10 +1157,10 @@ def test_crop_boxes_roam_the_whole_frame():
     assert min(tops) == 0 and max(tops) == height - int(height * 0.3)
 
 
-def test_seen_filter_narrows_the_deals(app, admin_client):
-    """The seen-films switch on the library-wide difficulties deals
-    only rated films, persists across plain visits, and prefers rated
-    distractors so the answer isn't the one familiar title."""
+def test_rated_films_are_the_default_world(app, admin_client):
+    """The library-wide difficulties deal only rated films by default
+    (inverted per Glenn's ask, Aug 27 2026) — the switch now *widens*
+    the deals to unrated films, and persists across plain visits."""
 
     from app import db
     from app.models import UserMovieReview
@@ -1152,28 +1186,37 @@ def test_seen_filter_narrows_the_deals(app, admin_client):
     rated_token = seed_frame(app, rated_id)
     unrated_token = seed_frame(app, unrated_id)
 
-    page = admin_client.get("/game?difficulty=difficult&rated=1").get_data(as_text=True)
-    assert 'id="rated-only" checked' in page
-    assert f'src="/game/frame/{rated_token}' in page
-
-    # The switch persists: plain visits keep dealing only rated films
+    # Bare visits deal only the rated film, visit after visit
 
     for _ in range(3):
         page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        assert 'id="include-unrated" checked' not in page
         assert f'src="/game/frame/{rated_token}' in page
         assert unrated_token not in page
 
-    # Un-ticking widens the deals again — the unrated frame is the
-    # only unseen one, so it comes straight up
+    # Ticking the switch widens the deals — the unrated frame is the
+    # only unseen one, so it comes straight up — and it persists
 
-    page = admin_client.get("/game?difficulty=difficult&rated=0").get_data(as_text=True)
-    assert 'id="rated-only" checked' not in page
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    assert 'id="include-unrated" checked' in page
     assert f'src="/game/frame/{unrated_token}' in page
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert 'id="include-unrated" checked' in page
+
+    # Un-ticking narrows the deals back to rated films
+
+    page = admin_client.get("/game?difficulty=difficult&unrated=0").get_data(
+        as_text=True
+    )
+    assert 'id="include-unrated" checked' not in page
+    assert f'src="/game/frame/{rated_token}' in page
 
 
-def test_seen_filter_empty_state_offers_the_way_out(app, admin_client):
-    """With the filter on and no rated films pooled, the page explains
-    the filter and keeps the switch on screen to untick."""
+def test_rated_default_empty_state_offers_the_way_out(app, admin_client):
+    """With nothing rated in the pool, the default rated-only world
+    explains itself and keeps the include-unrated switch on screen."""
 
     from app import db
 
@@ -1184,10 +1227,11 @@ def test_seen_filter_empty_state_offers_the_way_out(app, admin_client):
         unrated_id = unrated.id
 
     seed_frame(app, unrated_id)
-    page = admin_client.get("/game?difficulty=siracusa&rated=1").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
     assert "No frames to serve on this difficulty yet." in page
-    assert "untick the filter" in page
-    assert 'id="rated-only" checked' in page
+    assert "Include films I haven&rsquo;t rated" in page
+    assert "rate a few more" in page
+    assert 'id="include-unrated" checked' not in page
 
 
 def test_win_rate_counts_skips_as_frames_seen(app, admin_client):
@@ -1209,7 +1253,9 @@ def test_win_rate_counts_skips_as_frames_seen(app, admin_client):
         answer_id = answer.id
 
     token = seed_frame(app, answer_id)
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(choice):
@@ -1229,7 +1275,9 @@ def test_win_rate_counts_skips_as_frames_seen(app, admin_client):
 
     # Dealing again (a skip, effectively) counts as another frame seen
 
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert "Win rate: 50%" in page
 
     guess("999999")
@@ -1252,8 +1300,8 @@ def test_extra_resume_counts_one_frame_seen(app, admin_client):
         movie_id = movie.id
 
     seed_image_frame(app, movie_id)
-    admin_client.get("/game?difficulty=extra")
-    admin_client.get("/game?difficulty=extra")  # resumes, no new deal
+    admin_client.get("/game?difficulty=extra&unrated=1")
+    admin_client.get("/game?difficulty=extra&unrated=1")  # resumes, no new deal
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert score.rounds_seen == 1
@@ -1331,8 +1379,10 @@ def test_finished_rounds_queue_a_frame_replacement(app, admin_client):
 
     # Dealing (and re-dealing, a skip) queues nothing
 
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
-    admin_client.get("/game?difficulty=difficult")
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
+    admin_client.get("/game?difficulty=difficult&unrated=1")
     assert replacement_jobs() == []
 
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
@@ -1364,7 +1414,7 @@ def test_extra_round_queues_replacement_only_at_the_end(app, admin_client):
         movie_id = movie.id
 
     token = seed_image_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def post(data):
@@ -1480,7 +1530,9 @@ def test_difficulty_picker_is_a_radio_group(app, admin_client):
 
     import re
 
-    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=difficult&unrated=1").get_data(
+        as_text=True
+    )
     assert 'aria-label="Difficulty"' in page
     assert 'class="btn-check"' in page
     assert re.search(r'id="difficulty-difficult"[^>]*\schecked', page)
@@ -1504,7 +1556,9 @@ def test_fuzzy_matching_disregards_punctuation(app, admin_client):
         movie_id = movie.id
 
     token = seed_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
@@ -1527,7 +1581,7 @@ def test_fuzzy_matching_disregards_punctuation(app, admin_client):
 
 def test_unrated_watches_do_not_count_as_rated(app, admin_client):
     """A diary row without a star rating — a Netflix-import watch,
-    say — satisfies neither Easy nor the rated-films filter (Glenn's
+    say — satisfies neither Easy nor the rated-only default (Glenn's
     Conversation report, Aug 27 2026: 'seen' surfaced films nobody
     remembers, so the filter now means rated)."""
 
@@ -1558,7 +1612,7 @@ def test_unrated_watches_do_not_count_as_rated(app, admin_client):
     watched_token = seed_frame(app, watched_id)
     rated_token = seed_frame(app, rated_id)
 
-    for difficulty in ("easy", "difficult&rated=1"):
+    for difficulty in ("easy", "difficult"):
         for _ in range(3):
             page = admin_client.get(f"/game?difficulty={difficulty}").get_data(
                 as_text=True
@@ -1667,7 +1721,7 @@ def test_zoom_crops_avoid_letterbox_bars(app, admin_client):
         ),
     )
 
-    admin_client.get("/game?difficulty=extra")
+    admin_client.get("/game?difficulty=extra&unrated=1")
     served = admin_client.get(f"/game/frame/{token}?stage=1")
     crop = Image.open(io.BytesIO(served.data)).convert("L")
     darkest, _ = crop.getextrema()
@@ -1695,7 +1749,9 @@ def test_fuzzy_matching_accepts_the_pre_subtitle_title(app, admin_client):
         movie_id = movie.id
 
     token = seed_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
@@ -1732,7 +1788,9 @@ def test_fuzzy_matching_accepts_the_subtitle_alone(app, admin_client):
         movie_id = movie.id
 
     token = seed_frame(app, movie_id)
-    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(text):
@@ -1772,7 +1830,9 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
 
     pelham_token = seed_frame(app, pelham_id)
     apollo_token = seed_frame(app, apollo_id)
-    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    page = admin_client.get("/game?difficulty=siracusa&unrated=1").get_data(
+        as_text=True
+    )
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
     def guess(token, text):
@@ -1792,3 +1852,73 @@ def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
     assert "alert-danger" in guess(pelham_token, "The French Connection")
     assert "Correct" in guess(apollo_token, "apollo thirteen")
     assert "Correct" in guess(apollo_token, "Apollo 13")
+
+
+def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
+    """Naming an unrated film on Extra Difficult doubles the stage's
+    points — but the round prompt keeps quoting base points, since
+    'guess now for 6 points' would itself mark the film as unrated.
+    Only the toggle label and the after-the-fact reveal disclose it."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Bonus Secret Film", 2008)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    assert "(2x point bonus)" in page  # the toggle label may say so
+    assert "3 points" in page  # the prompt quotes base points only
+    assert "6 points" not in page
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        ).get_data(as_text=True)
+
+    # A first-look hit banks 3 doubled to 6, and only now says why
+
+    body = post({"guess": "Bonus Secret Film", "guess_submit": "y"})
+    assert "(+6 points &mdash; 2x bonus for an unrated film)" in body
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == (6, 1)
+
+    # A stage-two hit banks 2 doubled to 4 the same way
+
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    assert "3 points" in page and "6 points" not in page  # no leak
+    post({"zoom_out": "y"})
+    body = post({"guess": "bonus secret film", "guess_submit": "y"})
+    assert "(+4 points &mdash; 2x bonus for an unrated film)" in body
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == (10, 2)
+
+
+def test_game_reopens_at_the_last_chosen_difficulty(app, admin_client):
+    """A plain /game visit resumes the difficulty the user last chose
+    instead of resetting to Easy (Glenn's ask, Aug 27 2026)."""
+
+    import re
+
+    page = admin_client.get("/game").get_data(as_text=True)
+    assert re.search(r'id="difficulty-easy"[^>]*\schecked', page)
+
+    admin_client.get("/game?difficulty=siracusa")
+    page = admin_client.get("/game").get_data(as_text=True)
+    assert re.search(r'id="difficulty-siracusa"[^>]*\schecked', page)
+    assert not re.search(r'id="difficulty-easy"[^>]*\schecked', page)
+
+    # An unknown slug falls back to the remembered pick, not Easy
+
+    page = admin_client.get("/game?difficulty=bogus").get_data(as_text=True)
+    assert re.search(r'id="difficulty-siracusa"[^>]*\schecked', page)

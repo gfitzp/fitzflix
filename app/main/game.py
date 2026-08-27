@@ -1,14 +1,17 @@
-"""Name that Frame (GitHub #52): the guessing game itself.
+"""Name That Frame (GitHub #52): the guessing game itself.
 
 Rounds draw from the pre-extracted pool (app/frames.py) — the page
 never touches ffmpeg. Four difficulties, per Glenn's issues: Easy
 serves only films the current user has rated, with four choices;
-Hard (slug "difficult") serves the whole pooled library with eight;
-Difficult (slug "siracusa", renamed per #203)
-serves the whole library and takes free text, fuzzy-matched against
-the film's titles; Extra Difficult (slug "extra", #202) is free text
-too, but opens on a tight crop of the frame and scores by how early
-the guess lands. Frames are served through an authenticated route
+Hard (slug "difficult") has eight; Difficult (slug "siracusa",
+renamed per #203) takes free text, fuzzy-matched against the film's
+titles; Extra Difficult (slug "extra", #202) is free text too, but
+opens on a tight crop of the frame and scores by how early the guess
+lands — with the points doubled when the named film is one the user
+hasn't rated. The library-wide difficulties deal rated films by
+default too, each with an include-unrated switch (inverted per
+Glenn's ask, Aug 27 2026), and a plain /game visit reopens at the
+difficulty last chosen. Frames are served through an authenticated route
 keyed by the pool's opaque tokens, so neither the image URL nor the
 page markup leaks the answer before a guess lands."""
 
@@ -60,15 +63,27 @@ EXTRA_ROUND_KEY = "fitzflix:frames:extra:{user_id}"
 
 TOP_CAST_SIZE = 5
 
-# The library-wide difficulties can narrow to films the user has
-# rated (Glenn's ask, Aug 27 2026 — tightened from "seen" the same
-# day: unrated Netflix-import watches kept surfacing films nobody
-# remembers): a per-user, per-difficulty switch, held in a Redis set
-# of slugs with no expiry — it's a preference, not round state. Easy
-# is already that filter by definition.
+# The library-wide difficulties deal only films the user has rated by
+# default (inverted per Glenn's ask, Aug 27 2026 — rated-only proved
+# the mode actually played, so the switch now *widens* the deals to
+# unrated films instead of narrowing them): a per-user, per-difficulty
+# include-unrated flag, held in a Redis set of slugs with no expiry —
+# it's a preference, not round state. Easy never widens.
 
 RATED_FILTER_DIFFICULTIES = ("difficult", "siracusa", "extra")
-RATED_FILTER_KEY = "fitzflix:frames:ratedonly:{user_id}"
+UNRATED_FILTER_KEY = "fitzflix:frames:unrated:{user_id}"
+
+# Naming an unrated film on Extra Difficult doubles the stage's
+# points (Glenn's ask, Aug 27 2026). The bonus is only ever disclosed
+# after it lands — a prompt quoting doubled points would itself mark
+# the answer as a film the player hasn't rated.
+
+UNRATED_BONUS = 2
+
+# The game reopens at the difficulty the user last chose (Glenn's
+# ask, Aug 27 2026) — a plain /game visit used to reset to Easy
+
+LAST_DIFFICULTY_KEY = "fitzflix:frames:difficulty:{user_id}"
 
 # Distractors stay within the answer's era (Glenn, Aug 20 2026: an
 # option decades away hands the round to process of deduction) —
@@ -184,25 +199,34 @@ def _fuzzy_match(guess, movie):
     return False
 
 
-def _rated_only(difficulty):
-    """Whether the user has the rated-films filter on for a difficulty
-    that offers it."""
+def _include_unrated(difficulty):
+    """Whether the user has widened a library-wide difficulty to films
+    they haven't rated — rated-only is the default (inverted per
+    Glenn's ask, Aug 27 2026)."""
 
     return difficulty in RATED_FILTER_DIFFICULTIES and bool(
         current_app.redis.sismember(
-            RATED_FILTER_KEY.format(user_id=int(current_user.id)), difficulty
+            UNRATED_FILTER_KEY.format(user_id=int(current_user.id)), difficulty
         )
     )
 
 
-def _set_rated_only(difficulty, on):
-    """Persist the rated-films switch for one difficulty."""
+def _set_include_unrated(difficulty, on):
+    """Persist the include-unrated switch for one difficulty."""
 
-    key = RATED_FILTER_KEY.format(user_id=int(current_user.id))
+    key = UNRATED_FILTER_KEY.format(user_id=int(current_user.id))
     if on:
         current_app.redis.sadd(key, difficulty)
     else:
         current_app.redis.srem(key, difficulty)
+
+
+def _rated_only(difficulty):
+    """Whether a library-wide difficulty's deals narrow to rated films
+    — the default, unless the user has opted unrated films in. (Easy
+    handles its always-rated world separately.)"""
+
+    return difficulty in RATED_FILTER_DIFFICULTIES and not _include_unrated(difficulty)
 
 
 def _rated_movie_ids():
@@ -554,7 +578,7 @@ def _render_extra_round(token, stage, form, missed=None):
     ).first()
     return render_template(
         "game.html",
-        title="Name that Frame",
+        title="Name That Frame",
         difficulty="extra",
         difficulties=DIFFICULTIES,
         result=None,
@@ -563,6 +587,7 @@ def _render_extra_round(token, stage, form, missed=None):
         stage=stage,
         stage_points=EXTRA_STAGES + 1 - stage,
         missed_guess=missed,
+        include_unrated=_include_unrated("extra"),
         rated_only=_rated_only("extra"),
         streak=score.current_streak if score else 0,
         best=score.best_streak if score else 0,
@@ -606,6 +631,12 @@ def _extra_post(form, token, movie):
 
     _clear_extra_round()
     points_won = EXTRA_STAGES + 1 - stage if correct else 0
+    # The unrated bonus stays secret until it lands: the round prompt
+    # quoted base points all along, and only now may the reveal say
+    # the film was one the player hadn't rated
+    doubled = bool(points_won) and movie.id not in _rated_movie_ids()
+    if doubled:
+        points_won *= UNRATED_BONUS
     score = _score_row("extra")
     score.points = (score.points or 0) + points_won
     score.current_streak = score.current_streak + 1 if correct else 0
@@ -620,7 +651,7 @@ def _extra_post(form, token, movie):
 
     return render_template(
         "game.html",
-        title="Name that Frame",
+        title="Name That Frame",
         difficulty="extra",
         difficulties=DIFFICULTIES,
         result={
@@ -630,11 +661,13 @@ def _extra_post(form, token, movie):
             "answer": _display_title(movie),
             "new_best": new_best,
             "points_won": points_won,
+            "doubled": doubled,
         },
         answer_movie=movie,
         token=token,
         options=None,
         stage=None,
+        include_unrated=_include_unrated("extra"),
         rated_only=_rated_only("extra"),
         streak=score.current_streak,
         best=score.best_streak,
@@ -693,7 +726,7 @@ def name_that_frame():
 
         return render_template(
             "game.html",
-            title="Name that Frame",
+            title="Name That Frame",
             difficulty=difficulty,
             difficulties=DIFFICULTIES,
             result={
@@ -711,6 +744,7 @@ def name_that_frame():
             token=token,
             options=None,
             stage=None,
+            include_unrated=_include_unrated(difficulty),
             rated_only=_rated_only(difficulty),
             streak=score.current_streak,
             best=score.best_streak,
@@ -721,15 +755,21 @@ def name_that_frame():
             pool_size=len(pool_entries()),
         )
 
-    difficulty = request.args.get("difficulty", "easy")
-    if difficulty not in DIFFICULTIES:
-        difficulty = "easy"
+    # A plain /game visit reopens at the last difficulty the user
+    # chose (Glenn's ask, Aug 27 2026) — a preference, so no expiry
+    difficulty = request.args.get("difficulty")
+    last_key = LAST_DIFFICULTY_KEY.format(user_id=int(current_user.id))
+    if difficulty in DIFFICULTIES:
+        current_app.redis.set(last_key, difficulty)
+    else:
+        stored = (current_app.redis.get(last_key) or b"").decode()
+        difficulty = stored if stored in DIFFICULTIES else "easy"
 
-    # The rated-films switch: the checkbox always submits a hidden
-    # rated=0 alongside a checked rated=1, so an absent "1" is a
+    # The include-unrated switch: the checkbox always submits a hidden
+    # unrated=0 alongside a checked unrated=1, so an absent "1" is a
     # deliberate un-tick, not a bare visit
-    if difficulty in RATED_FILTER_DIFFICULTIES and "rated" in request.args:
-        _set_rated_only(difficulty, "1" in request.args.getlist("rated"))
+    if difficulty in RATED_FILTER_DIFFICULTIES and "unrated" in request.args:
+        _set_include_unrated(difficulty, "1" in request.args.getlist("unrated"))
     rated_only = _rated_only(difficulty)
 
     tokens = _round_tokens(difficulty, rated_only)
@@ -778,7 +818,7 @@ def name_that_frame():
 
     return render_template(
         "game.html",
-        title="Name that Frame",
+        title="Name That Frame",
         difficulty=difficulty,
         difficulties=DIFFICULTIES,
         result=None,
@@ -787,6 +827,7 @@ def name_that_frame():
         stage=stage,
         stage_points=(EXTRA_STAGES + 1 - stage) if stage else None,
         missed_guess=None,
+        include_unrated=_include_unrated(difficulty),
         rated_only=rated_only,
         streak=score.current_streak if score else 0,
         best=score.best_streak if score else 0,

@@ -248,14 +248,14 @@ def cron_table(config):
             3600,
             "Pre-warming estimate payloads",
         ),
-        # Top up and rotate the Name that Frame pool nightly;
+        # Top up and rotate the Name That Frame pool nightly;
         # the coordinator queues per-film extractions on the serial
         # transcode lane, so a big backfill can't crowd anything out
         (
             "5 3 * * *",
             "app.frames.refresh_frame_pool_task",
             3600,
-            "Refreshing the Name that Frame pool",
+            "Refreshing the Name That Frame pool",
         ),
         # Re-fetch episode data for in-production TV series nightly,
         # clear of the 3:05 frame pool and 3:25 Plex title windows

@@ -5,7 +5,7 @@
 {# Display names for the difficulty slugs (renamed per #203); the
    slugs themselves are stored in score rows and URLs, so they stay #}
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
-<h2 class="mt-n2">Name that Frame</h2>
+<h2 class="mt-n2">Name That Frame</h2>
 <p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
 {# Difficulty picker: a radio button group (Glenn's ask, Aug 27 2026)
    — picking a level submits the GET and deals a fresh round there #}
@@ -29,17 +29,20 @@
 	{% endif %}
 </div>
 {% if difficulty in ("difficult", "siracusa", "extra") %}
-{# The rated-films switch (Glenn's ask, Aug 27 2026): narrow this
-   difficulty's deals to films the user has rated. The hidden
-   rated=0 makes an un-tick explicit — the server treats "no 1 among
-   the rated values" as off — and the switch survives in Redis, so
-   rounds and revisits keep it without threading a parameter #}
+{# Rated films are the default world (inverted per Glenn's ask, Aug
+   27 2026): the switch *includes* unrated films instead. The hidden
+   unrated=0 makes an un-tick explicit — the server treats "no 1
+   among the unrated values" as off — and the switch survives in
+   Redis, so rounds and revisits keep it without threading a
+   parameter. Only this label may disclose the Extra Difficult
+   unrated bonus — the round prompt never does, since a doubled
+   figure would mark the answer as unrated #}
 <form method="get" class="mb-3">
 	<input type="hidden" name="difficulty" value="{{ difficulty }}">
-	<input type="hidden" name="rated" value="0">
+	<input type="hidden" name="unrated" value="0">
 	<div class="form-check form-switch">
-		<input class="form-check-input" type="checkbox" name="rated" value="1" id="rated-only"{% if rated_only %} checked{% endif %} onchange="this.form.submit()">
-		<label class="form-check-label small" for="rated-only">Only films I&rsquo;ve rated</label>
+		<input class="form-check-input" type="checkbox" name="unrated" value="1" id="include-unrated"{% if include_unrated %} checked{% endif %} onchange="this.form.submit()">
+		<label class="form-check-label small" for="include-unrated">Include films I haven&rsquo;t rated{% if difficulty == "extra" %} <span class="text-muted">(2x point bonus)</span>{% endif %}</label>
 	</div>
 	<noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">Apply</button></noscript>
 </form>
@@ -67,7 +70,7 @@
 <div class="alert alert-light border" role="status">Which film is this frame from?</div>
 {% endif %}
 {% elif result.correct %}
-<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}){% endif %}{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
+<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}{% if result.doubled %} &mdash; 2x bonus for an unrated film{% endif %}){% endif %}{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
@@ -145,7 +148,7 @@
    films #}
 <p class="lead">No frames to serve on this difficulty yet.</p>
 {% if rated_only %}
-<p class="text-muted">None of the pooled frames are films you&rsquo;ve rated &mdash; rate a few more, or untick the filter above to deal from the whole library.</p>
+<p class="text-muted">None of the pooled frames are films you&rsquo;ve rated &mdash; rate a few more, or tick &ldquo;Include films I haven&rsquo;t rated&rdquo; above to deal from the whole library.</p>
 {% else %}
 <p class="text-muted">Easy only deals films you've rated &mdash; rate a few from the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or your <a href="{{ url_for('main.movie_library') }}">library</a>, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
 {% endif %}
