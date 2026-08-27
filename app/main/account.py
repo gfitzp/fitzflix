@@ -37,6 +37,7 @@ from app.main.forms import (
     LetterboxdUsernameForm,
     PlexPlayerForm,
     PlexUsernameForm,
+    ResetFrameScoresForm,
     StreamingProvidersForm,
     UpdateAPIKeyForm,
 )
@@ -51,6 +52,7 @@ from app.plex_player import probe_player, remote_playback_configured
 from app.models import (
     Movie,
     User,
+    UserFrameScore,
     UserMovieReview,
     UserStreamingProvider,
 )
@@ -593,6 +595,20 @@ def profile():
         flash("Regenerated the API key.", "success")
         return redirect(url_for("main.profile"))
 
+    # Button to wipe the user's Name that Frame standings (Glenn's
+    # ask, Aug 27 2026) — the score rows go, the dealt-frames record
+    # stays, so a fresh start doesn't replay frames just seen
+
+    reset_frames_form = ResetFrameScoresForm()
+    if (
+        reset_frames_form.reset_frames_submit.data
+        and reset_frames_form.validate_on_submit()
+    ):
+        UserFrameScore.query.filter_by(user_id=int(current_user.id)).delete()
+        db.session.commit()
+        flash("Your Name that Frame scores and statistics have been reset.", "success")
+        return redirect(url_for("main.profile"))
+
     # Form to map this account to a Plex username, so Plex watches land in
     # this user's diary
 
@@ -807,6 +823,7 @@ def profile():
         title="Profile",
         review_export_form=review_export_form,
         review_upload_form=review_upload_form,
+        reset_frames_form=reset_frames_form,
         email_form=email_form,
         api_refresh_form=api_refresh_form,
         plex_form=plex_form,

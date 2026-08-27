@@ -2651,6 +2651,11 @@ class UserFrameScore(db.Model):
     # Extra Difficult's running total (#202): 3/2/1 points by how
     # early in the zoom-out the guess landed
     points = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    # Win rate (Glenn's ask, Aug 27 2026): every dealt frame counts as
+    # seen — skipped and abandoned rounds included — and only a
+    # correct guess counts as won
+    rounds_seen = db.Column(db.Integer, nullable=False, default=0, server_default="0")
+    rounds_won = db.Column(db.Integer, nullable=False, default=0, server_default="0")
 
     __table_args__ = (db.UniqueConstraint("user_id", "difficulty"),)
 

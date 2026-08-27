@@ -14,14 +14,31 @@
 		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ difficulty_labels[level] }}</a>
 	</li>
 	{% endfor %}
-	{% if streak or best or (difficulty == "extra" and points) %}
+	{% if streak or best or seen or (difficulty == "extra" and points) %}
 	<li class="nav-item ms-auto align-self-center">
 		{% if difficulty == "extra" and points %}<span class="badge text-bg-primary" title="Your Extra Difficult points total">Points: {{ points }}</span>{% endif %}
 		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
 		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
+		{% if seen %}<span class="badge text-bg-light border" title="{{ won }} of the {{ seen }} frames dealt to you, skips included">Win rate: {{ ((100 * won / seen) | round) | int }}%</span>{% endif %}
 	</li>
 	{% endif %}
 </ul>
+{% if difficulty in ("difficult", "siracusa", "extra") %}
+{# The seen-films switch (Glenn's ask, Aug 27 2026): narrow this
+   difficulty's deals to films from the user's diary. The hidden
+   rated=0 makes an un-tick explicit — the server treats "no 1 among
+   the rated values" as off — and the switch survives in Redis, so
+   rounds and revisits keep it without threading a parameter #}
+<form method="get" class="mb-3">
+	<input type="hidden" name="difficulty" value="{{ difficulty }}">
+	<input type="hidden" name="rated" value="0">
+	<div class="form-check form-switch">
+		<input class="form-check-input" type="checkbox" name="rated" value="1" id="rated-only"{% if rated_only %} checked{% endif %} onchange="this.form.submit()">
+		<label class="form-check-label small" for="rated-only">Only films I&rsquo;ve seen</label>
+	</div>
+	<noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">Apply</button></noscript>
+</form>
+{% endif %}
 <hr>
 {% if result or token %}
 {# Guess and reveal share ONE skeleton (Glenn's report, Aug 20 2026:
@@ -113,9 +130,14 @@
 {% endif %}
 {% elif pool_size %}
 {# The pool has frames, just none this difficulty can serve — Easy
-   before the user has rated any pooled films #}
+   (or a seen-films filter) before the user has rated any pooled
+   films #}
 <p class="lead">No frames to serve on this difficulty yet.</p>
+{% if rated_only %}
+<p class="text-muted">None of the pooled frames are films you&rsquo;ve seen &mdash; rate a few more, or untick the filter above to deal from the whole library.</p>
+{% else %}
 <p class="text-muted">Easy only deals films you've rated &mdash; rate a few from the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or your <a href="{{ url_for('main.movie_library') }}">library</a>, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
+{% endif %}
 {% else %}
 <p class="lead">The frame pool is still empty.</p>
 <p class="text-muted">Frames are extracted nightly from the library{% if current_user.admin %} &mdash; or start a fill now with <code>flask frames refresh</code>{% endif %}. Check back soon.</p>

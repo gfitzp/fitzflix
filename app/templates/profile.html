@@ -176,4 +176,11 @@
 		<p class="small text-muted mt-1">Emails your reviews as a Letterboxd-format CSV. Unchecked, only entries logged or updated since your last export are included, so each file uploads to Letterboxd without duplicates.</p>
 	</div>
 </div>
+<hr>
+<h5>Name that Frame</h5>
+<form action="" method="post">
+	{{ reset_frames_form.hidden_tag() }}
+	{{ reset_frames_form.reset_frames_submit(class_="btn btn-sm btn-warning") }}
+</form>
+<p class="small text-muted mt-1">Wipes your streaks, personal bests, points, and win rates on every difficulty and starts the game fresh. There&rsquo;s no undo.</p>
 {% endblock %}

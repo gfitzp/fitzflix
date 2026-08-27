@@ -60,6 +60,14 @@ EXTRA_ROUND_KEY = "fitzflix:frames:extra:{user_id}"
 
 TOP_CAST_SIZE = 5
 
+# The library-wide difficulties can narrow to films the user has seen
+# (Glenn's ask, Aug 27 2026): a per-user, per-difficulty switch, held
+# in a Redis set of slugs with no expiry — it's a preference, not
+# round state. Easy is already that filter by definition.
+
+RATED_FILTER_DIFFICULTIES = ("difficult", "siracusa", "extra")
+RATED_FILTER_KEY = "fitzflix:frames:ratedonly:{user_id}"
+
 # Distractors stay within the answer's era (Glenn, Aug 20 2026: an
 # option decades away hands the round to process of deduction) —
 # each difficulty tries its tight window first, then its widened one
@@ -114,6 +122,27 @@ def _fuzzy_match(guess, movie):
         ):
             return True
     return False
+
+
+def _rated_only(difficulty):
+    """Whether the user has the seen-films filter on for a difficulty
+    that offers it."""
+
+    return difficulty in RATED_FILTER_DIFFICULTIES and bool(
+        current_app.redis.sismember(
+            RATED_FILTER_KEY.format(user_id=int(current_user.id)), difficulty
+        )
+    )
+
+
+def _set_rated_only(difficulty, on):
+    """Persist the seen-films switch for one difficulty."""
+
+    key = RATED_FILTER_KEY.format(user_id=int(current_user.id))
+    if on:
+        current_app.redis.sadd(key, difficulty)
+    else:
+        current_app.redis.srem(key, difficulty)
 
 
 def _rated_movie_ids():
@@ -172,7 +201,7 @@ def _shared_genre_movie_ids(answer_id):
     }
 
 
-def _build_options(answer_id, difficulty):
+def _build_options(answer_id, difficulty, rated_only=False):
     """The round's shuffled multiple-choice list: the answer plus
     random distractors, drawn down Glenn's ladder (#201): films
     sharing the answer's top-billed cast within its era first — one
@@ -181,7 +210,9 @@ def _build_options(answer_id, difficulty):
     and same-genre films outside it. Each rung tries the difficulty's
     tight year window before the widened one (±5→±10 on Easy, ±2→±5
     on Hard; Glenn's rule, Aug 20 2026), since an option decades away
-    is its own giveaway. Easy walks the ladder over the user's rated
+    is its own giveaway. Easy — and any difficulty with the
+    seen-films filter on, where an unrated option would mark the
+    answer by elimination — walks the ladder over the user's rated
     films first before padding from the whole library, and
     anything-goes is the last resort so a round can always fill its
     slots."""
@@ -199,7 +230,11 @@ def _build_options(answer_id, difficulty):
         .filter(Movie.id != answer_id)
         .filter(Movie.tmdb_id.isnot(None))
     }
-    rated = _rated_movie_ids() - {answer_id} if difficulty == "easy" else set()
+    rated = (
+        _rated_movie_ids() - {answer_id}
+        if difficulty == "easy" or rated_only
+        else set()
+    )
 
     def in_window(span):
         return [
@@ -247,11 +282,13 @@ def _build_options(answer_id, difficulty):
     return [(movie_id, _display_title(movies[movie_id])) for movie_id in ids]
 
 
-def _round_tokens(difficulty):
-    """The pooled tokens this difficulty may serve."""
+def _round_tokens(difficulty, rated_only=False):
+    """The pooled tokens this difficulty may serve — Easy's world is
+    the user's rated films always, and the other difficulties narrow
+    to the same world when the seen-films filter is on."""
 
     entries = pool_entries()
-    if difficulty == "easy":
+    if difficulty == "easy" or rated_only:
         rated = _rated_movie_ids()
         return {
             token: entry
@@ -352,31 +389,40 @@ def _clear_extra_round():
     current_app.redis.delete(EXTRA_ROUND_KEY.format(user_id=int(current_user.id)))
 
 
-def _cropped_frame_response(token, stage):
-    """The Extra Difficult crop: a window onto the pooled frame sized
-    by the stage, centred at a point derived from the token so every
-    zoom-out reveals more of the same spot. Cropped server-side — the
-    full frame never reaches the page before stage three. None when
-    the image won't decode, so the route can fall back to the full
-    frame rather than 500 on a bad pool entry."""
-
-    from PIL import Image
+def _crop_box(token, stage, width, height):
+    """The stage's crop rectangle: sized by the stage's zoom, centred
+    at a point hashed from the token — anywhere on the frame — and
+    clamped to its edges. The clamping is what keeps the stages
+    nested wherever the centre lands, so zooming out always reveals
+    more of the same spot. (An early version instead pinned the
+    centre where the widest stage fit unclamped, which confined every
+    crop to the middle fifth of the frame — Glenn noticed, Aug 27
+    2026.)"""
 
     fraction = EXTRA_ZOOM[stage]
     digest = hashlib.sha256(token.encode()).digest()
-    # Pin the centre where the widest stage's window still fits inside
-    # the frame, so the stages nest without sliding
-    span = 1 - max(EXTRA_ZOOM.values())
-    centre_x = 0.5 + span * (digest[0] / 255 - 0.5)
-    centre_y = 0.5 + span * (digest[1] / 255 - 0.5)
+    centre_x = digest[0] / 255
+    centre_y = digest[1] / 255
+    crop_w = max(1, int(width * fraction))
+    crop_h = max(1, int(height * fraction))
+    left = min(max(int(centre_x * width - crop_w / 2), 0), width - crop_w)
+    top = min(max(int(centre_y * height - crop_h / 2), 0), height - crop_h)
+    return left, top, left + crop_w, top + crop_h
+
+
+def _cropped_frame_response(token, stage):
+    """The Extra Difficult crop: the stage's window onto the pooled
+    frame, cut server-side — the full frame never reaches the page
+    before stage three. None when the image won't decode, so the
+    route can fall back to the full frame rather than 500 on a bad
+    pool entry."""
+
+    from PIL import Image
+
     try:
         with Image.open(frame_path(token)) as image:
-            width, height = image.size
-            crop_w = max(1, int(width * fraction))
-            crop_h = max(1, int(height * fraction))
-            left = min(max(int(centre_x * width - crop_w / 2), 0), width - crop_w)
-            top = min(max(int(centre_y * height - crop_h / 2), 0), height - crop_h)
-            crop = image.crop((left, top, left + crop_w, top + crop_h)).convert("RGB")
+            box = _crop_box(token, stage, *image.size)
+            crop = image.crop(box).convert("RGB")
             buffer = io.BytesIO()
             crop.save(buffer, format="JPEG", quality=90)
     except (OSError, ValueError):
@@ -406,9 +452,12 @@ def _render_extra_round(token, stage, form, missed=None):
         stage=stage,
         stage_points=EXTRA_STAGES + 1 - stage,
         missed_guess=missed,
+        rated_only=_rated_only("extra"),
         streak=score.current_streak if score else 0,
         best=score.best_streak if score else 0,
         points=(score.points or 0) if score else 0,
+        seen=(score.rounds_seen or 0) if score else 0,
+        won=(score.rounds_won or 0) if score else 0,
         form=form,
         pool_size=len(pool_entries()),
     )
@@ -446,6 +495,8 @@ def _extra_post(form, token, movie):
     score = _score_row("extra")
     score.points = (score.points or 0) + points_won
     score.current_streak = score.current_streak + 1 if correct else 0
+    if correct:
+        score.rounds_won = (score.rounds_won or 0) + 1
     new_best = correct and score.current_streak > score.best_streak
     if new_best:
         score.best_streak = score.current_streak
@@ -469,9 +520,12 @@ def _extra_post(form, token, movie):
         token=token,
         options=None,
         stage=None,
+        rated_only=_rated_only("extra"),
         streak=score.current_streak,
         best=score.best_streak,
         points=score.points or 0,
+        seen=(score.rounds_seen or 0),
+        won=(score.rounds_won or 0),
         form=form,
         pool_size=len(pool_entries()),
     )
@@ -513,6 +567,8 @@ def name_that_frame():
 
         score = _score_row(difficulty)
         score.current_streak = score.current_streak + 1 if correct else 0
+        if correct:
+            score.rounds_won = (score.rounds_won or 0) + 1
         new_best = correct and score.current_streak > score.best_streak
         if new_best:
             score.best_streak = score.current_streak
@@ -539,9 +595,12 @@ def name_that_frame():
             token=token,
             options=None,
             stage=None,
+            rated_only=_rated_only(difficulty),
             streak=score.current_streak,
             best=score.best_streak,
             points=(score.points or 0),
+            seen=(score.rounds_seen or 0),
+            won=(score.rounds_won or 0),
             form=form,
             pool_size=len(pool_entries()),
         )
@@ -550,8 +609,16 @@ def name_that_frame():
     if difficulty not in DIFFICULTIES:
         difficulty = "easy"
 
-    tokens = _round_tokens(difficulty)
+    # The seen-films switch: the checkbox always submits a hidden
+    # rated=0 alongside a checked rated=1, so an absent "1" is a
+    # deliberate un-tick, not a bare visit
+    if difficulty in RATED_FILTER_DIFFICULTIES and "rated" in request.args:
+        _set_rated_only(difficulty, "1" in request.args.getlist("rated"))
+    rated_only = _rated_only(difficulty)
+
+    tokens = _round_tokens(difficulty, rated_only)
     stage = None
+    dealt = False
     if difficulty == "extra":
         # A visit resumes the live round at its stage rather than
         # dealing — a refresh mustn't be a free zoom reset — so Skip
@@ -565,19 +632,29 @@ def name_that_frame():
         else:
             token = _deal_token(tokens)
             stage = 1
+            dealt = token is not None
             if token:
                 _save_extra_round(token, stage)
             else:
                 _clear_extra_round()
     else:
         token = _deal_token(tokens)
+        dealt = token is not None
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
-        options = _build_options(tokens[token]["movie_id"], difficulty)
+        options = _build_options(tokens[token]["movie_id"], difficulty, rated_only)
 
-    score = UserFrameScore.query.filter_by(
-        user_id=int(current_user.id), difficulty=difficulty
-    ).first()
+    if dealt:
+        # Every dealt frame counts as seen (Glenn's win-rate rule,
+        # Aug 27 2026): a skipped or refreshed-away round is a frame
+        # the player looked at and didn't name
+        score = _score_row(difficulty)
+        score.rounds_seen = (score.rounds_seen or 0) + 1
+        db.session.commit()
+    else:
+        score = UserFrameScore.query.filter_by(
+            user_id=int(current_user.id), difficulty=difficulty
+        ).first()
 
     return render_template(
         "game.html",
@@ -590,9 +667,12 @@ def name_that_frame():
         stage=stage,
         stage_points=(EXTRA_STAGES + 1 - stage) if stage else None,
         missed_guess=None,
+        rated_only=rated_only,
         streak=score.current_streak if score else 0,
         best=score.best_streak if score else 0,
         points=(score.points or 0) if score else 0,
+        seen=(score.rounds_seen or 0) if score else 0,
+        won=(score.rounds_won or 0) if score else 0,
         form=form,
         pool_size=len(pool_entries()),
     )

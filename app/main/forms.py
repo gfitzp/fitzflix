@@ -27,6 +27,13 @@ from wtforms.widgets import HiddenInput
 from app.models import User
 
 
+class ResetFrameScoresForm(FlaskForm):
+    """Profile: wipe the user's Name that Frame standings — streaks,
+    bests, points, and win rates on every difficulty."""
+
+    reset_frames_submit = SubmitField("Reset game scores")
+
+
 class EditProfileForm(FlaskForm):
     """Change the account email, on the Profile page."""
 

@@ -1030,3 +1030,207 @@ def test_extra_skip_abandons_the_round(app, admin_client):
     assert "3 points" in admin_client.get("/game?difficulty=extra&skip=1").get_data(
         as_text=True
     )
+
+
+def test_crop_boxes_roam_the_whole_frame():
+    """Crop windows land anywhere on the frame, not just its middle
+    (Glenn's report, Aug 27 2026) — while staying in bounds and
+    nested, so zooming out still reveals more of the same spot."""
+
+    from app.main.game import _crop_box
+
+    width, height = 1000, 600
+    lefts, tops = [], []
+    for n in range(200):
+        token = f"roamtoken{n:04d}"
+        s1 = _crop_box(token, 1, width, height)
+        s2 = _crop_box(token, 2, width, height)
+        assert 0 <= s1[0] and s1[2] <= width and 0 <= s1[1] and s1[3] <= height
+        assert 0 <= s2[0] and s2[2] <= width and 0 <= s2[1] and s2[3] <= height
+        # Stage one's window sits inside stage two's
+        assert s2[0] <= s1[0] and s1[2] <= s2[2]
+        assert s2[1] <= s1[1] and s1[3] <= s2[3]
+        lefts.append(s1[0])
+        tops.append(s1[1])
+    # The centres range across the frame — some crops hug the edges
+    assert min(lefts) == 0 and max(lefts) == width - int(width * 0.3)
+    assert min(tops) == 0 and max(tops) == height - int(height * 0.3)
+
+
+def test_seen_filter_narrows_the_deals(app, admin_client):
+    """The seen-films switch on the library-wide difficulties deals
+    only rated films, persists across plain visits, and prefers rated
+    distractors so the answer isn't the one familiar title."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    with app.app_context():
+        rated = make_movie("Filter Rated Film", 1990)
+        make_movie_file(rated, "Bluray-1080p")
+        unrated = make_movie("Filter Unrated Film", 1991)
+        make_movie_file(unrated, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(
+                user_id=admin_id(),
+                movie_id=rated.id,
+                liked=True,
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        rated_id, unrated_id = rated.id, unrated.id
+
+    rated_token = seed_frame(app, rated_id)
+    unrated_token = seed_frame(app, unrated_id)
+
+    page = admin_client.get("/game?difficulty=difficult&rated=1").get_data(as_text=True)
+    assert 'id="rated-only" checked' in page
+    assert f'src="/game/frame/{rated_token}' in page
+
+    # The switch persists: plain visits keep dealing only rated films
+
+    for _ in range(3):
+        page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+        assert f'src="/game/frame/{rated_token}' in page
+        assert unrated_token not in page
+
+    # Un-ticking widens the deals again — the unrated frame is the
+    # only unseen one, so it comes straight up
+
+    page = admin_client.get("/game?difficulty=difficult&rated=0").get_data(as_text=True)
+    assert 'id="rated-only" checked' not in page
+    assert f'src="/game/frame/{unrated_token}' in page
+
+
+def test_seen_filter_empty_state_offers_the_way_out(app, admin_client):
+    """With the filter on and no rated films pooled, the page explains
+    the filter and keeps the switch on screen to untick."""
+
+    from app import db
+
+    with app.app_context():
+        unrated = make_movie("Filter Only Unrated", 1992)
+        make_movie_file(unrated, "Bluray-1080p")
+        db.session.commit()
+        unrated_id = unrated.id
+
+    seed_frame(app, unrated_id)
+    page = admin_client.get("/game?difficulty=siracusa&rated=1").get_data(as_text=True)
+    assert "No frames to serve on this difficulty yet." in page
+    assert "untick the filter" in page
+    assert 'id="rated-only" checked' in page
+
+
+def test_win_rate_counts_skips_as_frames_seen(app, admin_client):
+    """Every dealt frame counts as seen — a skipped one included — and
+    only correct guesses count as won, so the badge reads wins over
+    deals."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        answer = make_movie("Winrate Film", 1993)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(8):
+            make_movie(f"Winrate Distractor {n}", 1985 + n)
+        db.session.commit()
+        answer_id = answer.id
+
+    token = seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(choice):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "difficult",
+                "choice": choice,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    body = guess(str(answer_id))
+    assert "Win rate: 100%" in body  # one seen, one won
+
+    # Dealing again (a skip, effectively) counts as another frame seen
+
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert "Win rate: 50%" in page
+
+    guess("999999")
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="difficult").one()
+        assert (score.rounds_seen, score.rounds_won) == (2, 1)
+
+
+def test_extra_resume_counts_one_frame_seen(app, admin_client):
+    """Resuming a live Extra round on a plain visit is not another
+    frame seen — only a fresh deal (a skip included) counts."""
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Extra Seen Film", 2004)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    seed_image_frame(app, movie_id)
+    admin_client.get("/game?difficulty=extra")
+    admin_client.get("/game?difficulty=extra")  # resumes, no new deal
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert score.rounds_seen == 1
+
+    admin_client.get("/game?difficulty=extra&skip=1")  # abandons and deals
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert score.rounds_seen == 2
+
+
+def test_profile_reset_wipes_frame_standings(app, admin_client):
+    """The profile's reset button deletes every one of the user's
+    standings rows — streaks, points, and win stats together."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+    from tests.test_recommendations import admin_id
+
+    with app.app_context():
+        for difficulty, best in (("difficult", 4), ("extra", 2)):
+            db.session.add(
+                UserFrameScore(
+                    user_id=admin_id(),
+                    difficulty=difficulty,
+                    current_streak=1,
+                    best_streak=best,
+                    points=7,
+                    rounds_seen=10,
+                    rounds_won=5,
+                )
+            )
+        db.session.commit()
+
+    page = admin_client.get("/profile").get_data(as_text=True)
+    assert 'name="reset_frames_submit"' in page
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    body = admin_client.post(
+        "/profile",
+        data={"csrf_token": csrf, "reset_frames_submit": "Reset game scores"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "have been reset" in body
+    with app.app_context():
+        assert UserFrameScore.query.count() == 0
