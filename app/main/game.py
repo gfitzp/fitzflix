@@ -538,7 +538,9 @@ def _render_extra_round(token, stage, form, missed=None):
 def _extra_post(form, token, movie):
     """Grade one Extra Difficult action: Zoom Out or a mid-round miss
     advances the stage; a hit banks the stage's points; a stage-three
-    miss ends the round and the streak (#202)."""
+    miss — or giving up, once the round is past its first zoom-out —
+    ends the round and the streak (#202; the surrender rule is
+    Glenn's ask, Aug 27 2026: a started round is won or lost)."""
 
     round_ = _extra_round()
     if round_ is None or round_.get("token") != token:
@@ -553,9 +555,10 @@ def _extra_post(form, token, movie):
         _save_extra_round(token, stage)
         return _render_extra_round(token, stage, form)
 
-    guessed = (form.guess.data or "").strip()
-    correct = _fuzzy_match(guessed, movie)
-    if not correct and stage < EXTRA_STAGES:
+    gave_up = bool(form.give_up.data)
+    guessed = "" if gave_up else (form.guess.data or "").strip()
+    correct = False if gave_up else _fuzzy_match(guessed, movie)
+    if not gave_up and not correct and stage < EXTRA_STAGES:
         # A mid-round miss zooms out instead of ending the round —
         # the wrong guess buys the same look a Zoom Out would
         stage += 1
@@ -696,10 +699,14 @@ def name_that_frame():
     if difficulty == "extra":
         # A visit resumes the live round at its stage rather than
         # dealing — a refresh mustn't be a free zoom reset — so Skip
-        # abandons it explicitly
-        if request.args.get("skip"):
-            _clear_extra_round()
+        # abandons it explicitly. But only an untouched round skips:
+        # past the first zoom-out the round is won, lost, or given up
+        # (Glenn's rule, Aug 27 2026), so a hand-typed ?skip=1 can't
+        # dodge the loss either
         round_ = _extra_round()
+        if request.args.get("skip") and round_ and int(round_.get("stage") or 1) <= 1:
+            _clear_extra_round()
+            round_ = None
         if round_ and round_.get("token") in tokens:
             token = round_["token"]
             stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)

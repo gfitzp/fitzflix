@@ -997,8 +997,9 @@ def test_extra_difficult_full_frame_miss_ends_the_round(app, admin_client):
 
 
 def test_extra_skip_abandons_the_round(app, admin_client):
-    """Skip clears the live round — the next deal opens back at stage
-    one — while a plain revisit never does (#202)."""
+    """Skip clears an untouched round — but past the first zoom-out
+    the round must be won, lost, or given up, so a hand-typed ?skip=1
+    is ignored (Glenn's rule, Aug 27 2026)."""
 
     import re
 
@@ -1027,7 +1028,72 @@ def test_extra_skip_abandons_the_round(app, admin_client):
     assert "2 points" in admin_client.get("/game?difficulty=extra").get_data(
         as_text=True
     )
-    assert "3 points" in admin_client.get("/game?difficulty=extra&skip=1").get_data(
+    # Zoomed out already: the skip parameter no longer resets the round
+    assert "2 points" in admin_client.get("/game?difficulty=extra&skip=1").get_data(
+        as_text=True
+    )
+
+
+def test_extra_give_up_ends_the_round_as_a_miss(app, admin_client):
+    """After the first zoom-out, Skip gives way to I-give-up: the
+    round ends with the reveal, the streak resets, no points bank,
+    and the played frame's replacement queues (Glenn's ask, Aug 27
+    2026)."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Surrender Film", 2007)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    # An untouched round offers Skip, not surrender
+
+    assert 'name="give_up"' not in page
+    assert "skip=1" in page
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        ).get_data(as_text=True)
+
+    body = post({"zoom_out": "y"})
+    assert 'name="give_up"' in body
+    assert "skip=1" not in body
+
+    # Give a streak to lose
+
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        score.current_streak = 3
+        db.session.commit()
+
+    body = post({"give_up": "y"})
+    assert "alert-danger" in body
+    assert "Surrender Film" in body  # the reveal
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.current_streak, score.points, score.rounds_won) == (0, 0, 0)
+    jobs = [
+        app.transcode_queue.fetch_job(job_id)
+        for job_id in app.transcode_queue.get_job_ids()
+    ]
+    assert [
+        job.args[0] for job in jobs if "replace_frame_task" in (job.func_name or "")
+    ] == [movie_id]
+
+    # The round is over: the next visit deals fresh at three points
+
+    assert "3 points" in admin_client.get("/game?difficulty=extra").get_data(
         as_text=True
     )
 

@@ -128,9 +128,15 @@
 	{% if difficulty == "extra" and stage and stage < 3 %}
 	<button type="submit" name="zoom_out" value="y" class="btn btn-outline-secondary">Zoom Out</button>
 	{% endif %}
+	{% if difficulty == "extra" and stage and stage > 1 %}
+	{# Past the first zoom-out a round is won or lost (Glenn's rule,
+	   Aug 27 2026): surrender ends it as a miss #}
+	<button type="submit" name="give_up" value="y" class="btn btn-outline-danger">I give up</button>
+	{% else %}
 	{# Extra rounds resume on a plain visit, so Skip abandons the live
-	   round explicitly #}
+	   round explicitly — and only an untouched one may skip #}
 	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
+	{% endif %}
 </form>
 {% endif %}
 {% elif pool_size %}

@@ -504,3 +504,6 @@ class GuessFrameForm(FlaskForm):
     # Extra Difficult (#202): trade this look at the frame for a wider
     # one instead of guessing
     zoom_out = SubmitField("Zoom Out")
+    # Extra Difficult again: surrender a round that's past its first
+    # zoom-out — it ends as a miss (Glenn's ask, Aug 27 2026)
+    give_up = SubmitField("I give up")
