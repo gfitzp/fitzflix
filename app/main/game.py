@@ -84,6 +84,43 @@ FUZZY_THRESHOLD = 0.75
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
+# Spelled-out numbers fold to digits during normalization, so
+# 'Pelham 123' meets 'Pelham One Two Three' (Glenn's report, Aug 27
+# 2026) — the squeezed comparison pass then bridges '1 2 3' vs '123'.
+# Applied to guess and title alike, the fold is direction-agnostic:
+# 'apollo thirteen' names Apollo 13 the same way.
+
+NUMBER_WORDS = {
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "eleven": "11",
+    "twelve": "12",
+    "thirteen": "13",
+    "fourteen": "14",
+    "fifteen": "15",
+    "sixteen": "16",
+    "seventeen": "17",
+    "eighteen": "18",
+    "nineteen": "19",
+    "twenty": "20",
+    "thirty": "30",
+    "forty": "40",
+    "fifty": "50",
+    "sixty": "60",
+    "seventy": "70",
+    "eighty": "80",
+    "ninety": "90",
+}
+
 
 def _display_title(movie):
     """The site-wide display grammar: TMDB title and year when known."""
@@ -99,13 +136,15 @@ def _display_title(movie):
 
 def _normalize(text):
     """Fold a title for fuzzy comparison: unaccent, casefold, drop
-    punctuation, strip a leading article, collapse whitespace."""
+    punctuation, strip a leading article, fold spelled-out numbers to
+    digits, collapse whitespace."""
 
     text = unidecode(text or "").casefold()
     text = re.sub(r"[^a-z0-9 ]+", " ", text)
     words = text.split()
     if words and words[0] in ("the", "a", "an"):
         words = words[1:]
+    words = [NUMBER_WORDS.get(word, word) for word in words]
     return " ".join(words)
 
 

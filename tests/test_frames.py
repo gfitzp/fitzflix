@@ -1751,3 +1751,44 @@ def test_fuzzy_matching_accepts_the_subtitle_alone(app, admin_client):
     assert "Correct" in guess("The Wrath of Khan")
     assert "Correct" in guess("star trek ii")
     assert "alert-danger" in guess("The Search for Spock")
+
+
+def test_fuzzy_matching_folds_spelled_numbers_to_digits(app, admin_client):
+    """Digits and their spelled-out forms interchange — 'Pelham 123'
+    names 'The Taking of Pelham One Two Three', and 'apollo thirteen'
+    names Apollo 13 (Glenn's report, Aug 27 2026)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        pelham = make_movie("The Taking of Pelham One Two Three", 1974)
+        make_movie_file(pelham, "Bluray-1080p")
+        apollo = make_movie("Apollo 13", 1995)
+        make_movie_file(apollo, "Bluray-1080p")
+        db.session.commit()
+        pelham_id, apollo_id = pelham.id, apollo.id
+
+    pelham_token = seed_frame(app, pelham_id)
+    apollo_token = seed_frame(app, apollo_id)
+    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(token, text):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "siracusa",
+                "guess": text,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    assert "Correct" in guess(pelham_token, "The Taking of Pelham 123")
+    assert "Correct" in guess(pelham_token, "taking of pelham one two three")
+    assert "alert-danger" in guess(pelham_token, "The French Connection")
+    assert "Correct" in guess(apollo_token, "apollo thirteen")
+    assert "Correct" in guess(apollo_token, "Apollo 13")
