@@ -111,9 +111,12 @@ def _normalize(text):
 
 def _fuzzy_match(guess, movie):
     """True when the guess lands close enough to any of the film's
-    titles (local or TMDB, with or without the year). Each pair is
-    compared twice: as normalized words, and with the spaces squeezed
-    out — normalization turns punctuation into spaces, so 'M*A*S*H'
+    titles — local or TMDB, with or without the year, and with or
+    without a subtitle: the part before a ':' (or the filename-safe
+    ' - ') stands alone, so 'Rogue One' names 'Rogue One: A Star Wars
+    Story' (Glenn's report, Aug 27 2026). Each pair is compared
+    twice: as normalized words, and with the spaces squeezed out —
+    normalization turns punctuation into spaces, so 'M*A*S*H'
     normalizes to 'm a s h' and only the squeezed pass lets a player
     type 'mash' (Glenn's report, Aug 27 2026)."""
 
@@ -121,6 +124,10 @@ def _fuzzy_match(guess, movie):
     if not normalized:
         return False
     candidates = {movie.title, movie.tmdb_title, _display_title(movie)}
+    for title in (movie.title, movie.tmdb_title):
+        for separator in (":", " - "):
+            if title and separator in title:
+                candidates.add(title.split(separator)[0])
     for candidate in filter(None, candidates):
         candidate = _normalize(candidate)
         for pair in (

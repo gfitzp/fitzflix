@@ -1608,3 +1608,43 @@ def test_zoom_crops_avoid_letterbox_bars(app, admin_client):
     assert darkest > ACTIVE_LUMA  # not a single letterbox pixel
     assert crop.size[0] == 60  # 30% of the frame's width
     assert crop.size[1] < 24  # 30% of the ~60px active height, not the 100px frame
+
+
+def test_fuzzy_matching_accepts_the_pre_subtitle_title(app, admin_client):
+    """The part of a title before its subtitle stands alone — 'Rogue
+    One' names 'Rogue One: A Star Wars Story' (Glenn's report, Aug 27
+    2026), and the filename-safe ' - ' form local titles use splits
+    the same way — while a different film still misses."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        # Local title carries the filename-safe dash; TMDB the colon
+        movie = make_movie("Rogue One - A Star Wars Story", 2016)
+        movie.tmdb_title = "Rogue One: A Star Wars Story"
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(text):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "siracusa",
+                "guess": text,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    assert "Correct" in guess("Rogue One")
+    assert "Correct" in guess("rogue one a star wars story")
+    assert "alert-danger" in guess("Solo")
+    assert "alert-danger" in guess("A New Hope")
