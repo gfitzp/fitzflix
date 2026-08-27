@@ -1545,3 +1545,66 @@ def test_pool_floor_ignores_unrated_watches(app, monkeypatch):
         ]
         # The single slot goes to the starred film, not the bare watch
         assert queued == [rated_id]
+
+
+def test_zoom_crops_avoid_letterbox_bars(app, admin_client):
+    """Extra Difficult crops confine themselves to the frame's active
+    picture area, so a zoom window never lands on baked-in letterbox
+    or pillarbox bars (Glenn's report, Aug 27 2026) — and an all-dark
+    frame falls back to the whole frame."""
+
+    import io
+
+    from PIL import Image
+
+    from app import db
+    from app.frames import POOL_KEY, frame_path
+    from app.main.game import ACTIVE_LUMA, _active_picture_box, _crop_box
+
+    # A letterboxed frame: grey picture between 20px black bars
+
+    frame = Image.new("RGB", (200, 100), (0, 0, 0))
+    frame.paste(Image.new("RGB", (200, 60), (128, 128, 128)), (0, 20))
+    active = _active_picture_box(frame)
+    assert active == (0, 20, 200, 80)
+
+    for n in range(100):
+        token = f"barstoken{n:04d}"
+        s1 = _crop_box(token, 1, 200, 100, active)
+        s2 = _crop_box(token, 2, 200, 100, active)
+        for box in (s1, s2):
+            assert box[1] >= 20 and box[3] <= 80  # never into the bars
+            assert box[0] >= 0 and box[2] <= 200
+        # The stages still nest inside the active area
+        assert s2[0] <= s1[0] and s1[2] <= s2[2]
+        assert s2[1] <= s1[1] and s1[3] <= s2[3]
+
+    # No bright pixels at all: no active box, callers use the frame
+
+    assert _active_picture_box(Image.new("RGB", (50, 40), (0, 0, 0))) is None
+
+    # End to end: a letterboxed pooled frame serves bar-free crops
+
+    with app.app_context():
+        movie = make_movie("Letterboxed Film", 2006)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+        os.makedirs(app.config["FRAME_POOL_DIR"], exist_ok=True)
+        token = "barstokenlive"
+        frame.save(frame_path(token), "JPEG", quality=95)
+    app.redis.hset(
+        POOL_KEY,
+        token,
+        json.dumps(
+            {"movie_id": movie_id, "extracted_at": int(time.time()), "offset": 1.0}
+        ),
+    )
+
+    admin_client.get("/game?difficulty=extra")
+    served = admin_client.get(f"/game/frame/{token}?stage=1")
+    crop = Image.open(io.BytesIO(served.data)).convert("L")
+    darkest, _ = crop.getextrema()
+    assert darkest > ACTIVE_LUMA  # not a single letterbox pixel
+    assert crop.size[0] == 60  # 30% of the frame's width
+    assert crop.size[1] < 24  # 30% of the ~60px active height, not the 100px frame

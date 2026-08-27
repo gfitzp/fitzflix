@@ -421,24 +421,54 @@ def _clear_extra_round():
     current_app.redis.delete(EXTRA_ROUND_KEY.format(user_id=int(current_user.id)))
 
 
-def _crop_box(token, stage, width, height):
-    """The stage's crop rectangle: sized by the stage's zoom, centred
-    at a point hashed from the token — anywhere on the frame — and
-    clamped to its edges. The clamping is what keeps the stages
-    nested wherever the centre lands, so zooming out always reveals
-    more of the same spot. (An early version instead pinned the
-    centre where the widest stage fit unclamped, which confined every
-    crop to the middle fifth of the frame — Glenn noticed, Aug 27
-    2026.)"""
+# Pixels at least this bright (0-255 luma) count as picture when
+# finding a frame's active area — high enough to ride over JPEG noise
+# in letterbox bars, low enough that a dim scene still counts
 
+ACTIVE_LUMA = 24
+
+
+def _active_picture_box(image):
+    """The bounding box of the frame's actual picture: everything
+    brighter than near-black. Letterboxed and pillarboxed transfers
+    bake their bars into the frame, and a zoom window that lands on a
+    bar is a wall of black (Glenn's report, Aug 27 2026) — so the
+    Extra Difficult crops confine themselves to this box. None when
+    no pixel clears the bar (the caller falls back to the full
+    frame)."""
+
+    mask = image.convert("L").point(lambda v: 255 if v > ACTIVE_LUMA else 0)
+    return mask.getbbox()
+
+
+def _crop_box(token, stage, width, height, active=None):
+    """The stage's crop rectangle: sized by the stage's zoom, centred
+    at a point hashed from the token — anywhere in the frame's active
+    picture area (the whole frame when no `active` box is given) —
+    and clamped to that area's edges. The clamping is what keeps the
+    stages nested wherever the centre lands, so zooming out always
+    reveals more of the same spot. (An early version instead pinned
+    the centre where the widest stage fit unclamped, which confined
+    every crop to the middle fifth of the frame — Glenn noticed,
+    Aug 27 2026.)"""
+
+    bound_left, bound_top, bound_right, bound_bottom = active or (0, 0, width, height)
+    span_w = bound_right - bound_left
+    span_h = bound_bottom - bound_top
     fraction = EXTRA_ZOOM[stage]
     digest = hashlib.sha256(token.encode()).digest()
     centre_x = digest[0] / 255
     centre_y = digest[1] / 255
-    crop_w = max(1, int(width * fraction))
-    crop_h = max(1, int(height * fraction))
-    left = min(max(int(centre_x * width - crop_w / 2), 0), width - crop_w)
-    top = min(max(int(centre_y * height - crop_h / 2), 0), height - crop_h)
+    crop_w = max(1, int(span_w * fraction))
+    crop_h = max(1, int(span_h * fraction))
+    left = min(
+        max(int(bound_left + centre_x * span_w - crop_w / 2), bound_left),
+        bound_right - crop_w,
+    )
+    top = min(
+        max(int(bound_top + centre_y * span_h - crop_h / 2), bound_top),
+        bound_bottom - crop_h,
+    )
     return left, top, left + crop_w, top + crop_h
 
 
@@ -453,7 +483,7 @@ def _cropped_frame_response(token, stage):
 
     try:
         with Image.open(frame_path(token)) as image:
-            box = _crop_box(token, stage, *image.size)
+            box = _crop_box(token, stage, *image.size, _active_picture_box(image))
             crop = image.crop(box).convert("RGB")
             buffer = io.BytesIO()
             crop.save(buffer, format="JPEG", quality=90)
