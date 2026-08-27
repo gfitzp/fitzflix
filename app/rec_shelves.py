@@ -2,9 +2,11 @@
 
 Each shelf is keyed by one to four shared criteria — a genre, a TMDB
 keyword, a decade, an award won, a person in a taste-tracked role —
-and is captioned by two ANCHOR films the user has expressed interest
-in (rated, liked, watched, or watchlisted) that carry every one of
-them. The shelf's suggestions are films the user has never logged or
+and is fronted by two ANCHOR films the user rated or liked that carry
+every one of them ("Because you liked" must never name a film the
+user hasn't passed a verdict on — Glenn, Aug 26 2026; watchlist adds
+and bare unrated watches still feed the engine's scores, but they
+can't face a shelf). The shelf's suggestions are films the user has never logged or
 waved off that carry the same criteria and can actually be watched
 tonight: owned locally, or streaming on one of the user's services
 (record-backed films only, answered from the availability cache the
@@ -30,6 +32,8 @@ from app.models import (
     MovieAward,
     MovieCast,
     MovieCrew,
+    TMDBKeyword,
+    UserMovieReview,
     UserWatchlist,
     movie_genres,
     movie_keywords,
@@ -38,6 +42,7 @@ from app.recommendations import (
     CREW_ROLE_JOBS,
     TOP_BILLING_CUTOFF,
     collect_features,
+    copref_anchor_sims,
     local_candidates,
     scoreable_records,
     stored_scores,
@@ -56,23 +61,32 @@ from app.streaming import (
 
 SHELF_CLASSES = ("genre", "keyword", "decade", "actor") + tuple(CREW_ROLE_JOBS)
 
-# How many shelves a page load aims for, how many films each shows,
+# How many shelves a page load aims for, how many films each shows
+# (five suggestions — the anchor slot takes the row's first column),
 # and the floor below which a criteria set isn't worth a shelf
 
 SHELF_COUNT = 5
-SHELF_SIZE = 6
+SHELF_SIZE = 5
 MIN_SHELF_FILMS = 4
 MAX_CRITERIA = 4
+
+# Copref-pair shelves (Glenn's Aug 26 follow-up): up to this many of a
+# load's shelves come from MovieLens co-preference instead of shared
+# features — two high-weight anchor films, suggestions ranked by how
+# similar they are to BOTH. Pairs are drawn from the user's top-weight
+# interest films; the cap keeps the pair search quadratic-but-tiny.
+
+COPREF_SHELF_COUNT = 2
+COPREF_ANCHOR_POOL = 30
 
 # No class may key more than this many of one load's shelves, so a
 # cast-heavy profile still mixes genres, keywords, and awards in
 
 MAX_SHELVES_PER_CLASS = 2
 
-# The interest bar: a film anchors a shelf when the diary weights say
-# the user expressed interest in it — a watchlist add (0.2) is the
-# mildest signal that counts, so bare watches and positive ratings
-# clear it and dislikes never do
+# The interest bar: on top of the rated-or-liked requirement below, an
+# anchor's diary weight must clear this floor, so a film the user
+# rated below their own mean never fronts a "Because you liked" shelf
 
 ANCHOR_MIN_WEIGHT = 0.2
 
@@ -94,6 +108,67 @@ AWARD_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{1,32}$")
 
 KEYWORD_DENYLIST = {"aftercreditsstinger", "duringcreditsstinger"}
 
+# Keyword display casing (Glenn, Aug 26 2026): TMDB stores keywords
+# lowercase, but "new york city", "fbi", and "world war ii" are not
+# common nouns. The library's own overview prose knows the real
+# casing, so a shelf-bound keyword resolves against mid-sentence
+# occurrences there — adopted when one non-lowercase casing carries a
+# clear majority, first-char-upper otherwise ("Heist"). Resolutions
+# cache in Redis; only the few keywords actually chosen as criteria
+# ever resolve, never the whole feature index.
+
+KEYWORD_CASE_KEY = "fitzflix:kwcase:{name}"
+KEYWORD_CASE_TTL = 30 * 86400
+KEYWORD_CASE_MAJORITY = 0.6
+KEYWORD_CASE_SAMPLE = 400
+
+
+def keyword_display_name(name):
+    """The keyword with real-world capitalization, learned from the
+    overview text of films that use the phrase mid-sentence — "new
+    york city" → "New York City", "fbi" → "FBI" — falling back to a
+    capitalized first character for phrases prose keeps lowercase."""
+
+    redis = current_app.redis
+    cache_key = KEYWORD_CASE_KEY.format(name=name)
+    cached = redis.get(cache_key)
+    if cached:
+        return cached.decode() if isinstance(cached, bytes) else cached
+
+    pattern = re.compile(
+        r"(?<![A-Za-z])" + re.escape(name).replace(r"\ ", r"\s+") + r"(?![A-Za-z])",
+        re.I,
+    )
+    needle = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = (
+        db.session.query(Movie.tmdb_overview)
+        .filter(Movie.tmdb_overview.like(f"%{needle}%", escape="\\"))
+        .limit(KEYWORD_CASE_SAMPLE)
+        .all()
+    )
+    counts = {}
+    total = 0
+    for (overview,) in rows:
+        if not overview:
+            continue
+        for match in pattern.finditer(overview):
+            # A sentence-start capital is the sentence's, not the
+            # phrase's — only mid-sentence occurrences vote
+            head = overview[: match.start()].rstrip()
+            if not head or head[-1] in ".!?—“\"'(":
+                continue
+            casing = re.sub(r"\s+", " ", match.group(0))
+            counts[casing] = counts.get(casing, 0) + 1
+            total += 1
+
+    resolved = f"{name[:1].upper()}{name[1:]}"
+    if total:
+        best = max(counts, key=counts.get)
+        if best != name and counts[best] / total >= KEYWORD_CASE_MAJORITY:
+            resolved = best
+    redis.set(cache_key, resolved, ex=KEYWORD_CASE_TTL)
+    return resolved
+
 
 def _shelf_label(cls, label):
     """The shelf wording for one feature: collect_features' labels
@@ -103,7 +178,10 @@ def _shelf_label(cls, label):
     if cls == "genre":
         return f"{label} films"
     if cls == "keyword":
-        return f"“{label}” films"
+        # The cheap default for the feature index; a keyword that
+        # actually becomes a shelf criterion re-labels through
+        # keyword_display_name at assembly time
+        return f"“{label[:1].upper()}{label[1:]}” films"
     if cls == "decade":
         return f"the {label}"
     if cls == "actor":
@@ -148,6 +226,28 @@ def shelf_features(movie_ids):
             ("award", f"award:{award_id}", f"{name} winners")
         )
     return features
+
+
+def _rated_or_liked_ids(user_id):
+    """Films the user has passed an actual verdict on — stars or a
+    liked heart on some diary row. Only these may anchor a shelf
+    (Glenn's rule, Aug 26 2026): a watchlist add or a bare unrated
+    watch expresses interest and still feeds the engine's scores, but
+    "Because you liked" must name a film the user really rated or
+    liked."""
+
+    return {
+        movie_id
+        for (movie_id,) in db.session.query(UserMovieReview.movie_id)
+        .filter(UserMovieReview.user_id == int(user_id))
+        .filter(UserMovieReview.movie_id.isnot(None))
+        .filter(
+            db.or_(
+                UserMovieReview.rating.isnot(None),
+                UserMovieReview.liked == True,
+            )
+        )
+    }
 
 
 def _watchlisted_ids(user_id):
@@ -231,30 +331,120 @@ def _top_heavy_sample(rng, ranked, count, decay=0.93):
     return [item for _, item in selected]
 
 
+def _copref_shelves(interest, pool, rng, count, shown):
+    """Up to `count` copref-pair shelves: two of the user's top-weight
+    interest films whose MovieCopref neighbor lists jointly cover
+    enough eligible films. Suggestions rank by min(sim to A, sim to B)
+    — a film must sit close to BOTH anchors — and the criteria key
+    `copref:{tmdbA}:{tmdbB}` lets the tile endpoint refill slots from
+    the same joint list. Mutates `shown` like the criteria loop does.
+    """
+
+    top = sorted(interest.items(), key=lambda kv: kv[1], reverse=True)[
+        :COPREF_ANCHOR_POOL
+    ]
+    tmdb_of = dict(
+        db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_([movie_id for movie_id, _ in top] or [0]))
+        .filter(Movie.tmdb_id.isnot(None))
+    )
+    anchors = [movie_id for movie_id, _ in top if movie_id in tmdb_of]
+    sims = copref_anchor_sims([tmdb_of[movie_id] for movie_id in anchors])
+    pool_by_tmdb = {
+        tmdb_id: movie_id
+        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(pool) or [0]))
+        .filter(Movie.tmdb_id.isnot(None))
+    }
+
+    # Each anchor's neighbors that are actually suggestible, then every
+    # pair with a joint list deep enough for a shelf, scored by the
+    # quality of its top picks so strong pairs lead the weighted draw
+
+    neighbors = {
+        movie_id: set(sims.get(tmdb_of[movie_id], ())) & set(pool_by_tmdb)
+        for movie_id in anchors
+    }
+    pairs = []
+    for i, first in enumerate(anchors):
+        for second in anchors[i + 1 :]:
+            joint = neighbors[first] & neighbors[second]
+            if len(joint) < MIN_SHELF_FILMS:
+                continue
+            sims_a = sims[tmdb_of[first]]
+            sims_b = sims[tmdb_of[second]]
+            quality = sum(
+                sorted((min(sims_a[t], sims_b[t]) for t in joint), reverse=True)[
+                    :SHELF_SIZE
+                ]
+            )
+            pairs.append((quality, (first, second, joint)))
+
+    shelves = []
+    used_anchors = set()
+    for first, second, joint in _weighted_order(rng, pairs):
+        if len(shelves) >= count:
+            break
+        if first in used_anchors or second in used_anchors:
+            continue
+        sims_a = sims[tmdb_of[first]]
+        sims_b = sims[tmdb_of[second]]
+        ranked = sorted(
+            (t for t in joint if pool_by_tmdb[t] not in shown),
+            key=lambda t: min(sims_a[t], sims_b[t]),
+            reverse=True,
+        )
+        if len(ranked) < MIN_SHELF_FILMS:
+            continue
+        picks = [pool_by_tmdb[t] for t in _top_heavy_sample(rng, ranked, SHELF_SIZE)]
+        key = f"copref:{tmdb_of[first]}:{tmdb_of[second]}"
+        shelves.append(
+            {
+                "kind": "copref",
+                "criteria": [(key, "loved alongside these")],
+                "anchor_ids": [first, second],
+                "movie_ids": picks,
+            }
+        )
+        used_anchors.update((first, second))
+        shown.update(picks)
+    return shelves
+
+
 def build_shelves(user, count=SHELF_COUNT, rng=None):
     """One page load's shelves for a user, freshly drawn.
 
-    Each shelf dict carries its criteria [(key, label), ...], its two
-    anchor movie ids, and its suggested movie ids. Seeds are single
-    features held by at least two interest films and enough eligible
-    candidates; the winning seed's criteria then greedily extend with
-    features BOTH anchors share, as long as enough candidates carry
-    the whole set — so anchors and suggestions always overlap on every
-    criterion. Films never repeat across one load's shelves.
+    Each shelf dict carries its kind ("criteria" or "copref"), its
+    criteria [(key, label), ...], its two anchor movie ids, and its
+    suggested movie ids. Anchors come only from films the user rated
+    or liked. Copref-pair shelves draw first (capped at
+    COPREF_SHELF_COUNT); criteria shelves fill the rest: seeds are
+    single features held by at least two anchor-eligible films and
+    enough eligible candidates, and the winning seed's criteria
+    greedily extend with features BOTH anchors share, as long as
+    enough candidates carry the whole set — so anchors and suggestions
+    always overlap on every criterion. Films never repeat across one
+    load's shelves.
     """
 
     rng = rng or random.Random()
     user_id = int(user.id)
+    verdicts = _rated_or_liked_ids(user_id)
     interest = {
         movie_id: weight
         for movie_id, weight in user_movie_weights(user_id).items()
-        if weight >= ANCHOR_MIN_WEIGHT
+        if weight >= ANCHOR_MIN_WEIGHT and movie_id in verdicts
     }
     if len(interest) < 2:
         return []
     pool = eligible_films(user)
     if len(pool) < MIN_SHELF_FILMS:
         return []
+
+    shown = set()
+    copref_shelves = _copref_shelves(
+        interest, pool, rng, min(COPREF_SHELF_COUNT, count), shown
+    )
 
     features = shelf_features(list(set(pool) | set(interest)))
     holders = {}  # feature key -> interest movie ids carrying it
@@ -282,11 +472,10 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
         if score > 0:
             seed_scores[key] = score
     if not seed_scores:
-        return []
+        return copref_shelves
 
     scores = stored_scores(current_app.redis, user_id)
-    shelves = []
-    shown = set()
+    shelves = list(copref_shelves)
     shelves_per_class = {}
     for seed in _weighted_order(rng, [(s, k) for k, s in seed_scores.items()]):
         if len(shelves) >= count:
@@ -322,7 +511,10 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
         picks = _top_heavy_sample(rng, ranked, SHELF_SIZE)
         shelves.append(
             {
-                "criteria": [(key, labels[key]) for key in criteria],
+                "kind": "criteria",
+                "criteria": [
+                    (key, _criterion_label(key, labels[key])) for key in criteria
+                ],
                 "anchor_ids": anchors,
                 "movie_ids": picks,
             }
@@ -332,13 +524,37 @@ def build_shelves(user, count=SHELF_COUNT, rng=None):
     return shelves
 
 
+def _criterion_label(key, label):
+    """The final display label for one chosen criterion: keywords swap
+    their cheap first-upper label for the overview-derived casing
+    ("“New York City” films", "“FBI” films"); every other class keeps
+    the index label."""
+
+    if not key.startswith("keyword:"):
+        return label
+    row = db.session.get(TMDBKeyword, int(key.split(":", 1)[1]))
+    if row is None:
+        return label
+    return f"“{keyword_display_name(row.name)}” films"
+
+
 def parse_criteria(raw):
     """[(class, value)] from the tile endpoint's comma-joined criteria
-    keys, or None when any key is malformed."""
+    keys, or None when any key is malformed. A copref pair key
+    (`copref:{tmdbA}:{tmdbB}`) always stands alone — a copref shelf
+    has exactly that one criterion — and parses to
+    ("copref", (tmdbA, tmdbB))."""
 
     keys = [key for key in (raw or "").split(",") if key]
     if not keys or len(keys) > MAX_CRITERIA:
         return None
+    if any(key.startswith("copref:") for key in keys):
+        if len(keys) != 1:
+            return None
+        parts = keys[0].split(":")
+        if len(parts) != 3 or not (parts[1].isdigit() and parts[2].isdigit()):
+            return None
+        return [("copref", (int(parts[1]), int(parts[2])))]
     parsed = []
     for key in keys:
         cls, _, value = key.partition(":")
@@ -388,10 +604,39 @@ def _criterion_movie_ids(cls, value):
     return {movie_id for (movie_id,) in rows}
 
 
+def _copref_replacement(user, pair, exclude):
+    """The next movie id for a copref shelf's slot: the eligible film
+    most similar to BOTH anchors that isn't already showing."""
+
+    first, second = pair
+    sims = copref_anchor_sims([first, second])
+    joint = {
+        tmdb_id: min(sims[first][tmdb_id], sims[second][tmdb_id])
+        for tmdb_id in set(sims.get(first, ())) & set(sims.get(second, ()))
+    }
+    if not joint:
+        return None
+    pool = set(eligible_films(user)) - set(exclude)
+    pool_by_tmdb = {
+        tmdb_id: movie_id
+        for movie_id, tmdb_id in db.session.query(Movie.id, Movie.tmdb_id)
+        .filter(Movie.id.in_(list(pool) or [0]))
+        .filter(Movie.tmdb_id.in_(list(joint)))
+    }
+    if not pool_by_tmdb:
+        return None
+    return pool_by_tmdb[max(pool_by_tmdb, key=lambda tmdb_id: joint[tmdb_id])]
+
+
 def replacement_film(user, criteria, exclude=()):
     """The next movie id for a shelf slot: the best-scored eligible
     film carrying every criterion that isn't already showing — or None
-    when the criteria set is exhausted, which closes the slot."""
+    when the criteria set is exhausted, which closes the slot. Copref
+    shelves rank by joint similarity to their anchor pair instead of
+    the engine score, matching the shelf's own ordering."""
+
+    if criteria and criteria[0][0] == "copref":
+        return _copref_replacement(user, criteria[0][1], exclude)
 
     matching = None
     for cls, value in criteria:

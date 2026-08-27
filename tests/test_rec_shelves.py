@@ -86,7 +86,9 @@ def test_shelf_features_cover_awards_and_skip_language(app):
             "award",
             "Academy Award for Best Picture winners",
         )
-        assert by_key["keyword:9717"] == ("keyword", "“heist” films")
+        # Keyword names are stored lowercase; the label upcases the
+        # first character (Glenn: "“Poker” films", never "“poker”")
+        assert by_key["keyword:9717"] == ("keyword", "“Heist” films")
         assert "award:Q103360" not in by_key
         # TMDB's bookkeeping keywords never key a shelf
         assert "keyword:179431" not in by_key
@@ -177,6 +179,7 @@ def test_build_shelves_anchors_and_criteria_overlap(app):
         shelf = next(
             s for s in shelves if any(key == "genre:37" for key, _ in s["criteria"])
         )
+        assert shelf["kind"] == "criteria"
         assert set(shelf["anchor_ids"]) <= anchor_ids
         assert len(shelf["anchor_ids"]) == 2
         assert set(shelf["movie_ids"]) <= suggestion_ids
@@ -207,8 +210,9 @@ def test_build_shelves_needs_two_interest_films(app):
 
 
 def test_recommendations_page_renders_shelves(app, admin_client):
-    """The page shows a shelf's heading, its "Based on your interest
-    in" caption naming both anchors, and its suggestion tiles."""
+    """The page shows a shelf's heading, the fanned anchor slot naming
+    both anchors under a "Because you liked" eyebrow, and its
+    suggestion tiles."""
 
     with app.app_context():
         user_id = admin_id()
@@ -224,12 +228,19 @@ def test_recommendations_page_renders_shelves(app, admin_client):
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
     assert "Recommendations" in page
-    assert "Based on your interest in" in page
     assert "Western films" in page
-    assert "Page Anchor A (1961)" in page
-    assert "Page Anchor B (1963)" in page
+    assert 'class="anchor-slot"' in page
+    assert "Because you liked" in page
+    # The anchors are named only in the poster links' tooltip and alt
+    # text — no visible title list under the fan (Glenn, Aug 26 2026)
+    assert 'title="Page Anchor A (1961)"' in page
+    assert 'title="Page Anchor B (1963)"' in page
+    assert "anchor-slot-titles" not in page
+    assert "anchor-fan-back" in page and "anchor-fan-front" in page
     assert 'data-criteria="' in page
     assert any(title in page for title in pick_titles)
+    # The old prose caption is gone — the slot carries the anchors now
+    assert "Based on your interest in" not in page
     # Anchors are evidence, never suggestions
     assert "data-suggestion-cell" in page
 
@@ -351,3 +362,232 @@ def test_reload_reshuffles_shelf_draw(app):
             for seed in range(2, 8)
         )
         assert different, "six reseeded draws never varied the shelves"
+
+
+def make_copref(tmdb_a, tmdb_b, similarity):
+    """One directed co-preference similarity row."""
+
+    from app.models import MovieCopref
+
+    row = MovieCopref(tmdb_id_a=tmdb_a, tmdb_id_b=tmdb_b, similarity=similarity)
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
+def copref_fixture(app):
+    """Two liked anchors (tmdb 501/502) whose neighbor lists jointly
+    cover four owned candidates (tmdb 601-604) plus one film close to
+    only one anchor — returns (user, anchor ids, candidate ids)."""
+
+    user = admin_user(app)
+    user_id = int(user.id)
+    anchor_a = make_candidate("Copref Anchor A", 1977)
+    anchor_a.tmdb_id = 501
+    anchor_b = make_candidate("Copref Anchor B", 1980)
+    anchor_b.tmdb_id = 502
+    log_watch(user_id, anchor_a, rating=5, liked=True)
+    log_watch(user_id, anchor_b, rating=5, liked=True)
+
+    candidates = []
+    for n in range(4):
+        movie = make_candidate(f"Copref Joint {n}", 1984 + n)
+        movie.tmdb_id = 601 + n
+        candidates.append(movie)
+        make_copref(501, movie.tmdb_id, 0.30 - n * 0.02)
+        make_copref(502, movie.tmdb_id, 0.28 - n * 0.02)
+    lonely = make_candidate("Copref One Sided", 1990)
+    lonely.tmdb_id = 699
+    make_copref(501, lonely.tmdb_id, 0.9)
+    db.session.commit()
+    return user, (anchor_a.id, anchor_b.id), [movie.id for movie in candidates]
+
+
+def test_build_shelves_draws_a_copref_pair_shelf(app):
+    """Two liked films with a deep enough joint neighbor list yield a
+    copref shelf: kind "copref", the pair as anchors, a
+    copref:{tmdbA}:{tmdbB} criteria key, and only JOINT neighbors as
+    suggestions — a film similar to one anchor alone never shows."""
+
+    with app.app_context():
+        user, anchor_ids, candidate_ids = copref_fixture(app)
+
+        from app.rec_shelves import build_shelves
+
+        shelves = build_shelves(user, rng=random.Random(3))
+        copref = [s for s in shelves if s["kind"] == "copref"]
+        assert copref, "no copref shelf from a covered pair"
+        shelf = copref[0]
+        assert set(shelf["anchor_ids"]) == set(anchor_ids)
+        key = shelf["criteria"][0][0]
+        assert sorted(key.split(":")[1:]) == ["501", "502"]
+        assert set(shelf["movie_ids"]) <= set(candidate_ids)
+        lonely = [m for m in shelf["movie_ids"] if m not in candidate_ids]
+        assert lonely == []
+
+
+def test_parse_criteria_copref_key(app):
+    from app.rec_shelves import parse_criteria
+
+    assert parse_criteria("copref:501:502") == [("copref", (501, 502))]
+    assert parse_criteria("copref:501") is None
+    assert parse_criteria("copref:501:abc") is None
+    assert parse_criteria("copref:501:502,genre:37") is None
+
+
+def test_copref_tile_refills_by_joint_similarity(app, admin_client):
+    """The tile endpoint refills a copref slot with the next film most
+    similar to BOTH anchors, skips films already showing, and answers
+    204 once the joint list is spent."""
+
+    with app.app_context():
+        user, _, candidate_ids = copref_fixture(app)
+        best, runner_up = candidate_ids[0], candidate_ids[1]
+
+    response = admin_client.get(
+        f"/recommendations/tile?criteria=copref:501:502&exclude={best}"
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Copref Joint 1" in body
+    assert f'data-state-movie="{runner_up}"' in body
+    assert "Copref One Sided" not in body
+
+    exclude = ",".join(str(movie_id) for movie_id in candidate_ids)
+    response = admin_client.get(
+        f"/recommendations/tile?criteria=copref:501:502&exclude={exclude}"
+    )
+    assert response.status_code == 204
+
+
+def test_copref_shelf_page_render(app, admin_client):
+    """A copref shelf renders under its own heading with the anchor
+    slot and no criteria-style caption."""
+
+    with app.app_context():
+        copref_fixture(app)
+
+    page = admin_client.get("/recommendations").get_data(as_text=True)
+    assert "More like these two" in page
+    assert "Loved by the people who loved both" in page
+    assert 'title="Copref Anchor A (1977)"' in page
+    assert "Copref Anchor B (1980)" in page
+    assert 'data-criteria="copref:501:502"' in page or (
+        'data-criteria="copref:502:501"' in page
+    )
+
+
+def test_anchors_require_a_rated_or_liked_verdict(app):
+    """A watchlist add or a bare unrated watch expresses interest —
+    both clear the weight bar — but neither may front a "Because you
+    liked" shelf: anchors are rated-or-liked films only (Glenn's rule,
+    Aug 26 2026)."""
+
+    with app.app_context():
+        user = admin_user(app)
+        user_id = int(user.id)
+        western = genre(37, "Western")
+
+        bare = make_candidate("Verdict Bare Watch", 1961, genre_row=western)
+        log_watch(user_id, bare)  # seen, never rated or liked
+        wanted = make_candidate("Verdict Watchlisted", 1963, genre_row=western)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
+        for n in range(5):
+            make_candidate(f"Verdict Pick {n}", 1965 + n, genre_row=western)
+        db.session.commit()
+
+        from app.rec_shelves import build_shelves
+
+        assert build_shelves(user, rng=random.Random(7)) == []
+
+        # The same films with real verdicts anchor immediately
+
+        log_watch(user_id, bare, rating=4)
+        rewatch = make_candidate("Verdict Liked", 1962, genre_row=western)
+        log_watch(user_id, rewatch, liked=True)
+        db.session.commit()
+        bare_id, liked_id = bare.id, rewatch.id
+
+        shelves = build_shelves(user, rng=random.Random(7))
+        assert shelves
+        assert set(shelves[0]["anchor_ids"]) <= {bare_id, liked_id}
+
+
+def test_keyword_display_name_learns_from_overviews(app):
+    """Keyword casing resolves from mid-sentence overview prose: a
+    proper noun or acronym adopts its majority casing, a common noun
+    falls back to a capitalized first character, and sentence-start
+    capitals never vote."""
+
+    with app.app_context():
+        make_movie(
+            "Case Bureau One",
+            1990,
+            tmdb_overview="An agent of the FBI goes undercover.",
+        )
+        make_movie(
+            "Case Bureau Two",
+            1991,
+            tmdb_overview="Chased by the FBI across three states.",
+        )
+        make_movie(
+            "Case Common",
+            1992,
+            tmdb_overview="A tense poker game turns deadly. Poker was his life.",
+        )
+        db.session.commit()
+
+        from app.rec_shelves import keyword_display_name
+
+        assert keyword_display_name("fbi") == "FBI"
+        # "Poker" opens a sentence, so it doesn't vote; the
+        # mid-sentence lowercase wins and the fallback capitalizes
+        assert keyword_display_name("poker") == "Poker"
+        # No occurrences at all: plain fallback
+        assert keyword_display_name("new york city") == "New york city"
+
+        # Resolutions cache: new contrary evidence doesn't flip a
+        # cached answer until the TTL turns over
+        make_movie(
+            "Case Bureau Three",
+            1993,
+            tmdb_overview="He mocked the fbi in lowercase repeatedly.",
+        )
+        db.session.commit()
+        assert keyword_display_name("fbi") == "FBI"
+
+
+def test_shelf_criteria_use_resolved_keyword_casing(app):
+    """A keyword chosen as a shelf criterion is labeled with the
+    overview-derived casing, not the raw lowercase name."""
+
+    from app.models import TMDBKeyword
+
+    with app.app_context():
+        user = admin_user(app)
+        user_id = int(user.id)
+        nyc = TMDBKeyword(id=18426, name="new york city")
+        db.session.add(nyc)
+        movies = []
+        for n, title in enumerate(["Casing Anchor A", "Casing Anchor B"]):
+            movie = make_candidate(title, 1971 + n)
+            movie.keywords.append(nyc)
+            movie.tmdb_overview = f"A story set in New York City, part {n}."
+            log_watch(user_id, movie, rating=5, liked=True)
+            movies.append(movie)
+        for n in range(5):
+            movie = make_candidate(f"Casing Pick {n}", 1980 + n)
+            movie.keywords.append(nyc)
+            movie.tmdb_overview = f"Crime in New York City, chapter {n}."
+        db.session.commit()
+
+        from app.rec_shelves import build_shelves
+
+        shelves = build_shelves(user, rng=random.Random(5))
+        labels = [
+            label
+            for shelf in shelves
+            for key, label in shelf["criteria"]
+            if key == "keyword:18426"
+        ]
+        assert labels and labels[0] == "“New York City” films"

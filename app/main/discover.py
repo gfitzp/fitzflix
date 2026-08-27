@@ -1644,6 +1644,7 @@ def recommendations():
             continue
         shelves.append(
             {
+                "kind": shelf["kind"],
                 "criteria_param": ",".join(key for key, _ in shelf["criteria"]),
                 "labels": [label for _, label in shelf["criteria"]],
                 "anchors": anchors,

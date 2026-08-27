@@ -241,6 +241,33 @@
 		.poster-fold-new svg { left: 3px; }
 		.poster-fold-leaving svg { right: 3px; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
+		/* The Recommendations anchor slot (#235 follow-up, Glenn's
+		   fanned-pair pick): each shelf's first cell shows the two
+		   anchor films as small overlapped posters on a dashed-border
+		   ground — evidence for the shelf, visually distinct from the
+		   suggestion tiles it sits beside, with no actions to mistake
+		   for a rateable card. Bootstrap tokens keep it right in both
+		   themes; the eyebrow borrows the watchlist amber. */
+		.anchor-slot { height: 100%; display: flex; flex-direction: column; background: var(--bs-tertiary-bg); border: 1px dashed var(--bs-border-color); border-radius: .5rem; padding: .6rem .6rem .75rem; text-align: start; }
+		.anchor-slot-eyebrow { font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--bs-warning-text-emphasis); margin-bottom: .5rem; }
+		.anchor-fan { position: relative; aspect-ratio: 5 / 6; margin-bottom: .4rem; }
+		.anchor-fan a { position: absolute; display: block; width: 62%; aspect-ratio: 2 / 3; border-radius: .375rem; box-shadow: 0 3px 10px rgba(0, 0, 0, .25); }
+		.anchor-fan a.anchor-fan-back { top: 0; left: 0; transform: rotate(-4deg); }
+		.anchor-fan a.anchor-fan-front { bottom: 0; right: 0; transform: rotate(3deg); }
+		.anchor-fan img, .anchor-fan .anchor-fan-blank { width: 100%; height: 100%; object-fit: cover; border: 1px solid var(--bs-border-color); border-radius: .375rem; background: var(--bs-body-bg); }
+		/* The refill swap: the acted-on tile fades out, its
+		   replacement fades into place (Glenn, Aug 26 2026). The
+		   fade-out rides a transition the page's script triggers by
+		   adding .tile-fade-out; the fade-in is a one-shot animation
+		   on the freshly inserted cell. Reduced-motion users get an
+		   instant swap — the script checks the same media query. */
+		.tile-fade-out { transition: opacity .25s ease-out; opacity: 0; }
+		.tile-fade-in { animation: tile-fade-in .45s ease-out; }
+		@keyframes tile-fade-in { from { opacity: 0; } }
+		@media (prefers-reduced-motion: reduce) {
+			.tile-fade-out { transition: none; }
+			.tile-fade-in { animation: none; }
+		}
 		/* Name that Frame: the frame sits in a fixed-size
 		   letterbox, so a scope frame and a 4:3 frame occupy identical
 		   space and the page never resizes between rounds; the black
