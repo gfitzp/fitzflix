@@ -109,18 +109,27 @@ def _normalize(text):
 
 def _fuzzy_match(guess, movie):
     """True when the guess lands close enough to any of the film's
-    titles (local or TMDB, with or without the year)."""
+    titles (local or TMDB, with or without the year). Each pair is
+    compared twice: as normalized words, and with the spaces squeezed
+    out — normalization turns punctuation into spaces, so 'M*A*S*H'
+    normalizes to 'm a s h' and only the squeezed pass lets a player
+    type 'mash' (Glenn's report, Aug 27 2026)."""
 
     normalized = _normalize(guess)
     if not normalized:
         return False
     candidates = {movie.title, movie.tmdb_title, _display_title(movie)}
     for candidate in filter(None, candidates):
-        if (
-            SequenceMatcher(None, normalized, _normalize(candidate)).ratio()
-            >= FUZZY_THRESHOLD
+        candidate = _normalize(candidate)
+        for pair in (
+            (normalized, candidate),
+            (
+                normalized.replace(" ", ""),
+                candidate.replace(" ", ""),
+            ),
         ):
-            return True
+            if SequenceMatcher(None, *pair).ratio() >= FUZZY_THRESHOLD:
+                return True
     return False
 
 

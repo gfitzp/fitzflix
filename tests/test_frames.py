@@ -1420,3 +1420,40 @@ def test_difficulty_picker_is_a_radio_group(app, admin_client):
     assert re.search(r'id="difficulty-difficult"[^>]*\schecked', page)
     assert not re.search(r'id="difficulty-easy"[^>]*\schecked', page)
     assert 'id="difficulty-extra"' in page
+
+
+def test_fuzzy_matching_disregards_punctuation(app, admin_client):
+    """A punctuation-heavy title matches its plain spelling — 'mash'
+    names M*A*S*H (Glenn's report, Aug 27 2026) — while a wrong film
+    is still a wrong film."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("M*A*S*H", 1970)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(text):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "siracusa",
+                "guess": text,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    assert "Correct" in guess("mash")
+    assert "Correct" in guess("M*A*S*H")
+    assert "Correct" in guess("m.a.s.h.")
+    assert "alert-danger" in guess("Catch-22")
