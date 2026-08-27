@@ -230,6 +230,17 @@ def register(app):
         refresh_newly_added()
         click.echo("Newly-added feeds refreshed")
 
+    @recs.command("catalog")
+    def provider_catalogs():
+        """Enumerate subscribed providers' catalogs and process the
+        pending discoveries now, instead of waiting for the nightly
+        run."""
+
+        from app.provider_catalog import refresh_provider_catalogs
+
+        refresh_provider_catalogs()
+        click.echo("Provider catalogs refreshed")
+
     @recs.command()
     def awards():
         """Refresh every film's Wikidata award records now, instead of

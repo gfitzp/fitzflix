@@ -175,6 +175,18 @@ def cron_table(config):
             900,
             "Syncing Letterboxd diaries",
         ),
+        # Discover provider-catalog films for the recommendation
+        # universe (#250): enumerate subscribed providers' catalogs,
+        # diff against the ever-seen sets, and turn a bounded batch of
+        # verified, well-scoring arrivals into file-less records. At
+        # 0:45 so the records' TMDB refreshes land before the 1:45
+        # recompute scores them
+        (
+            "45 0 * * *",
+            "app.provider_catalog.refresh_provider_catalogs",
+            3600,
+            "Discovering provider-catalog films for recommendations",
+        ),
         # Recompute per-user film recommendations nightly, after the log
         # rotation and backup windows
         (
