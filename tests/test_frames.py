@@ -1457,3 +1457,91 @@ def test_fuzzy_matching_disregards_punctuation(app, admin_client):
     assert "Correct" in guess("M*A*S*H")
     assert "Correct" in guess("m.a.s.h.")
     assert "alert-danger" in guess("Catch-22")
+
+
+def test_unrated_watches_do_not_count_as_rated(app, admin_client):
+    """A diary row without a star rating — a Netflix-import watch,
+    say — satisfies neither Easy nor the rated-films filter (Glenn's
+    Conversation report, Aug 27 2026: 'seen' surfaced films nobody
+    remembers, so the filter now means rated)."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    with app.app_context():
+        watched = make_movie("Unrated Watch Film", 1974)
+        make_movie_file(watched, "Bluray-1080p")
+        rated = make_movie("Rated Film Proper", 1975)
+        make_movie_file(rated, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(user_id=admin_id(), movie_id=watched.id, liked=False)
+        )
+        db.session.add(
+            UserMovieReview(
+                user_id=admin_id(),
+                movie_id=rated.id,
+                liked=True,
+                **star_rating_fields(4.0),
+            )
+        )
+        db.session.commit()
+        watched_id, rated_id = watched.id, rated.id
+
+    watched_token = seed_frame(app, watched_id)
+    rated_token = seed_frame(app, rated_id)
+
+    for difficulty in ("easy", "difficult&rated=1"):
+        for _ in range(3):
+            page = admin_client.get(f"/game?difficulty={difficulty}").get_data(
+                as_text=True
+            )
+            assert f'src="/game/frame/{rated_token}' in page
+            assert watched_token not in page
+
+
+def test_pool_floor_ignores_unrated_watches(app, monkeypatch):
+    """The nightly rated floor matches the game's tightened world: an
+    unrated watch can't claim a floor slot, or the floor would pool
+    films Easy can no longer deal."""
+
+    from app import db
+    from app.models import UserMovieReview
+    from app.frames import refresh_frame_pool_task
+    from app.videos import star_rating_fields
+    from tests.test_recommendations import admin_id
+
+    monkeypatch.setitem(app.config, "FRAME_POOL_SIZE", 1)
+    monkeypatch.setitem(app.config, "FRAME_POOL_ROTATE", 1)
+    monkeypatch.setitem(app.config, "FRAME_POOL_MIN_RATED", 1)
+
+    with app.app_context():
+        watched = make_movie("Floor Unrated Watch", 1976)
+        make_movie_file(watched, "Bluray-1080p")
+        rated = make_movie("Floor Rated Star", 1977)
+        make_movie_file(rated, "Bluray-1080p")
+        db.session.add(
+            UserMovieReview(user_id=admin_id(), movie_id=watched.id, liked=False)
+        )
+        db.session.add(
+            UserMovieReview(
+                user_id=admin_id(),
+                movie_id=rated.id,
+                liked=True,
+                **star_rating_fields(3.5),
+            )
+        )
+        db.session.commit()
+        rated_id = rated.id
+
+        refresh_frame_pool_task()
+        jobs = [
+            app.transcode_queue.fetch_job(job_id)
+            for job_id in app.transcode_queue.get_job_ids()
+        ]
+        queued = [
+            job.args[0] for job in jobs if "extract_frame_task" in (job.func_name or "")
+        ]
+        # The single slot goes to the starred film, not the bare watch
+        assert queued == [rated_id]

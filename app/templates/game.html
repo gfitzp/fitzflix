@@ -29,8 +29,8 @@
 	{% endif %}
 </div>
 {% if difficulty in ("difficult", "siracusa", "extra") %}
-{# The seen-films switch (Glenn's ask, Aug 27 2026): narrow this
-   difficulty's deals to films from the user's diary. The hidden
+{# The rated-films switch (Glenn's ask, Aug 27 2026): narrow this
+   difficulty's deals to films the user has rated. The hidden
    rated=0 makes an un-tick explicit — the server treats "no 1 among
    the rated values" as off — and the switch survives in Redis, so
    rounds and revisits keep it without threading a parameter #}
@@ -39,7 +39,7 @@
 	<input type="hidden" name="rated" value="0">
 	<div class="form-check form-switch">
 		<input class="form-check-input" type="checkbox" name="rated" value="1" id="rated-only"{% if rated_only %} checked{% endif %} onchange="this.form.submit()">
-		<label class="form-check-label small" for="rated-only">Only films I&rsquo;ve seen</label>
+		<label class="form-check-label small" for="rated-only">Only films I&rsquo;ve rated</label>
 	</div>
 	<noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">Apply</button></noscript>
 </form>
@@ -135,11 +135,11 @@
 {% endif %}
 {% elif pool_size %}
 {# The pool has frames, just none this difficulty can serve — Easy
-   (or a seen-films filter) before the user has rated any pooled
+   (or a rated-films filter) before the user has rated any pooled
    films #}
 <p class="lead">No frames to serve on this difficulty yet.</p>
 {% if rated_only %}
-<p class="text-muted">None of the pooled frames are films you&rsquo;ve seen &mdash; rate a few more, or untick the filter above to deal from the whole library.</p>
+<p class="text-muted">None of the pooled frames are films you&rsquo;ve rated &mdash; rate a few more, or untick the filter above to deal from the whole library.</p>
 {% else %}
 <p class="text-muted">Easy only deals films you've rated &mdash; rate a few from the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or your <a href="{{ url_for('main.movie_library') }}">library</a>, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
 {% endif %}

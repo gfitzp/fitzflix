@@ -248,11 +248,15 @@ def refresh_frame_pool_task():
             for (user_id,) in db.session.query(UserMovieReview.user_id).distinct()
         }
         for user_id in sorted(reviewers):
+            # Rated means starred, matching the game's world — an
+            # unrated diary row (a Netflix-import watch, say) doesn't
+            # count, or the floor would pool films Easy can't deal
             rated_playable = {
                 movie_id
                 for (movie_id,) in db.session.query(UserMovieReview.movie_id)
                 .filter(UserMovieReview.user_id == user_id)
                 .filter(UserMovieReview.movie_id.isnot(None))
+                .filter(UserMovieReview.rating.isnot(None))
             } & playable
             floor = min(min_rated, len(rated_playable))
             pooled_rated = len(rated_playable & (pooled_movies | chosen))

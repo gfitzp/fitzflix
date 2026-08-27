@@ -60,10 +60,12 @@ EXTRA_ROUND_KEY = "fitzflix:frames:extra:{user_id}"
 
 TOP_CAST_SIZE = 5
 
-# The library-wide difficulties can narrow to films the user has seen
-# (Glenn's ask, Aug 27 2026): a per-user, per-difficulty switch, held
-# in a Redis set of slugs with no expiry — it's a preference, not
-# round state. Easy is already that filter by definition.
+# The library-wide difficulties can narrow to films the user has
+# rated (Glenn's ask, Aug 27 2026 — tightened from "seen" the same
+# day: unrated Netflix-import watches kept surfacing films nobody
+# remembers): a per-user, per-difficulty switch, held in a Redis set
+# of slugs with no expiry — it's a preference, not round state. Easy
+# is already that filter by definition.
 
 RATED_FILTER_DIFFICULTIES = ("difficult", "siracusa", "extra")
 RATED_FILTER_KEY = "fitzflix:frames:ratedonly:{user_id}"
@@ -134,7 +136,7 @@ def _fuzzy_match(guess, movie):
 
 
 def _rated_only(difficulty):
-    """Whether the user has the seen-films filter on for a difficulty
+    """Whether the user has the rated-films filter on for a difficulty
     that offers it."""
 
     return difficulty in RATED_FILTER_DIFFICULTIES and bool(
@@ -145,7 +147,7 @@ def _rated_only(difficulty):
 
 
 def _set_rated_only(difficulty, on):
-    """Persist the seen-films switch for one difficulty."""
+    """Persist the rated-films switch for one difficulty."""
 
     key = RATED_FILTER_KEY.format(user_id=int(current_user.id))
     if on:
@@ -155,13 +157,19 @@ def _set_rated_only(difficulty, on):
 
 
 def _rated_movie_ids():
-    """Movies in the current user's diary — Easy mode's world."""
+    """Movies the current user has actually RATED — a star rating, not
+    just a diary row. Easy's world and the rated-films filter both
+    read this; it used to accept any diary entry, but the Netflix
+    history import seeded unrated watches nobody remembers (Glenn's
+    Conversation report, Aug 27 2026), so a bare watch no longer
+    counts."""
 
     return {
         movie_id
         for (movie_id,) in db.session.query(UserMovieReview.movie_id)
         .filter(UserMovieReview.user_id == int(current_user.id))
         .filter(UserMovieReview.movie_id.isnot(None))
+        .filter(UserMovieReview.rating.isnot(None))
     }
 
 
@@ -220,7 +228,7 @@ def _build_options(answer_id, difficulty, rated_only=False):
     tight year window before the widened one (±5→±10 on Easy, ±2→±5
     on Hard; Glenn's rule, Aug 20 2026), since an option decades away
     is its own giveaway. Easy — and any difficulty with the
-    seen-films filter on, where an unrated option would mark the
+    rated-films filter on, where an unrated option would mark the
     answer by elimination — walks the ladder over the user's rated
     films first before padding from the whole library, and
     anything-goes is the last resort so a round can always fill its
@@ -294,7 +302,7 @@ def _build_options(answer_id, difficulty, rated_only=False):
 def _round_tokens(difficulty, rated_only=False):
     """The pooled tokens this difficulty may serve — Easy's world is
     the user's rated films always, and the other difficulties narrow
-    to the same world when the seen-films filter is on."""
+    to the same world when the rated-films filter is on."""
 
     entries = pool_entries()
     if difficulty == "easy" or rated_only:
@@ -635,7 +643,7 @@ def name_that_frame():
     if difficulty not in DIFFICULTIES:
         difficulty = "easy"
 
-    # The seen-films switch: the checkbox always submits a hidden
+    # The rated-films switch: the checkbox always submits a hidden
     # rated=0 alongside a checked rated=1, so an absent "1" is a
     # deliberate un-tick, not a bare visit
     if difficulty in RATED_FILTER_DIFFICULTIES and "rated" in request.args:
