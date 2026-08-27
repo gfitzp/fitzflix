@@ -82,7 +82,7 @@ STOREFRONT_PROVIDER_IDS = frozenset({2, 3, 7, 10, 68, 192})
 
 PROCESS_CAP = 200
 CREATE_CAP = 50
-MIN_ESTIMATE = 3.5
+MIN_ESTIMATE = 3.0
 
 
 def _catalog_ids(provider_id):
