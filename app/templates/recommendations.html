@@ -23,7 +23,9 @@
 		   two films that prove the interest, as evidence rather than
 		   another suggestion — no star ladder, no watchlist button,
 		   never swapped by the refill loop. It replaces the old
-		   caption clause that named the anchors in prose. #}
+		   caption clause that named the anchors in prose. On phones it
+		   holds the row's left half while the films beside it become a
+		   one-card swipe strip (Glenn, Aug 26 2026). #}
 		<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
 			<div class="anchor-slot">
 				<div class="anchor-slot-eyebrow">Because you liked</div>
@@ -48,9 +50,19 @@
 				</div>
 			</div>
 		</div>
-		{% for movie in shelf.movies %}
-		{% include "_recommendation_tile.html" %}
-		{% endfor %}
+		{# The films live in their own column so the phone layout can
+		   turn just this part into a scroll-snap carousel: the nested
+		   row-cols reproduce the old tile widths exactly at sm and up
+		   (8/12÷2, 9/12÷3, 10/12÷5 of the container), and below sm
+		   the shelf-films rules take over — one card at a time, the
+		   next one peeking, native swipe, no JS #}
+		<div class="col-6 col-sm-8 col-md-9 col-lg-10">
+			<div class="row shelf-films row-cols-2 row-cols-sm-2 row-cols-md-3 row-cols-lg-5">
+				{% for movie in shelf.movies %}
+				{% include "_recommendation_tile.html" %}
+				{% endfor %}
+			</div>
+		</div>
 	</div>
 </div>
 {% endfor %}

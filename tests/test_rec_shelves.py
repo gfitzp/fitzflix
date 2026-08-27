@@ -243,6 +243,10 @@ def test_recommendations_page_renders_shelves(app, admin_client):
     assert "Based on your interest in" not in page
     # Anchors are evidence, never suggestions
     assert "data-suggestion-cell" in page
+    # The films ride in their own shelf-films row, which the phone
+    # layout turns into the one-card swipe strip beside the fixed
+    # anchor slot (Glenn, Aug 26 2026)
+    assert "shelf-films" in page
 
 
 def test_recommendations_page_empty_states(app, admin_client):
