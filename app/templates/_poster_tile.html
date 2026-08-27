@@ -22,6 +22,25 @@
 {% endif %}
 {%- endmacro %}
 
+{# The server-rendered corner fold for a standalone poster (the movie
+   and log pages' large artwork): the same markup base.html's script
+   builds for gallery tiles, from a (kind, label) pair the route
+   computes with app.newly_added.poster_fold — at most one fold,
+   top-right, red leaving outranking green newly-added #}
+{% macro poster_fold_overlay(fold) -%}
+{% if fold %}
+<div class="poster-folds">
+	<div class="poster-fold poster-fold-{{ fold[0] }}" role="img" aria-label="{{ fold[1] }}" title="{{ fold[1] }}">
+		{% if fold[0] == "leaving" %}
+		<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="8" cy="8" r="5.4"/><path d="M8 5.2v2.8l2 1.3"/></svg>
+		{% else %}
+		<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>
+		{% endif %}
+	</div>
+</div>
+{% endif %}
+{%- endmacro %}
+
 {% macro movie_poster_src(movie) -%}
 {%- if movie.custom_poster -%}
 {{ url_for('static', filename='custom/movie/' + movie.id|string + '/w342/' + movie.custom_poster) }}

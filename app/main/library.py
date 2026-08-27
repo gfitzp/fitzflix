@@ -77,6 +77,7 @@ from app.models import (
     tv_file_rank,
 )
 from app.main import bp
+from app.newly_added import poster_fold
 from app.infuse_player import infuse_only_formats
 from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
@@ -1778,6 +1779,7 @@ def movie(movie_id):
         "movie.html",
         title=title,
         movie=movie,
+        poster_fold=poster_fold(current_user, movie.tmdb_id, movie.id),
         cast=cast,
         directors=directors,
         genres=genres,

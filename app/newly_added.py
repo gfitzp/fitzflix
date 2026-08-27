@@ -382,6 +382,35 @@ def newly_added_fold(tmdb_id, provider_ids):
     return None
 
 
+def poster_fold(user, tmdb_id, movie_id=None):
+    """("leaving" | "new", label) for the one corner fold a film's
+    standalone poster wears for this user, or None. Gallery tiles
+    paint theirs client-side from /movie_states; the movie and log
+    pages' large posters render server-side and ask here instead,
+    with the same rules: red leaving (Criterion subscribers only)
+    outranks green newly-added, and the alert diff's own
+    recently-available record keeps priority for the green label."""
+
+    # Imported here: streaming reaches this module lazily from
+    # streaming_matches, so a top-level import would be circular
+    from app.availability_alerts import recent_availability
+    from app.leaving_criterion import leaving_departure
+    from app.streaming import user_provider_ids
+
+    provider_ids = set(user_provider_ids(user))
+    if CRITERION_PROVIDER_ID in provider_ids:
+        departs = leaving_departure(tmdb_id)
+        if departs:
+            return ("leaving", f"Leaving the Criterion Channel {departs}")
+    label = None
+    if movie_id is not None:
+        entry = recent_availability(user).get(int(movie_id))
+        if entry:
+            label = entry.get("label")
+    label = label or newly_added_fold(tmdb_id, sorted(set(FEEDS) & provider_ids))
+    return ("new", label) if label else None
+
+
 def _fold_index():
     """{(provider_id, tmdb_id): "August 5"} for every recent arrival
     across the stored feeds, parsed once per app context and kept on

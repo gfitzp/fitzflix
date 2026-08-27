@@ -452,6 +452,76 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
     assert payload["tmdb"]["9702"]["fold_new"] is None
 
 
+def test_movie_page_poster_wears_the_fold(app, admin_client):
+    """The movie page's large poster renders its corner fold server-
+    side: green for a feed arrival, flipping red once the film joins
+    the leaving set — one fold, departure urgency first."""
+
+    from app import db
+    from tests.test_leaving_criterion import plant_shelf
+
+    subscribe_criterion(app)
+    with app.app_context():
+        movie = make_movie("Folded Poster", 1956, tmdb_id=9801)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+    first_seen = date.today() - timedelta(days=2)
+    plant_feed(
+        app, [new_item(9801, "Folded Poster", first_seen=first_seen.isoformat())]
+    )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    label = f"Added to the Criterion Channel {first_seen.strftime('%B %-d')}"
+    assert f'aria-label="{label}"' in page
+    assert "poster-fold poster-fold-new" in page
+
+    departs = date.today() + timedelta(days=5)
+    plant_shelf(app, [shelf_item(9801, "Folded Poster")], departs=departs)
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "poster-fold poster-fold-leaving" in page
+    assert "poster-fold poster-fold-new" not in page
+
+
+def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
+    """The TMDB log page (an unowned film) renders the same server-
+    side fold on its poster."""
+
+    import app.main.discover as discover
+
+    from tests.test_streaming import plant_availability
+
+    subscribe_criterion(app)
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        if url.endswith("/movie/9802"):
+            return FakeResponse(
+                payload={
+                    "id": 9802,
+                    "title": "Folded Log",
+                    "release_date": "1956-01-01",
+                    "poster_path": "/9802.jpg",
+                    "overview": "",
+                    "runtime": 90,
+                    "genres": [],
+                    "credits": {"cast": [], "crew": []},
+                    "release_dates": {"results": []},
+                }
+            )
+        return FakeResponse(payload={})
+
+    monkeypatch.setattr(discover, "tmdb_get", fake_tmdb_get)
+    plant_availability(
+        app, 9802, {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
+    )
+    plant_feed(app, [new_item(9802, "Folded Log", first_seen=date.today().isoformat())])
+
+    page = admin_client.get("/review/tmdb/9802").get_data(as_text=True)
+    assert "poster-fold poster-fold-new" in page
+    assert "Added to the Criterion Channel" in page
+
+
 def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
     assert "Nothing new right now." in body

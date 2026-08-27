@@ -11,7 +11,15 @@
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% if poster_path %}
+			{% if poster_fold is defined and poster_fold %}
+			{% from "_poster_tile.html" import poster_fold_overlay %}
+			<div class="poster-fold-host mx-auto" style="width: 250px;">
+			{{ poster_fold_overlay(poster_fold) }}
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="d-block border" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
+			</div>
+			{% else %}
 			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="mx-auto d-block border" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
+			{% endif %}
 		{% else %}
 			<div class="mx-auto d-block border rounded d-flex justify-content-center align-items-center text-secondary" style="height: 375px; width: 250px;">
 				<svg width="3em" height="3em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">

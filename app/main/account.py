@@ -58,6 +58,7 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import _ladder_fetch, _quick_rating, _watched_timestamp
+from app.newly_added import poster_fold
 from app.recommendations import (
     estimated_rating,
     resolved_score,
@@ -223,6 +224,7 @@ def review_edit(review_id):
         "review_edit.html",
         title=f'Edit review for "{title}"',
         movie=movie,
+        poster_fold=poster_fold(current_user, movie.tmdb_id, movie.id),
         user_review=user_review,
         movie_review_form=movie_review_form,
         page=page,

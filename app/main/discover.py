@@ -107,6 +107,7 @@ from app.newly_added import (
     newly_added_fold,
     newly_added_inventory,
     newly_added_shelves,
+    poster_fold,
 )
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
 from app.videos import (
@@ -2056,6 +2057,7 @@ def review_tmdb(tmdb_id):
     return render_template(
         "review_tmdb.html",
         title=f'Review "{film_title} ({year})"',
+        poster_fold=poster_fold(current_user, tmdb_id),
         film_title=film_title,
         year=year,
         overview=details.get("overview"),
