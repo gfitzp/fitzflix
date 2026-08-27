@@ -201,6 +201,17 @@ def cron_table(config):
             3600,
             "Refreshing the leaving-Criterion film set",
         ),
+        # Scrape and diff each provider's newly-added feed daily
+        # (#246) — the snapshot diff stamps the first-seen dates the
+        # discovery shelves and "added" badges read, so the cadence
+        # is what makes "newly added" mean something. In the 4:30
+        # refresh's shadow so the TMDB-heavy window stays contiguous
+        (
+            "0 5 * * *",
+            "app.newly_added.refresh_newly_added",
+            1800,
+            "Refreshing the newly-added streaming feeds",
+        ),
         # Refresh film awards from Wikidata weekly, early Monday
         (
             "15 4 * * 1",

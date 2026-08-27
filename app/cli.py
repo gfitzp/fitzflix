@@ -220,6 +220,16 @@ def register(app):
         refresh_leaving_criterion()
         click.echo("Leaving-Criterion set refreshed")
 
+    @recs.command("newly-added")
+    def newly_added():
+        """Scrape and diff every provider's newly-added feed now,
+        instead of waiting for the nightly run."""
+
+        from app.newly_added import refresh_newly_added
+
+        refresh_newly_added()
+        click.echo("Newly-added feeds refreshed")
+
     @recs.command()
     def awards():
         """Refresh every film's Wikidata award records now, instead of

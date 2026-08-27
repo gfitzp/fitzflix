@@ -248,15 +248,24 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
                     seen.add(provider["provider_id"])
                     matches.append({**provider, "kind": kind})
     if tmdb_id is not None:
-        # Imported here: leaving_criterion reaches this module through
-        # streaming_rail, so a top-level import would be circular
+        # Imported here: leaving_criterion and newly_added reach this
+        # module through streaming_rail, so top-level imports would be
+        # circular
         from app.leaving_criterion import CRITERION_PROVIDER_ID, leaving_departure
+        from app.newly_added import newly_added_since
 
         for match in matches:
             if match["provider_id"] == CRITERION_PROVIDER_ID:
                 departs = leaving_departure(tmdb_id)
                 if departs:
                     match["leaving"] = departs
+            # The newly-added feeds (#246) mark a recent arrival on
+            # any provider's badge; departure urgency outranks it on
+            # the odd film that is somehow both
+            if "leaving" not in match:
+                added = newly_added_since(tmdb_id, match["provider_id"])
+                if added:
+                    match["new_since"] = added
     return matches
 
 

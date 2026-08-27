@@ -20,6 +20,11 @@
 {%- set suffix = {"ads": " (with ads)", "rent": " (rent)"}.get(provider.kind, "") -%}
 {%- if provider.leaving -%}
 <span class="badge text-bg-danger align-middle me-1" title="Leaving {{ provider.provider_name }} {{ provider.leaving }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; leaving {{ provider.leaving }}</span>
+{%- elif provider.new_since -%}
+{# A recent arrival from the provider's newly-added feed (#246):
+   green like the newly-arrived corner fold — "new" reads the same
+   color everywhere #}
+<span class="badge text-bg-success align-middle me-1" title="Added to {{ provider.provider_name }} {{ provider.new_since }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; added {{ provider.new_since }}</span>
 {%- else -%}
 <span class="badge text-bg-light border align-middle me-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
 {%- endif -%}

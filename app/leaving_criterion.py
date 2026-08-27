@@ -113,34 +113,46 @@ def parse_leaving_page(page_html):
     return films
 
 
+def fetch_collection_films(url):
+    """Deduped [{title, director, year}] scraped from one VHX
+    collection page (the ?html=1&page=N markup every Criterion Channel
+    collection serves), paginating until an empty page; [] when the
+    page doesn't answer. The generic half of the scraper — the leaving
+    page and the newly-added feed (#246, app.newly_added) both read
+    through it."""
+
+    films = []
+    try:
+        for page in range(1, PAGE_CAP + 1):
+            r = requests.get(url, params={"html": 1, "page": page}, timeout=15)
+            if r.status_code != 200:
+                break
+            page_films = parse_leaving_page(r.text)
+            if not page_films:
+                break
+            films.extend(page_films)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return []
+    seen = set()
+    unique = []
+    for film in films:
+        key = (film["title"].lower(), film["year"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(film)
+    return unique
+
+
 def fetch_leaving_films():
     """(departure date, source url, films) scraped from the official
     leaving page, paginating until an empty page; (None, None, []) when
     no candidate page answers."""
 
     for url, departs in leaving_page_candidates(date.today()):
-        films = []
-        try:
-            for page in range(1, PAGE_CAP + 1):
-                r = requests.get(url, params={"html": 1, "page": page}, timeout=15)
-                if r.status_code != 200:
-                    break
-                page_films = parse_leaving_page(r.text)
-                if not page_films:
-                    break
-                films.extend(page_films)
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
-            continue
+        films = fetch_collection_films(url)
         if films:
-            seen = set()
-            unique = []
-            for film in films:
-                key = (film["title"].lower(), film["year"])
-                if key not in seen:
-                    seen.add(key)
-                    unique.append(film)
-            return departs, url, unique
+            return departs, url, films
     return None, None, []
 
 
@@ -343,32 +355,12 @@ def refresh_leaving_criterion():
         return True
 
 
-def leaving_shelf(user):
-    """The taste-ranked departure shelf for one user, or None.
+def user_film_sets(user, tmdb_ids):
+    """(owned, logged, watchlisted, refused) tmdb-id sets for one user
+    over the given films — the exclusion inputs the discovery shelves
+    share (the leaving shelf here, the newly-added shelves in
+    app.newly_added)."""
 
-    Renders only for Criterion subscribers with a stored set that
-    hasn't departed yet. Owned films drop out; diary films drop out
-    unless they're on the user's watchlist, and a watchlisted leaving
-    film badges and sorts first — the watch-it-now-or-buy-it case.
-    """
-
-    subscribed = {row.provider_id for row in user.streaming_providers}
-    if CRITERION_PROVIDER_ID not in subscribed:
-        return None
-    payload = current_app.redis.get(LEAVING_KEY)
-    if not payload:
-        return None
-    stored = json.loads(payload)
-    departs = date.fromisoformat(stored["departs"])
-    if departs < date.today():
-        return None
-    profile = stored_profile(current_app.redis, user.id)
-    if not profile:
-        return None
-
-    tmdb_ids = [item["tmdb_id"] for item in stored.get("items", []) if item["tmdb_id"]]
-    if not tmdb_ids:
-        return None
     owned = {
         tmdb_id
         for (tmdb_id,) in db.session.query(Movie.tmdb_id)
@@ -397,6 +389,36 @@ def leaving_shelf(user):
         .filter(UserMovieStatus.user_id == int(user.id))
         .filter(UserMovieStatus.kind == "not_interested")
     }
+    return owned, logged, watchlisted, refused
+
+
+def leaving_shelf(user):
+    """The taste-ranked departure shelf for one user, or None.
+
+    Renders only for Criterion subscribers with a stored set that
+    hasn't departed yet. Owned films drop out; diary films drop out
+    unless they're on the user's watchlist, and a watchlisted leaving
+    film badges and sorts first — the watch-it-now-or-buy-it case.
+    """
+
+    subscribed = {row.provider_id for row in user.streaming_providers}
+    if CRITERION_PROVIDER_ID not in subscribed:
+        return None
+    payload = current_app.redis.get(LEAVING_KEY)
+    if not payload:
+        return None
+    stored = json.loads(payload)
+    departs = date.fromisoformat(stored["departs"])
+    if departs < date.today():
+        return None
+    profile = stored_profile(current_app.redis, user.id)
+    if not profile:
+        return None
+
+    tmdb_ids = [item["tmdb_id"] for item in stored.get("items", []) if item["tmdb_id"]]
+    if not tmdb_ids:
+        return None
+    owned, logged, watchlisted, refused = user_film_sets(user, tmdb_ids)
 
     items = []
     for item in stored.get("items", []):

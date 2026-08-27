@@ -102,6 +102,9 @@ from app.leaving_criterion import (
     leaving_inventory,
     leaving_shelf,
 )
+from app.newly_added import (
+    newly_added_shelves,
+)
 from app.streaming_rail import ENRICHED_KEY, enriched_movie, stored_rail
 from app.videos import (
     clear_not_interested,
@@ -530,6 +533,72 @@ def index():
 
         return bool(minutes) and not shown and eligible > 0
 
+    # The newly-added discovery shelves (#246): recent arrivals on a
+    # subscribed provider's own newly-added feed, generic over
+    # provider — only the Criterion Channel feeds one today. The
+    # availability-alert email already covers watchlisted arrivals;
+    # these shelves are for films the database has never heard of.
+    # Same daily-frozen rotation as the departure shelf, watchlist
+    # urgencies pinned
+
+    new_shelves = []
+    for feed_shelf in newly_added_shelves(current_user):
+        eligible = len(feed_shelf["items"])
+
+        def pick_new(rows, provider_id=feed_shelf["provider_id"]):
+            """The day's baseline card order for one newly-added
+            shelf."""
+
+            chosen = [item for item in rows if item.get("watchlisted")][:12]
+            return chosen + rotate_daily(
+                [item for item in rows if not item.get("watchlisted")],
+                12 - len(chosen),
+                f"newly:{provider_id}:{int(current_user.id)}:"
+                f"{date.today().isoformat()}",
+            )
+
+        if minutes:
+            shown = pick_new(
+                [
+                    item
+                    for item in feed_shelf["items"]
+                    if item.get("runtime") and item["runtime"] <= minutes
+                ]
+            )
+        else:
+            by_id = {item["tmdb_id"]: item for item in feed_shelf["items"]}
+            shown_ids = frozen_shelf(
+                current_app.redis,
+                current_user.id,
+                day=date.today().isoformat(),
+                shelf=f"newly:{feed_shelf['provider_id']}",
+                eligible_ids=[
+                    item["tmdb_id"]
+                    for item in feed_shelf["items"]
+                    if item.get("watchlisted")
+                ]
+                + [
+                    item["tmdb_id"]
+                    for item in feed_shelf["items"]
+                    if not item.get("watchlisted")
+                ],
+                pick=lambda rows=feed_shelf["items"]: [
+                    item["tmdb_id"] for item in pick_new(rows)
+                ],
+            )
+            shown = [by_id[tmdb_id] for tmdb_id in shown_ids]
+        new_shelves.append(
+            {
+                "provider_id": feed_shelf["provider_id"],
+                "label": feed_shelf["label"],
+                "source": feed_shelf["source"],
+                # "films", not "items": a dict's .items in Jinja is
+                # the method, not the key
+                "films": shown,
+                "filtered_out": filtered_out(shown, eligible),
+            }
+        )
+
     return render_template(
         "index.html",
         title="Home",
@@ -547,6 +616,7 @@ def index():
         shelf=shelf_items,
         shelf_departs=shelf_departs,
         shelf_url=shelf_url,
+        new_shelves=new_shelves,
         now_playing=criterion_now_card(current_user),
         criterion_subscriber=is_criterion_subscriber(current_user),
         review_form=MovieReviewForm(),
