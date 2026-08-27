@@ -49,6 +49,24 @@ OFFSET_LOW, OFFSET_HIGH = 0.05, 0.85
 
 SEEK_LEAD = 30
 
+# Pixels at least this bright (0-255 luma) count as picture — high
+# enough to ride over JPEG noise in letterbox bars, low enough that a
+# dim scene still counts. Shared with the game's Extra Difficult crop
+# logic (app/main/game.py), which confines its windows to the frame's
+# active picture area.
+
+ACTIVE_LUMA = 24
+
+# An extracted frame must be at least this fraction picture, and
+# extraction gets this many random offsets to find one. A fade-out, a
+# hard cut, or an empty starfield extracts as a black rectangle —
+# Glenn's Empire Strikes Back round served one, Aug 27 2026 — and no
+# crop logic downstream can conjure content that isn't there, so a
+# too-dark frame never enters the pool at all.
+
+FRAME_MIN_ACTIVE = 0.05
+FRAME_ATTEMPTS = 4
+
 # Per-user record of the frames the game has dealt: a sorted set of
 # token → the turn it was served on. The game reads it to deal a frame
 # the player has never seen (and, once a difficulty runs out of those,
@@ -121,6 +139,23 @@ def _drop_entry(token):
         os.remove(frame_path(token))
     except OSError:
         pass
+
+
+def _frame_has_picture(path):
+    """Whether the extracted image holds enough actual picture to be
+    worth guessing at: at least FRAME_MIN_ACTIVE of its pixels above
+    the luma bar. A file that won't decode fails too — it would only
+    error downstream."""
+
+    from PIL import Image
+
+    try:
+        with Image.open(path) as image:
+            histogram = image.convert("L").histogram()
+    except (OSError, ValueError):
+        return False
+    total = sum(histogram)
+    return total > 0 and sum(histogram[ACTIVE_LUMA + 1 :]) / total >= FRAME_MIN_ACTIVE
 
 
 def _best_file(movie_id):
@@ -374,49 +409,68 @@ def extract_frame_task(movie_id):
             )
             return False
 
-        offset = random.uniform(OFFSET_LOW, OFFSET_HIGH) * duration
-        pre_seek = max(0.0, offset - SEEK_LEAD)
         token = secrets.token_urlsafe(12)
         os.makedirs(current_app.config["FRAME_POOL_DIR"], exist_ok=True)
         out = frame_path(token)
-        try:
-            # Glenn's recipe from the issue, plus sar correction so
-            # anamorphic DVDs come out at display proportions; the
-            # seek is two-stage (fast to SEEK_LEAD early, accurate the
-            # rest) so the decoder crosses a real keyframe on the way
-            subprocess.run(
-                [
-                    current_app.config["FFMPEG_BIN"],
-                    "-y",
-                    "-v",
-                    "error",
-                    "-ss",
-                    f"{pre_seek:.3f}",
-                    "-i",
-                    source,
-                    "-ss",
-                    f"{offset - pre_seek:.3f}",
-                    "-vf",
-                    "scale='min(1080,iw*sar)':-2",
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "2",
-                    out,
-                ],
-                capture_output=True,
-                timeout=600,
-            )
-        except (OSError, subprocess.SubprocessError):
-            current_app.logger.warning(traceback.format_exc())
-        if not os.path.isfile(out) or os.path.getsize(out) == 0:
+        for attempt in range(FRAME_ATTEMPTS):
+            offset = random.uniform(OFFSET_LOW, OFFSET_HIGH) * duration
+            pre_seek = max(0.0, offset - SEEK_LEAD)
+            try:
+                # Glenn's recipe from the issue, plus sar correction so
+                # anamorphic DVDs come out at display proportions; the
+                # seek is two-stage (fast to SEEK_LEAD early, accurate the
+                # rest) so the decoder crosses a real keyframe on the way
+                subprocess.run(
+                    [
+                        current_app.config["FFMPEG_BIN"],
+                        "-y",
+                        "-v",
+                        "error",
+                        "-ss",
+                        f"{pre_seek:.3f}",
+                        "-i",
+                        source,
+                        "-ss",
+                        f"{offset - pre_seek:.3f}",
+                        "-vf",
+                        "scale='min(1080,iw*sar)':-2",
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        out,
+                    ],
+                    capture_output=True,
+                    timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError):
+                current_app.logger.warning(traceback.format_exc())
+            if not os.path.isfile(out) or os.path.getsize(out) == 0:
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+                current_app.logger.warning(
+                    f"Frame extraction produced nothing for '{file.basename}' "
+                    f"at {offset:.1f}s"
+                )
+                return False
+            if _frame_has_picture(out):
+                break
+            # A black rectangle is no round at all (Glenn's Empire
+            # Strikes Back report, Aug 27 2026) — try another moment
             try:
                 os.remove(out)
             except OSError:
                 pass
+            current_app.logger.info(
+                f"Frame from '{file.basename}' at {offset:.1f}s is nearly "
+                f"all black; retrying at a fresh offset"
+            )
+        else:
             current_app.logger.warning(
-                f"Frame extraction produced nothing for '{file.basename}' "
-                f"at {offset:.1f}s"
+                f"No usable frame found in '{file.basename}' after "
+                f"{FRAME_ATTEMPTS} attempts; leaving the pool untouched"
             )
             return False
 

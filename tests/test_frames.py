@@ -143,12 +143,14 @@ def test_extract_frame_pools_one_frame_per_movie(app, monkeypatch):
         db.session.commit()
         movie_id = movie.id
 
+    from PIL import Image
+
     stale_token = seed_frame(app, movie_id)
     monkeypatch.setattr(frames, "_probe_duration", lambda path: 3600.0)
 
     def fake_run(cmd, **kwargs):
-        with open(cmd[-1], "wb") as handle:
-            handle.write(b"newframe")
+        # A real, bright JPEG — extraction now inspects what it grabbed
+        Image.new("RGB", (120, 80), (128, 128, 128)).save(cmd[-1], "JPEG")
 
     monkeypatch.setattr(frames.subprocess, "run", fake_run)
 
@@ -1922,3 +1924,115 @@ def test_game_reopens_at_the_last_chosen_difficulty(app, admin_client):
 
     page = admin_client.get("/game?difficulty=bogus").get_data(as_text=True)
     assert re.search(r'id="difficulty-siracusa"[^>]*\schecked', page)
+
+
+def test_extraction_rejects_black_frames_and_retries(app, monkeypatch):
+    """A black frame never enters the pool (Glenn's Empire Strikes
+    Back report, Aug 27 2026): extraction inspects what it grabbed,
+    retries at fresh offsets while the frame is nearly all black, and
+    gives up without pooling anything when every attempt is."""
+
+    import app.frames as frames
+
+    from PIL import Image
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Black Frame Film", 1980)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    monkeypatch.setattr(frames, "_probe_duration", lambda path: 3600.0)
+    attempts = []
+
+    def dark_then_bright(cmd, **kwargs):
+        colour = (0, 0, 0) if len(attempts) < 2 else (128, 128, 128)
+        attempts.append(cmd[-1])
+        Image.new("RGB", (120, 80), colour).save(cmd[-1], "JPEG")
+
+    monkeypatch.setattr(frames.subprocess, "run", dark_then_bright)
+    with app.app_context():
+        assert frames.extract_frame_task(movie_id) is True
+        entries = frames.pool_entries()
+    assert len(attempts) == 3  # two black grabs retried, the third pooled
+    assert len(entries) == 1
+
+    # Every attempt black: nothing pools, no orphan image lingers
+
+    app.redis.delete(frames.POOL_KEY)
+    attempts.clear()
+
+    def always_black(cmd, **kwargs):
+        attempts.append(cmd[-1])
+        Image.new("RGB", (120, 80), (0, 0, 0)).save(cmd[-1], "JPEG")
+
+    monkeypatch.setattr(frames.subprocess, "run", always_black)
+    with app.app_context():
+        assert frames.extract_frame_task(movie_id) is False
+        assert frames.pool_entries() == {}
+    assert len(attempts) == frames.FRAME_ATTEMPTS
+    assert not os.path.isfile(attempts[-1])
+
+
+def test_zoom_crops_hunt_for_light_inside_the_active_area(app, admin_client):
+    """The crop centre steers onto actual picture: the active-area box
+    is a bounding box, not a mask, so a frame that is mostly black
+    inside it — a ship against empty space — could serve an all-black
+    window (Glenn's Empire Strikes Back report, Aug 27 2026). The
+    chosen window holds real content, and the stages still nest."""
+
+    import io
+
+    from PIL import Image
+
+    from app import db
+    from app.frames import ACTIVE_LUMA, POOL_KEY, frame_path
+    from app.main.game import _active_picture_box, _crop_box, _crop_centre
+
+    # Bright picture on the left 55%, a lone 'star' at the far corner
+    # stretching the active box across the whole frame
+
+    frame = Image.new("RGB", (400, 200), (0, 0, 0))
+    frame.paste(Image.new("RGB", (220, 200), (150, 150, 150)), (0, 0))
+    frame.paste(Image.new("RGB", (4, 4), (200, 200, 200)), (396, 196))
+    active = _active_picture_box(frame)
+    assert active == (0, 0, 400, 200)  # the box alone can't dodge the dark
+
+    grey = frame.convert("L")
+    for n in range(60):
+        token = f"spacetoken{n:04d}"
+        centre = _crop_centre(token, frame, active)
+        s1 = _crop_box(token, 1, 400, 200, active, centre=centre)
+        s2 = _crop_box(token, 2, 400, 200, active, centre=centre)
+        histogram = grey.crop(s1).histogram()
+        assert sum(histogram[ACTIVE_LUMA + 1 :]) / sum(histogram) >= 0.1
+        # The stages still nest around the shared centre
+        assert s2[0] <= s1[0] and s1[2] <= s2[2]
+        assert s2[1] <= s1[1] and s1[3] <= s2[3]
+
+    # End to end: the pooled 'space' frame serves a stage-one crop
+    # with real picture in it
+
+    with app.app_context():
+        movie = make_movie("Space Shot Film", 2009)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+        os.makedirs(app.config["FRAME_POOL_DIR"], exist_ok=True)
+        token = "spacetokenlive"
+        frame.save(frame_path(token), "JPEG", quality=95)
+    app.redis.hset(
+        POOL_KEY,
+        token,
+        json.dumps(
+            {"movie_id": movie_id, "extracted_at": int(time.time()), "offset": 1.0}
+        ),
+    )
+
+    admin_client.get("/game?difficulty=extra&unrated=1")
+    served = admin_client.get(f"/game/frame/{token}?stage=1")
+    crop = Image.open(io.BytesIO(served.data)).convert("L")
+    histogram = crop.histogram()
+    assert sum(histogram[ACTIVE_LUMA + 1 :]) / sum(histogram) >= 0.1

@@ -38,7 +38,14 @@ from flask_login import current_user, login_required
 from unidecode import unidecode
 
 from app import db
-from app.frames import DEALT_TTL, POOL_KEY, dealt_key, frame_path, pool_entries
+from app.frames import (
+    ACTIVE_LUMA,
+    DEALT_TTL,
+    POOL_KEY,
+    dealt_key,
+    frame_path,
+    pool_entries,
+)
 from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.models import Movie, MovieCast, UserFrameScore, UserMovieReview, movie_genres
@@ -494,11 +501,14 @@ def _clear_extra_round():
     current_app.redis.delete(EXTRA_ROUND_KEY.format(user_id=int(current_user.id)))
 
 
-# Pixels at least this bright (0-255 luma) count as picture when
-# finding a frame's active area — high enough to ride over JPEG noise
-# in letterbox bars, low enough that a dim scene still counts
+# A crop window must be at least this fraction actual picture —
+# pixels above ACTIVE_LUMA (defined with the extraction floor in
+# app/frames.py). The active-area box is a bounding box, not a mask:
+# a starfield's box spans the whole frame, but a window between the
+# stars is still black (Glenn's Empire Strikes Back report, Aug 27
+# 2026), so the centre hunts for light before the crop is cut.
 
-ACTIVE_LUMA = 24
+CROP_MIN_ACTIVE = 0.10
 
 
 def _active_picture_box(image):
@@ -514,7 +524,7 @@ def _active_picture_box(image):
     return mask.getbbox()
 
 
-def _crop_box(token, stage, width, height, active=None):
+def _crop_box(token, stage, width, height, active=None, centre=None):
     """The stage's crop rectangle: sized by the stage's zoom, centred
     at a point hashed from the token — anywhere in the frame's active
     picture area (the whole frame when no `active` box is given) —
@@ -523,15 +533,16 @@ def _crop_box(token, stage, width, height, active=None):
     reveals more of the same spot. (An early version instead pinned
     the centre where the widest stage fit unclamped, which confined
     every crop to the middle fifth of the frame — Glenn noticed,
-    Aug 27 2026.)"""
+    Aug 27 2026.) A caller that has looked at the pixels may pass its
+    own `centre` (both coordinates as 0-1 fractions) — _crop_centre
+    does, steering the window onto actual picture."""
 
     bound_left, bound_top, bound_right, bound_bottom = active or (0, 0, width, height)
     span_w = bound_right - bound_left
     span_h = bound_bottom - bound_top
     fraction = EXTRA_ZOOM[stage]
     digest = hashlib.sha256(token.encode()).digest()
-    centre_x = digest[0] / 255
-    centre_y = digest[1] / 255
+    centre_x, centre_y = centre or (digest[0] / 255, digest[1] / 255)
     crop_w = max(1, int(span_w * fraction))
     crop_h = max(1, int(span_h * fraction))
     left = min(
@@ -545,6 +556,32 @@ def _crop_box(token, stage, width, height, active=None):
     return left, top, left + crop_w, top + crop_h
 
 
+def _crop_centre(token, image, active):
+    """The round's crop centre: the first token-hashed candidate whose
+    stage-one window holds enough actual picture, falling back to the
+    brightest candidate when none does. Every stage shares the one
+    centre, so the crops stay nested, and the choice is a pure
+    function of the token and the frame, so reloads serve the same
+    window. Without the hunt, a window could land on the black space
+    *inside* the active area — a starfield's bounding box spans the
+    frame (Glenn's Empire Strikes Back report, Aug 27 2026)."""
+
+    digest = hashlib.sha256(token.encode()).digest()
+    grey = image.convert("L")
+    best, best_fraction = None, -1.0
+    for n in range(0, len(digest) - 1, 2):
+        centre = (digest[n] / 255, digest[n + 1] / 255)
+        box = _crop_box(token, 1, *image.size, active, centre=centre)
+        histogram = grey.crop(box).histogram()
+        total = sum(histogram)
+        fraction = sum(histogram[ACTIVE_LUMA + 1 :]) / total if total else 0.0
+        if fraction >= CROP_MIN_ACTIVE:
+            return centre
+        if fraction > best_fraction:
+            best, best_fraction = centre, fraction
+    return best
+
+
 def _cropped_frame_response(token, stage):
     """The Extra Difficult crop: the stage's window onto the pooled
     frame, cut server-side — the full frame never reaches the page
@@ -556,7 +593,9 @@ def _cropped_frame_response(token, stage):
 
     try:
         with Image.open(frame_path(token)) as image:
-            box = _crop_box(token, stage, *image.size, _active_picture_box(image))
+            active = _active_picture_box(image)
+            centre = _crop_centre(token, image, active)
+            box = _crop_box(token, stage, *image.size, active, centre=centre)
             crop = image.crop(box).convert("RGB")
             buffer = io.BytesIO()
             crop.save(buffer, format="JPEG", quality=90)
