@@ -1648,3 +1648,40 @@ def test_fuzzy_matching_accepts_the_pre_subtitle_title(app, admin_client):
     assert "Correct" in guess("rogue one a star wars story")
     assert "alert-danger" in guess("Solo")
     assert "alert-danger" in guess("A New Hope")
+
+
+def test_fuzzy_matching_accepts_the_subtitle_alone(app, admin_client):
+    """The post-colon half stands alone too — 'Wrath of Khan' is how
+    people actually name that film (Glenn's ask, Aug 27 2026)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Star Trek II - The Wrath of Khan", 1982)
+        movie.tmdb_title = "Star Trek II: The Wrath of Khan"
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def guess(text):
+        return admin_client.post(
+            "/game",
+            data={
+                "csrf_token": csrf,
+                "token": token,
+                "difficulty": "siracusa",
+                "guess": text,
+                "guess_submit": "y",
+            },
+        ).get_data(as_text=True)
+
+    assert "Correct" in guess("wrath of khan")
+    assert "Correct" in guess("The Wrath of Khan")
+    assert "Correct" in guess("star trek ii")
+    assert "alert-danger" in guess("The Search for Spock")
