@@ -4,7 +4,7 @@
 {% block app_content %}
 {# Display names for the difficulty slugs (renamed per #203); the
    slugs themselves are stored in score rows and URLs, so they stay #}
-{% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult"} %}
+{% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
 <h2 class="mt-n2">Name that Frame</h2>
 <p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
 {# Difficulty pills: switching deals a fresh round at that level #}
@@ -14,8 +14,9 @@
 		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ difficulty_labels[level] }}</a>
 	</li>
 	{% endfor %}
-	{% if streak or best %}
+	{% if streak or best or (difficulty == "extra" and points) %}
 	<li class="nav-item ms-auto align-self-center">
+		{% if difficulty == "extra" and points %}<span class="badge text-bg-primary" title="Your Extra Difficult points total">Points: {{ points }}</span>{% endif %}
 		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
 		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
 	</li>
@@ -29,9 +30,22 @@
    column, and the same aside column, empty until the reveal fills
    it with the answer's poster tile. The frame never moves. #}
 {% if not result %}
+{% if difficulty == "extra" %}
+{# Extra Difficult (#202): the prompt carries the stage — how much of
+   the frame is showing, what a hit is worth now, and (after a
+   mid-round miss) what the frame turned out not to be #}
+<div class="alert {{ 'alert-warning' if missed_guess else 'alert-light border' }}" role="status">
+	{%- if missed_guess %}Not <em>{{ missed_guess }}</em> &mdash; {% if stage == 3 %}here&rsquo;s the whole frame.{% else %}zoomed out a little.{% endif %}
+	{% elif stage == 1 %}Which film is this frame from? You&rsquo;re zoomed way in.
+	{% elif stage == 2 %}Zoomed out a little.
+	{% else %}The whole frame.
+	{% endif %} {% if stage == 3 %}Last chance &mdash; name it for {{ stage_points }} point.{% else %}Guess now for {{ stage_points }} points, or zoom out.{% endif %}
+</div>
+{% else %}
 <div class="alert alert-light border" role="status">Which film is this frame from?</div>
+{% endif %}
 {% elif result.correct %}
-<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
+<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}){% endif %}{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
@@ -46,7 +60,10 @@
 <div class="row align-items-start mb-3">
 	<div class="col-12 col-md-8 col-lg-9 mb-3 mb-md-0 order-1">
 		<div class="game-frame-box">
-			<img src="{{ url_for('main.game_frame', token=token) }}" alt="{{ 'A frame from ' ~ result.answer if result else 'A frame from a mystery film' }}">
+			{# The stage rides the URL only to bust the browser cache as
+			   the round zooms out — the server decides the crop; the
+			   zoom class blows the small crop up to fill the box #}
+			<img src="{{ url_for('main.game_frame', token=token, stage=stage) }}"{% if stage and stage < 3 %} class="game-frame-zoom"{% endif %} alt="{{ 'A frame from ' ~ result.answer if result else 'A frame from a mystery film' }}">
 		</div>
 	</div>
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 poster-cell order-3 order-md-2">
@@ -86,7 +103,12 @@
 	</div>
 	{% endif %}
 	<button type="submit" name="guess_submit" value="y" class="btn btn-primary">Guess</button>
-	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty) }}">Skip</a>
+	{% if difficulty == "extra" and stage and stage < 3 %}
+	<button type="submit" name="zoom_out" value="y" class="btn btn-outline-secondary">Zoom Out</button>
+	{% endif %}
+	{# Extra rounds resume on a plain visit, so Skip abandons the live
+	   round explicitly #}
+	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
 </form>
 {% endif %}
 {% elif pool_size %}

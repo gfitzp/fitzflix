@@ -1,6 +1,7 @@
 """Name that Frame: the nightly frame pool — pruning, top-up,
-rotation, and extraction — and the game's three difficulties, the
-fuzzy Siracusa matcher, and the authenticated frame route."""
+rotation, and extraction — and the game's four difficulties, the
+fuzzy Siracusa matcher, the Extra Difficult zoom-out rounds, and the
+authenticated frame route."""
 
 import json
 import os
@@ -765,3 +766,267 @@ def test_the_pool_never_grows_past_its_configured_size(app, monkeypatch):
         ]
         # One slot freed, one slot filled — the pool stays at four
         assert len(pool_entries()) + len(queued) == 4
+
+
+def seed_image_frame(app, movie_id, size=(120, 80), token=None):
+    """A pooled frame whose image is a real JPEG, for the crop tests."""
+
+    from PIL import Image
+
+    from app.frames import POOL_KEY, frame_path
+
+    token = token or f"imagetoken{movie_id:04d}"
+    with app.app_context():
+        os.makedirs(app.config["FRAME_POOL_DIR"], exist_ok=True)
+        Image.new("RGB", size, (40, 90, 160)).save(frame_path(token), "JPEG")
+    app.redis.hset(
+        POOL_KEY,
+        token,
+        json.dumps(
+            {"movie_id": movie_id, "extracted_at": int(time.time()), "offset": 12.3}
+        ),
+    )
+    return token
+
+
+def test_options_prefer_shared_cast_then_genre(app, admin_client, monkeypatch):
+    """Distractors walk Glenn's ladder (#201): an in-era film sharing
+    the answer's top-billed cast fills a slot first, then an in-era
+    film sharing a genre — a plain in-era film only pads after both."""
+
+    import app.main.game as game
+
+    from app import db
+    from app.models import MovieCast, TMDBCredit, TMDBGenre
+
+    # Three options, so two distractor slots decide the ladder
+
+    monkeypatch.setitem(game.DIFFICULTIES, "difficult", 3)
+
+    with app.app_context():
+        answer = make_movie("Ladder Answer", 1960)
+        make_movie_file(answer, "Bluray-1080p")
+        castmate = make_movie("Ladder Castmate", 1961)
+        genremate = make_movie("Ladder Genremate", 1961)
+        make_movie("Ladder Plain", 1961)
+        lead = TMDBCredit(id=911911, name="Ladder Lead")
+        db.session.add(lead)
+        db.session.flush()
+        for movie, order in ((answer, 0), (castmate, 3)):
+            db.session.add(
+                MovieCast(
+                    movie_id=movie.id,
+                    credit_id=lead.id,
+                    character="Lead",
+                    billing_order=order,
+                )
+            )
+        genre = TMDBGenre(id=987654, name="Ladder Drama")
+        db.session.add(genre)
+        db.session.flush()
+        answer.genres.append(genre)
+        genremate.genres.append(genre)
+        db.session.commit()
+        answer_id = answer.id
+
+    seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert "Ladder Castmate (1961)" in page
+    assert "Ladder Genremate (1961)" in page
+    assert "Ladder Plain (1961)" not in page
+
+
+def test_options_fall_back_to_shared_genre_outside_the_era(
+    app, admin_client, monkeypatch
+):
+    """With nothing in the answer's era, a same-genre film outside it
+    beats a random out-of-era one — the ladder's last real rung before
+    anything-goes (#201)."""
+
+    import app.main.game as game
+
+    from app import db
+    from app.models import TMDBGenre
+
+    # Two options: one distractor slot
+
+    monkeypatch.setitem(game.DIFFICULTIES, "difficult", 2)
+
+    with app.app_context():
+        answer = make_movie("Ladder Era Answer", 1960)
+        make_movie_file(answer, "Bluray-1080p")
+        far_genre = make_movie("Ladder Far Genremate", 1990)
+        make_movie("Ladder Far Plain", 1991)
+        genre = TMDBGenre(id=987655, name="Ladder Noir")
+        db.session.add(genre)
+        db.session.flush()
+        answer.genres.append(genre)
+        far_genre.genres.append(genre)
+        db.session.commit()
+        answer_id = answer.id
+
+    seed_frame(app, answer_id)
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert "Ladder Far Genremate (1990)" in page
+    assert "Ladder Far Plain (1991)" not in page
+
+
+def test_extra_difficult_zooms_out_and_scores_points(app, admin_client):
+    """The Extra Difficult round (#202): opens on a stage-one crop
+    worth 3 points, Zoom Out widens it to 2, a mid-round miss widens
+    it again to the full frame, and a hit there banks 1 — while a
+    first-look hit on the next round banks 3. The image route serves
+    the server-side stage's crop, never more."""
+
+    import io
+    import re
+
+    from PIL import Image
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Extra Round Film", 2001)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    assert 'name="guess"' in page
+    assert 'name="zoom_out"' in page
+    assert "3 points" in page
+    assert "Extra Round Film" not in page  # no answer leak
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def frame_size(query=""):
+        response = admin_client.get(f"/game/frame/{token}{query}")
+        return Image.open(io.BytesIO(response.data)).size
+
+    # Stage one serves a 30% crop — even when the URL asks for more
+
+    assert frame_size("?stage=1") == (36, 24)
+    assert frame_size("?stage=3") == (36, 24)
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        ).get_data(as_text=True)
+
+    # Zoom Out widens the crop and drops the round to 2 points; a
+    # plain revisit resumes the stage instead of resetting it
+
+    body = post({"zoom_out": "y"})
+    assert "2 points" in body
+    assert frame_size("?stage=2") == (72, 48)
+    assert "2 points" in admin_client.get("/game?difficulty=extra").get_data(
+        as_text=True
+    )
+
+    # A mid-round miss zooms out to the full frame instead of ending
+    # the round, and stage three offers no further Zoom Out
+
+    body = post({"guess": "Wrong Film", "guess_submit": "y"})
+    assert "Not <em>Wrong Film</em>" in body
+    assert "1 point" in body
+    assert 'name="zoom_out"' not in body
+    assert frame_size() == (120, 80)
+
+    # A full-frame hit banks one point and starts the streak
+
+    body = post({"guess": "Extra Round Film", "guess_submit": "y"})
+    assert "Correct" in body
+    assert "(+1 point)" in body
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == (1, 1)
+
+    # The next round opens fresh at 3 points; a first-look hit banks
+    # all three
+
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    assert "3 points" in page
+    body = post({"guess": "extra round film", "guess_submit": "y"})
+    assert "(+3 points)" in body
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == (4, 2)
+
+    # The standings badge carries the running total
+
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    assert "Points: 4" in page
+
+
+def test_extra_difficult_full_frame_miss_ends_the_round(app, admin_client):
+    """Missing on the full frame ends the round: no points, the streak
+    resets, and the reveal shows the answer (#202)."""
+
+    import re
+
+    from app import db
+    from app.models import UserFrameScore
+
+    with app.app_context():
+        movie = make_movie("Extra Miss Film", 2002)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        ).get_data(as_text=True)
+
+    post({"zoom_out": "y"})
+    post({"zoom_out": "y"})
+    body = post({"guess": "Still Wrong", "guess_submit": "y"})
+    assert "alert-danger" in body
+    assert "Extra Miss Film" in body  # the reveal
+    with app.app_context():
+        score = UserFrameScore.query.filter_by(difficulty="extra").one()
+        assert (score.points, score.current_streak) == (0, 0)
+
+
+def test_extra_skip_abandons_the_round(app, admin_client):
+    """Skip clears the live round — the next deal opens back at stage
+    one — while a plain revisit never does (#202)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Extra Skip Film", 2003)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    assert "skip=1" in page
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "extra",
+            "zoom_out": "y",
+        },
+    )
+
+    assert "2 points" in admin_client.get("/game?difficulty=extra").get_data(
+        as_text=True
+    )
+    assert "3 points" in admin_client.get("/game?difficulty=extra&skip=1").get_data(
+        as_text=True
+    )

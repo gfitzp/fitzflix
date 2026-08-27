@@ -494,3 +494,6 @@ class GuessFrameForm(FlaskForm):
     choice = StringField(validators=[Optional()])
     guess = StringField("Your guess", validators=[Optional()])
     guess_submit = SubmitField("Guess")
+    # Extra Difficult (#202): trade this look at the frame for a wider
+    # one instead of guessing
+    zoom_out = SubmitField("Zoom Out")

@@ -1,15 +1,20 @@
 """Name that Frame (GitHub #52): the guessing game itself.
 
 Rounds draw from the pre-extracted pool (app/frames.py) — the page
-never touches ffmpeg. Three difficulties, per Glenn's issue: Easy
+never touches ffmpeg. Four difficulties, per Glenn's issues: Easy
 serves only films the current user has rated, with four choices;
 Hard (slug "difficult") serves the whole pooled library with eight;
 Difficult (slug "siracusa", renamed per #203)
 serves the whole library and takes free text, fuzzy-matched against
-the film's titles. Frames are served through an authenticated route
+the film's titles; Extra Difficult (slug "extra", #202) is free text
+too, but opens on a tight crop of the frame and scores by how early
+the guess lands. Frames are served through an authenticated route
 keyed by the pool's opaque tokens, so neither the image URL nor the
 page markup leaks the answer before a guess lands."""
 
+import hashlib
+import io
+import json
 import random
 import re
 
@@ -22,6 +27,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     url_for,
 )
@@ -29,14 +35,30 @@ from flask_login import current_user, login_required
 from unidecode import unidecode
 
 from app import db
-from app.frames import DEALT_TTL, POOL_KEY, dealt_key, pool_entries
+from app.frames import DEALT_TTL, POOL_KEY, dealt_key, frame_path, pool_entries
 from app.main import bp
 from app.main.forms import GuessFrameForm
-from app.models import Movie, UserFrameScore, UserMovieReview
+from app.models import Movie, MovieCast, UserFrameScore, UserMovieReview, movie_genres
 
 # Difficulty → number of multiple-choice options (None = free text)
 
-DIFFICULTIES = {"easy": 4, "difficult": 8, "siracusa": None}
+DIFFICULTIES = {"easy": 4, "difficult": 8, "siracusa": None, "extra": None}
+
+# Extra Difficult (#202) zooms in instead of widening the choices: the
+# round opens on a tight crop and the player either guesses or zooms
+# out. A miss zooms out too, so a round is up to three looks at the
+# same spot — crop, wider crop, full frame — worth 3, 2, and 1 points.
+# The live round (token + stage) is held server-side so the image
+# route can't be talked into serving the full frame early.
+
+EXTRA_STAGES = 3
+EXTRA_ZOOM = {1: 0.3, 2: 0.6}  # crop side, as a fraction of the frame's
+EXTRA_ROUND_KEY = "fitzflix:frames:extra:{user_id}"
+
+# How many of the answer's top-billed cast anchor the shared-cast
+# distractor tier (#201)
+
+TOP_CAST_SIZE = 5
 
 # Distractors stay within the answer's era (Glenn, Aug 20 2026: an
 # option decades away hands the round to process of deduction) —
@@ -112,15 +134,57 @@ def _display_year(year, tmdb_title, tmdb_release_date):
     return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
 
 
+def _shared_cast_movie_ids(answer_id):
+    """Movies crediting any of the answer's top-billed cast — the
+    distractors that keep a familiar face from naming the film."""
+
+    top_cast = [
+        credit_id
+        for (credit_id,) in db.session.query(MovieCast.credit_id)
+        .filter(MovieCast.movie_id == answer_id)
+        .filter(MovieCast.credit_id.isnot(None))
+        .order_by(MovieCast.billing_order)
+        .limit(TOP_CAST_SIZE)
+    ]
+    if not top_cast:
+        return set()
+    return {
+        movie_id
+        for (movie_id,) in db.session.query(MovieCast.movie_id)
+        .filter(MovieCast.credit_id.in_(top_cast))
+        .filter(MovieCast.movie_id != answer_id)
+        .distinct()
+    }
+
+
+def _shared_genre_movie_ids(answer_id):
+    """Movies sharing any of the answer's TMDB genres."""
+
+    answer_genres = db.session.query(movie_genres.c.genre_id).filter(
+        movie_genres.c.movie_id == answer_id
+    )
+    return {
+        movie_id
+        for (movie_id,) in db.session.query(movie_genres.c.movie_id)
+        .filter(movie_genres.c.genre_id.in_(answer_genres))
+        .filter(movie_genres.c.movie_id != answer_id)
+        .distinct()
+    }
+
+
 def _build_options(answer_id, difficulty):
     """The round's shuffled multiple-choice list: the answer plus
-    random distractors from its own era — the tight year window
-    first, the widened one when the library runs thin there (±5→±10
-    on Easy, ±2→±5 on Hard; Glenn's rule, Aug 20 2026). Easy
-    prefers the user's rated films within each window, but the era
-    always outranks ratedness — an out-of-era option is the
-    deduction giveaway this exists to close. Anything-goes is the
-    last resort so a round can always fill its slots."""
+    random distractors, drawn down Glenn's ladder (#201): films
+    sharing the answer's top-billed cast within its era first — one
+    Star Trek film among strangers hands the round to Spock's ears —
+    then same-genre films within the era, any film within the era,
+    and same-genre films outside it. Each rung tries the difficulty's
+    tight year window before the widened one (±5→±10 on Easy, ±2→±5
+    on Hard; Glenn's rule, Aug 20 2026), since an option decades away
+    is its own giveaway. Easy walks the ladder over the user's rated
+    films first before padding from the whole library, and
+    anything-goes is the last resort so a round can always fill its
+    slots."""
 
     count = DIFFICULTIES[difficulty]
     answer = db.session.get(Movie, answer_id)
@@ -146,18 +210,28 @@ def _build_options(answer_id, difficulty):
             and abs(year - answer_year) <= span
         ]
 
-    # Easy's universe stays the rated films, widening its window per
-    # Glenn's fallback, before padding from in-era unrated films;
-    # Difficult widens over the whole library the same way
+    # The base ladder: shared cast in era, shared genre in era, any
+    # film in era, shared genre out of era — tight window before wide
+    # at every rung. Easy's universe stays the rated films, walking
+    # the whole ladder over them per Glenn's fallback before padding
+    # from the unrated library the same way.
 
+    cast_mates = _shared_cast_movie_ids(answer_id)
+    genre_mates = _shared_genre_movie_ids(answer_id)
     tight, wide = YEAR_WINDOWS[difficulty]
+    ladder = [
+        [m for m in in_window(tight) if m in cast_mates],
+        [m for m in in_window(wide) if m in cast_mates],
+        [m for m in in_window(tight) if m in genre_mates],
+        [m for m in in_window(wide) if m in genre_mates],
+        in_window(tight),
+        in_window(wide),
+        [m for m in years if m in genre_mates],
+    ]
     tiers = []
     if rated:
-        tiers += [
-            [m for m in in_window(tight) if m in rated],
-            [m for m in in_window(wide) if m in rated],
-        ]
-    tiers += [in_window(tight), in_window(wide), list(years)]
+        tiers += [[m for m in tier if m in rated] for tier in ladder]
+    tiers += ladder + [list(years)]
 
     distractors = []
     for tier in tiers:
@@ -244,6 +318,165 @@ def _deal_token(tokens):
     return token
 
 
+def _extra_round():
+    """The user's live Extra Difficult round — {token, stage} — or
+    None. Server-side state is what makes the stages honest: the
+    posted stage never decides the points, and the image route never
+    serves more frame than the round has earned."""
+
+    payload = current_app.redis.get(
+        EXTRA_ROUND_KEY.format(user_id=int(current_user.id))
+    )
+    if not payload:
+        return None
+    try:
+        round_ = json.loads(payload)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return round_ if isinstance(round_, dict) and round_.get("token") else None
+
+
+def _save_extra_round(token, stage):
+    """Persist the live round's token and stage for the current user."""
+
+    current_app.redis.set(
+        EXTRA_ROUND_KEY.format(user_id=int(current_user.id)),
+        json.dumps({"token": token, "stage": stage}),
+        ex=DEALT_TTL,
+    )
+
+
+def _clear_extra_round():
+    """Drop the current user's live round — it ended or was skipped."""
+
+    current_app.redis.delete(EXTRA_ROUND_KEY.format(user_id=int(current_user.id)))
+
+
+def _cropped_frame_response(token, stage):
+    """The Extra Difficult crop: a window onto the pooled frame sized
+    by the stage, centred at a point derived from the token so every
+    zoom-out reveals more of the same spot. Cropped server-side — the
+    full frame never reaches the page before stage three. None when
+    the image won't decode, so the route can fall back to the full
+    frame rather than 500 on a bad pool entry."""
+
+    from PIL import Image
+
+    fraction = EXTRA_ZOOM[stage]
+    digest = hashlib.sha256(token.encode()).digest()
+    # Pin the centre where the widest stage's window still fits inside
+    # the frame, so the stages nest without sliding
+    span = 1 - max(EXTRA_ZOOM.values())
+    centre_x = 0.5 + span * (digest[0] / 255 - 0.5)
+    centre_y = 0.5 + span * (digest[1] / 255 - 0.5)
+    try:
+        with Image.open(frame_path(token)) as image:
+            width, height = image.size
+            crop_w = max(1, int(width * fraction))
+            crop_h = max(1, int(height * fraction))
+            left = min(max(int(centre_x * width - crop_w / 2), 0), width - crop_w)
+            top = min(max(int(centre_y * height - crop_h / 2), 0), height - crop_h)
+            crop = image.crop((left, top, left + crop_w, top + crop_h)).convert("RGB")
+            buffer = io.BytesIO()
+            crop.save(buffer, format="JPEG", quality=90)
+    except (OSError, ValueError):
+        return None
+    buffer.seek(0)
+    # Uncached: the same token serves different pixels as the round
+    # advances, and crops are cheap to cut again
+    return send_file(buffer, mimetype="image/jpeg", max_age=0)
+
+
+def _render_extra_round(token, stage, form, missed=None):
+    """The Extra Difficult guessing page at one stage — reached fresh,
+    by zooming out, or by a mid-round miss (which shows what it
+    wasn't)."""
+
+    score = UserFrameScore.query.filter_by(
+        user_id=int(current_user.id), difficulty="extra"
+    ).first()
+    return render_template(
+        "game.html",
+        title="Name that Frame",
+        difficulty="extra",
+        difficulties=DIFFICULTIES,
+        result=None,
+        token=token,
+        options=None,
+        stage=stage,
+        stage_points=EXTRA_STAGES + 1 - stage,
+        missed_guess=missed,
+        streak=score.current_streak if score else 0,
+        best=score.best_streak if score else 0,
+        points=(score.points or 0) if score else 0,
+        form=form,
+        pool_size=len(pool_entries()),
+    )
+
+
+def _extra_post(form, token, movie):
+    """Grade one Extra Difficult action: Zoom Out or a mid-round miss
+    advances the stage; a hit banks the stage's points; a stage-three
+    miss ends the round and the streak (#202)."""
+
+    round_ = _extra_round()
+    if round_ is None or round_.get("token") != token:
+        # The posted round isn't the live one — a stale tab, or the
+        # round was skipped elsewhere. Deal or resume instead of
+        # grading against the wrong stage.
+        return redirect(url_for("main.name_that_frame", difficulty="extra"))
+    stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
+
+    if form.zoom_out.data:
+        stage = min(stage + 1, EXTRA_STAGES)
+        _save_extra_round(token, stage)
+        return _render_extra_round(token, stage, form)
+
+    guessed = (form.guess.data or "").strip()
+    correct = _fuzzy_match(guessed, movie)
+    if not correct and stage < EXTRA_STAGES:
+        # A mid-round miss zooms out instead of ending the round —
+        # the wrong guess buys the same look a Zoom Out would
+        stage += 1
+        _save_extra_round(token, stage)
+        return _render_extra_round(token, stage, form, missed=guessed or None)
+
+    _clear_extra_round()
+    points_won = EXTRA_STAGES + 1 - stage if correct else 0
+    score = _score_row("extra")
+    score.points = (score.points or 0) + points_won
+    score.current_streak = score.current_streak + 1 if correct else 0
+    new_best = correct and score.current_streak > score.best_streak
+    if new_best:
+        score.best_streak = score.current_streak
+        score.date_best = datetime.now()
+    db.session.commit()
+
+    return render_template(
+        "game.html",
+        title="Name that Frame",
+        difficulty="extra",
+        difficulties=DIFFICULTIES,
+        result={
+            "correct": correct,
+            "guess": guessed or None,
+            "movie_id": movie.id,
+            "answer": _display_title(movie),
+            "new_best": new_best,
+            "points_won": points_won,
+        },
+        answer_movie=movie,
+        token=token,
+        options=None,
+        stage=None,
+        streak=score.current_streak,
+        best=score.best_streak,
+        points=score.points or 0,
+        form=form,
+        pool_size=len(pool_entries()),
+    )
+
+
 @bp.route("/game", methods=["GET", "POST"])
 @login_required
 def name_that_frame():
@@ -264,6 +497,9 @@ def name_that_frame():
             # The round's frame rotated out of the pool mid-game —
             # deal a fresh one rather than erroring
             return redirect(url_for("main.name_that_frame", difficulty=difficulty))
+
+        if difficulty == "extra":
+            return _extra_post(form, token, movie)
 
         if DIFFICULTIES[difficulty] is None:
             guessed = (form.guess.data or "").strip()
@@ -302,8 +538,10 @@ def name_that_frame():
             answer_movie=movie,
             token=token,
             options=None,
+            stage=None,
             streak=score.current_streak,
             best=score.best_streak,
+            points=(score.points or 0),
             form=form,
             pool_size=len(pool_entries()),
         )
@@ -313,7 +551,26 @@ def name_that_frame():
         difficulty = "easy"
 
     tokens = _round_tokens(difficulty)
-    token = _deal_token(tokens)
+    stage = None
+    if difficulty == "extra":
+        # A visit resumes the live round at its stage rather than
+        # dealing — a refresh mustn't be a free zoom reset — so Skip
+        # abandons it explicitly
+        if request.args.get("skip"):
+            _clear_extra_round()
+        round_ = _extra_round()
+        if round_ and round_.get("token") in tokens:
+            token = round_["token"]
+            stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
+        else:
+            token = _deal_token(tokens)
+            stage = 1
+            if token:
+                _save_extra_round(token, stage)
+            else:
+                _clear_extra_round()
+    else:
+        token = _deal_token(tokens)
     options = None
     if token and DIFFICULTIES[difficulty] is not None:
         options = _build_options(tokens[token]["movie_id"], difficulty)
@@ -330,8 +587,12 @@ def name_that_frame():
         result=None,
         token=token,
         options=options,
+        stage=stage,
+        stage_points=(EXTRA_STAGES + 1 - stage) if stage else None,
+        missed_guess=None,
         streak=score.current_streak if score else 0,
         best=score.best_streak if score else 0,
+        points=(score.points or 0) if score else 0,
         form=form,
         pool_size=len(pool_entries()),
     )
@@ -342,12 +603,22 @@ def name_that_frame():
 def game_frame(token):
     """One pooled frame, by its opaque token. Auth-gated — library
     frames never ride the public static path — and only tokens the
-    pool actually holds resolve."""
+    pool actually holds resolve. While the token is the user's live
+    Extra Difficult round, the server-side stage decides how much of
+    the frame serves (#202) — the ?stage in the page's URL is only a
+    cache-buster, so asking for a later stage yields nothing extra."""
 
     if not TOKEN_PATTERN.fullmatch(token) or not current_app.redis.hexists(
         POOL_KEY, token
     ):
         abort(404)
+    round_ = _extra_round()
+    if round_ and round_.get("token") == token:
+        stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
+        if stage < EXTRA_STAGES:
+            response = _cropped_frame_response(token, stage)
+            if response is not None:
+                return response
     return send_from_directory(
         current_app.config["FRAME_POOL_DIR"], f"{token}.jpg", max_age=3600
     )

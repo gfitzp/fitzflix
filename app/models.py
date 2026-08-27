@@ -2648,6 +2648,9 @@ class UserFrameScore(db.Model):
     current_streak = db.Column(db.Integer, nullable=False, default=0)
     best_streak = db.Column(db.Integer, nullable=False, default=0)
     date_best = db.Column(db.DateTime)
+    # Extra Difficult's running total (#202): 3/2/1 points by how
+    # early in the zoom-out the guess landed
+    points = db.Column(db.Integer, nullable=False, default=0, server_default="0")
 
     __table_args__ = (db.UniqueConstraint("user_id", "difficulty"),)
 
