@@ -360,6 +360,34 @@ def newly_added_since(tmdb_id, provider_id):
 
     if tmdb_id is None:
         return None
+    index = _fold_index()
+    return index.get((provider_id, tmdb_id))
+
+
+def newly_added_fold(tmdb_id, provider_ids):
+    """The green poster fold's label ("Added to the Criterion Channel
+    August 1") when the film recently arrived on one of the given
+    subscribed providers' feeds; None otherwise."""
+
+    if tmdb_id is None:
+        return None
+    index = _fold_index()
+    for provider_id in provider_ids:
+        feed = FEEDS.get(provider_id)
+        if feed is None:
+            continue
+        added = index.get((provider_id, tmdb_id))
+        if added:
+            return f"Added to {feed['label']} {added}"
+    return None
+
+
+def _fold_index():
+    """{(provider_id, tmdb_id): "August 5"} for every recent arrival
+    across the stored feeds, parsed once per app context and kept on
+    flask.g — one Redis read per provider per page, in the
+    leaving_departure tradition."""
+
     index = getattr(g, "_newly_added_index", None)
     if index is None:
         index = {}
@@ -374,4 +402,4 @@ def newly_added_since(tmdb_id, provider_id):
                         item["first_seen"]
                     ).strftime("%B %-d")
         g._newly_added_index = index
-    return index.get((provider_id, tmdb_id))
+    return index

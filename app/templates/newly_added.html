@@ -13,7 +13,10 @@
    via data-card-reasons); the actions sit under the poster. Owned
    tiles open their movie page, the rest open the log page, which
    redirects when a record already exists #}
-<div class="row mb-2">
+{# data-no-new-fold: the whole page is the arrival set, so the green
+   corner fold would repeat on every tile — the red leaving fold
+   still paints #}
+<div class="row mb-2" data-no-new-fold>
 	{% for item in section.films %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
 		<a href="{% if item.movie_id %}{{ url_for('main.movie', movie_id=item.movie_id) }}{% else %}{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}{% endif %}" class="text-decoration-none text-body" data-card-url="{% if item.movie_id %}{{ url_for('main.movie_card', movie_id=item.movie_id) }}{% else %}{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}{% endif %}"{% if item.because %} data-card-reasons='{{ item.because[:3] | tojson }}'{% endif %}>

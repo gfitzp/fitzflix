@@ -235,11 +235,11 @@
 		.poster-fold-host { position: relative; display: block; }
 		.poster-folds { position: absolute; top: 0; left: 0; right: 0; aspect-ratio: 2 / 3; border-radius: var(--bs-border-radius); overflow: hidden; pointer-events: none; }
 		.poster-fold { position: absolute; top: 0; width: 30px; height: 30px; pointer-events: auto; }
-		.poster-fold-new { left: 0; background: var(--bs-success); clip-path: polygon(0 0, 100% 0, 0 100%); }
+		/* Both folds wear the top-right corner — at most one paints
+		   per tile (red leaving outranks green newly-added) */
+		.poster-fold-new { right: 0; background: var(--bs-success); clip-path: polygon(0 0, 100% 0, 100% 100%); }
 		.poster-fold-leaving { right: 0; background: var(--bs-danger); clip-path: polygon(0 0, 100% 0, 100% 100%); }
-		.poster-fold svg { position: absolute; top: 3px; width: 11px; height: 11px; color: #fff; }
-		.poster-fold-new svg { left: 3px; }
-		.poster-fold-leaving svg { right: 3px; }
+		.poster-fold svg { position: absolute; top: 3px; right: 3px; width: 11px; height: 11px; color: #fff; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
 		/* The Recommendations anchor slot (#235 follow-up, Glenn's
 		   fanned-pair pick): each shelf's first cell shows the two

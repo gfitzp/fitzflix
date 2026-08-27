@@ -178,7 +178,10 @@
 {% if ns.filtered_out %}
 <p class="text-muted mt-3">Nothing newly added fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
-<div class="row mt-3">
+{# data-no-new-fold: everything on this shelf is newly added by
+   definition, so the green corner fold would just repeat the header
+   — but the red leaving fold still paints #}
+<div class="row mt-3" data-no-new-fold>
 	{% for item in ns.films %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
 		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}"{% if item.because %} data-card-reasons='{{ item.because[:3] | tojson }}'{% endif %}>

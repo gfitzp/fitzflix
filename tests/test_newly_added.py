@@ -219,6 +219,11 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert 'id="newly-added-shelf-258"' in emptied
     assert "Nothing newly added fits in 10 minutes" in emptied
 
+    # The shelf suppresses the green corner fold — everything here is
+    # newly added by definition
+
+    assert "data-no-new-fold" in body
+
 
 def test_shelf_hides_without_subscription_or_arrivals(app, admin_client):
     today = date.today().isoformat()
@@ -381,9 +386,70 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
     assert body.index("Inventory Wanted") < body.index("Inventory Fresh")
     assert body.index("Inventory Fresh") < body.index("Inventory Owned")
 
-    # The standing nav link reaches the page from anywhere
+    # The standing nav link reaches the page from anywhere, and the
+    # page suppresses the green corner fold like the shelf does
 
     assert 'href="/newly-added"' in body
+    assert "data-no-new-fold" in body
+
+
+def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
+    """/movie_states answers fold_new with the feed's label for a
+    subscribed provider's recent arrival — movie-keyed and tmdb-keyed
+    alike; the alert diff's own recently-available record outranks
+    it, and a non-subscriber gets no fold at all."""
+
+    import json as jsonlib
+
+    from app import db
+    from app.models import User, UserStreamingProvider
+
+    subscribe_criterion(app)
+    first_seen = date.today() - timedelta(days=3)
+    with app.app_context():
+        movie = make_movie("Folded Arrival", 1956, tmdb_id=9701)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+        user_id = User.query.filter_by(admin=True).first().id
+    plant_feed(
+        app,
+        [
+            new_item(9701, "Folded Arrival", first_seen=first_seen.isoformat()),
+            new_item(9702, "Folded Stranger", first_seen=first_seen.isoformat()),
+        ],
+    )
+    label = f"Added to the Criterion Channel {first_seen.strftime('%B %-d')}"
+
+    payload = admin_client.get(
+        f"/movie_states?movie_ids={movie_id}&tmdb_ids=9702"
+    ).get_json()
+    assert payload["movies"][str(movie_id)]["fold_new"] == label
+    assert payload["tmdb"]["9702"]["fold_new"] == label
+
+    # The alert diff's own record wins over the feed label
+
+    app.redis.hset(
+        f"fitzflix:availability:recent:{user_id}",
+        str(movie_id),
+        jsonlib.dumps(
+            {"date": date.today().isoformat(), "label": "New on Criterion Channel"}
+        ),
+    )
+    payload = admin_client.get(f"/movie_states?movie_ids={movie_id}").get_json()
+    assert payload["movies"][str(movie_id)]["fold_new"] == "New on Criterion Channel"
+
+    # No subscription, no fold
+
+    app.redis.delete(f"fitzflix:availability:recent:{user_id}")
+    with app.app_context():
+        UserStreamingProvider.query.delete()
+        db.session.commit()
+    payload = admin_client.get(
+        f"/movie_states?movie_ids={movie_id}&tmdb_ids=9702"
+    ).get_json()
+    assert payload["movies"][str(movie_id)]["fold_new"] is None
+    assert payload["tmdb"]["9702"]["fold_new"] is None
 
 
 def test_newly_added_page_says_when_nothing_is_new(app, admin_client):

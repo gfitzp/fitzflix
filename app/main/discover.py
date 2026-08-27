@@ -103,6 +103,8 @@ from app.leaving_criterion import (
     leaving_shelf,
 )
 from app.newly_added import (
+    FEEDS as NEWLY_ADDED_FEEDS,
+    newly_added_fold,
     newly_added_inventory,
     newly_added_shelves,
 )
@@ -1232,19 +1234,23 @@ def movie_states():
             .filter(UserWatchlist.movie_id.in_(all_ids))
         }
 
-    # Poster folds (#197, plus #156/#230's badge): the per-user corner
-    # overlays every gallery tile paints through this one batched
-    # fetch — green for a watchlist film that recently became
-    # available (the nightly alert diff's record), red for a film in
-    # the leaving-Criterion set, subscribers only. Movie-keyed tiles
-    # need their tmdb ids for the leaving lookup; one query covers
-    # them, and leaving_departure parses the stored set once per
-    # request on flask.g
+    # Poster folds (#197, plus #156/#230's badge and #246's feeds):
+    # the per-user corner overlays every gallery tile paints through
+    # this one batched fetch — green for a watchlist film that
+    # recently became available (the nightly alert diff's record) or
+    # a film recently arrived on a subscribed provider's newly-added
+    # feed, red for a film in the leaving-Criterion set, subscribers
+    # only. The client paints at most one fold, red outranking green.
+    # Movie-keyed tiles need their tmdb ids for both lookups; one
+    # query covers them, and each set parses once per request on
+    # flask.g
 
     recent = recent_availability(current_user)
-    criterion_member = CRITERION_PROVIDER_ID in user_provider_ids(current_user)
+    provider_ids = set(user_provider_ids(current_user))
+    criterion_member = CRITERION_PROVIDER_ID in provider_ids
+    fold_feeds = sorted(set(NEWLY_ADDED_FEEDS) & provider_ids)
     movie_tmdb = {}
-    if all_ids and criterion_member:
+    if all_ids and (criterion_member or fold_feeds):
         movie_tmdb = dict(
             db.session.query(Movie.id, Movie.tmdb_id).filter(Movie.id.in_(all_ids))
         )
@@ -1370,7 +1376,8 @@ def movie_states():
             "flagged": flagged,
             "estimated": estimated,
             "on_watchlist": movie_id in listed_ids,
-            "fold_new": (recent.get(movie_id) or {}).get("label"),
+            "fold_new": (recent.get(movie_id) or {}).get("label")
+            or newly_added_fold(movie_tmdb.get(movie_id), fold_feeds),
             "fold_leaving": (
                 leaving_departure(movie_tmdb.get(movie_id))
                 if criterion_member
@@ -1384,6 +1391,8 @@ def movie_states():
             state["estimated"] = tmdb_estimates.get(tmdb_id)
         if criterion_member and state["fold_leaving"] is None:
             state["fold_leaving"] = leaving_departure(tmdb_id)
+        if state["fold_new"] is None:
+            state["fold_new"] = newly_added_fold(tmdb_id, fold_feeds)
         return state
 
     return jsonify(
