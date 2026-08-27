@@ -11,7 +11,9 @@ FRAME_POOL_SIZE and retires at least FRAME_POOL_ROTATE entries each
 night — every frame a player has already been dealt first, then the
 oldest — so every film eventually gets a turn, long-pooled films get
 fresh frames, and a played-out frame gives up its slot to one nobody
-has seen. Extraction runs on the transcode queue — the serial
+has seen. Each finished game round also turns the pool over by one on
+the spot (replace_frame_task), so frames refresh continuously between
+nightly passes. Extraction runs on the transcode queue — the serial
 heavy-I/O lane — because the shell can't read /Volumes; only workers
 can.
 """
@@ -311,6 +313,42 @@ def refresh_frame_pool_task():
             f"{len(retired)} retired, {len(to_extract)} extractions queued"
         )
         return {"pooled": pooled, "queued": len(to_extract)}
+
+
+def replace_frame_task(movie_id):
+    """Task (per-round top-up, Glenn's ask, Aug 27 2026): turn the
+    pool over by one as soon as a round ends, instead of waiting for
+    the nightly pass. Extract a frame from a playable film the pool
+    doesn't currently hold — or, when the whole library is pooled, a
+    fresh frame of the played film itself — and on success retire the
+    played film's old frame, so the pool never grows past its size.
+    The extraction runs here on the transcode queue, seconds after
+    the reveal; the reveal page itself has already rendered, so the
+    played token can safely leave the pool. A failed extraction
+    leaves the played frame in place for the nightly pass to retire."""
+
+    with app.app_context():
+        entries = pool_entries()
+        played_tokens = [
+            token
+            for token, entry in entries.items()
+            if entry.get("movie_id") == movie_id
+        ]
+        pooled_movies = {entry.get("movie_id") for entry in entries.values()}
+        playable = {
+            candidate_id
+            for (candidate_id,) in db.session.query(Movie.id)
+            .filter(Movie.files.any(File.feature_type_id.is_(None)))
+            .filter(Movie.tmdb_id.isnot(None))
+        }
+        candidates = list(playable - pooled_movies)
+        replacement = random.choice(candidates) if candidates else movie_id
+        if extract_frame_task(replacement) and replacement != movie_id:
+            # extract_frame_task only retires old frames of its own
+            # movie — swap the played film's frame out here
+            for token in played_tokens:
+                _drop_entry(token)
+        return replacement
 
 
 def extract_frame_task(movie_id):

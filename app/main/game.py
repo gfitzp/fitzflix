@@ -355,6 +355,21 @@ def _deal_token(tokens):
     return token
 
 
+def _enqueue_frame_replacement(movie):
+    """Queue the per-round pool top-up (Glenn's ask, Aug 27 2026):
+    once a round is graded, its film's frame gets swapped for a frame
+    of an unpooled film on the transcode queue — the pool turns over
+    continuously instead of waiting for the nightly pass. Fired only
+    on a reveal; a skipped frame keeps its slot."""
+
+    current_app.transcode_queue.enqueue(
+        "app.frames.replace_frame_task",
+        args=(movie.id,),
+        job_timeout=600,
+        description=f"Replacing the played frame from '{movie.title}'",
+    )
+
+
 def _extra_round():
     """The user's live Extra Difficult round — {token, stage} — or
     None. Server-side state is what makes the stages honest: the
@@ -502,6 +517,7 @@ def _extra_post(form, token, movie):
         score.best_streak = score.current_streak
         score.date_best = datetime.now()
     db.session.commit()
+    _enqueue_frame_replacement(movie)
 
     return render_template(
         "game.html",
@@ -574,6 +590,7 @@ def name_that_frame():
             score.best_streak = score.current_streak
             score.date_best = datetime.now()
         db.session.commit()
+        _enqueue_frame_replacement(movie)
 
         return render_template(
             "game.html",

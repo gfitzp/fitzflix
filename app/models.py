@@ -1262,13 +1262,25 @@ class User(UserMixin, db.Model):
                 return job.started_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
             return "9999"
 
+        def banner_worthy(job):
+            """Whether a running job earns a top-of-page alert. Frame
+            pool work never does (Glenn, Aug 27 2026): a per-round
+            replacement banner disrupts the game and telegraphs that
+            the pool just changed, and even the nightly batch's
+            'Extracting a frame from X' names films about to become
+            answers. They all still list on the queue page."""
+
+            return job is not None and not (job.func_name or "").startswith(
+                "app.frames."
+            )
+
         details = {}
         details["count"] = self.get_queue_count()
         details["running"] = []
 
         for job_id in imports_running:
             job = current_app.import_queue.fetch_job(job_id)
-            if job:
+            if banner_worthy(job):
                 details["running"].append(
                     {
                         "id": job.id,
@@ -1286,7 +1298,7 @@ class User(UserMixin, db.Model):
 
         for job_id in transcodes_running:
             job = current_app.transcode_queue.fetch_job(job_id)
-            if job:
+            if banner_worthy(job):
                 details["running"].append(
                     {
                         "id": job.id,
@@ -1304,7 +1316,7 @@ class User(UserMixin, db.Model):
 
         for job_id in file_operations_running:
             job = current_app.file_queue.fetch_job(job_id)
-            if job:
+            if banner_worthy(job):
                 details["running"].append(
                     {
                         "id": job.id,

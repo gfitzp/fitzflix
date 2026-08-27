@@ -7,22 +7,27 @@
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
 <h2 class="mt-n2">Name that Frame</h2>
 <p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
-{# Difficulty pills: switching deals a fresh round at that level #}
-<ul class="nav nav-pills mb-3">
-	{% for level in difficulties %}
-	<li class="nav-item">
-		<a class="nav-link{% if level == difficulty %} active{% endif %}" href="{{ url_for('main.name_that_frame', difficulty=level) }}">{{ difficulty_labels[level] }}</a>
-	</li>
-	{% endfor %}
+{# Difficulty picker: a radio button group (Glenn's ask, Aug 27 2026)
+   — picking a level submits the GET and deals a fresh round there #}
+<div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+	<form method="get">
+		<div class="btn-group" role="group" aria-label="Difficulty">
+			{% for level in difficulties %}
+			<input type="radio" class="btn-check" name="difficulty" id="difficulty-{{ level }}" value="{{ level }}" autocomplete="off"{% if level == difficulty %} checked{% endif %} onchange="this.form.submit()">
+			<label class="btn btn-outline-primary" for="difficulty-{{ level }}">{{ difficulty_labels[level] }}</label>
+			{% endfor %}
+		</div>
+		<noscript><button type="submit" class="btn btn-outline-secondary ms-1">Go</button></noscript>
+	</form>
 	{% if streak or best or seen or (difficulty == "extra" and points) %}
-	<li class="nav-item ms-auto align-self-center">
+	<div class="ms-auto">
 		{% if difficulty == "extra" and points %}<span class="badge text-bg-primary" title="Your Extra Difficult points total">Points: {{ points }}</span>{% endif %}
 		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
 		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
 		{% if seen %}<span class="badge text-bg-light border" title="{{ won }} of the {{ seen }} frames dealt to you, skips included">Win rate: {{ ((100 * won / seen) | round) | int }}%</span>{% endif %}
-	</li>
+	</div>
 	{% endif %}
-</ul>
+</div>
 {% if difficulty in ("difficult", "siracusa", "extra") %}
 {# The seen-films switch (Glenn's ask, Aug 27 2026): narrow this
    difficulty's deals to films from the user's diary. The hidden

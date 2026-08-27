@@ -1234,3 +1234,189 @@ def test_profile_reset_wipes_frame_standings(app, admin_client):
     assert "have been reset" in body
     with app.app_context():
         assert UserFrameScore.query.count() == 0
+
+
+def test_finished_rounds_queue_a_frame_replacement(app, admin_client):
+    """A graded reveal queues the per-round top-up for the played film;
+    dealing and skipping alone never do (Glenn's ask, Aug 27 2026)."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        answer = make_movie("Topup Answer Film", 1994)
+        make_movie_file(answer, "Bluray-1080p")
+        for n in range(8):
+            make_movie(f"Topup Distractor {n}", 1985 + n)
+        db.session.commit()
+        answer_id = answer.id
+
+    token = seed_frame(app, answer_id)
+
+    def replacement_jobs():
+        jobs = [
+            app.transcode_queue.fetch_job(job_id)
+            for job_id in app.transcode_queue.get_job_ids()
+        ]
+        return [
+            job.args[0] for job in jobs if "replace_frame_task" in (job.func_name or "")
+        ]
+
+    # Dealing (and re-dealing, a skip) queues nothing
+
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    admin_client.get("/game?difficulty=difficult")
+    assert replacement_jobs() == []
+
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    admin_client.post(
+        "/game",
+        data={
+            "csrf_token": csrf,
+            "token": token,
+            "difficulty": "difficult",
+            "choice": str(answer_id),
+            "guess_submit": "y",
+        },
+    )
+    assert replacement_jobs() == [answer_id]
+
+
+def test_extra_round_queues_replacement_only_at_the_end(app, admin_client):
+    """Zoom-outs and mid-round misses keep the round alive — the
+    top-up fires once, when the round actually ends."""
+
+    import re
+
+    from app import db
+
+    with app.app_context():
+        movie = make_movie("Topup Extra Film", 2005)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id)
+    page = admin_client.get("/game?difficulty=extra").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        )
+
+    def replacement_jobs():
+        jobs = [
+            app.transcode_queue.fetch_job(job_id)
+            for job_id in app.transcode_queue.get_job_ids()
+        ]
+        return [
+            job.args[0] for job in jobs if "replace_frame_task" in (job.func_name or "")
+        ]
+
+    post({"zoom_out": "y"})
+    post({"guess": "Wrong Film", "guess_submit": "y"})  # mid-round miss
+    assert replacement_jobs() == []
+
+    post({"guess": "Topup Extra Film", "guess_submit": "y"})
+    assert replacement_jobs() == [movie_id]
+
+
+def test_replace_frame_task_swaps_in_an_unpooled_film(app, monkeypatch):
+    """The top-up extracts a film the pool doesn't hold and retires the
+    played film's frame on success; with the whole library pooled it
+    re-extracts the played film itself instead."""
+
+    import app.frames as frames
+
+    from app import db
+    from app.frames import POOL_KEY, replace_frame_task
+
+    with app.app_context():
+        played = make_movie("Swap Played Film", 1990)
+        make_movie_file(played, "Bluray-1080p")
+        fresh = make_movie("Swap Fresh Film", 1991)
+        make_movie_file(fresh, "Bluray-1080p")
+        db.session.commit()
+        played_id, fresh_id = played.id, fresh.id
+
+    played_token = seed_frame(app, played_id)
+    extracted = []
+    monkeypatch.setattr(
+        frames,
+        "extract_frame_task",
+        lambda movie_id: extracted.append(movie_id) or True,
+    )
+
+    with app.app_context():
+        assert replace_frame_task(played_id) == fresh_id
+    assert extracted == [fresh_id]
+    assert not app.redis.hexists(POOL_KEY, played_token)
+
+    # Whole library pooled: the played film comes back on a new frame,
+    # and its current frame is left for the real extraction to replace
+
+    played_token = seed_frame(app, played_id)
+    seed_frame(app, fresh_id)
+    with app.app_context():
+        assert replace_frame_task(played_id) == played_id
+    assert extracted == [fresh_id, played_id]
+    assert app.redis.hexists(POOL_KEY, played_token)
+
+
+def test_frame_pool_tasks_stay_off_the_running_banners(app):
+    """Frame extractions and per-round replacements never surface as
+    top-of-page task alerts — mid-game they disrupt the round and name
+    films about to become answers — but the queue page still lists
+    them."""
+
+    from rq.registry import StartedJobRegistry
+
+    from app.models import User
+    from tests.conftest import ADMIN_EMAIL
+
+    with app.app_context():
+        replace_job = app.transcode_queue.enqueue(
+            "app.frames.replace_frame_task",
+            args=(1,),
+            description="Replacing the played frame from 'Secret Answer'",
+        )
+        extract_job = app.transcode_queue.enqueue(
+            "app.frames.extract_frame_task",
+            args=(1,),
+            description="Extracting a frame from 'Secret Answer'",
+        )
+        visible_job = app.transcode_queue.enqueue(
+            "app.videos.transcode_task",
+            args=(1,),
+            description="Transcoding a visible file",
+        )
+        # rq 2's StartedJobRegistry.add raises NotImplementedError —
+        # stamp the registry's sorted set directly
+        registry = StartedJobRegistry("fitzflix-transcode", connection=app.redis)
+        for job in (replace_job, extract_job, visible_job):
+            app.redis.zadd(registry.key, {job.id: int(time.time()) + 300})
+
+        details = User.query.filter_by(email=ADMIN_EMAIL).one().get_queue_details()
+        running = " ".join(task["description"] for task in details["running"])
+        assert "Transcoding a visible file" in running
+        assert "Secret Answer" not in running
+        listed = " ".join(task["description"] for task in details["all"])
+        assert "Replacing the played frame" in listed
+        assert "Extracting a frame" in listed
+
+
+def test_difficulty_picker_is_a_radio_group(app, admin_client):
+    """The difficulty switcher renders as one radio button group with
+    the current level checked."""
+
+    import re
+
+    page = admin_client.get("/game?difficulty=difficult").get_data(as_text=True)
+    assert 'aria-label="Difficulty"' in page
+    assert 'class="btn-check"' in page
+    assert re.search(r'id="difficulty-difficult"[^>]*\schecked', page)
+    assert not re.search(r'id="difficulty-easy"[^>]*\schecked', page)
+    assert 'id="difficulty-extra"' in page
