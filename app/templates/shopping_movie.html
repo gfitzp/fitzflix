@@ -53,6 +53,64 @@
 	</div>
 </div>
 <hr>
+{% if watchlist_groups %}
+{# The watchlist view (#247): every user's watchlisted, unowned films
+   grouped hardest-to-watch first — the worst case among a film's
+   watchers decides its group, so a film one watcher can't stream or
+   rent leads even if another watcher could stream it #}
+<p class="small text-muted">Films on any user's watchlist with no copy in the library. Hardest to watch first: films nobody's services carry, then rentals, then films already streaming &mdash; a film files under its watchers' worst case. Streaming data by JustWatch.</p>
+{% for group in watchlist_groups %}
+<h4 class="mt-4">{{ group.heading }} <span class="text-muted fs-6 fw-normal">&middot; {{ group.rows | length }} film{% if group.rows | length != 1 %}s{% endif %}</span></h4>
+{% if not group.rows %}
+<p class="text-muted">Nothing here.</p>
+{% endif %}
+{% for row in group.rows %}
+{% set movie = row.movie %}
+<div class="d-flex mb-3">
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		{% include "_movie_poster_small.html" %}
+	</a>
+	<div class="flex-grow-1" data-state-movie="{{ movie.id }}" data-watchlist-scope>
+		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></h5>
+		<form action="{{ url_for('main.movie', movie_id=movie.id) }}" method="post" class="d-flex align-items-center">
+			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+			<input type="hidden" name="from_card" value="1">
+			{{ rating_ladder(compact=true, live=true) }}
+		</form>
+		<p class="mt-n1">
+			<span class="text-muted">Watchlisted by {{ row.watchers }}</span><br>
+			<span class="text-muted">{{ row.instruction }}</span>
+		</p>
+		<div class="btn-group mt-n2">
+			{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
+				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
+			{% elif movie.criterion_spine_number or movie.criterion_set_title %}
+				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }} {{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }} Criterion Collection" rel="noreferrer">Find</a>
+			{% else %}
+				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie.tmdb_title|urlencode if movie.tmdb_title else movie.title|urlencode }}&yearfrom={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&yearto={{ movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
+			{% endif %}
+			<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-bs-toggle="dropdown" aria-expanded="false">
+				<span class="visually-hidden">Toggle dropdown</span>
+			</button>
+			{% include "_shopping_search_dropdown.html" %}
+		</div>
+		<div class="btn-group mt-n2">
+			<form action="" method="post">
+				{{ movie_shopping_exclude_form.csrf_token() }}
+				{{ movie_shopping_exclude_form.movie_id(value=movie.id) }}
+				<button class="btn btn-sm btn-light" id="exclude_submit" name="exclude_submit" type="submit" value="Remove from List">
+					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-x" viewBox="0 0 16 16">
+						<path d="M7.354 5.646a.5.5 0 1 0-.708.708L7.793 7.5 6.646 8.646a.5.5 0 1 0 .708.708L8.5 8.207l1.146 1.147a.5.5 0 0 0 .708-.708L9.207 7.5l1.147-1.146a.5.5 0 0 0-.708-.708L8.5 6.793 7.354 5.646z"/>
+						<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+					</svg>
+				</button>
+			</form>
+		</div>
+	</div>
+</div>
+{% endfor %}
+{% endfor %}
+{% endif %}
 {% if movies %}
 <div class="d-none d-sm-block">
 	<nav class="d-none d-sm-block" aria-label="...">

@@ -234,3 +234,105 @@ def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
     assert f'action="/movie/{movie_id}"' in page
     assert "bi-star-fill" not in page
     assert "bi-star-half" not in page
+
+
+def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
+    """#247: ?library=watchlist lists every user's watchlisted,
+    unowned films grouped hardest-to-watch first — the worst case
+    among a film's watchers decides its group — with owned and
+    list-excluded films left out and no-availability films counting
+    as unavailable."""
+
+    from app.models import UserWatchlist
+    from tests.conftest import MEMBER_EMAIL
+    from tests.test_streaming import NETFLIX, plant_availability, subscribe
+
+    subscribe(app, 8, "Netflix")
+    subscribe(app, 1899, "Max", email=MEMBER_EMAIL)
+
+    def availability(streaming=(), rent=()):
+        return {
+            "link": None,
+            "flatrate": list(streaming),
+            "ads": [],
+            "rent": list(rent),
+            "buy": [],
+        }
+
+    with app.app_context():
+        # The user table survives across tests, and other files set
+        # plex_username (which _watcher_name prefers) — pin both so
+        # the name assertions hold in any test order
+
+        admin = User.query.filter_by(admin=True).first()
+        member = User.query.filter_by(email=MEMBER_EMAIL).one()
+        admin.plex_username = None
+        member.plex_username = None
+        admin_id, member_id = admin.id, member.id
+
+        # Watched by both: streams for the admin (Netflix), but the
+        # member (Max only) can neither stream nor rent it — the worst
+        # case wins, so it files under unavailable
+
+        split = make_movie("Split Verdict", 1960, tmdb_id=9901)
+        rentable = make_movie("Rent Me", 1961, tmdb_id=9902)
+        streamable = make_movie("Stream Me", 1962, tmdb_id=9903)
+        owned = make_movie("Owned Already", 1963, tmdb_id=9904)
+        make_movie_file(owned, "Bluray-1080p")
+        excluded = make_movie("Waved Off", 1964, tmdb_id=9905)
+        excluded.shopping_list_exclude = True
+        mystery = make_movie("No Data", 1965)
+        db.session.commit()
+        for user_id, movie in (
+            (admin_id, split),
+            (member_id, split),
+            (admin_id, rentable),
+            (admin_id, streamable),
+            (admin_id, owned),
+            (admin_id, excluded),
+            (member_id, mystery),
+        ):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+    plant_availability(app, 9901, availability(streaming=[NETFLIX]))
+    plant_availability(app, 9902, availability(rent=[NETFLIX]))
+    plant_availability(app, 9903, availability(streaming=[NETFLIX]))
+    plant_availability(app, 9904, availability(streaming=[NETFLIX]))
+    plant_availability(app, 9905, availability(streaming=[NETFLIX]))
+
+    page = admin_client.get("/shopping-list/movie?library=watchlist").get_data(
+        as_text=True
+    )
+    assert "Watchlisted movies to buy" in page
+
+    # Group membership reads off the section ordering; the split film
+    # and the no-data film land in unavailable, and the film watched
+    # by two sorts ahead of the film watched by one
+
+    unavailable_at = page.index("Not available to stream or rent")
+    rent_at = page.index("Available to rent")
+    streaming_at = page.index("Streaming on subscribed services")
+    assert unavailable_at < page.index("Split Verdict") < rent_at
+    assert unavailable_at < page.index("No Data (1965)") < rent_at
+    assert page.index("Split Verdict") < page.index("No Data (1965)")
+    assert rent_at < page.index("Rent Me") < streaming_at
+    assert streaming_at < page.index("Stream Me")
+    assert "Owned Already" not in page
+    assert "Waved Off" not in page
+
+    # A film whose watchers disagree names each with their own state
+
+    assert "admin (streaming)" in page
+    assert "member (unavailable)" in page
+    assert "Buy on Blu-Ray" in page
+
+
+def test_watchlist_view_leaves_default_list_alone(app, admin_client):
+    """The default shopping list is untouched; the watchlist view is
+    reachable through the nav item and the filter radio."""
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    assert "Not available to stream or rent" not in page
+    assert 'href="/shopping-list/movie?library=watchlist"' in page
+    assert "Watchlisted films not in the library" in page

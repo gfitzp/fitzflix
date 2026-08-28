@@ -246,6 +246,7 @@ class MovieShoppingFilterForm(FlaskForm):
         choices=[
             ("all", "All films"),
             ("criterion", "Films with a Criterion release"),
+            ("watchlist", "Watchlisted films not in the library"),
         ],
     )
     media = RadioField(

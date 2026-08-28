@@ -28,10 +28,139 @@ from app.models import (
     Movie,
     RefQuality,
     TVSeries,
+    User,
     UserMovieReview,
+    UserWatchlist,
     movie_file_rank,
 )
+from app.streaming import (
+    batch_title_availability,
+    rental_matches,
+    streaming_matches,
+    user_provider_ids,
+)
 from app.main import bp
+
+# The watchlist view's scarcity order (#247, Glenn's ranking): a film
+# nobody's services carry can only be watched by buying it, so it
+# outranks one that's rentable, which outranks one already streaming.
+# A film's group is its WORST case across everyone watching it — if
+# it's unavailable to one watcher, unavailable wins.
+
+WATCHLIST_SCARCITY = {"streaming": 1, "rent": 2, "unavailable": 3}
+
+WATCHLIST_GROUPS = (
+    ("unavailable", "Not available to stream or rent"),
+    ("rent", "Available to rent"),
+    ("streaming", "Streaming on subscribed services"),
+)
+
+
+def _watcher_name(user):
+    """A short display handle for a watcher — there's no name column,
+    so the Plex username or the email's mailbox part stands in."""
+
+    return user.plex_username or user.email.split("@")[0]
+
+
+def watchlist_shopping_groups():
+    """The shopping list's watchlist view (#247): every film on ANY
+    user's watchlist with no local copy and no shopping-list
+    exclusion, grouped hardest-to-watch first. Availability answers
+    from the cache the nightly refresh keeps full (fetch_limit=0);
+    a film with no cached payload — or no TMDB id at all — counts
+    as unavailable, since nothing says otherwise. Within a group:
+    the most-watched films first, then title."""
+
+    watch_rows = (
+        db.session.query(UserWatchlist.movie_id, User)
+        .join(User, User.id == UserWatchlist.user_id)
+        .join(Movie, Movie.id == UserWatchlist.movie_id)
+        .filter(~Movie.files.any(File.feature_type_id.is_(None)))
+        .filter(
+            db.or_(
+                Movie.shopping_list_exclude == False,
+                Movie.shopping_list_exclude == None,
+            )
+        )
+        .all()
+    )
+    watchers = {}
+    for movie_id, user in watch_rows:
+        watchers.setdefault(movie_id, []).append(user)
+    if not watchers:
+        return [
+            {"state": state, "heading": heading, "rows": []}
+            for state, heading in WATCHLIST_GROUPS
+        ]
+
+    movies = {
+        movie.id: movie for movie in Movie.query.filter(Movie.id.in_(sorted(watchers)))
+    }
+    availability, _ = batch_title_availability(
+        [movie.tmdb_id for movie in movies.values() if movie.tmdb_id],
+        fetch_limit=0,
+    )
+
+    provider_sets = {}
+    entries = []
+    for movie_id, users in watchers.items():
+        movie = movies.get(movie_id)
+        if movie is None:
+            continue
+        payload = availability.get(movie.tmdb_id) if movie.tmdb_id else None
+        states = []
+        for user in sorted(users, key=_watcher_name):
+            if user.id not in provider_sets:
+                provider_sets[user.id] = user_provider_ids(user)
+            provider_ids = provider_sets[user.id]
+            if streaming_matches(payload, provider_ids):
+                state = "streaming"
+            elif rental_matches(payload, provider_ids):
+                state = "rent"
+            else:
+                state = "unavailable"
+            states.append((user, state))
+        rank = max(WATCHLIST_SCARCITY[state] for _, state in states)
+        mixed = len({state for _, state in states}) > 1
+        entries.append(
+            {
+                "movie": movie,
+                "rank": rank,
+                "watchers": ", ".join(
+                    f"{_watcher_name(user)} ({state})" if mixed else _watcher_name(user)
+                    for user, state in states
+                ),
+                "watcher_count": len(states),
+                "instruction": (
+                    "Buy Criterion edition"
+                    if (movie.criterion_spine_number or movie.criterion_set_title)
+                    else "Buy on Blu-Ray"
+                ),
+            }
+        )
+
+    entries.sort(
+        key=lambda entry: (
+            -entry["rank"],
+            -entry["watcher_count"],
+            re.sub(
+                r"^(The|A|An) ",
+                "",
+                entry["movie"].tmdb_title or entry["movie"].title or "",
+            ).lower(),
+        )
+    )
+    return [
+        {
+            "state": state,
+            "heading": heading,
+            "rows": [
+                entry for entry in entries if entry["rank"] == WATCHLIST_SCARCITY[state]
+            ],
+        }
+        for state, heading in WATCHLIST_GROUPS
+    ]
 
 
 @bp.route("/shopping-list/movie", methods=["GET", "POST"])
@@ -71,6 +200,10 @@ def movie_shopping():
     if library == "criterion":
         criterion_release = True
         filter_form.filter_status.default = "criterion"
+
+    elif library == "watchlist":
+        criterion_release = None
+        filter_form.filter_status.default = "watchlist"
 
     else:
         criterion_release = None
@@ -550,6 +683,8 @@ def movie_shopping():
             .filter(Movie.id.not_in(owned_movie_ids))
         )
 
+    watchlist_groups = None
+
     if q:
         if re.match(r"tmdb:(?P<tmdb_id>\d+)", q):
             tmdb_id = re.match(r"tmdb:(?P<tmdb_id>\d+)", q).group(1)
@@ -650,6 +785,17 @@ def movie_shopping():
                 RefQuality.preference.asc(),
                 File.date_added.asc(),
             ).paginate(page=page, per_page=100, error_out=False)
+
+    elif library == "watchlist":
+        # The watchlist view (#247): cross-user and availability-
+        # ranked, so it's built in Python from the availability cache
+        # rather than in the quality-driven SQL below. Unpaginated on
+        # purpose, like the watchlist page itself — the group
+        # structure is the navigation
+
+        title = "Watchlisted movies to buy"
+        watchlist_groups = watchlist_shopping_groups()
+        movies = None
 
     elif media == "digital":
         physical_media = (
@@ -805,7 +951,7 @@ def movie_shopping():
             min_quality=min_quality,
             max_quality=max_quality,
         )
-        if movies.has_next
+        if movies is not None and movies.has_next
         else None
     )
     prev_url = (
@@ -818,7 +964,7 @@ def movie_shopping():
             min_quality=min_quality,
             max_quality=max_quality,
         )
-        if movies.has_prev
+        if movies is not None and movies.has_prev
         else None
     )
 
@@ -869,10 +1015,11 @@ def movie_shopping():
     return render_template(
         "shopping_movie.html",
         title=title,
-        movies=movies.items,
+        movies=movies.items if movies is not None else None,
         next_url=next_url,
         prev_url=prev_url,
         pages=movies,
+        watchlist_groups=watchlist_groups,
         filter_form=filter_form,
         library_search_form=library_search_form,
         radarr_proxy_url=current_app.config["RADARR_PROXY_URL"],
