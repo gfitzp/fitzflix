@@ -78,9 +78,12 @@
 {# Bragging rights (Glenn's ask, Aug 27 2026): a zoomed win stashed
    its crop at grading time, so it survives the played frame's
    replacement. Share hands image + message to the native share
-   sheet — the path that lands both in a text message — and Copy
-   writes them to the clipboard as one item: a rich paste target
-   takes the image, a plain-text one takes the message. #}
+   sheet — the only one-tap path that lands both in a message. The
+   copies are two separate buttons because a clipboard paste only
+   ever yields ONE representation: a combined image+text item looked
+   copied but pasted image-only, and the words seemed to vanish
+   (Glenn's report, Aug 27 2026) — so image and message copy
+   individually, to be pasted one after the other. #}
 <div class="d-flex align-items-center flex-wrap gap-3 mb-3" id="brag-box"
 	data-brag-url="{{ url_for('main.game_brag', token=result.brag) }}"
 	data-brag-text="I was able to guess {{ result.answer }} from just this image">
@@ -88,7 +91,8 @@
 	<div>
 		<p class="small mb-1">Named from just this much &mdash; tell somebody:</p>
 		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-share" hidden>Share&hellip;</button>
-		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-copy">Copy image &amp; message</button>
+		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-copy-image">Copy image</button>
+		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-copy-text">Copy message</button>
 		<span class="small text-muted d-block mt-1" id="brag-status" role="status"></span>
 	</div>
 </div>
@@ -99,7 +103,8 @@
 	const text = box.dataset.bragText;
 	const status = document.getElementById("brag-status");
 	const share = document.getElementById("brag-share");
-	const copy = document.getElementById("brag-copy");
+	const copyImage = document.getElementById("brag-copy-image");
+	const copyText = document.getElementById("brag-copy-text");
 	const pngBlob = async () => {
 		const response = await fetch(url);
 		if (!response.ok) throw new Error("expired");
@@ -112,27 +117,27 @@
 				const file = new File([await pngBlob()], "name-that-frame.png", {type: "image/png"});
 				await navigator.share({files: [file], text: text});
 			} catch (error) {
-				if (error.name !== "AbortError") status.textContent = "Sharing didn’t work — try Copy instead.";
+				if (error.name !== "AbortError") status.textContent = "Sharing didn’t work — try the copy buttons instead.";
 			}
 		});
 	}
-	copy.addEventListener("click", async () => {
+	copyImage.addEventListener("click", async () => {
 		try {
 			if (!navigator.clipboard || !window.ClipboardItem) throw new Error("unsupported");
-			// Promise-valued entries: Safari requires the clipboard
+			// Promise-valued entry: Safari requires the clipboard
 			// write to start inside the click gesture
-			await navigator.clipboard.write([new ClipboardItem({
-				"image/png": pngBlob(),
-				"text/plain": new Blob([text], {type: "text/plain"})
-			})]);
-			status.textContent = "Copied — paste the image into your message; a text-only field gets the words.";
+			await navigator.clipboard.write([new ClipboardItem({"image/png": pngBlob()})]);
+			status.textContent = "Image copied — paste it, then come back for the message.";
 		} catch (error) {
-			try {
-				await navigator.clipboard.writeText(text);
-				status.textContent = "Copied the message — press and hold the image to copy it separately.";
-			} catch {
-				status.textContent = "Copying isn’t available in this browser.";
-			}
+			status.textContent = "Couldn’t copy the image here — press and hold it to copy, or use Share.";
+		}
+	});
+	copyText.addEventListener("click", async () => {
+		try {
+			await navigator.clipboard.writeText(text);
+			status.textContent = "Message copied — paste it next to the image.";
+		} catch (error) {
+			status.textContent = "Copying isn’t available in this browser.";
 		}
 	});
 })();
