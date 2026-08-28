@@ -74,6 +74,70 @@
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
+{% if result and result.correct and result.brag %}
+{# Bragging rights (Glenn's ask, Aug 27 2026): a zoomed win stashed
+   its crop at grading time, so it survives the played frame's
+   replacement. Share hands image + message to the native share
+   sheet — the path that lands both in a text message — and Copy
+   writes them to the clipboard as one item: a rich paste target
+   takes the image, a plain-text one takes the message. #}
+<div class="d-flex align-items-center flex-wrap gap-3 mb-3" id="brag-box"
+	data-brag-url="{{ url_for('main.game_brag', token=result.brag) }}"
+	data-brag-text="I was able to guess {{ result.answer }} from just this image">
+	<img src="{{ url_for('main.game_brag', token=result.brag) }}" alt="The crop you guessed from" class="rounded border" style="max-height: 5rem;">
+	<div>
+		<p class="small mb-1">Named from just this much &mdash; tell somebody:</p>
+		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-share" hidden>Share&hellip;</button>
+		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-copy">Copy image &amp; message</button>
+		<span class="small text-muted d-block mt-1" id="brag-status" role="status"></span>
+	</div>
+</div>
+<script>
+(() => {
+	const box = document.getElementById("brag-box");
+	const url = box.dataset.bragUrl;
+	const text = box.dataset.bragText;
+	const status = document.getElementById("brag-status");
+	const share = document.getElementById("brag-share");
+	const copy = document.getElementById("brag-copy");
+	const pngBlob = async () => {
+		const response = await fetch(url);
+		if (!response.ok) throw new Error("expired");
+		return await response.blob();
+	};
+	if (navigator.canShare && navigator.canShare({files: [new File([""], "f.png", {type: "image/png"})]})) {
+		share.hidden = false;
+		share.addEventListener("click", async () => {
+			try {
+				const file = new File([await pngBlob()], "name-that-frame.png", {type: "image/png"});
+				await navigator.share({files: [file], text: text});
+			} catch (error) {
+				if (error.name !== "AbortError") status.textContent = "Sharing didn’t work — try Copy instead.";
+			}
+		});
+	}
+	copy.addEventListener("click", async () => {
+		try {
+			if (!navigator.clipboard || !window.ClipboardItem) throw new Error("unsupported");
+			// Promise-valued entries: Safari requires the clipboard
+			// write to start inside the click gesture
+			await navigator.clipboard.write([new ClipboardItem({
+				"image/png": pngBlob(),
+				"text/plain": new Blob([text], {type: "text/plain"})
+			})]);
+			status.textContent = "Copied — paste the image into your message; a text-only field gets the words.";
+		} catch (error) {
+			try {
+				await navigator.clipboard.writeText(text);
+				status.textContent = "Copied the message — press and hold the image to copy it separately.";
+			} catch {
+				status.textContent = "Copying isn’t available in this browser.";
+			}
+		}
+	});
+})();
+</script>
+{% endif %}
 {# On the reveal, the answer rides the aside as a standard poster
    tile: the popover carries the synopsis and badges, the tile the
    ladder and watchlist toggle — rate it or bank it without leaving

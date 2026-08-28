@@ -20,6 +20,7 @@ import io
 import json
 import random
 import re
+import secrets
 
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -91,6 +92,16 @@ UNRATED_BONUS = 2
 # ask, Aug 27 2026) — a plain /game visit used to reset to Easy
 
 LAST_DIFFICULTY_KEY = "fitzflix:frames:difficulty:{user_id}"
+
+# A zoomed Extra Difficult win earns bragging rights (Glenn's ask,
+# Aug 27 2026): the winning crop is cut and stashed the moment the
+# guess grades, because the round state clears and the played frame
+# gets replaced — sometimes deleted — seconds after the reveal. The
+# stash is PNG because the async Clipboard API only takes image/png.
+# An hour is plenty of time to paste a brag somewhere.
+
+BRAG_KEY = "fitzflix:frames:brag:{token}"
+BRAG_TTL = 3600
 
 # Distractors stay within the answer's era (Glenn, Aug 20 2026: an
 # option decades away hands the round to process of deduction) —
@@ -582,12 +593,10 @@ def _crop_centre(token, image, active):
     return best
 
 
-def _cropped_frame_response(token, stage):
-    """The Extra Difficult crop: the stage's window onto the pooled
-    frame, cut server-side — the full frame never reaches the page
-    before stage three. None when the image won't decode, so the
-    route can fall back to the full frame rather than 500 on a bad
-    pool entry."""
+def _stage_crop_image(token, stage):
+    """The stage's window onto the pooled frame as a PIL image — the
+    piece both the round page and the brag stash serve — or None when
+    the pooled image won't decode."""
 
     from PIL import Image
 
@@ -596,15 +605,45 @@ def _cropped_frame_response(token, stage):
             active = _active_picture_box(image)
             centre = _crop_centre(token, image, active)
             box = _crop_box(token, stage, *image.size, active, centre=centre)
-            crop = image.crop(box).convert("RGB")
-            buffer = io.BytesIO()
-            crop.save(buffer, format="JPEG", quality=90)
+            return image.crop(box).convert("RGB")
     except (OSError, ValueError):
         return None
+
+
+def _cropped_frame_response(token, stage):
+    """The Extra Difficult crop: the stage's window onto the pooled
+    frame, cut server-side — the full frame never reaches the page
+    before stage three. None when the image won't decode, so the
+    route can fall back to the full frame rather than 500 on a bad
+    pool entry."""
+
+    crop = _stage_crop_image(token, stage)
+    if crop is None:
+        return None
+    buffer = io.BytesIO()
+    crop.save(buffer, format="JPEG", quality=90)
     buffer.seek(0)
     # Uncached: the same token serves different pixels as the round
     # advances, and crops are cheap to cut again
     return send_file(buffer, mimetype="image/jpeg", max_age=0)
+
+
+def _stash_brag_crop(token, stage):
+    """Cut the winning stage's crop and park it under a fresh share
+    token for the reveal's brag buttons — done synchronously at
+    grading time, before the frame replacement can delete the pooled
+    image out from under it. None when the image won't decode."""
+
+    crop = _stage_crop_image(token, stage)
+    if crop is None:
+        return None
+    buffer = io.BytesIO()
+    crop.save(buffer, format="PNG")
+    share_token = secrets.token_urlsafe(12)
+    current_app.redis.set(
+        BRAG_KEY.format(token=share_token), buffer.getvalue(), ex=BRAG_TTL
+    )
+    return share_token
 
 
 def _render_extra_round(token, stage, form, missed=None):
@@ -669,6 +708,9 @@ def _extra_post(form, token, movie):
         return _render_extra_round(token, stage, form, missed=guessed or None)
 
     _clear_extra_round()
+    # Naming the film while still zoomed in is the brag-worthy feat —
+    # a full-frame win is just a win
+    brag = _stash_brag_crop(token, stage) if correct and stage < EXTRA_STAGES else None
     points_won = EXTRA_STAGES + 1 - stage if correct else 0
     # The unrated bonus stays secret until it lands: the round prompt
     # quoted base points all along, and only now may the reveal say
@@ -701,6 +743,7 @@ def _extra_post(form, token, movie):
             "new_best": new_best,
             "points_won": points_won,
             "doubled": doubled,
+            "brag": brag,
         },
         answer_movie=movie,
         token=token,
@@ -876,6 +919,23 @@ def name_that_frame():
         form=form,
         pool_size=len(pool_entries()),
     )
+
+
+@bp.route("/game/brag/<token>")
+@login_required
+def game_brag(token):
+    """The stashed winning crop for a just-won zoomed round, by its
+    share token — what the reveal's brag buttons copy or share. The
+    stash outlives the played frame's replacement but only by
+    BRAG_TTL; after that the brag is a 404, which the page reports
+    as expired."""
+
+    if not TOKEN_PATTERN.fullmatch(token):
+        abort(404)
+    payload = current_app.redis.get(BRAG_KEY.format(token=token))
+    if not payload:
+        abort(404)
+    return send_file(io.BytesIO(payload), mimetype="image/png", max_age=0)
 
 
 @bp.route("/game/frame/<token>")

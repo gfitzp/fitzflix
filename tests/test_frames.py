@@ -1906,6 +1906,86 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
         assert (score.points, score.current_streak) == (10, 2)
 
 
+def test_zoomed_win_offers_bragging_rights(app, admin_client):
+    """A correct guess while still zoomed in stashes the winning crop
+    under a share token (Glenn's ask, Aug 27 2026): the reveal offers
+    the exact brag message and the stashed PNG — which matches the
+    stage's crop and outlives the played frame — while a full-frame
+    win and a miss offer nothing."""
+
+    import io
+    import re
+
+    from PIL import Image
+
+    from app import db
+    from app.frames import POOL_KEY, frame_path
+    from app.main.game import BRAG_KEY
+
+    with app.app_context():
+        movie = make_movie("Brag Film", 2010)
+        make_movie_file(movie, "Bluray-1080p")
+        db.session.commit()
+        movie_id = movie.id
+
+    token = seed_image_frame(app, movie_id, size=(120, 80))
+    page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
+    csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+    def post(data):
+        return admin_client.post(
+            "/game",
+            data={"csrf_token": csrf, "token": token, "difficulty": "extra", **data},
+        ).get_data(as_text=True)
+
+    body = post({"guess": "Brag Film", "guess_submit": "y"})
+    assert 'id="brag-box"' in body
+    assert (
+        'data-brag-text="I was able to guess Brag Film (2010) from just this image"'
+        in body
+    )
+    share_token = re.search(r'data-brag-url="/game/brag/([A-Za-z0-9_-]+)"', body).group(
+        1
+    )
+
+    # The stash is the stage-one crop as PNG, TTL'd, and it outlives
+    # the played frame's replacement
+
+    response = admin_client.get(f"/game/brag/{share_token}")
+    assert response.status_code == 200
+    assert response.mimetype == "image/png"
+    assert Image.open(io.BytesIO(response.data)).size == (36, 24)
+    assert app.redis.ttl(BRAG_KEY.format(token=share_token)) > 0
+    app.redis.hdel(POOL_KEY, token)
+    with app.app_context():
+        os.remove(frame_path(token))
+    assert admin_client.get(f"/game/brag/{share_token}").status_code == 200
+
+    # Auth-gated like the frames themselves; unknown tokens 404
+
+    assert app.test_client().get(f"/game/brag/{share_token}").status_code == 302
+    assert admin_client.get("/game/brag/nosuchbragtoken").status_code == 404
+
+    # A full-frame win is just a win: no brag on the stage-three
+    # reveal — nor on a miss
+
+    token = seed_image_frame(app, movie_id, size=(120, 80), token="bragtoken0002")
+    admin_client.get("/game?difficulty=extra")
+    post({"zoom_out": "y", "token": "bragtoken0002"})
+    post({"zoom_out": "y", "token": "bragtoken0002"})
+    body = post({"guess": "Brag Film", "guess_submit": "y", "token": "bragtoken0002"})
+    assert "Correct" in body
+    assert 'id="brag-box"' not in body
+
+    token = seed_image_frame(app, movie_id, size=(120, 80), token="bragtoken0003")
+    admin_client.get("/game?difficulty=extra")
+    body = post({"guess": "Wrong Film", "guess_submit": "y", "token": "bragtoken0003"})
+    body = post({"guess": "Still Wrong", "guess_submit": "y", "token": "bragtoken0003"})
+    body = post({"guess": "Wrong Again", "guess_submit": "y", "token": "bragtoken0003"})
+    assert "alert-danger" in body
+    assert 'id="brag-box"' not in body
+
+
 def test_game_reopens_at_the_last_chosen_difficulty(app, admin_client):
     """A plain /game visit resumes the difficulty the user last chose
     instead of resetting to Easy (Glenn's ask, Aug 27 2026)."""
