@@ -642,20 +642,28 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
         "logo_path": "/criterion.jpg",
     }
     with app.app_context():
+        # The departing film is record-only: an OWNED film never wears
+        # the warning (Glenn, Aug 27 2026) — that's owned_leaving below
         leaving = make_movie("Leaving Soon", 1956, tmdb_id=8401)
-        make_movie_file(leaving, "Bluray-1080p")
         staying = make_movie("Staying Put", 1957, tmdb_id=8402)
         make_movie_file(staying, "Bluray-1080p")
+        owned_leaving = make_movie("Shelf Safe", 1958, tmdb_id=8403)
+        make_movie_file(owned_leaving, "Bluray-1080p")
         db.session.commit()
         leaving_id, staying_id = leaving.id, staying.id
-    for tmdb_id in (8401, 8402):
+        owned_leaving_id = owned_leaving.id
+    for tmdb_id in (8401, 8402, 8403):
         plant_availability(
             app,
             tmdb_id,
             {"link": None, "flatrate": [criterion], "ads": [], "rent": [], "buy": []},
         )
     departs = date.today() + timedelta(days=10)
-    plant_shelf(app, [shelf_item(8401, "Leaving Soon")], departs=departs)
+    plant_shelf(
+        app,
+        [shelf_item(8401, "Leaving Soon"), shelf_item(8403, "Shelf Safe")],
+        departs=departs,
+    )
     label = departs.strftime("%B %-d")
 
     page = admin_client.get(f"/movie/{leaving_id}").get_data(as_text=True)
@@ -669,6 +677,16 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
     # A Criterion film that isn't departing keeps the plain badge
 
     page = admin_client.get(f"/movie/{staying_id}").get_data(as_text=True)
+    assert 'title="Streaming on Criterion Channel"' in page
+    assert (
+        "leaving"
+        not in page.split("Streaming data by JustWatch")[0].split("In library")[1]
+    )
+
+    # An OWNED film on the leaving set keeps the plain badge too — the
+    # copy on the shelf isn't going anywhere (Glenn, Aug 27 2026)
+
+    page = admin_client.get(f"/movie/{owned_leaving_id}").get_data(as_text=True)
     assert 'title="Streaming on Criterion Channel"' in page
     assert (
         "leaving"

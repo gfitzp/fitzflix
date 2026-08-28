@@ -310,7 +310,12 @@ def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
     if not provider_ids:
         return None
     availability = title_availability(tmdb_id)
-    matches = streaming_matches(availability, provider_ids, tmdb_id=tmdb_id)
+    # An owned film's strip never warns of a departure or trumpets an
+    # arrival (Glenn, Aug 27 2026) — the copy on the shelf isn't going
+    # anywhere — so the annotation lookups are skipped outright
+    matches = streaming_matches(
+        availability, provider_ids, tmdb_id=None if local else tmdb_id
+    )
     if not matches and not negative and not local:
         return None
 

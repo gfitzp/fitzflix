@@ -243,9 +243,11 @@ def test_shelf_hides_without_subscription_or_arrivals(app, admin_client):
 
 
 def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatch):
-    """Wherever a film's availability badge renders, a recent arrival
-    on that provider's newly-added feed turns it green with the date;
-    the leaving badge outranks it on a film that is somehow both."""
+    """Wherever an unowned film's availability badge renders, a recent
+    arrival on that provider's newly-added feed turns it green with
+    the date; the leaving badge outranks it on a film that is somehow
+    both, and an OWNED film's strip carries neither annotation — the
+    copy on the shelf isn't going anywhere (Glenn, Aug 27 2026)."""
 
     from app import db
     from app.leaving_criterion import CRITERION_PROVIDER_ID
@@ -261,12 +263,12 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
     }
     with app.app_context():
         arrived = make_movie("Just Arrived", 1956, tmdb_id=9401)
-        make_movie_file(arrived, "Bluray-1080p")
         both = make_movie("Blink And Miss", 1957, tmdb_id=9402)
-        make_movie_file(both, "Bluray-1080p")
+        owned = make_movie("Arrived Owned", 1958, tmdb_id=9403)
+        make_movie_file(owned, "Bluray-1080p")
         db.session.commit()
-        arrived_id, both_id = arrived.id, both.id
-    for tmdb_id in (9401, 9402):
+        arrived_id, both_id, owned_id = arrived.id, both.id, owned.id
+    for tmdb_id in (9401, 9402, 9403):
         plant_availability(
             app,
             tmdb_id,
@@ -278,6 +280,7 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
         [
             new_item(9401, "Just Arrived", first_seen=first_seen.isoformat()),
             new_item(9402, "Blink And Miss", first_seen=first_seen.isoformat()),
+            new_item(9403, "Arrived Owned", first_seen=first_seen.isoformat()),
         ],
     )
     departs = date.today() + timedelta(days=10)
@@ -297,6 +300,12 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
     page = admin_client.get(f"/movie/{both_id}").get_data(as_text=True)
     leaving_label = departs.strftime("%B %-d")
     assert f"Criterion Channel &middot; leaving {leaving_label}" in page
+    assert f"Criterion Channel &middot; added {label}" not in page
+
+    # The owned film's strip stays plain despite the feed entry
+
+    page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
+    assert 'title="Streaming on Criterion Channel"' in page
     assert f"Criterion Channel &middot; added {label}" not in page
 
 
@@ -408,40 +417,70 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
     first_seen = date.today() - timedelta(days=3)
     with app.app_context():
         movie = make_movie("Folded Arrival", 1956, tmdb_id=9701)
-        make_movie_file(movie, "Bluray-1080p")
+        owned = make_movie("Folded Owned", 1958, tmdb_id=9703)
+        make_movie_file(owned, "Bluray-1080p")
         db.session.commit()
         movie_id = movie.id
+        owned_id = owned.id
         user_id = User.query.filter_by(admin=True).first().id
     plant_feed(
         app,
         [
             new_item(9701, "Folded Arrival", first_seen=first_seen.isoformat()),
             new_item(9702, "Folded Stranger", first_seen=first_seen.isoformat()),
+            new_item(9703, "Folded Owned", first_seen=first_seen.isoformat()),
         ],
     )
     label = f"Added to the Criterion Channel {first_seen.strftime('%B %-d')}"
 
     payload = admin_client.get(
-        f"/movie_states?movie_ids={movie_id}&tmdb_ids=9702"
+        f"/movie_states?movie_ids={movie_id},{owned_id}&tmdb_ids=9702,9703"
     ).get_json()
     assert payload["movies"][str(movie_id)]["fold_new"] == label
     assert payload["tmdb"]["9702"]["fold_new"] == label
 
-    # The alert diff's own record wins over the feed label
+    # An OWNED film never folds for a feed arrival — movie-keyed or
+    # through its tmdb id (Glenn, Aug 27 2026)
 
+    assert payload["movies"][str(owned_id)]["fold_new"] is None
+    assert payload["tmdb"]["9703"]["fold_new"] is None
+
+    # The alert diff's own record wins over the feed label — and on an
+    # owned film only the local-arrival label folds; a service arrival
+    # doesn't
+
+    recent_key = f"fitzflix:availability:recent:{user_id}"
     app.redis.hset(
-        f"fitzflix:availability:recent:{user_id}",
+        recent_key,
         str(movie_id),
         jsonlib.dumps(
             {"date": date.today().isoformat(), "label": "New on Criterion Channel"}
         ),
     )
-    payload = admin_client.get(f"/movie_states?movie_ids={movie_id}").get_json()
+    app.redis.hset(
+        recent_key,
+        str(owned_id),
+        jsonlib.dumps(
+            {"date": date.today().isoformat(), "label": "New on Criterion Channel"}
+        ),
+    )
+    payload = admin_client.get(
+        f"/movie_states?movie_ids={movie_id},{owned_id}"
+    ).get_json()
     assert payload["movies"][str(movie_id)]["fold_new"] == "New on Criterion Channel"
+    assert payload["movies"][str(owned_id)]["fold_new"] is None
 
-    # No subscription, no fold
+    app.redis.hset(
+        recent_key,
+        str(owned_id),
+        jsonlib.dumps({"date": date.today().isoformat(), "label": "New in library"}),
+    )
+    payload = admin_client.get(f"/movie_states?movie_ids={owned_id}").get_json()
+    assert payload["movies"][str(owned_id)]["fold_new"] == "New in library"
 
-    app.redis.delete(f"fitzflix:availability:recent:{user_id}")
+    # No subscription, no feed fold
+
+    app.redis.delete(recent_key)
     with app.app_context():
         UserStreamingProvider.query.delete()
         db.session.commit()
@@ -453,22 +492,34 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
 
 
 def test_movie_page_poster_wears_the_fold(app, admin_client):
-    """The movie page's large poster renders its corner fold server-
-    side: green for a feed arrival, flipping red once the film joins
-    the leaving set — one fold, departure urgency first."""
+    """An unowned record's movie-page poster renders its corner fold
+    server-side: green for a feed arrival, flipping red once the film
+    joins the leaving set — one fold, departure urgency first. An
+    OWNED film's poster ignores both signals; only the local file's
+    own recent arrival folds it (Glenn, Aug 27 2026)."""
+
+    import json as jsonlib
 
     from app import db
+    from app.models import User
     from tests.test_leaving_criterion import plant_shelf
 
     subscribe_criterion(app)
     with app.app_context():
         movie = make_movie("Folded Poster", 1956, tmdb_id=9801)
-        make_movie_file(movie, "Bluray-1080p")
+        owned = make_movie("Folded Poster Owned", 1958, tmdb_id=9803)
+        make_movie_file(owned, "Bluray-1080p")
         db.session.commit()
         movie_id = movie.id
+        owned_id = owned.id
+        user_id = User.query.filter_by(admin=True).first().id
     first_seen = date.today() - timedelta(days=2)
     plant_feed(
-        app, [new_item(9801, "Folded Poster", first_seen=first_seen.isoformat())]
+        app,
+        [
+            new_item(9801, "Folded Poster", first_seen=first_seen.isoformat()),
+            new_item(9803, "Folded Poster Owned", first_seen=first_seen.isoformat()),
+        ],
     )
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
@@ -477,10 +528,30 @@ def test_movie_page_poster_wears_the_fold(app, admin_client):
     assert "poster-fold poster-fold-new" in page
 
     departs = date.today() + timedelta(days=5)
-    plant_shelf(app, [shelf_item(9801, "Folded Poster")], departs=departs)
+    plant_shelf(
+        app,
+        [shelf_item(9801, "Folded Poster"), shelf_item(9803, "Folded Poster Owned")],
+        departs=departs,
+    )
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "poster-fold poster-fold-leaving" in page
     assert "poster-fold poster-fold-new" not in page
+
+    # The owned film — on the feed AND the leaving set — folds for
+    # neither; only a "New in library" record earns its green
+
+    page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
+    assert "poster-fold poster-fold-leaving" not in page
+    assert "poster-fold poster-fold-new" not in page
+
+    app.redis.hset(
+        f"fitzflix:availability:recent:{user_id}",
+        str(owned_id),
+        jsonlib.dumps({"date": date.today().isoformat(), "label": "New in library"}),
+    )
+    page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
+    assert "poster-fold poster-fold-new" in page
+    assert 'aria-label="New in library"' in page
 
 
 def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):

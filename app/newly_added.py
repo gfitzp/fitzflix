@@ -393,20 +393,35 @@ def poster_fold(user, tmdb_id, movie_id=None):
 
     # Imported here: streaming reaches this module lazily from
     # streaming_matches, so a top-level import would be circular
-    from app.availability_alerts import recent_availability
+    from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
     from app.leaving_criterion import leaving_departure
     from app.streaming import user_provider_ids
+
+    label = None
+    if movie_id is not None:
+        entry = recent_availability(user).get(int(movie_id))
+        if entry:
+            label = entry.get("label")
+
+    # Ownership gates the folds (Glenn, Aug 27 2026): an owned film's
+    # copy isn't going anywhere, so it never warns of a departure, and
+    # its only green fold is the local file's own recent arrival
+
+    if (
+        movie_id is not None
+        and db.session.query(
+            Movie.query.filter(Movie.id == int(movie_id))
+            .filter(Movie.files.any(File.feature_type_id.is_(None)))
+            .exists()
+        ).scalar()
+    ):
+        return ("new", label) if label == NEW_IN_LIBRARY_LABEL else None
 
     provider_ids = set(user_provider_ids(user))
     if CRITERION_PROVIDER_ID in provider_ids:
         departs = leaving_departure(tmdb_id)
         if departs:
             return ("leaving", f"Leaving the Criterion Channel {departs}")
-    label = None
-    if movie_id is not None:
-        entry = recent_availability(user).get(int(movie_id))
-        if entry:
-            label = entry.get("label")
     label = label or newly_added_fold(tmdb_id, sorted(set(FEEDS) & provider_ids))
     return ("new", label) if label else None
 

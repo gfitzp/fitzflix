@@ -80,6 +80,13 @@ RECENT_KEY_SECONDS = 45 * 86400
 
 LEAVING_SOON_DAYS = 7
 
+# The local-arrival badge label. Shared because ownership gates the
+# poster folds (Glenn, Aug 27 2026): an owned film's only green fold
+# is this one — a service arrival or feed arrival never folds a film
+# whose copy is already on the shelf
+
+NEW_IN_LIBRARY_LABEL = "New in library"
+
 
 def _text(value):
     """A str from a Redis-returned field that may be bytes."""
@@ -340,7 +347,7 @@ def notify_watchlist_availability():
                 if movie.id in newly_owned:
                     if _first_event(user.id, movie.id, "local"):
                         events["local"].append({**item, "note": "Added to the library"})
-                        _record_recent(user.id, movie.id, "New in library")
+                        _record_recent(user.id, movie.id, NEW_IN_LIBRARY_LABEL)
                     continue
                 if movie.id in owned_ids or not movie.tmdb_id:
                     continue

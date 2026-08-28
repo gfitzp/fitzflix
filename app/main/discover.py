@@ -78,7 +78,7 @@ from app.recommendations import (
     stored_scores,
     watch_again_shelf,
 )
-from app.availability_alerts import recent_availability
+from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
 from app.streaming import (
     batch_title_availability,
     rental_matches,
@@ -1242,6 +1242,9 @@ def movie_states():
     # a film recently arrived on a subscribed provider's newly-added
     # feed, red for a film in the leaving-Criterion set, subscribers
     # only. The client paints at most one fold, red outranking green.
+    # Ownership overrides it all (Glenn, Aug 27 2026): an owned film's
+    # copy isn't going anywhere, so it never wears the red fold, and
+    # its only green fold is the local file's own recent arrival.
     # Movie-keyed tiles need their tmdb ids for both lookups; one
     # query covers them, and each set parses once per request on
     # flask.g
@@ -1251,6 +1254,14 @@ def movie_states():
     criterion_member = CRITERION_PROVIDER_ID in provider_ids
     fold_feeds = sorted(set(NEWLY_ADDED_FEEDS) & provider_ids)
     movie_tmdb = {}
+    owned_fold_ids = set()
+    if all_ids:
+        owned_fold_ids = {
+            movie_id
+            for (movie_id,) in db.session.query(Movie.id)
+            .filter(Movie.id.in_(all_ids))
+            .filter(Movie.files.any(File.feature_type_id.is_(None)))
+        }
     if all_ids and (criterion_member or fold_feeds):
         movie_tmdb = dict(
             db.session.query(Movie.id, Movie.tmdb_id).filter(Movie.id.in_(all_ids))
@@ -1367,6 +1378,21 @@ def movie_states():
             score = scores.get(movie_id)
             if score is not None:
                 estimated = estimated_rating(profile, score)
+        recent_label = (recent.get(movie_id) or {}).get("label")
+        if movie_id in owned_fold_ids:
+            # Ownership gates the folds: only the local file's own
+            # arrival goes green, and the red fold never paints
+            fold_new = recent_label if recent_label == NEW_IN_LIBRARY_LABEL else None
+            fold_leaving = None
+        else:
+            fold_new = recent_label or newly_added_fold(
+                movie_tmdb.get(movie_id), fold_feeds
+            )
+            fold_leaving = (
+                leaving_departure(movie_tmdb.get(movie_id))
+                if criterion_member
+                else None
+            )
         return {
             "rating": (
                 float(row.rating)
@@ -1377,19 +1403,16 @@ def movie_states():
             "flagged": flagged,
             "estimated": estimated,
             "on_watchlist": movie_id in listed_ids,
-            "fold_new": (recent.get(movie_id) or {}).get("label")
-            or newly_added_fold(movie_tmdb.get(movie_id), fold_feeds),
-            "fold_leaving": (
-                leaving_departure(movie_tmdb.get(movie_id))
-                if criterion_member
-                else None
-            ),
+            "fold_new": fold_new,
+            "fold_leaving": fold_leaving,
         }
 
     def tmdb_state_for(tmdb_id):
         state = state_for(tmdb_to_movie.get(tmdb_id))
         if state["estimated"] is None:
             state["estimated"] = tmdb_estimates.get(tmdb_id)
+        if tmdb_to_movie.get(tmdb_id) in owned_fold_ids:
+            return state
         if criterion_member and state["fold_leaving"] is None:
             state["fold_leaving"] = leaving_departure(tmdb_id)
         if state["fold_new"] is None:
@@ -1560,8 +1583,12 @@ def watchlist():
         rentals = []
         if provider_ids and movie.tmdb_id:
             availability = availability_by_id.get(movie.tmdb_id)
+            # Owned rows skip the leaving/newly-added annotations —
+            # the copy on the shelf isn't going anywhere
             streaming = streaming_matches(
-                availability, provider_ids, tmdb_id=movie.tmdb_id
+                availability,
+                provider_ids,
+                tmdb_id=None if movie.id in owned_ids else movie.tmdb_id,
             )
             rentals = rental_matches(availability, provider_ids)
             if streaming or rentals:

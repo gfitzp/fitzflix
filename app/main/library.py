@@ -1192,10 +1192,12 @@ def criterion_collection():
     for row in rows:
         if not row["tmdb_id"]:
             continue
+        # Rows with a local file skip the leaving/newly-added
+        # annotations — the copy on the shelf isn't going anywhere
         matches = streaming_matches(
             availability_by_id.get(row["tmdb_id"]),
             {CRITERION_CHANNEL_PROVIDER_ID},
-            tmdb_id=row["tmdb_id"],
+            tmdb_id=None if row.get("quality") else row["tmdb_id"],
         )
         if matches:
             row["streaming"] = matches
