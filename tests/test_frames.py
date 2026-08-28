@@ -1944,10 +1944,11 @@ def test_zoomed_win_offers_bragging_rights(app, admin_client):
         'data-brag-text="I was able to guess Brag Film (2010) from just this image"'
         in body
     )
-    # Image and message copy separately — one paste only ever yields
-    # one clipboard representation (Glenn's report, Aug 27 2026)
+    # Share sheet plus image-copy only (Glenn, Aug 27 2026): a paste
+    # yields one clipboard representation, so no message-copy button
+    assert 'id="brag-share"' in body
     assert 'id="brag-copy-image"' in body
-    assert 'id="brag-copy-text"' in body
+    assert 'id="brag-copy-text"' not in body
     share_token = re.search(r'data-brag-url="/game/brag/([A-Za-z0-9_-]+)"', body).group(
         1
     )
