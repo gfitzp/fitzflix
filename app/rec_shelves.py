@@ -18,8 +18,9 @@ tonight: owned locally, or streaming on one of the user's services
 nightly refresh keeps full — never a render-time TMDB call).
 
 Unlike the landing rails, nothing here is frozen for the day: every
-reload draws a fresh set of shelves (weighted toward the user's
-strongest interests, but random), and acting on a suggestion — rating
+reload draws a fresh set of shelves (criteria shelves weighted toward
+the user's strongest interests, copref anchors and pairs uniformly
+random), and acting on a suggestion — rating
 it, watchlisting it, waving it off — replaces just that film with the
 next candidate matching the shelf's criteria, through the tile
 endpoint. The page replaced the old /rate drive: rating suggestions
@@ -77,9 +78,13 @@ MAX_CRITERIA = 4
 
 # Copref-pair shelves (Glenn's Aug 26 follow-up): up to this many of a
 # load's shelves come from MovieLens co-preference instead of shared
-# features — two high-weight anchor films, suggestions ranked by how
-# similar they are to BOTH. Pairs are drawn from the user's top-weight
-# interest films; the cap keeps the pair search quadratic-but-tiny.
+# features — two anchor films, suggestions ranked by how similar they
+# are to BOTH. Anchors are a fresh uniform sample of the user's
+# rated-or-liked interest films each load, and valid pairs are drawn
+# uniformly too (Glenn, Aug 28 2026: the old top-weight pool plus
+# quality-weighted draw resurfaced the same few dense-neighborhood
+# favorites every reload); the cap keeps the pair search
+# quadratic-but-tiny.
 
 COPREF_SHELF_COUNT = 3
 COPREF_ANCHOR_POOL = 30
@@ -87,8 +92,7 @@ COPREF_ANCHOR_POOL = 30
 # Single-anchor shelves (#249): at most one per load across both
 # kinds — one film is weaker evidence than two, so these stay
 # occasional. A pairless copref anchor competes in the pair draw with
-# its quality damped (its own-similarity sums run higher than a
-# pair's min-blend, and pairs should still lead most loads), and a
+# its weight damped (pairs should still lead most loads), and a
 # one-holder criteria seed may key a shelf only when its class is
 # specific enough that a single loved film is real evidence — a
 # person, a keyword, an award won, never a genre or decade
@@ -350,27 +354,28 @@ def _top_heavy_sample(rng, ranked, count, decay=0.93):
 
 
 def _copref_shelves(interest, pool, rng, count, shown):
-    """Up to `count` copref shelves: two of the user's top-weight
+    """Up to `count` copref shelves: two of the user's rated-or-liked
     interest films whose MovieCopref neighbor lists jointly cover
     enough eligible films. Suggestions rank by min(sim to A, sim to B)
     — a film must sit close to BOTH anchors — and the criteria key
     `copref:{tmdbA}:{tmdbB}` lets the tile endpoint refill slots from
-    the same joint list. An anchor that qualifies for NO pair may
-    front a single-anchor shelf instead (#249) — `copref:{tmdbA}`,
-    ranked by similarity to it alone, damped in the draw and capped at
-    MAX_SINGLE_ANCHOR_SHELVES. Mutates `shown` like the criteria loop
-    does.
+    the same joint list. Anchors are sampled uniformly from the whole
+    interest set each load, and valid pairs drawn uniformly, so
+    reloads surface fresh pairings instead of the same few
+    dense-neighborhood favorites. An anchor that qualifies for NO
+    pair may front a single-anchor shelf instead (#249) —
+    `copref:{tmdbA}`, ranked by similarity to it alone, damped in the
+    draw and capped at MAX_SINGLE_ANCHOR_SHELVES. Mutates `shown`
+    like the criteria loop does.
     """
 
-    top = sorted(interest.items(), key=lambda kv: kv[1], reverse=True)[
-        :COPREF_ANCHOR_POOL
-    ]
+    sampled = rng.sample(sorted(interest), min(len(interest), COPREF_ANCHOR_POOL))
     tmdb_of = dict(
         db.session.query(Movie.id, Movie.tmdb_id)
-        .filter(Movie.id.in_([movie_id for movie_id, _ in top] or [0]))
+        .filter(Movie.id.in_(sampled or [0]))
         .filter(Movie.tmdb_id.isnot(None))
     )
-    anchors = [movie_id for movie_id, _ in top if movie_id in tmdb_of]
+    anchors = [movie_id for movie_id in sampled if movie_id in tmdb_of]
     sims = copref_anchor_sims([tmdb_of[movie_id] for movie_id in anchors])
     pool_by_tmdb = {
         tmdb_id: movie_id
@@ -380,8 +385,8 @@ def _copref_shelves(interest, pool, rng, count, shown):
     }
 
     # Each anchor's neighbors that are actually suggestible, then every
-    # pair with a joint list deep enough for a shelf, scored by the
-    # quality of its top picks so strong pairs lead the weighted draw
+    # pair with a joint list deep enough for a shelf — all equally
+    # weighted, so the draw is a uniform shuffle of the valid pairs
 
     neighbors = {
         movie_id: set(sims.get(tmdb_of[movie_id], ())) & set(pool_by_tmdb)
@@ -394,14 +399,7 @@ def _copref_shelves(interest, pool, rng, count, shown):
             joint = neighbors[first] & neighbors[second]
             if len(joint) < MIN_SHELF_FILMS:
                 continue
-            sims_a = sims[tmdb_of[first]]
-            sims_b = sims[tmdb_of[second]]
-            quality = sum(
-                sorted((min(sims_a[t], sims_b[t]) for t in joint), reverse=True)[
-                    :SHELF_SIZE
-                ]
-            )
-            pairs.append((quality, (first, second, joint)))
+            pairs.append((1.0, (first, second, joint)))
             paired.update((first, second))
 
     # Pairless anchors — the outlier tastes the intersection rule
@@ -409,11 +407,7 @@ def _copref_shelves(interest, pool, rng, count, shown):
     for first in anchors:
         if first in paired or len(neighbors[first]) < MIN_SHELF_FILMS:
             continue
-        own = sims[tmdb_of[first]]
-        quality = SINGLE_ANCHOR_DAMP * sum(
-            sorted((own[t] for t in neighbors[first]), reverse=True)[:SHELF_SIZE]
-        )
-        pairs.append((quality, (first, None, neighbors[first])))
+        pairs.append((SINGLE_ANCHOR_DAMP, (first, None, neighbors[first])))
 
     shelves = []
     used_anchors = set()
