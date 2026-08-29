@@ -395,6 +395,26 @@ def apply_tmdb_refresh(
                         current_app.config["AWS_UNTOUCHED_PREFIX"],
                         sanitize_s3_key(f.untouched_basename),
                     )
+
+                    # WEBDL-rebuild scaffolding (#158): ~1,000 rows were
+                    # deliberately flipped to WEBRip while their archive
+                    # keys stay WEBDL-named until a real WEB-DL replaces
+                    # them. The keys are Deep Archive, so "renaming" one
+                    # means re-uploading the multi-gigabyte library copy
+                    # and retiring the scaffold key — the Aug 29 genre
+                    # backfill started doing exactly that. Leave those
+                    # keys alone; the old key still names a real object,
+                    # so the archive invariant holds.
+
+                    if "[WEBDL-" in (f.aws_untouched_key or "") and (
+                        "[WEBRip-" in aws_untouched_key
+                    ):
+                        current_app.logger.info(
+                            f"'{f.untouched_basename}' keeps its WEBDL-named "
+                            f"archive key (rebuild scaffolding, #158)"
+                        )
+                        continue
+
                     if f.aws_untouched_key != aws_untouched_key and os.path.exists(
                         os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
                     ):

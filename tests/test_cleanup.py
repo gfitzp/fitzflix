@@ -442,3 +442,49 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
         db.session.expire_all()
         assert file.aws_untouched_key == "untouched/current.mkv"
         assert uploads == []
+
+
+def test_rearchive_keeps_webdl_scaffold_keys(app, monkeypatch):
+    """WEBDL-rebuild scaffolding (#158): a WEBRip row deliberately
+    keeps its WEBDL-named archive key until a real WEB-DL replaces it.
+    The deferred re-archive refuses that trade instead of re-uploading
+    gigabytes and retiring the scaffold key (the Aug 29 2026 genre
+    backfill started doing exactly that)."""
+
+    from app import aws_storage
+
+    from app import db
+    from app import videos
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Scaffold Subject", 1964), "WEBRip-1080p")
+        file.aws_untouched_key = "untouched/Scaffold Subject (1964) - [WEBDL-1080p].mkv"
+        file.untouched_basename = "Scaffold Subject (1964) - [WEBRip-1080p].mkv"
+        db.session.commit()
+        file_id = file.id
+
+        new_key = os.path.join(
+            app.config["AWS_UNTOUCHED_PREFIX"],
+            "Scaffold Subject (1964) - [WEBRip-1080p].mkv",
+        )
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_upload",
+            lambda *a, **kw: pytest.fail("the scaffold re-upload must not run"),
+        )
+        monkeypatch.setattr(
+            aws_storage,
+            "aws_s3_client",
+            lambda **kw: pytest.fail("no S3 calls for a scaffold key"),
+        )
+
+        assert videos.rearchive_untouched_object(file_id, new_key) is False
+
+        db.session.expire_all()
+        file = db.session.get(File, file_id)
+        assert (
+            file.aws_untouched_key
+            == "untouched/Scaffold Subject (1964) - [WEBDL-1080p].mkv"
+        )

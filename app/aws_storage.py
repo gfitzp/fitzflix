@@ -888,6 +888,19 @@ def rearchive_untouched_object(file_id, new_key):
             current_app.logger.info(f"'{file.basename}' archive is already '{new_key}'")
             return True
 
+        # WEBDL-rebuild scaffolding (#158): a WEBRip row keeps its
+        # WEBDL-named archive key until a real WEB-DL replaces it —
+        # never trade the scaffold key for a fresh multi-gigabyte
+        # upload. Mirrors the guard in apply_tmdb_refresh, catching
+        # jobs that were already queued before it shipped.
+
+        if "[WEBDL-" in (file.aws_untouched_key or "") and "[WEBRip-" in new_key:
+            current_app.logger.info(
+                f"'{file.basename}' keeps its WEBDL-named archive key "
+                f"(rebuild scaffolding, #158), skipping the re-archive"
+            )
+            return False
+
         # The key the record wants NOW. It differs when the refresh
         # that queued this rolled back, or when a later refresh queued
         # a newer key behind this one — either way, uploading tens of
