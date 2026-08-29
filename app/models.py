@@ -281,15 +281,35 @@ class TMDBMixin(object):
         MovieCast.query.filter_by(movie_id=self.id).delete()
         MovieCrew.query.filter_by(movie_id=self.id).delete()
 
-        tmdb_genres = TMDBGenre.query.all()
-        for genre in tmdb_genres:
-            if genre in self.genres:
-                self.genres.remove(genre)
+        # TMDB can transiently serve a details payload whose genre list
+        # is empty while the rest is intact — the Aug 7-13 2026 bulk
+        # refreshes got such payloads for ~16% of requests, and the
+        # unconditional wipe here then erased 943 films' genres for
+        # good (#251; the Aug 22 credits glitch was the same failure
+        # shape). An empty incoming list never wipes rows the record
+        # already has: they're kept and the anomaly logged, since a
+        # film genuinely losing its every genre or keyword on TMDB is
+        # far rarer than TMDB briefly serving bad data.
 
-        tmdb_keywords = TMDBKeyword.query.all()
-        for keyword in tmdb_keywords:
-            if keyword in self.keywords:
-                self.keywords.remove(keyword)
+        if tmdb_info.get("genres") or self.genres.count() == 0:
+            for genre in TMDBGenre.query.all():
+                if genre in self.genres:
+                    self.genres.remove(genre)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
+            )
+
+        if (tmdb_info.get("keywords") or {}).get(
+            "keywords"
+        ) or self.keywords.count() == 0:
+            for keyword in TMDBKeyword.query.all():
+                if keyword in self.keywords:
+                    self.keywords.remove(keyword)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
+            )
 
         tmdb_production_companies = TMDBProductionCompany.query.all()
         for company in tmdb_production_companies:
@@ -737,17 +757,29 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
-        # Delete any existing records associated with this tv series
+        # Delete any existing records associated with this tv series.
+        # Genres and keywords get the same empty-payload guard as
+        # tmdb_movie_apply (#251) — TV keyword lists ride in "results"
 
-        tmdb_genres = TMDBGenre.query.all()
-        for genre in tmdb_genres:
-            if genre in self.genres:
-                self.genres.remove(genre)
+        if tmdb_info.get("genres") or self.genres.count() == 0:
+            for genre in TMDBGenre.query.all():
+                if genre in self.genres:
+                    self.genres.remove(genre)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
+            )
 
-        tmdb_keywords = TMDBKeyword.query.all()
-        for keyword in tmdb_keywords:
-            if keyword in self.keywords:
-                self.keywords.remove(keyword)
+        if (tmdb_info.get("keywords") or {}).get(
+            "results"
+        ) or self.keywords.count() == 0:
+            for keyword in TMDBKeyword.query.all():
+                if keyword in self.keywords:
+                    self.keywords.remove(keyword)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
+            )
 
         tmdb_networks = TMDBNetwork.query.all()
         for network in tmdb_networks:
