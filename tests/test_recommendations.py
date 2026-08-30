@@ -875,9 +875,10 @@ def test_watch_again_shelf_picks_stale_favorites(app):
         assert items[1]["last_watched"] is not None
 
 
-def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
+def test_index_watch_again_shelf_renders(app, admin_client):
     """The landing page's rewatch shelf shows stale favorites with
-    last-watched badges, watchlisted ones pinned first."""
+    last-watched badges; a re-watchlisted one (declared rewatch
+    intent) moves to the top watchlist shelf instead."""
 
     from datetime import datetime, timedelta
 
@@ -921,12 +922,16 @@ def test_index_watch_again_shelf_renders_and_pins(app, admin_client):
     assert "Shelf Old Favorite (1975)" in body
     # The last-watched labels ride the anchors as card labels (Aug 2026)
     assert f"data-card-reasons='[\"Last watched {old_year}\"]'" in body
-    assert "Shelf Wanted Again (1976)" in body
-    assert "data-card-reasons='[\"Seen ages ago\"]'" in body
     assert "haven't watched in at least two years" in body
 
-    # The re-watchlisted film still holds a pinned slot; its watchlist
-    # answer comes from the hydration endpoint now, not a badge
+    # The re-watchlisted film surfaces on the watchlist shelf up top —
+    # owned, so watchable tonight — not on the rewatch shelf, and its
+    # watchlist answer comes from the hydration endpoint, not a badge
+
+    assert "From your watchlist" in body
+    assert "Shelf Wanted Again (1976)" in body
+    assert body.index("Shelf Wanted Again (1976)") < body.index("Watch it again")
+    assert "data-card-reasons='[\"Seen ages ago\"]'" not in body
 
     from app.models import Movie
 

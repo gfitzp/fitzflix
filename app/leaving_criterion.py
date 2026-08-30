@@ -396,9 +396,10 @@ def leaving_shelf(user):
     """The taste-ranked departure shelf for one user, or None.
 
     Renders only for Criterion subscribers with a stored set that
-    hasn't departed yet. Owned films drop out; diary films drop out
-    unless they're on the user's watchlist, and a watchlisted leaving
-    film badges and sorts first — the watch-it-now-or-buy-it case.
+    hasn't departed yet. Owned, diary, and watchlisted films all drop
+    out — this is a discovery shelf since Aug 30 2026: a watchlisted
+    departure is the watch-it-now-or-buy-it case, and it leads the
+    landing page's watchlist shelf instead of pinning here.
     """
 
     subscribed = {row.provider_id for row in user.streaming_providers}
@@ -429,7 +430,7 @@ def leaving_shelf(user):
             continue
         if tmdb_id in refused:
             continue
-        if tmdb_id in logged and tmdb_id not in watchlisted:
+        if tmdb_id in logged or tmdb_id in watchlisted:
             continue
         score, contributions = score_movie(_payload_features(item), profile)
         items.append(
@@ -439,7 +440,6 @@ def leaving_shelf(user):
                 "year": item.get("year"),
                 "poster_path": item.get("poster_path"),
                 "runtime": item.get("runtime"),
-                "watchlisted": tmdb_id in watchlisted,
                 "because": [
                     label
                     for contribution, label in contributions[:3]
@@ -449,7 +449,7 @@ def leaving_shelf(user):
             }
         )
 
-    items.sort(key=lambda item: (item["watchlisted"], item["score"]), reverse=True)
+    items.sort(key=lambda item: item["score"], reverse=True)
     return {"departs": departs, "url": _source_url(stored, departs), "items": items}
 
 

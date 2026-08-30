@@ -1,11 +1,16 @@
 """The day-frozen shelves (#204): a rail shows the same films in the
 same slots all day; a film that stops being eligible mid-day (watched,
 waved off) is replaced in its slot and nothing else moves; the next
-calendar day starts fresh."""
+calendar day starts fresh. Plus daily_shelf, the shared shelf recipe
+(Aug 30 2026): urgent rows lead, the rest walk no-repeat quality tiers
+into day-stable shuffled slots, and shelves never repeat a film
+another shelf on the page already claimed."""
 
 import json
 
-from app.recommendations import RECS_KEY, frozen_shelf
+from datetime import date
+
+from app.recommendations import RECS_KEY, daily_shelf, frozen_shelf
 
 from tests.factories import make_movie, make_movie_file
 
@@ -61,6 +66,106 @@ def test_frozen_shelf_replays_and_replaces_in_slot(app):
 
     other = frozen_shelf(app.redis, 2, "unit", eligible, lambda: [7], day="2026-08-26")
     assert other == [7]
+
+
+def test_daily_shelf_urgent_rows_lead_in_order(app):
+    """Urgent rows hold the leading slots in the order given — never
+    shuffled — and the remaining slots fill from the ranked rows."""
+
+    urgent = [{"id": "u1"}, {"id": "u2"}]
+    rows = [{"id": f"r{n}"} for n in range(10)]
+
+    with app.app_context():
+        cards = daily_shelf(
+            app.redis,
+            1,
+            "unit-urgent",
+            rows,
+            set(),
+            key=lambda row: row["id"],
+            urgent=urgent,
+            day=date(2026, 8, 30),
+            count=6,
+        )
+
+    assert [card["id"] for card in cards[:2]] == ["u1", "u2"]
+    assert len(cards) == 6
+    assert len({card["id"] for card in cards}) == 6
+
+
+def test_daily_shelf_never_repeats_across_the_page(app):
+    """Two shelves fed the same candidates claim disjoint films: the
+    shared `shown` set is the page's no-repeat pool."""
+
+    rows = [{"id": f"r{n}"} for n in range(12)]
+
+    with app.app_context():
+        shown = set()
+        first = daily_shelf(
+            app.redis,
+            1,
+            "unit-first",
+            rows,
+            shown,
+            key=lambda row: row["id"],
+            day=date(2026, 8, 30),
+            count=5,
+        )
+        second = daily_shelf(
+            app.redis,
+            1,
+            "unit-second",
+            rows,
+            shown,
+            key=lambda row: row["id"],
+            day=date(2026, 8, 30),
+            count=5,
+        )
+
+    first_ids = {card["id"] for card in first}
+    second_ids = {card["id"] for card in second}
+    assert len(first) == 5 and len(second) == 5
+    assert not first_ids & second_ids
+    assert shown == first_ids | second_ids
+
+
+def test_daily_shelf_freezes_the_day_and_varies_by_day(app):
+    """A frozen shelf replays the same cards all day; the next day
+    draws a different arrangement; freeze=False (the ?minutes= lens)
+    picks live without writing a snapshot."""
+
+    rows = [{"id": f"r{n}"} for n in range(30)]
+
+    def draw(day, shelf="unit-freeze", freeze=True):
+        """One shelf pick for the given day, with a fresh claim set."""
+
+        with app.app_context():
+            return [
+                card["id"]
+                for card in daily_shelf(
+                    app.redis,
+                    1,
+                    shelf,
+                    rows,
+                    set(),
+                    key=lambda row: row["id"],
+                    day=day,
+                    freeze=freeze,
+                )
+            ]
+
+    first = draw(date(2026, 8, 30))
+    assert len(first) == 12
+    assert draw(date(2026, 8, 30)) == first
+    assert draw(date(2026, 8, 31)) != first
+
+    # The live lens picks the same day-deterministic result but leaves
+    # no snapshot behind
+
+    assert draw(date(2026, 9, 1), shelf="unit-live", freeze=False) == draw(
+        date(2026, 9, 1), shelf="unit-live", freeze=False
+    )
+    assert app.redis.get("fitzflix:shelf:unit-live:1:2026-09-01") is None
 
 
 def test_landing_rail_is_stable_and_replaces_only_the_watched_slot(app, admin_client):

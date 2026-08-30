@@ -172,10 +172,11 @@ def newly_added_shelves(user):
     recent arrivals; [] without a taste profile.
 
     Shelf semantics mirror the leaving shelf: owned films drop out
-    (they're not discoveries), refused films drop out, logged films
-    drop out unless watchlisted, and a watchlisted arrival badges and
-    sorts first — though the alert email is the primary channel for
-    that case, the scrape often knows days before TMDb does.
+    (they're not discoveries), and so do refused, logged, and
+    watchlisted films — a watchlisted arrival belongs to the landing
+    page's watchlist shelf (and the alert email is the primary channel
+    for that case anyway; the scrape often knows days before TMDb
+    does).
     """
 
     subscribed = {row.provider_id for row in user.streaming_providers}
@@ -208,7 +209,7 @@ def newly_added_shelves(user):
             tmdb_id = item["tmdb_id"]
             if tmdb_id in owned or tmdb_id in refused:
                 continue
-            if tmdb_id in logged and tmdb_id not in watchlisted:
+            if tmdb_id in logged or tmdb_id in watchlisted:
                 continue
             score, contributions = score_movie(_payload_features(item), profile)
             rows.append(
@@ -219,7 +220,6 @@ def newly_added_shelves(user):
                     "poster_path": item.get("poster_path"),
                     "runtime": item.get("runtime"),
                     "first_seen": item.get("first_seen"),
-                    "watchlisted": tmdb_id in watchlisted,
                     "because": [
                         label
                         for contribution, label in contributions[:3]
@@ -230,7 +230,7 @@ def newly_added_shelves(user):
             )
         if not rows:
             continue
-        rows.sort(key=lambda row: (row["watchlisted"], row["score"]), reverse=True)
+        rows.sort(key=lambda row: row["score"], reverse=True)
         shelves.append(
             {
                 "provider_id": provider_id,

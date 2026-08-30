@@ -396,7 +396,7 @@ def subscribe_criterion(app):
     return user_id
 
 
-def test_shelf_ranks_excludes_and_badges(app, admin_client):
+def test_shelf_ranks_and_excludes(app, admin_client):
     from app import db
     from app.models import UserMovieReview, UserWatchlist
     from app.videos import star_rating_fields
@@ -407,8 +407,10 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
         owned = make_movie("Shelf Owned", 1956, tmdb_id=8102)
         make_movie_file(owned, "Bluray-1080p")
 
-        # Watchlisted (and even previously logged): the urgency case —
-        # watch it before it leaves, or buy the disc
+        # Watchlisted (and even previously logged): belongs to the
+        # landing page's watchlist shelf now, never this one — and
+        # with no availability cached it isn't watchable tonight, so
+        # it doesn't surface there either
 
         wanted = make_movie("Shelf Wanted", 1956, tmdb_id=8103)
         db.session.add(
@@ -448,11 +450,7 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="leaving-shelf"' in body
     assert "Shelf Fresh (1956)" in body
-    assert "Shelf Wanted (1956)" in body
-    # The watchlist badge lives in the popover since Aug 2026; the
-    # tile carries the hydrated actions instead
-    assert "On your watchlist" not in body
-    assert 'data-state-tmdb="8103"' in body
+    assert "Shelf Wanted" not in body
     assert "Shelf Owned" not in body
     assert "Shelf Dismissed" not in body
     assert "Western" in body
@@ -462,13 +460,106 @@ def test_shelf_ranks_excludes_and_badges(app, admin_client):
 
     assert 'href="/leaving"' in body
 
-    # The watchlisted film sorts first — it's the urgency case — and
-    # the runtime filter applies like everywhere else
+    # The runtime filter applies like everywhere else
 
-    assert body.index("Shelf Wanted") < body.index("Shelf Fresh")
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)
     assert "Shelf Fresh (1956)" in filtered
-    assert "Shelf Wanted" not in filtered
+
+
+def test_watchlist_shelf_leads_with_departures(app, admin_client):
+    """A watchlisted film leaving the Criterion Channel is the most
+    urgent card on the page: it heads the top watchlist shelf, ahead
+    of the calm watchlisted films, carrying the departure as its card
+    reason — while the leaving shelf itself stays pure discovery."""
+
+    from app import db
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+    from app.models import UserWatchlist
+    from app.streaming import AVAILABILITY_KEY
+
+    user_id = subscribe_criterion(app)
+    with app.app_context():
+        urgent = make_movie("Urgent Departure", 1956, tmdb_id=8301)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=urgent.id))
+        calm = make_movie("Calm Wanted", 1956, tmdb_id=8302)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=calm.id))
+        db.session.commit()
+
+    criterion = {
+        "provider_id": CRITERION_PROVIDER_ID,
+        "provider_name": "The Criterion Channel",
+        "logo_path": "/criterion.jpg",
+    }
+    for tmdb_id in (8301, 8302):
+        app.redis.set(
+            AVAILABILITY_KEY.format(tmdb_id=tmdb_id),
+            json.dumps(
+                {
+                    "link": None,
+                    "flatrate": [criterion],
+                    "ads": [],
+                    "rent": [],
+                    "buy": [],
+                }
+            ),
+        )
+    plant_shelf(app, [shelf_item(8301, "Urgent Departure")])
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "From your watchlist" in body
+    assert body.index("Urgent Departure (1956)") < body.index("Calm Wanted (1956)")
+    assert "Leaving the Criterion Channel" in body
+
+    # Both watchlisted films left the leaving shelf itself nothing to
+    # show, so its heading doesn't render
+
+    assert 'id="leaving-shelf"' not in body
+
+
+def test_page_never_repeats_a_film_across_shelves(app, admin_client):
+    """A film both on the streaming rail and in the leaving set shows
+    exactly once on the page: the shelves claim their films from one
+    shared no-repeat pool, in a day-stable order."""
+
+    from app.streaming_rail import RAIL_KEY
+
+    user_id = subscribe_criterion(app)
+    plant_shelf(
+        app,
+        [shelf_item(8401, "Overlap Film"), shelf_item(8402, "Departure Only")],
+    )
+
+    def rail_item(tmdb_id, title, score):
+        """A minimal stored rail entry."""
+
+        return {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "year": "1956",
+            "poster_path": None,
+            "runtime": 95,
+            "providers": [],
+            "because": [],
+            "score": score,
+        }
+
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 02:15",
+                "items": [
+                    rail_item(8401, "Overlap Film", 2.0),
+                    rail_item(8403, "Rail Only", 1.0),
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert body.count("Overlap Film (1956)") == 1
+    assert "Departure Only (1956)" in body
+    assert "Rail Only (1956)" in body
 
 
 def test_runtime_filter_says_when_the_shelf_empties(app, admin_client):

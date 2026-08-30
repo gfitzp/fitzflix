@@ -463,7 +463,11 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
     assert "TMDB data refreshing" in body
 
 
-def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
+def test_rail_excludes_watchlisted_films(app, admin_client):
+    """A watchlisted film never rides the streaming rail (Aug 30 2026):
+    the rail is pure discovery now — the watchlist shelf up top is
+    where wanted films surface, and only when they're watchable."""
+
     from app import db
     from app.models import UserWatchlist
     from app.streaming_rail import RAIL_KEY
@@ -503,70 +507,77 @@ def test_rail_pins_and_badges_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The watchlisted film holds a pinned slot alongside the
-    # higher-scoring one (positions vary daily since the shuffle);
-    # the badge itself lives in the popover since Aug 2026
+    # The wanted film leaves the rail; with no availability cached it
+    # isn't watchable tonight, so the watchlist shelf skips it too
 
-    assert "On your watchlist" not in body
-    assert "Rail Wanted (1994)" in body
+    assert "Rail Wanted (1994)" not in body
     assert "Rail Unwanted High (1994)" in body
 
 
-def test_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
-    """A big watchlist cycles through a few pinned slots instead of
-    freezing the streaming rail — discovery keeps most of the cards."""
+def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
+    """A watchlisted film streaming on a subscribed service is
+    watchable tonight, so it surfaces on the top watchlist shelf —
+    answered from the availability cache, never a live fetch."""
 
     from app import db
-    from app.main.discover import WATCHLIST_PIN_LIMIT
     from app.models import UserWatchlist
+    from app.streaming import AVAILABILITY_KEY
     from app.streaming_rail import RAIL_KEY
 
     user_id = admin_id(app)
     with app.app_context():
-        wanted_tmdb_ids = []
-        for n in range(12):
-            movie = make_movie(f"Rail Wanted {n}", 1990, tmdb_id=9400 + n)
-            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
-            wanted_tmdb_ids.append(9400 + n)
+        from app.models import UserStreamingProvider
+
+        db.session.add(
+            UserStreamingProvider(
+                user_id=user_id, provider_id=8, name="Netflix", logo_path="/n.jpg"
+            )
+        )
+        wanted = make_movie("Rail Wanted", 1994, tmdb_id=9307)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
         db.session.commit()
 
-    def rail_item(tmdb_id, title, score):
-        """A minimal stored rail entry."""
-
-        return {
-            "tmdb_id": tmdb_id,
-            "title": title,
-            "year": "1990",
-            "poster_path": None,
-            "runtime": 95,
-            "providers": [{**NETFLIX, "kind": "flatrate"}],
-            "because": ["popular on Netflix"],
-            "score": 2.0,
-        }
-
-    items = [
-        rail_item(tmdb_id, f"Rail Wanted {n}", 2.0)
-        for n, tmdb_id in enumerate(wanted_tmdb_ids)
-    ]
-    items += [rail_item(9500 + n, f"Rail Discovery {n}", 1.0) for n in range(12)]
+    app.redis.set(
+        AVAILABILITY_KEY.format(tmdb_id=9307),
+        json.dumps(
+            {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": [], "buy": []}
+        ),
+    )
     app.redis.set(
         RAIL_KEY.format(user_id=user_id),
-        json.dumps({"computed_at": "2026-08-12 02:15", "items": items}),
+        json.dumps(
+            {
+                "computed_at": "2026-08-12 02:15",
+                "items": [
+                    {
+                        "tmdb_id": 9307,
+                        "title": "Rail Wanted",
+                        "year": "1994",
+                        "poster_path": None,
+                        "runtime": 95,
+                        "providers": [{**NETFLIX, "kind": "flatrate"}],
+                        "because": ["popular on Netflix"],
+                        "score": 1.0,
+                    }
+                ],
+            }
+        ),
     )
 
     body = admin_client.get("/").get_data(as_text=True)
-    shown_wanted = sum(f"Rail Wanted {n} (1990)" in body for n in range(12))
-    shown_discovery = sum(f"Rail Discovery {n} (1990)" in body for n in range(12))
-    assert shown_wanted == WATCHLIST_PIN_LIMIT
-    assert shown_discovery == 12 - WATCHLIST_PIN_LIMIT
+    assert "From your watchlist" in body
+    assert "Rail Wanted (1994)" in body
+    # Once on the watchlist shelf, the film never repeats on the rail:
+    # the rail was its only other source and it's excluded there
+    assert body.count("Rail Wanted (1994)") == 1
 
 
-def test_library_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
-    """Twelve watchlisted owned films must not freeze the library rail:
-    the cap keeps the daily discovery slots in the majority."""
+def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client):
+    """Twelve watchlisted owned films all surface on the top watchlist
+    shelf (its cap is bigger than a discovery shelf's), and the
+    library rail keeps all twelve of its discovery slots."""
 
     from app import db
-    from app.main.discover import WATCHLIST_PIN_LIMIT
     from app.models import UserWatchlist
     from app.recommendations import RECS_KEY
 
@@ -591,10 +602,11 @@ def test_library_rail_pin_cap_keeps_the_rotation_alive(app, admin_client):
     )
 
     body = admin_client.get("/").get_data(as_text=True)
+    assert "From your watchlist" in body
     shown_wanted = sum(f"Library Wanted {n} (1990)" in body for n in range(12))
     shown_discovery = sum(f"Library Discovery {n} (1991)" in body for n in range(12))
-    assert shown_wanted == WATCHLIST_PIN_LIMIT
-    assert shown_discovery == 12 - WATCHLIST_PIN_LIMIT
+    assert shown_wanted == 12
+    assert shown_discovery == 12
 
 
 def test_watchlist_feeds_the_taste_profile(app):
@@ -614,9 +626,10 @@ def test_watchlist_feeds_the_taste_profile(app):
     assert weights[wanted_id] == WATCHLIST_WEIGHT
 
 
-def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
-    """A watchlisted owned film pins ahead of the library rail's daily
-    rotation, badged — the library is big, these are the wanted ones."""
+def test_library_rail_excludes_watchlisted_films(app, admin_client):
+    """A watchlisted owned film leaves the library rail for the top
+    watchlist shelf: the rail is pure discovery, the shelf is intent —
+    and the film shows exactly once on the page."""
 
     from app import db
     from app.models import UserWatchlist
@@ -647,20 +660,20 @@ def test_library_rail_pins_and_badges_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The watchlisted film holds a pinned slot regardless of its stored
-    # ranking (positions vary daily since the shuffle); the badge
-    # itself lives in the popover since Aug 2026
+    # The owned wanted film is watchable tonight, so it surfaces on
+    # the watchlist shelf — once — while the rail keeps discovery
 
-    assert "On your watchlist" not in body
-    assert "Library Wanted (1995)" in body
+    assert "From your watchlist" in body
+    assert body.count("Library Wanted (1995)") == 1
     assert "Library Unwanted High (1994)" in body
+    assert body.index("From your watchlist") < body.index("Library Wanted (1995)")
+    assert body.index("Library Wanted (1995)") < body.index("From your library")
 
 
-def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
-    """The amber cards land on day-varying positions instead of always
-    leading the rail (Glenn: no fixed watchlist block up front)."""
-
-    from datetime import date as real_date
+def test_watchlist_shelf_leads_the_page(app, admin_client):
+    """The watchlist shelf renders above every discovery shelf: the
+    page reads "what you already want", then ways to find something
+    else (Glenn, Aug 30 2026)."""
 
     from app import db
     from app.models import UserWatchlist
@@ -686,39 +699,14 @@ def test_library_rail_mixes_pins_into_the_row(app, admin_client, monkeypatch):
         json.dumps({"computed_at": "2026-08-12 01:45", "items": rec_items}),
     )
 
-    def pin_positions(frozen):
-        """The rail-order ranks the four amber cards land on."""
-
-        class FrozenDate(real_date):
-            """A date whose today() is pinned for deterministic seeds."""
-
-            @classmethod
-            def today(cls):
-                return cls(*frozen)
-
-        monkeypatch.setattr("app.main.discover.date", FrozenDate)
-        body = admin_client.get("/").get_data(as_text=True)
-        shown = sorted(
-            (body.index(title), title)
-            for title in [f"Mix Wanted {n} (1990)" for n in range(4)]
-            + [f"Mix Discovery {n} (1991)" for n in range(8)]
-            if title in body
-        )
-        assert len(shown) == 12
-        return {
-            rank
-            for rank, (_, title) in enumerate(shown)
-            if title.startswith("Mix Wanted")
-        }
-
-    first = pin_positions((2026, 8, 12))
-    second = pin_positions((2026, 8, 13))
-
-    # Pins sit at day-varying positions, not a fixed leading block on
-    # both days; the arrangement changes between days
-
-    assert not (first == {0, 1, 2, 3} and second == {0, 1, 2, 3})
-    assert first != second
+    body = admin_client.get("/").get_data(as_text=True)
+    assert body.index("From your watchlist") < body.index("From your library")
+    for n in range(4):
+        assert f"Mix Wanted {n} (1990)" in body
+        assert body.index(f"Mix Wanted {n} (1990)") < body.index("From your library")
+    for n in range(8):
+        assert f"Mix Discovery {n} (1991)" in body
+        assert body.index("From your library") < body.index(f"Mix Discovery {n} (1991)")
 
 
 def test_movie_page_not_interested_toggle(app, admin_client):

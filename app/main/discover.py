@@ -70,9 +70,7 @@ from app.recommendations import (
     not_interested_movie_ids,
     resolved_score,
     resolved_tmdb_score,
-    rotate_daily,
-    rotate_partition,
-    frozen_shelf,
+    daily_shelf,
     shuffle_daily,
     stored_profile,
     stored_recommendations,
@@ -119,11 +117,11 @@ from app.videos import (
 )
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
-# At most this many of a rail's 12 daily slots go to watchlist pins;
-# bigger watchlists rotate through the pinned slots day by day, so the
-# list always surfaces without ever crowding out discovery
+# The top watchlist shelf runs bigger than the 12-card discovery
+# shelves (Glenn, Aug 30 2026): it's the already-wanted films, so it
+# earns three rows before the discovery shelves start
 
-WATCHLIST_PIN_LIMIT = 4
+WATCHLIST_SHELF_SIZE = 18
 
 
 def _fits(movie, minutes):
@@ -132,14 +130,120 @@ def _fits(movie, minutes):
     return bool(movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
 
 
+def _movie_key(movie):
+    """The page-wide claim id for a movie-backed card: the tmdb id the
+    streaming-sourced shelves also use, so the cross-shelf no-repeat
+    set recognizes the same film everywhere — with a local-only
+    fallback for the rare film TMDB doesn't know."""
+
+    return movie.tmdb_id if movie.tmdb_id else f"m{movie.id}"
+
+
+def watchlist_shelf_rows(user):
+    """(urgent, rows) for the landing page's top watchlist shelf: the
+    films the user already said they want that can actually be watched
+    tonight — owned locally, or streaming on one of their services,
+    answered from the availability cache the nightly refresh keeps
+    full (a film added since last night simply waits for tonight's
+    warm).
+
+    `urgent` is the leaving-soon films — streaming departures the
+    fold rules already treat as the page's loudest badge — best-first
+    by suggested rating; they hold the shelf's leading slots in order,
+    because a watchlisted film about to leave is the most urgent card
+    on the whole page. `rows` is everything else, best-first by
+    suggested rating from the shared score source. Owned films never
+    count as leaving (the disc isn't going anywhere)."""
+
+    user_id = int(user.id)
+    entries = (
+        UserWatchlist.query.filter_by(user_id=user_id)
+        .join(Movie, Movie.id == UserWatchlist.movie_id)
+        .options(contains_eager(UserWatchlist.movie))
+        .all()
+    )
+    if not entries:
+        return [], []
+    movies = [entry.movie for entry in entries]
+    owned_ids = {
+        movie_id
+        for (movie_id,) in db.session.query(Movie.id)
+        .filter(Movie.id.in_([movie.id for movie in movies]))
+        .filter(Movie.files.any(File.feature_type_id.is_(None)))
+    }
+    provider_ids = user_provider_ids(user)
+    availability = {}
+    if provider_ids:
+        availability, _ = batch_title_availability(
+            (
+                movie.tmdb_id
+                for movie in movies
+                if movie.id not in owned_ids and movie.tmdb_id
+            ),
+            fetch_limit=0,
+        )
+
+    watchable = []
+    for movie in movies:
+        owned = movie.id in owned_ids
+        streaming = bool(
+            provider_ids
+            and movie.tmdb_id
+            and streaming_matches(availability.get(movie.tmdb_id), provider_ids)
+        )
+        if owned or streaming:
+            watchable.append((movie, owned, streaming))
+    if not watchable:
+        return [], []
+
+    # Suggested ratings from the one shared score source: the stored
+    # map covers the unlogged candidates (the recompute's cut deepens
+    # by watchlisted films for exactly this), and the rest — mostly
+    # rewatch intents, already logged — score live once and patch in
+
+    profile = stored_profile(current_app.redis, user_id)
+    scores = stored_scores(current_app.redis, user_id) if profile else {}
+    rows = []
+    for movie, owned, streaming in watchable:
+        score = (
+            resolved_score(current_app.redis, user_id, movie, profile, scores=scores)
+            if profile
+            else None
+        )
+        rows.append(
+            {
+                "movie": movie,
+                "owned": owned,
+                "leaving": (
+                    leaving_departure(movie.tmdb_id)
+                    if streaming and not owned
+                    else None
+                ),
+                "score": score if score is not None else 0.0,
+            }
+        )
+    rows.sort(key=lambda row: row["score"], reverse=True)
+    return (
+        [row for row in rows if row["leaving"]],
+        [row for row in rows if not row["leaving"]],
+    )
+
+
 @bp.route("/")
 @bp.route("/index")
 @login_required
 def index():
-    """The landing page: what to watch tonight, recommended from the
-    library by the user's own diary (GitHub #46/#61).
+    """The landing page: what to watch tonight (GitHub #46/#61).
 
-    ?minutes=N filters both rails at view time to films that fit the
+    Since Aug 30 2026 the page opens with the watchlist shelf — the
+    films the user already said they want that are watchable tonight,
+    leaving-soon departures leading — and every shelf below it is pure
+    discovery, watchlist excluded at the source: the library rail, the
+    Criterion departures, the newly-added feeds, the streaming rail,
+    and the rewatch shelf, all picked by the one shared daily_shelf
+    recipe with a page-wide no-repeat set.
+
+    ?minutes=N filters every shelf at view time to films that fit the
     evening — the computed recommendations themselves never consider
     length, and films with unknown runtimes hide only from filtered
     views.
@@ -153,6 +257,54 @@ def index():
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
         minutes = None
+    day = date.today()
+    freeze = minutes is None
+
+    # The watchlist is a SOURCE now, not a per-shelf sort key (Glenn,
+    # Aug 30 2026): its watchable films fill the top shelf, and every
+    # discovery shelf below excludes watchlisted films at the source —
+    # the page reads "what you already want", then "ways to discover
+    # something else if none of that appeals"
+
+    watchlisted_ids = {
+        movie_id
+        for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
+            UserWatchlist.user_id == int(current_user.id)
+        )
+    }
+    watchlisted_tmdb = set()
+    if watchlisted_ids:
+        watchlisted_tmdb = {
+            tmdb_id
+            for (tmdb_id,) in db.session.query(Movie.tmdb_id)
+            .filter(Movie.id.in_(watchlisted_ids))
+            .filter(Movie.tmdb_id.isnot(None))
+        }
+
+    # The top shelf claims its films first, always; the discovery
+    # shelves claim afterwards in a day-shuffled order, so no single
+    # shelf gets first pick of the shared candidates every day
+
+    shown = set()
+    wl_urgent, wl_rows = watchlist_shelf_rows(current_user)
+    # Candidates that clear every other test, so an empty rail can tell
+    # "nothing fits the filter" from "nothing left to recommend" (#198)
+    watchlist_eligible = len(wl_urgent) + len(wl_rows)
+    if minutes:
+        wl_urgent = [row for row in wl_urgent if _fits(row["movie"], minutes)]
+        wl_rows = [row for row in wl_rows if _fits(row["movie"], minutes)]
+    watchlist_items = daily_shelf(
+        current_app.redis,
+        current_user.id,
+        "watchlist",
+        wl_rows,
+        shown,
+        key=lambda row: _movie_key(row["movie"]),
+        urgent=wl_urgent,
+        day=day,
+        count=WATCHLIST_SHELF_SIZE,
+        freeze=freeze,
+    )
 
     stored = stored_recommendations(current_app.redis, current_user.id)
 
@@ -163,116 +315,33 @@ def index():
         is not None
     )
 
-    recs = []
-    # Candidates that clear every other test, so an empty rail can tell
-    # "nothing fits the filter" from "nothing left to recommend" (#198)
-    recs_eligible = 0
+    # The library rail's source: the nightly ranking, minus films
+    # logged or waved off since the recompute (they drop immediately
+    # rather than lingering until tonight) and minus the watchlist
+
+    rec_rows = []
     computed_at = None
     if stored:
         computed_at = stored.get("computed_at")
-
-        # Films logged since the nightly recompute drop out immediately
-        # rather than lingering as recommendations until tonight
-
         seen = {
             movie_id
             for (movie_id,) in db.session.query(UserMovieReview.movie_id)
             .filter(UserMovieReview.user_id == int(current_user.id))
             .filter(UserMovieReview.movie_id.isnot(None))
         }
-        # Films waved off since the nightly run drop immediately too
         seen |= not_interested_movie_ids(current_user.id)
         movie_ids = [item["movie_id"] for item in stored.get("items", [])]
         movies = {
             movie.id: movie
             for movie in Movie.query.filter(Movie.id.in_(movie_ids or [0]))
         }
-        # Watchlisted owned films pin ahead of the rotation regardless
-        # of where (or whether) they sit in the stored ranking — the
-        # library is big, but these are the ones specifically wanted.
-        # Pins are capped so a long watchlist rotates through its slots
-        # instead of freezing the rail — the discovery slots always
-        # keep the majority
-
-        because_by_id = {
-            item["movie_id"]: item.get("because", [])[:3]
-            for item in stored.get("items", [])
-        }
-        wanted_owned = (
-            db.session.query(Movie)
-            .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
-            .filter(UserWatchlist.user_id == int(current_user.id))
-            .filter(Movie.files.any(File.feature_type_id.is_(None)))
-            .order_by(UserWatchlist.date_added.desc())
-            .all()
-        )
-        watchlist_ids = {movie.id for movie in wanted_owned}
-        recs_eligible = len(wanted_owned)
-        pin_candidates = [
-            {
-                "movie": movie,
-                "because": because_by_id.get(movie.id, []),
-                "watchlisted": True,
-            }
-            for movie in wanted_owned
-        ]
-
-        rec_rows = []
         for item in stored.get("items", []):
             movie = movies.get(item["movie_id"])
             if movie is None or item["movie_id"] in seen:
                 continue
-            if item["movie_id"] in watchlist_ids:
+            if item["movie_id"] in watchlisted_ids:
                 continue
-            recs_eligible += 1
-            rec_rows.append(
-                {
-                    "movie": movie,
-                    "because": item.get("because", [])[:3],
-                    "watchlisted": False,
-                }
-            )
-
-        # A no-repeat daily partition through the deep stored ranking:
-        # twelve films a day, one per quality tier, cycling the whole
-        # set (400+ films, roughly monthly) before anything repeats.
-        # The day's cards then shuffle so neither the amber pins nor
-        # the quality tiers hold fixed positions (Glenn: slot one must
-        # not always be a pin or a top-tier film). The default view
-        # freezes the day's result (#204); the ?minutes= view stays a
-        # live pick over the films that fit — it's a transient planning
-        # lens, not the shelf
-
-        def pick_recs(pins, rows):
-            """The day's baseline card order for the library rail."""
-
-            chosen = rotate_partition(
-                pins, WATCHLIST_PIN_LIMIT, date.today().toordinal()
-            )
-            return shuffle_daily(
-                chosen
-                + rotate_partition(rows, 12 - len(chosen), date.today().toordinal()),
-                f"mix:recs:{int(current_user.id)}:{date.today().isoformat()}",
-            )
-
-        if minutes:
-            recs = pick_recs(
-                [row for row in pin_candidates if _fits(row["movie"], minutes)],
-                [row for row in rec_rows if _fits(row["movie"], minutes)],
-            )
-        else:
-            rows_by_id = {row["movie"].id: row for row in pin_candidates + rec_rows}
-            shown_ids = frozen_shelf(
-                current_app.redis,
-                current_user.id,
-                day=date.today().isoformat(),
-                shelf="recs",
-                eligible_ids=list(rows_by_id),
-                pick=lambda: [
-                    row["movie"].id for row in pick_recs(pin_candidates, rec_rows)
-                ],
-            )
-            recs = [rows_by_id[movie_id] for movie_id in shown_ids]
+            rec_rows.append({"movie": movie, "because": item.get("because", [])[:3]})
     elif has_history:
         # Diary rows but nothing stored yet (first deploy, or a brand-new
         # reviewer): compute once now instead of waiting for tonight; the
@@ -287,14 +356,12 @@ def index():
                 description="Computing film recommendations",
             )
 
-    # The rewatch shelf: owned films the user liked whose last watch is
-    # long past — old favorites otherwise have no surface, since the
-    # engine's candidates exclude logged films. Watchlisted ones
-    # (re-added = declared rewatch intent) pin first under the same cap
-    # as the other rails; the rest rotates daily
+    # The rewatch shelf's source: owned films the user liked whose last
+    # watch is long past — old favorites otherwise have no surface,
+    # since the engine's candidates exclude logged films. Re-added ones
+    # (declared rewatch intent) live on the watchlist shelf now
 
-    again_items = []
-    again_eligible = 0
+    again_rows = []
     again_ranked = watch_again_shelf(current_user.id)
     if again_ranked:
         again_movies = {
@@ -303,70 +370,21 @@ def index():
                 Movie.id.in_([item["movie_id"] for item in again_ranked])
             )
         }
-        again_watchlisted = {
-            movie_id
-            for (movie_id,) in db.session.query(UserWatchlist.movie_id).filter(
-                UserWatchlist.user_id == int(current_user.id)
-            )
-        }
-        again_rows = []
         for item in again_ranked:
             again_movie = again_movies.get(item["movie_id"])
-            if again_movie is None:
+            if again_movie is None or item["movie_id"] in watchlisted_ids:
                 continue
-            again_eligible += 1
             again_rows.append(
-                {
-                    "movie": again_movie,
-                    "last_watched": item["last_watched"],
-                    "watchlisted": item["movie_id"] in again_watchlisted,
-                }
+                {"movie": again_movie, "last_watched": item["last_watched"]}
             )
 
-        def pick_again(rows):
-            """The day's baseline card order for the rewatch shelf."""
+    # The streaming rail's source: films streaming on this user's
+    # services, from the nightly discover-pool recompute. Films logged
+    # or acquired since the run drop out immediately; a user with a
+    # profile and provider picks but no stored rail gets a one-off
+    # compute enqueued
 
-            chosen = rotate_partition(
-                [row for row in rows if row["watchlisted"]],
-                WATCHLIST_PIN_LIMIT,
-                date.today().toordinal(),
-            )
-            return shuffle_daily(
-                chosen
-                + rotate_daily(
-                    [row for row in rows if not row["watchlisted"]],
-                    12 - len(chosen),
-                    f"again:{int(current_user.id)}:{date.today().isoformat()}",
-                ),
-                f"mix:again:{int(current_user.id)}:{date.today().isoformat()}",
-            )
-
-        if minutes:
-            again_items = pick_again(
-                [row for row in again_rows if _fits(row["movie"], minutes)]
-            )
-        else:
-            again_by_id = {row["movie"].id: row for row in again_rows}
-            shown_ids = frozen_shelf(
-                current_app.redis,
-                current_user.id,
-                day=date.today().isoformat(),
-                shelf="again",
-                eligible_ids=[
-                    row["movie"].id for row in again_rows if row["watchlisted"]
-                ]
-                + [row["movie"].id for row in again_rows if not row["watchlisted"]],
-                pick=lambda: [row["movie"].id for row in pick_again(again_rows)],
-            )
-            again_items = [again_by_id[movie_id] for movie_id in shown_ids]
-
-    # The second rail: films streaming on this user's services, from the
-    # nightly discover-pool recompute. Films logged or acquired since
-    # the run drop out immediately; a user with a profile and provider
-    # picks but no stored rail gets a one-off compute enqueued
-
-    rail = []
-    rail_eligible = 0
+    rail_rows = []
     rail_computed_at = None
     rail_payload = stored_rail(current_app.redis, current_user.id)
     if rail_payload:
@@ -396,68 +414,12 @@ def index():
                 | {t for (t,) in logged_now}
                 | {t for (t,) in refused_now}
             )
-        # A watchlisted film on the rail is the best kind of match —
-        # wanted, and streaming on a service already paid for — so it
-        # pins ahead of the daily rotation, capped like the library
-        # rail so discovery keeps most of the slots
-
-        watchlisted_now = set()
-        if rail_ids:
-            watchlisted_now = {
-                tmdb_id
-                for (tmdb_id,) in db.session.query(Movie.tmdb_id)
-                .join(UserWatchlist, UserWatchlist.movie_id == Movie.id)
-                .filter(Movie.tmdb_id.in_(rail_ids))
-                .filter(UserWatchlist.user_id == int(current_user.id))
-            }
-        rail_rows = []
-        for item in rail_payload.get("items", []):
-            if item["tmdb_id"] in dropped:
-                continue
-            rail_eligible += 1
-            item["watchlisted"] = item["tmdb_id"] in watchlisted_now
-            rail_rows.append(item)
-
-        def pick_rail(rows):
-            """The day's baseline card order for the streaming rail."""
-
-            chosen = rotate_partition(
-                [item for item in rows if item["watchlisted"]],
-                WATCHLIST_PIN_LIMIT,
-                date.today().toordinal(),
-            )
-            return shuffle_daily(
-                chosen
-                + rotate_daily(
-                    [item for item in rows if not item["watchlisted"]],
-                    12 - len(chosen),
-                    f"rail:{int(current_user.id)}:{date.today().isoformat()}",
-                ),
-                f"mix:rail:{int(current_user.id)}:{date.today().isoformat()}",
-            )
-
-        if minutes:
-            rail = pick_rail(
-                [
-                    item
-                    for item in rail_rows
-                    if item.get("runtime") and item["runtime"] <= minutes
-                ]
-            )
-        else:
-            rail_by_id = {item["tmdb_id"]: item for item in rail_rows}
-            shown_ids = frozen_shelf(
-                current_app.redis,
-                current_user.id,
-                day=date.today().isoformat(),
-                shelf="rail",
-                eligible_ids=[
-                    item["tmdb_id"] for item in rail_rows if item["watchlisted"]
-                ]
-                + [item["tmdb_id"] for item in rail_rows if not item["watchlisted"]],
-                pick=lambda: [item["tmdb_id"] for item in pick_rail(rail_rows)],
-            )
-            rail = [rail_by_id[tmdb_id] for tmdb_id in shown_ids]
+        rail_rows = [
+            item
+            for item in rail_payload.get("items", [])
+            if item["tmdb_id"] not in dropped
+            and item["tmdb_id"] not in watchlisted_tmdb
+        ]
     elif user_provider_ids(current_user) and stored_profile(
         current_app.redis, current_user.id
     ):
@@ -470,151 +432,132 @@ def index():
                 description="Computing the streaming rail",
             )
 
-    # The departure shelf: what leaves the Criterion Channel at month's
-    # end, taste-ranked, for Criterion subscribers. The runtime filter
-    # applies like everywhere else
+    # The departure shelf's source: what leaves the Criterion Channel
+    # at month's end, taste-ranked, for Criterion subscribers —
+    # watchlisted departures live on the watchlist shelf, leading it
 
     shelf = leaving_shelf(current_user)
-    shelf_items = []
-    shelf_eligible = 0
-    shelf_departs = None
-    shelf_url = None
-    if shelf:
-        shelf_departs = shelf["departs"].strftime("%B %-d")
-        shelf_url = shelf["url"]
-        shelf_eligible = len(shelf["items"])
+    leaving_rows = shelf["items"] if shelf else []
+    shelf_departs = shelf["departs"].strftime("%B %-d") if shelf else None
+    shelf_url = shelf["url"] if shelf else None
 
-        # Watchlist urgencies stay pinned; the rest rotates daily so a
-        # month-long departure set doesn't look frozen — but frozen
-        # WITHIN the day like the other rails (#204). No shuffle here:
-        # watchlist-first order is urgency, not discovery
+    # The newly-added discovery shelves' sources (#246): recent
+    # arrivals on a subscribed provider's own newly-added feed,
+    # generic over provider — only the Criterion Channel feeds one
+    # today. The availability-alert email already covers watchlisted
+    # arrivals; these shelves are for films the database has never
+    # heard of
 
-        def pick_shelf(rows):
-            """The day's baseline card order for the departure shelf."""
+    newly_feeds = newly_added_shelves(current_user)
 
-            chosen = [item for item in rows if item.get("watchlisted")][:12]
-            return chosen + rotate_daily(
-                [item for item in rows if not item.get("watchlisted")],
-                12 - len(chosen),
-                f"shelf:{int(current_user.id)}:{date.today().isoformat()}",
-            )
+    # Every discovery shelf runs the one shared recipe (daily_shelf):
+    # taste-ranked rows walk no-repeat quality tiers into day-stable
+    # random slots, frozen for the day (#204), never repeating a film
+    # another shelf already claimed. The claim order shuffles daily so
+    # candidates the shelves share spread around instead of always
+    # going to whichever shelf picked first; the page's render order
+    # stays fixed
 
+    def movie_fits(row):
+        """The runtime filter for movie-backed rows."""
+
+        return _fits(row["movie"], minutes)
+
+    def payload_fits(item):
+        """The runtime filter for stored-payload rows."""
+
+        return bool(item.get("runtime") and item["runtime"] <= minutes)
+
+    def movie_row_key(row):
+        """A movie-backed row's page-wide claim id."""
+
+        return _movie_key(row["movie"])
+
+    def payload_key(item):
+        """A stored-payload row's page-wide claim id."""
+
+        return item["tmdb_id"]
+
+    specs = {
+        "recs": (rec_rows, movie_row_key, movie_fits),
+        "again": (again_rows, movie_row_key, movie_fits),
+        "rail": (rail_rows, payload_key, payload_fits),
+        "leaving": (leaving_rows, payload_key, payload_fits),
+    }
+    for feed in newly_feeds:
+        specs[f"newly:{feed['provider_id']}"] = (
+            feed["items"],
+            payload_key,
+            payload_fits,
+        )
+
+    eligible_counts = {name: len(rows) for name, (rows, _, _) in specs.items()}
+    picked = {}
+    for name in shuffle_daily(
+        sorted(specs), f"order:{int(current_user.id)}:{day.isoformat()}"
+    ):
+        rows, row_key, fits = specs[name]
+        if not rows:
+            picked[name] = []
+            continue
         if minutes:
-            shelf_items = pick_shelf(
-                [
-                    item
-                    for item in shelf["items"]
-                    if item.get("runtime") and item["runtime"] <= minutes
-                ]
-            )
-        else:
-            shelf_by_id = {item["tmdb_id"]: item for item in shelf["items"]}
-            shown_ids = frozen_shelf(
-                current_app.redis,
-                current_user.id,
-                day=date.today().isoformat(),
-                shelf="leaving",
-                eligible_ids=[
-                    item["tmdb_id"]
-                    for item in shelf["items"]
-                    if item.get("watchlisted")
-                ]
-                + [
-                    item["tmdb_id"]
-                    for item in shelf["items"]
-                    if not item.get("watchlisted")
-                ],
-                pick=lambda: [item["tmdb_id"] for item in pick_shelf(shelf["items"])],
-            )
-            shelf_items = [shelf_by_id[tmdb_id] for tmdb_id in shown_ids]
+            rows = [row for row in rows if fits(row)]
+        picked[name] = daily_shelf(
+            current_app.redis,
+            current_user.id,
+            name,
+            rows,
+            shown,
+            key=row_key,
+            day=day,
+            freeze=freeze,
+        )
+
+    recs = picked["recs"]
+    again_items = picked["again"]
+    rail = picked["rail"]
+    shelf_items = picked["leaving"]
 
     # A rail the runtime filter emptied says so rather than vanishing —
     # silence reads as "there's nothing here" (#198). Each flag means
     # the rail had films and the filter took them all
 
-    def filtered_out(shown, eligible):
+    def filtered_out(shown_cards, eligible):
         """True when a rail had films and the runtime filter took
         every one of them."""
 
-        return bool(minutes) and not shown and eligible > 0
-
-    # The newly-added discovery shelves (#246): recent arrivals on a
-    # subscribed provider's own newly-added feed, generic over
-    # provider — only the Criterion Channel feeds one today. The
-    # availability-alert email already covers watchlisted arrivals;
-    # these shelves are for films the database has never heard of.
-    # Same daily-frozen rotation as the departure shelf, watchlist
-    # urgencies pinned
+        return bool(minutes) and not shown_cards and eligible > 0
 
     new_shelves = []
-    for feed_shelf in newly_added_shelves(current_user):
-        eligible = len(feed_shelf["items"])
-
-        def pick_new(rows, provider_id=feed_shelf["provider_id"]):
-            """The day's baseline card order for one newly-added
-            shelf."""
-
-            chosen = [item for item in rows if item.get("watchlisted")][:12]
-            return chosen + rotate_daily(
-                [item for item in rows if not item.get("watchlisted")],
-                12 - len(chosen),
-                f"newly:{provider_id}:{int(current_user.id)}:"
-                f"{date.today().isoformat()}",
-            )
-
-        if minutes:
-            shown = pick_new(
-                [
-                    item
-                    for item in feed_shelf["items"]
-                    if item.get("runtime") and item["runtime"] <= minutes
-                ]
-            )
-        else:
-            by_id = {item["tmdb_id"]: item for item in feed_shelf["items"]}
-            shown_ids = frozen_shelf(
-                current_app.redis,
-                current_user.id,
-                day=date.today().isoformat(),
-                shelf=f"newly:{feed_shelf['provider_id']}",
-                eligible_ids=[
-                    item["tmdb_id"]
-                    for item in feed_shelf["items"]
-                    if item.get("watchlisted")
-                ]
-                + [
-                    item["tmdb_id"]
-                    for item in feed_shelf["items"]
-                    if not item.get("watchlisted")
-                ],
-                pick=lambda rows=feed_shelf["items"]: [
-                    item["tmdb_id"] for item in pick_new(rows)
-                ],
-            )
-            shown = [by_id[tmdb_id] for tmdb_id in shown_ids]
+    for feed in newly_feeds:
+        films = picked[f"newly:{feed['provider_id']}"]
         new_shelves.append(
             {
-                "provider_id": feed_shelf["provider_id"],
-                "label": feed_shelf["label"],
-                "source": feed_shelf["source"],
+                "provider_id": feed["provider_id"],
+                "label": feed["label"],
+                "source": feed["source"],
                 # "films", not "items": a dict's .items in Jinja is
                 # the method, not the key
-                "films": shown,
-                "filtered_out": filtered_out(shown, eligible),
+                "films": films,
+                "filtered_out": filtered_out(
+                    films, eligible_counts[f"newly:{feed['provider_id']}"]
+                ),
             }
         )
 
     return render_template(
         "index.html",
         title="Home",
+        watchlist_items=watchlist_items,
+        watchlist_filtered_out=filtered_out(watchlist_items, watchlist_eligible),
         recs=recs,
         computed_at=computed_at,
         has_history=has_history,
         recs_stored=bool(stored),
-        recs_filtered_out=filtered_out(recs, recs_eligible),
-        again_filtered_out=filtered_out(again_items, again_eligible),
-        rail_filtered_out=filtered_out(rail, rail_eligible),
-        shelf_filtered_out=filtered_out(shelf_items, shelf_eligible),
+        recs_filtered_out=filtered_out(recs, eligible_counts["recs"]),
+        again_filtered_out=filtered_out(again_items, eligible_counts["again"]),
+        rail_filtered_out=filtered_out(rail, eligible_counts["rail"]),
+        shelf_filtered_out=filtered_out(shelf_items, eligible_counts["leaving"]),
         again=again_items,
         rail=rail,
         rail_computed_at=rail_computed_at,

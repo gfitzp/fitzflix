@@ -751,10 +751,11 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
 
     # The stored cut must survive the render-time exclusions: the
     # landing page pulls watchlisted films out of the discovery pool
-    # into the pin lane, and the watchlist is deliberately uncapped
-    # (Glenn once queued 500 films on Netflix) — so the cut deepens by
-    # the watchlisted candidates, keeping at least `limit` films for
-    # discovery and the rail's no-repeat cycle at a month or longer
+    # onto the top watchlist shelf, and the watchlist is deliberately
+    # uncapped (Glenn once queued 500 films on Netflix) — so the cut
+    # deepens by the watchlisted candidates, keeping at least `limit`
+    # films for discovery and the rail's no-repeat cycle at a month or
+    # longer
 
     watchlisted = {
         movie_id
@@ -1053,6 +1054,78 @@ def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
     if changed:
         redis_client.set(key, json.dumps(cards), ex=SHELF_SNAPSHOT_TTL)
     return cards
+
+
+def daily_shelf(
+    redis_client,
+    user_id,
+    shelf,
+    rows,
+    shown,
+    key,
+    urgent=(),
+    day=None,
+    count=12,
+    freeze=True,
+):
+    """One landing shelf's cards for the day, from the shared recipe
+    (Glenn, Aug 30 2026): with the watchlist promoted to its own top
+    shelf, every shelf below it is purely a discovery surface, and
+    they all pick the same way instead of each managing its own pin
+    lane.
+
+    `rows` is the shelf's candidate list, best-first by the shelf's
+    own taste ranking, with watchlisted films already excluded at the
+    source. `urgent` rows — the watchlist shelf's leaving-soon films —
+    always show first, in the order given, and never shuffle: there,
+    position IS the urgency signal. The remaining slots walk
+    rotate_partition's quality tiers, so every day mixes the whole
+    quality range and nothing repeats until the pool cycles, then
+    shuffle_daily scatters them into day-stable random slots.
+
+    `key` extracts a row's page-wide card id (a tmdb id where one
+    exists, so the same film can be recognized across shelves) and
+    `shown` is the page's cross-shelf claim set, mutated here: one
+    render never shows a film twice, which means the caller must pick
+    its shelves in a day-stable order — replayed snapshots claim their
+    films exactly as the first render of the day did. With `freeze`
+    the day's first render snapshots the result and later renders
+    replay it slot-for-slot via frozen_shelf; the ?minutes= view
+    passes freeze=False and picks live over the rows that fit, a
+    transient planning lens rather than the shelf (#204).
+    """
+
+    day = day or date.today()
+
+    def pick():
+        """The day's baseline card ids for this shelf."""
+
+        lead = [row for row in urgent if key(row) not in shown][:count]
+        pool = [row for row in rows if key(row) not in shown]
+        sampled = rotate_partition(pool, count - len(lead), day.toordinal())
+        mixed = shuffle_daily(sampled, f"mix:{shelf}:{int(user_id)}:{day.isoformat()}")
+        return [key(row) for row in lead + mixed]
+
+    by_key = {key(row): row for row in list(rows) + list(urgent)}
+    if freeze:
+        ids = frozen_shelf(
+            redis_client,
+            user_id,
+            day=day.isoformat(),
+            shelf=shelf,
+            # Replacement priority mirrors the pick: urgent rows, then
+            # the ranking — and never a film another shelf is showing
+            eligible_ids=[
+                row_key
+                for row_key in [key(row) for row in urgent] + [key(row) for row in rows]
+                if row_key not in shown
+            ],
+            pick=pick,
+        )
+    else:
+        ids = pick()
+    shown.update(ids)
+    return [by_key[row_key] for row_key in ids if row_key in by_key]
 
 
 def stored_recommendations(redis, user_id):

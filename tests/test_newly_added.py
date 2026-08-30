@@ -195,7 +195,9 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert 'id="newly-added-shelf-258"' in body
     assert "Newly added to the Criterion Channel" in body
     assert "Arrival Fresh (1956)" in body
-    assert "Arrival Wanted (1956)" in body
+    # Watchlisted arrivals belong to the watchlist shelf (and with no
+    # availability cached, nowhere at all tonight), never this one
+    assert "Arrival Wanted" not in body
     assert "Arrival Owned" not in body
     assert "Arrival Dismissed" not in body
     assert "Arrival Planted" not in body
@@ -207,14 +209,11 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
 
     assert 'href="/newly-added#newly-added-258"' in body
 
-    # The watchlisted arrival sorts first, and the runtime filter
-    # applies like everywhere else — including the emptied-not-hidden
-    # message (#198)
+    # The runtime filter applies like everywhere else — including the
+    # emptied-not-hidden message (#198)
 
-    assert body.index("Arrival Wanted") < body.index("Arrival Fresh")
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)
     assert "Arrival Fresh (1956)" in filtered
-    assert "Arrival Wanted" not in filtered
     emptied = admin_client.get("/?minutes=10").get_data(as_text=True)
     assert 'id="newly-added-shelf-258"' in emptied
     assert "Nothing newly added fits in 10 minutes" in emptied
