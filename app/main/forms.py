@@ -485,6 +485,21 @@ class SubtitleTriageForm(FlaskForm):
     dismiss_submit = SubmitField("Nothing forced here")
 
 
+class LossyAudioTriageForm(FlaskForm):
+    """Per-file actions on the lossy-audio triage page (#212).
+
+    The lossless track to promote travels as a plain lossless_track
+    radio; the form carries the file and the three actions — remux
+    with that track in the lead, keep the file as-is, or build the
+    listening-clip comparison (#223).
+    """
+
+    file_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    promote_submit = SubmitField("Remux with this track in the lead")
+    dismiss_submit = SubmitField("Keep as-is")
+    generate_submit = SubmitField("Generate listening clips")
+
+
 class FilenameTestForm(FlaskForm):
     """Maintenance page: preview how a filename would import."""
 

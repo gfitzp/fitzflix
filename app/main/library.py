@@ -123,6 +123,7 @@ from app.radarr_push import (
 )
 from app.triage import (
     forced_subtitle_candidates,
+    lossy_audio_candidates,
 )
 from app.videos import (
     clear_not_interested,
@@ -3080,6 +3081,9 @@ def file(file_id):
         for candidate in entry["tracks"]
     }
     pending_subtitle_triage = bool(current_user.admin and triage_candidates)
+    pending_lossy_triage = bool(
+        current_user.admin and lossy_audio_candidates(file_id=file.id)
+    )
 
     return render_template(
         "file.html",
@@ -3090,6 +3094,7 @@ def file(file_id):
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
         pending_subtitle_triage=pending_subtitle_triage,
+        pending_lossy_triage=pending_lossy_triage,
         possibly_forced_track_ids=possibly_forced_track_ids,
         metadata_scan_form=metadata_scan_form,
         mkvpropedit_form=mkvpropedit_form,

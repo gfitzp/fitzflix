@@ -110,7 +110,7 @@
 						&mdash;
 					{% endif %}
 				</td>
-				<td>{{ audio.compression_mode }}</td>
+				<td>{{ audio.compression_mode }}{% if pending_lossy_triage and audio.track == 1 %}<a href="{{ url_for('main.lossy_audio_triage', file_id=file.id, origin=url_for('main.file', file_id=file.id)) }}" class="small fw-normal ms-2">Review&hellip;</a>{% endif %}</td>
 				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="radio" form="mkvpropedit-form" name="default_audio" value="{{ audio.track }}"{% if audio.default or (not audio_has_default and loop.first) %} checked{% endif %}{% if not file_exists_locally %} disabled{% endif %} aria-label="Make audio track {{ audio.track }} the default">{% elif audio.default %}<span class="badge text-bg-info">Default</span>{% endif %}</td>
 				<td class="text-center">{% if file.container == "Matroska" %}<input class="form-check-input" type="checkbox" form="mkvmerge-form" name="audio_tracks" value="{{ audio.track }}" checked{% if not file_exists_locally %} disabled{% endif %} aria-label="Keep audio track {{ audio.track }} when remuxing">{% endif %}</td>
 			</tr>

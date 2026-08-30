@@ -2073,6 +2073,13 @@ class File(db.Model):
     # Reset on re-import: a replacement's length is new evidence.
 
     runtime_mismatch_reviewed = db.Column(db.DateTime)
+
+    # When the lossy-audio triage (#212) accepted this file's track
+    # layout as-is — the lossless sibling is a commentary or otherwise
+    # different content — so it stops reappearing on the worklist.
+    # Reset on re-import like the other verdicts.
+
+    lossy_audio_reviewed = db.Column(db.DateTime)
     aws_untouched_key = db.Column(db.String(255), index=True)
     aws_untouched_filesize_bytes = db.Column(db.BigInteger)
     aws_untouched_date_uploaded = db.Column(db.DateTime)

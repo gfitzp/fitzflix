@@ -1717,6 +1717,13 @@ def finalize_localization(
                     ),
                 )
 
+            # The candidates check inside maybe_enqueue keeps the Atmos
+            # trio's deliberate E-AC-3 Atmos lead from generating clips
+
+            from app.triage import maybe_enqueue_audio_comparison
+
+            maybe_enqueue_audio_comparison(file.id)
+
             if first_audio_track_lossy and lossless_audio_track_present:
                 admin_user = User.query.filter(User.admin == True).first()
                 send_email_async(

@@ -430,6 +430,34 @@ def register(app):
             queued += 1
         click.echo(f"Queued snapshot generation for {queued} file(s)")
 
+    @triage.command()
+    def backfill_audio():
+        """Queue lossy-audio comparison clips (#223) for every existing
+        candidate file (#212) that has none yet — same serial-queue
+        throttle as the subtitle backfill."""
+
+        from app.triage import audio_comparison_dir, lossy_audio_candidates
+
+        queued = 0
+        for entry in lossy_audio_candidates():
+            file = entry["file"]
+            if os.path.isfile(
+                os.path.join(audio_comparison_dir(file.id), "comparison.json")
+            ):
+                continue
+            if not os.path.isfile(
+                os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+            ):
+                continue
+            app.transcode_queue.enqueue(
+                "app.triage.generate_audio_comparison",
+                args=(file.id,),
+                job_timeout="2h",
+                description=f"Audio comparison for '{file.basename}'",
+            )
+            queued += 1
+        click.echo(f"Queued audio comparisons for {queued} file(s)")
+
     @app.cli.group()
     def audio():
         """Manage the audio-track supplement pipelines."""

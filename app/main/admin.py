@@ -27,6 +27,7 @@ from app.main.forms import (
     CriterionRefreshForm,
     FailedJobForm,
     FilenameTestForm,
+    LossyAudioTriageForm,
     SubtitleTriageForm,
     ImportForm,
     LibrarySearchForm,
@@ -55,6 +56,9 @@ from app.main.helpers import admin_required
 from app.maintenance import system_health
 from app.triage import (
     forced_subtitle_candidates,
+    lossy_audio_candidates,
+    lossy_audio_presentation,
+    remove_audio_comparison,
     remove_triage_snapshots,
     runtime_mismatch_candidates,
     triage_presentation,
@@ -637,6 +641,7 @@ def maintenance():
         title="Library Maintenance",
         rejected_count=len(_rejected_files()),
         subtitle_triage_count=len(forced_subtitle_candidates()),
+        lossy_triage_count=len(lossy_audio_candidates()),
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
         runtime_mismatch_count=len(runtime_mismatch_candidates()),
         tv_suspect_count=sum(1 for e in validation_report() if e["suspect"]),
@@ -952,6 +957,168 @@ def subtitle_triage(file_id):
             f'Possibly-forced subtitles in "{focus_file.basename}"'
             if focus_file
             else "Possibly-forced subtitles"
+        ),
+        candidates=candidates,
+        focus_file=focus_file,
+        origin=origin,
+        triage_form=triage_form,
+    )
+
+
+@bp.route(
+    "/maintenance/lossy-audio", methods=["GET", "POST"], defaults={"file_id": None}
+)
+@bp.route("/maintenance/lossy-audio/<int:file_id>", methods=["GET", "POST"])
+@login_required
+@admin_required
+def lossy_audio_triage(file_id):
+    """Triage files whose first audio track is lossy while a lossless
+    track rides behind (#212).
+
+    Promoting a lossless track enqueues the same mkvpropedit task the
+    file page's default-audio radio uses — a non-first default audio
+    track triggers the remux that puts it in the lead — preserving the
+    file's subtitle defaults and forced flags; "Keep as-is" records
+    that the pairing is not redundant (a commentary, say) so the file
+    stops reappearing. The listening-clip comparison (#223) is the
+    evidence for that call, generated proactively on import and on
+    demand here.
+
+    Same page split as the subtitle triage: the all-files page is the
+    worklist, the per-file view carries the clips and forms, and an
+    `origin` query param bounces actions back where the visitor
+    came from.
+    """
+
+    origin = request.args.get("origin", "", type=str)
+    if not origin.startswith("/") or origin.startswith("//"):
+        origin = None
+
+    def done():
+        return redirect(origin or url_for("main.lossy_audio_triage", file_id=file_id))
+
+    def stay():
+        return redirect(
+            url_for("main.lossy_audio_triage", file_id=file_id, origin=origin)
+        )
+
+    triage_form = LossyAudioTriageForm()
+
+    if triage_form.promote_submit.data and triage_form.validate_on_submit():
+        file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        chosen = request.form.get("lossless_track", type=int)
+        track = FileAudioTrack.query.filter_by(
+            file_id=file.id, track=chosen or 0
+        ).first()
+        if track is None or track.compression_mode != "Lossless":
+            flash("Select a lossless track to lead.", "warning")
+            return stay()
+
+        if file.container != "Matroska":
+            flash(
+                f"'{file.basename}' isn't an MKV file, so its tracks can't "
+                f"be reordered in place.",
+                "danger",
+            )
+            return stay()
+        if not os.path.isfile(
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        ):
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return stay()
+
+        # Preserve the file's current subtitle selections; the promoted
+        # track becomes the default audio, and mkvpropedit's remux pass
+        # moves it into the lead
+
+        subtitle_default = FileSubtitleTrack.query.filter_by(
+            file_id=file.id, default=True
+        ).first()
+        default_subtitle_track = (
+            str(subtitle_default.track) if subtitle_default else None
+        )
+        forced_tracks = sorted(
+            {
+                str(existing.track)
+                for existing in FileSubtitleTrack.query.filter_by(
+                    file_id=file.id, forced=True
+                )
+            },
+            key=int,
+        )
+
+        current_app.file_queue.enqueue(
+            "app.videos.mkvpropedit_task",
+            args=(
+                file.id,
+                str(track.track),
+                default_subtitle_track,
+                forced_tracks,
+            ),
+            job_timeout=current_app.config["MKVPROPEDIT_TASK_TIMEOUT"],
+            description=f"'{file.basename}'",
+        )
+
+        # The remux renumbers tracks, so every aid set pictures streams
+        # that are about to move — drop them all
+
+        remove_triage_snapshots(file.id)
+        flash(
+            f"Remuxing '{file.basename}' with track {track.track} "
+            f"({track.codec}) in the lead",
+            "info",
+        )
+        return done()
+
+    if triage_form.dismiss_submit.data and triage_form.validate_on_submit():
+        file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        file.lossy_audio_reviewed = datetime.now()
+        db.session.commit()
+        remove_audio_comparison(file.id)
+        flash(f"Marked '{file.basename}' audio as reviewed", "success")
+        return done()
+
+    if triage_form.generate_submit.data and triage_form.validate_on_submit():
+        file = File.query.filter_by(id=triage_form.file_id.data).first_or_404()
+        if not os.path.isfile(
+            os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+        ):
+            flash(f"'{file.basename}' is not present locally.", "warning")
+            return stay()
+        current_app.transcode_queue.enqueue(
+            "app.triage.generate_audio_comparison",
+            args=(file.id,),
+            job_timeout="2h",
+            description=f"Audio comparison for '{file.basename}'",
+        )
+        flash(
+            f"Generating listening clips for '{file.basename}' — they'll "
+            f"appear here once the transcode queue gets to it",
+            "info",
+        )
+        return stay()
+
+    focus_file = (
+        File.query.filter_by(id=file_id).first_or_404() if file_id is not None else None
+    )
+    candidates = lossy_audio_candidates(file_id=file_id)
+
+    # The listening clips are the expensive part, and only the per-file
+    # view renders them — the all-files page is just the worklist
+
+    if focus_file:
+        for entry in candidates:
+            entry["comparison"] = lossy_audio_presentation(entry["file"].id)
+            entry["local"] = os.path.isfile(
+                os.path.join(current_app.config["LIBRARY_DIR"], entry["file"].file_path)
+            )
+
+    return render_template(
+        "lossy_audio_triage.html",
+        title=(
+            f'Lossy-audio lead in "{focus_file.basename}"'
+            if focus_file
+            else "Lossy-audio leads"
         ),
         candidates=candidates,
         focus_file=focus_file,

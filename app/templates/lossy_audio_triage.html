@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		<li class="breadcrumb-item"><a href="{{ url_for('main.maintenance') }}">Library Maintenance</a></li>
+		{% if focus_file %}
+		<li class="breadcrumb-item"><a href="{{ url_for('main.lossy_audio_triage') }}">Lossy-audio leads</a></li>
+		<li class="breadcrumb-item active" aria-current="page">{{ focus_file.basename }}</li>
+		{% else %}
+		<li class="breadcrumb-item active" aria-current="page">Lossy-audio leads</li>
+		{% endif %}
+	</ol>
+</nav>
+<h2 class="mt-2 mb-n2">Lossy-audio leads{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
+<hr>
+{% if not focus_file %}
+{# The worklist: just the pending files, each opening its own
+   triage page — the listening clips and forms all live there, and
+   its actions bounce back here via the origin param #}
+<p class="small text-muted">Each file below leads with a lossy audio track while a lossless track rides behind. Work down the list: each name opens that file's own triage page, and acting there returns here.</p>
+{% if candidates %}
+<div class="list-group mb-3">
+	{% for entry in candidates %}
+	{% set file = entry.file %}
+	<a href="{{ url_for('main.lossy_audio_triage', file_id=file.id, origin=url_for('main.lossy_audio_triage')) }}" class="list-group-item list-group-item-action">
+		{{ file.basename }}
+		<span class="badge text-bg-light border fw-normal ms-1">{{ entry.lossless_tracks | length }} lossless track{{ 's' if entry.lossless_tracks | length != 1 }}</span>
+		{% if file.container != "Matroska" %}<span class="badge text-bg-secondary ms-1" title="Only MKV files can have their tracks reordered in place">{{ file.container or "unknown container" }}</span>{% endif %}
+	</a>
+	{% endfor %}
+</div>
+{% else %}
+<p class="small text-muted">Every file leads with its best audio right now.</p>
+{% endif %}
+{% else %}
+<p class="small text-muted">This file's first audio track is lossy while a lossless track rides behind &mdash; usually the wrong order, sometimes a commentary that only looks redundant. The listening clips sample both tracks at the same moments: matching programme audio tracks each other (correlation near 100%), a commentary doesn't. Promote the lossless track to remux it into the lead, or "Keep as-is" if the pairing is not redundant.</p>
+{% if candidates %}
+{% for entry in candidates %}
+{% set file = entry.file %}
+<div class="card mb-3">
+	<div class="card-header py-2">
+		<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>
+		{% if file.container != "Matroska" %}<span class="badge text-bg-secondary ms-2" title="Only MKV files can have their tracks reordered in place">{{ file.container or "unknown container" }}</span>{% endif %}
+		<form action="" method="post" class="float-end">
+			{{ triage_form.csrf_token }}
+			{{ triage_form.file_id(value=file.id) }}
+			{{ triage_form.dismiss_submit(class_="btn btn-sm btn-outline-secondary") }}
+		</form>
+	</div>
+	<div class="card-body py-2">
+		<form action="" method="post">
+			{{ triage_form.csrf_token }}
+			{{ triage_form.file_id(value=file.id) }}
+			<table class="table table-sm mb-0">
+				<thead class="table-light">
+					<tr>
+						{% if file.container == "Matroska" %}<th scope="col" style="width: 2rem;">Lead</th>{% endif %}
+						<th scope="col">Track</th>
+						<th scope="col">Language</th>
+						<th scope="col">Codec</th>
+						<th scope="col">Channels</th>
+						<th scope="col">Quality</th>
+						<th scope="col"></th>
+					</tr>
+				</thead>
+				<tbody>
+					{% for track in entry.tracks %}
+					<tr>
+						{% if file.container == "Matroska" %}
+						<td>{% if track.compression_mode == "Lossless" %}<input type="radio" name="lossless_track" value="{{ track.track }}"{% if track.track == entry.lossless_tracks[0].track %} checked{% endif %} aria-label="Remux with track {{ track.track }} in the lead">{% endif %}</td>
+						{% endif %}
+						<td>{{ track.track }}</td>
+						<td>{{ track.language_name }}</td>
+						<td>{{ track.codec }}</td>
+						<td>{{ track.channels }}</td>
+						<td>
+							{% if track.compression_mode == "Lossless" and track.bit_depth and track.sampling_rate_khz %}
+								{{ track.bit_depth }}-bit {{ track.sampling_rate_khz }} kHz
+							{% elif track.bitrate_kbps %}
+								{{ track.bitrate_kbps }} kbps
+							{% else %}
+								&mdash;
+							{% endif %}
+						</td>
+						<td>{% if track.track == 1 and track.compression_mode != "Lossless" %}<span class="badge text-bg-warning">Lossy lead</span>{% elif track.compression_mode == "Lossless" %}<span class="badge text-bg-info">Lossless</span>{% endif %}</td>
+					</tr>
+					{% endfor %}
+				</tbody>
+			</table>
+			{% if file.container == "Matroska" %}
+			{{ triage_form.promote_submit(class_="btn btn-sm btn-warning mt-2") }}
+			{% endif %}
+		</form>
+		{% if entry.comparison %}
+		<hr>
+		{% for pair in entry.comparison.pairs %}
+		<h6 class="mb-1">Track {{ pair.lossy_track }} (lossy) vs track {{ pair.lossless_track }} (lossless)
+			{% if pair.verdict == "match" %}<span class="badge text-bg-success ms-1">Same programme audio</span>
+			{% elif pair.verdict == "differs" %}<span class="badge text-bg-danger ms-1">Diverging &mdash; possibly a commentary</span>
+			{% endif %}
+		</h6>
+		<div class="row g-3 mb-2">
+			{% for sample in pair.samples %}
+			<div class="col-12 col-lg-4">
+				<p class="small text-muted mb-1">At {{ sample.clock }}{% if sample.percent is not none %} &middot; correlation {{ sample.percent }}%{% endif %}</p>
+				<div class="d-flex align-items-center mb-1">
+					<span class="small me-2" style="width: 4.5rem;">Lossy</span>
+					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('static', filename='triage/' + file.id|string + '/audio/' + sample.lossy) }}"></audio>
+				</div>
+				<div class="d-flex align-items-center">
+					<span class="small me-2" style="width: 4.5rem;">Lossless</span>
+					<audio controls preload="none" class="w-100" style="height: 2rem;" src="{{ url_for('static', filename='triage/' + file.id|string + '/audio/' + sample.lossless) }}"></audio>
+				</div>
+			</div>
+			{% endfor %}
+		</div>
+		{% endfor %}
+		{% elif entry.local %}
+		<hr>
+		<form action="" method="post" class="d-inline">
+			{{ triage_form.csrf_token }}
+			{{ triage_form.file_id(value=file.id) }}
+			{{ triage_form.generate_submit(class_="btn btn-sm btn-outline-primary") }}
+		</form>
+		<span class="small text-muted ms-2">No listening clips yet &mdash; generate them to hear both tracks side by side before acting.</span>
+		{% else %}
+		<hr>
+		<p class="small text-muted mb-0">This file is not present locally, so no listening clips can be generated and no remux can run.</p>
+		{% endif %}
+	</div>
+</div>
+{% endfor %}
+{% else %}
+<p class="small text-muted">Every file leads with its best audio right now.</p>
+{% endif %}
+{% endif %}
+{% endblock %}
