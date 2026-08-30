@@ -278,8 +278,32 @@ class TMDBMixin(object):
             if collection in self.collections:
                 self.collections.remove(collection)
 
-        MovieCast.query.filter_by(movie_id=self.id).delete()
-        MovieCrew.query.filter_by(movie_id=self.id).delete()
+        # Cast and crew get the same empty-payload guard as the
+        # association groups below (#252): the bulk delete used to run
+        # before any payload check, so a glitched payload with an
+        # empty or missing credits section permanently wiped a film's
+        # cast — the #251 failure shape, aimed at /people rankings,
+        # cast criteria shelves, and Name That Frame distractors
+
+        incoming_credits = tmdb_info.get("credits") or {}
+        if (
+            incoming_credits.get("cast")
+            or MovieCast.query.filter_by(movie_id=self.id).count() == 0
+        ):
+            MovieCast.query.filter_by(movie_id=self.id).delete()
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no cast; keeping the stored rows"
+            )
+        if (
+            incoming_credits.get("crew")
+            or MovieCrew.query.filter_by(movie_id=self.id).count() == 0
+        ):
+            MovieCrew.query.filter_by(movie_id=self.id).delete()
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no crew; keeping the stored rows"
+            )
 
         # TMDB can transiently serve a details payload whose genre list
         # is empty while the rest is intact — the Aug 7-13 2026 bulk
@@ -311,25 +335,57 @@ class TMDBMixin(object):
                 f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
             )
 
-        tmdb_production_companies = TMDBProductionCompany.query.all()
-        for company in tmdb_production_companies:
-            if company in self.production_companies:
-                self.production_companies.remove(company)
+        # The remaining association groups carry the same guard (#252);
+        # collections stay unguarded on purpose — belongs_to_collection
+        # is legitimately null for most films
 
-        tmdb_production_countries = TMDBProductionCountry.query.all()
-        for country in tmdb_production_countries:
-            if country in self.production_countries:
-                self.production_countries.remove(country)
+        if (
+            tmdb_info.get("production_companies")
+            or self.production_companies.count() == 0
+        ):
+            for company in TMDBProductionCompany.query.all():
+                if company in self.production_companies:
+                    self.production_companies.remove(company)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no production companies; "
+                f"keeping the stored ones"
+            )
 
-        tmdb_spoken_languages = TMDBSpokenLanguage.query.all()
-        for language in tmdb_spoken_languages:
-            if language in self.spoken_languages:
-                self.spoken_languages.remove(language)
+        if (
+            tmdb_info.get("production_countries")
+            or self.production_countries.count() == 0
+        ):
+            for country in TMDBProductionCountry.query.all():
+                if country in self.production_countries:
+                    self.production_countries.remove(country)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no production countries; "
+                f"keeping the stored ones"
+            )
 
-        ref_tmdb_certifications = RefTMDBCertification.query.all()
-        for certification in ref_tmdb_certifications:
-            if certification in self.certifications:
-                self.certifications.remove(certification)
+        if tmdb_info.get("spoken_languages") or self.spoken_languages.count() == 0:
+            for language in TMDBSpokenLanguage.query.all():
+                if language in self.spoken_languages:
+                    self.spoken_languages.remove(language)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no spoken languages; "
+                f"keeping the stored ones"
+            )
+
+        if (tmdb_info.get("release_dates") or {}).get(
+            "results"
+        ) or self.certifications.count() == 0:
+            for certification in RefTMDBCertification.query.all():
+                if certification in self.certifications:
+                    self.certifications.remove(certification)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no release dates; "
+                f"keeping the stored certifications"
+            )
 
         # Add fresh new data from TMDB
 
@@ -337,16 +393,28 @@ class TMDBMixin(object):
             external_ids = tmdb_info.get("external_ids")
             self.imdb_id = external_ids.get("imdb_id")
 
-        self.tmdb_id = tmdb_info.get("id")
-        self.tmdb_adult = tmdb_info.get("adult")
-        self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
-        self.tmdb_budget = tmdb_info.get("budget")
-        self.tmdb_homepage = tmdb_info.get("homepage")
-        self.tmdb_original_language = tmdb_info.get("original_language")
-        self.tmdb_original_title = tmdb_info.get("original_title")
-        self.tmdb_overview = tmdb_info.get("overview")
-        self.tmdb_popularity = tmdb_info.get("popularity")
-        self.tmdb_poster_path = tmdb_info.get("poster_path")
+        # Scalars fall back to their stored value when the KEY is absent
+        # (#252): a full details payload always carries every key (null
+        # where TMDB has nothing), so a missing key means a partial
+        # payload — don't let it null a populated column. A key present
+        # with null still clears, since that's TMDB removing real data.
+
+        self.tmdb_id = tmdb_info.get("id", self.tmdb_id)
+        self.tmdb_adult = tmdb_info.get("adult", self.tmdb_adult)
+        self.tmdb_backdrop_path = tmdb_info.get(
+            "backdrop_path", self.tmdb_backdrop_path
+        )
+        self.tmdb_budget = tmdb_info.get("budget", self.tmdb_budget)
+        self.tmdb_homepage = tmdb_info.get("homepage", self.tmdb_homepage)
+        self.tmdb_original_language = tmdb_info.get(
+            "original_language", self.tmdb_original_language
+        )
+        self.tmdb_original_title = tmdb_info.get(
+            "original_title", self.tmdb_original_title
+        )
+        self.tmdb_overview = tmdb_info.get("overview", self.tmdb_overview)
+        self.tmdb_popularity = tmdb_info.get("popularity", self.tmdb_popularity)
+        self.tmdb_poster_path = tmdb_info.get("poster_path", self.tmdb_poster_path)
         canonical_year = self.year
         if tmdb_info.get("release_date"):
             self.tmdb_release_date = datetime.strptime(
@@ -354,11 +422,11 @@ class TMDBMixin(object):
             )
             canonical_year = self.tmdb_release_date.year
 
-        self.tmdb_revenue = tmdb_info.get("revenue")
-        self.tmdb_runtime = tmdb_info.get("runtime")
-        self.tmdb_status = tmdb_info.get("status")
-        self.tmdb_tagline = tmdb_info.get("tagline")
-        self.tmdb_title = tmdb_info.get("title")
+        self.tmdb_revenue = tmdb_info.get("revenue", self.tmdb_revenue)
+        self.tmdb_runtime = tmdb_info.get("runtime", self.tmdb_runtime)
+        self.tmdb_status = tmdb_info.get("status", self.tmdb_status)
+        self.tmdb_tagline = tmdb_info.get("tagline", self.tmdb_tagline)
+        self.tmdb_title = tmdb_info.get("title", self.tmdb_title)
 
         # Rename this movie to TMDB's canonical title and year, unless a
         # different movie record already holds that name: title + year is
@@ -404,9 +472,9 @@ class TMDBMixin(object):
         elif canonical_title:
             self.title = canonical_title
             self.year = canonical_year
-        self.tmdb_video = tmdb_info.get("video")
-        self.tmdb_vote_average = tmdb_info.get("vote_average")
-        self.tmdb_vote_count = tmdb_info.get("vote_count")
+        self.tmdb_video = tmdb_info.get("video", self.tmdb_video)
+        self.tmdb_vote_average = tmdb_info.get("vote_average", self.tmdb_vote_average)
+        self.tmdb_vote_count = tmdb_info.get("vote_count", self.tmdb_vote_count)
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
 
@@ -781,20 +849,36 @@ class TMDBMixin(object):
                 f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
             )
 
-        tmdb_networks = TMDBNetwork.query.all()
-        for network in tmdb_networks:
-            if network in self.networks:
-                self.networks.remove(network)
+        if tmdb_info.get("networks") or self.networks.count() == 0:
+            for network in TMDBNetwork.query.all():
+                if network in self.networks:
+                    self.networks.remove(network)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no networks; keeping the stored ones"
+            )
 
-        tmdb_production_companies = TMDBProductionCompany.query.all()
-        for company in tmdb_production_companies:
-            if company in self.production_companies:
-                self.production_companies.remove(company)
+        if (
+            tmdb_info.get("production_companies")
+            or self.production_companies.count() == 0
+        ):
+            for company in TMDBProductionCompany.query.all():
+                if company in self.production_companies:
+                    self.production_companies.remove(company)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no production companies; "
+                f"keeping the stored ones"
+            )
 
-        tmdb_seasons = TMDBSeason.query.all()
-        for season in tmdb_seasons:
-            if season in self.seasons:
-                self.seasons.remove(season)
+        if tmdb_info.get("seasons") or self.seasons.count() == 0:
+            for season in TMDBSeason.query.all():
+                if season in self.seasons:
+                    self.seasons.remove(season)
+        else:
+            current_app.logger.warning(
+                f"{self} TMDB payload carries no seasons; keeping the stored ones"
+            )
 
         # Add fresh new data from TMDB
 
@@ -804,34 +888,44 @@ class TMDBMixin(object):
             self.tvdb_id = external_ids.get("tvdb_id")
 
         self.tmdb_id = tmdb_info.get("id")
-        self.tmdb_backdrop_path = tmdb_info.get("backdrop_path")
+        # Scalars fall back to their stored value when the key is
+        # absent, like the movie side (#252)
+
+        self.tmdb_backdrop_path = tmdb_info.get(
+            "backdrop_path", self.tmdb_backdrop_path
+        )
         if tmdb_info.get("first_air_date"):
             self.tmdb_first_air_date = datetime.strptime(
                 tmdb_info.get("first_air_date"), "%Y-%m-%d"
             )
 
-        self.tmdb_homepage = tmdb_info.get("homepage")
-        self.tmdb_poster_path = tmdb_info.get("poster_path")
-        self.tmdb_in_production = tmdb_info.get("in_production")
+        self.tmdb_homepage = tmdb_info.get("homepage", self.tmdb_homepage)
+        self.tmdb_in_production = tmdb_info.get(
+            "in_production", self.tmdb_in_production
+        )
         if tmdb_info.get("last_air_date"):
             self.tmdb_last_air_date = datetime.strptime(
                 tmdb_info.get("last_air_date"), "%Y-%m-%d"
             )
 
-        self.tmdb_name = tmdb_info.get("name")
+        self.tmdb_name = tmdb_info.get("name", self.tmdb_name)
         if tmdb_info.get("status") == "Ended":
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
 
-        self.tmdb_original_language = tmdb_info.get("original_language")
-        self.tmdb_original_name = tmdb_info.get("original_name")
-        self.tmdb_overview = tmdb_info.get("overview")
-        self.tmdb_popularity = tmdb_info.get("popularity")
-        self.tmdb_poster_path = tmdb_info.get("poster_path")
-        self.tmdb_status = tmdb_info.get("status")
-        self.tmdb_type = tmdb_info.get("type")
-        self.tmdb_vote_average = tmdb_info.get("vote_average")
-        self.tmdb_vote_count = tmdb_info.get("vote_count")
+        self.tmdb_original_language = tmdb_info.get(
+            "original_language", self.tmdb_original_language
+        )
+        self.tmdb_original_name = tmdb_info.get(
+            "original_name", self.tmdb_original_name
+        )
+        self.tmdb_overview = tmdb_info.get("overview", self.tmdb_overview)
+        self.tmdb_popularity = tmdb_info.get("popularity", self.tmdb_popularity)
+        self.tmdb_poster_path = tmdb_info.get("poster_path", self.tmdb_poster_path)
+        self.tmdb_status = tmdb_info.get("status", self.tmdb_status)
+        self.tmdb_type = tmdb_info.get("type", self.tmdb_type)
+        self.tmdb_vote_average = tmdb_info.get("vote_average", self.tmdb_vote_average)
+        self.tmdb_vote_count = tmdb_info.get("vote_count", self.tmdb_vote_count)
         if tmdb_info.get("id"):
             self.tmdb_data_as_of = datetime.now(timezone.utc)
 
@@ -939,8 +1033,28 @@ class TMDBMixin(object):
 
         if tmdb_info.get("aggregate_credits"):
             aggregate = tmdb_info.get("aggregate_credits")
-            TVCast.query.filter_by(tv_id=self.id).delete()
-            TVCrew.query.filter_by(tv_id=self.id).delete()
+
+            # Same guard as the movie side (#252): a present section
+            # whose cast or crew list is empty keeps the stored rows
+
+            if (
+                aggregate.get("cast")
+                or TVCast.query.filter_by(tv_id=self.id).count() == 0
+            ):
+                TVCast.query.filter_by(tv_id=self.id).delete()
+            else:
+                current_app.logger.warning(
+                    f"{self} TMDB payload carries no cast; keeping the stored rows"
+                )
+            if (
+                aggregate.get("crew")
+                or TVCrew.query.filter_by(tv_id=self.id).count() == 0
+            ):
+                TVCrew.query.filter_by(tv_id=self.id).delete()
+            else:
+                current_app.logger.warning(
+                    f"{self} TMDB payload carries no crew; keeping the stored rows"
+                )
             invalidate_people_ranking()
 
             seen_roles = set()

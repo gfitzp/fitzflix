@@ -90,3 +90,75 @@ def test_tv_apply_persists_external_ids(app):
         assert stored.tvdb_id == 78804
         assert stored.imdb_id == "tt0436992"
         assert stored.tmdb_id == 57243
+
+
+def test_movie_apply_empty_credits_keeps_stored_cast(app):
+    """#252: the cast/crew bulk delete used to run before any payload
+    check, so a glitched payload with an empty credits section wiped a
+    film's cast permanently. Empty incoming lists keep stored rows;
+    populated ones still replace."""
+
+    from app.models import MovieCast, TMDBCredit
+
+    with app.app_context():
+        movie = make_movie("Cast Victim", 1957, tmdb_id=990003)
+        credit = TMDBCredit(id=7001, name="Lead Actor")
+        db.session.add(credit)
+        db.session.add(MovieCast(movie_id=movie.id, credit_id=7001, character="Hero"))
+        db.session.commit()
+
+        movie.tmdb_movie_apply({"id": 990003, "credits": {"cast": [], "crew": []}})
+        db.session.commit()
+        assert MovieCast.query.filter_by(movie_id=movie.id).count() == 1
+
+        movie.tmdb_movie_apply(
+            {
+                "id": 990003,
+                "credits": {
+                    "cast": [{"id": 7002, "name": "New Lead", "character": "Villain"}],
+                    "crew": [],
+                },
+            }
+        )
+        db.session.commit()
+        rows = MovieCast.query.filter_by(movie_id=movie.id).all()
+        assert [r.credit_id for r in rows] == [7002]
+
+
+def test_movie_apply_absent_scalar_keys_keep_stored_values(app):
+    """#252: a partial payload (key missing entirely) must not null a
+    populated column; a key present with null still clears, since that
+    is TMDB removing real data."""
+
+    with app.app_context():
+        movie = make_movie("Scalar Victim", 1960, tmdb_id=990004)
+        movie.tmdb_overview = "A stored overview."
+        movie.tmdb_runtime = 96
+        movie.tmdb_poster_path = "/stored.jpg"
+        db.session.commit()
+
+        movie.tmdb_movie_apply({"id": 990004, "poster_path": None})
+        db.session.commit()
+
+        assert movie.tmdb_overview == "A stored overview."
+        assert movie.tmdb_runtime == 96
+        assert movie.tmdb_poster_path is None
+
+
+def test_tv_apply_empty_aggregate_cast_keeps_stored_rows(app):
+    """#252 on the TV side: an aggregate_credits section present with
+    empty cast/crew lists keeps the stored rows."""
+
+    from app.models import TMDBCredit, TVCast
+
+    with app.app_context():
+        series = make_tv_series("Cast Series")
+        db.session.add(TMDBCredit(id=7003, name="Series Lead"))
+        db.session.add(TVCast(tv_id=series.id, credit_id=7003, character="Captain"))
+        db.session.commit()
+
+        series.tmdb_tv_apply(
+            {"id": 990005, "aggregate_credits": {"cast": [], "crew": []}}
+        )
+        db.session.commit()
+        assert TVCast.query.filter_by(tv_id=series.id).count() == 1

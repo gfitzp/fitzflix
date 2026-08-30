@@ -197,7 +197,10 @@ def test_apply_replaces_cast_and_crew_from_aggregate_credits(app):
         assert producer.job == "Producer"
         assert producer.episode_count == 86
 
-        # A refresh replaces wholesale: a role gone upstream disappears
+        # A refresh replaces wholesale: a role gone upstream disappears.
+        # An EMPTY crew list, though, keeps the stored rows (#252) — an
+        # every-credit wipe is likelier a glitched payload than TMDB
+        # truly dropping the whole department (the Aug 22 2026 shape)
         series.tmdb_tv_apply(
             {
                 "id": 121,
@@ -218,7 +221,7 @@ def test_apply_replaces_cast_and_crew_from_aggregate_credits(app):
         )
         db.session.commit()
         assert series.cast.count() == 1
-        assert series.crew.count() == 0
+        assert series.crew.count() == 1
 
 
 def test_apply_dedupes_credits_the_way_mysql_collates(app):
