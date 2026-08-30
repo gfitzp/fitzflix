@@ -79,15 +79,16 @@ MAX_CRITERIA = 4
 # Copref-pair shelves (Glenn's Aug 26 follow-up): up to this many of a
 # load's shelves come from MovieLens co-preference instead of shared
 # features — two anchor films, suggestions ranked by how similar they
-# are to BOTH. Anchors are a fresh uniform sample of the user's
-# rated-or-liked interest films each load, and valid pairs are drawn
-# uniformly too (Glenn, Aug 28 2026: the old top-weight pool plus
-# quality-weighted draw resurfaced the same few dense-neighborhood
-# favorites every reload); the cap keeps the pair search
-# quadratic-but-tiny.
+# are to BOTH. Anchors and valid pairs draw uniformly at random
+# (Glenn, Aug 28 2026: the old top-weight pool plus quality-weighted
+# draw resurfaced the same few dense-neighborhood favorites every
+# reload), and since Aug 30 the pool is the user's WHOLE
+# rated-or-liked interest set — the cap is a cost backstop, not a
+# taste filter (the full-library pair scan measured ~26ms at 302
+# anchors; revisit if the interest set ever grows past the cap).
 
 COPREF_SHELF_COUNT = 3
-COPREF_ANCHOR_POOL = 30
+COPREF_ANCHOR_POOL = 10_000
 
 # Single-anchor shelves (#249): at most one per load across both
 # kinds — one film is weaker evidence than two, so these stay
@@ -362,7 +363,10 @@ def _copref_shelves(interest, pool, rng, count, shown):
     the same joint list. Anchors are sampled uniformly from the whole
     interest set each load, and valid pairs drawn uniformly, so
     reloads surface fresh pairings instead of the same few
-    dense-neighborhood favorites. An anchor that qualifies for NO
+    dense-neighborhood favorites. A pair must share a TMDB genre
+    (films with no genre data pass), one load's shelves never repeat
+    a common-ground genre, and each shelf carries its shared genre
+    ids for the page's subtitle. An anchor that qualifies for NO
     pair may front a single-anchor shelf instead (#249) —
     `copref:{tmdbA}`, ranked by similarity to it alone, damped in the
     draw and capped at MAX_SINGLE_ANCHOR_SHELVES. Mutates `shown`
@@ -392,10 +396,28 @@ def _copref_shelves(interest, pool, rng, count, shown):
         movie_id: set(sims.get(tmdb_of[movie_id], ())) & set(pool_by_tmdb)
         for movie_id in anchors
     }
+
+    # Anchors must share a genre (Glenn, Aug 29 2026): two popular
+    # films whose 100-neighbor lists overlap only incidentally
+    # shouldn't front a shelf together. Films with no genre data on
+    # either side aren't blocked — post-#251 that's a small set. The
+    # shared set also feeds the shelf's subtitle ("Their common
+    # ground: …") and the per-load genre dedup below.
+
+    genres_of = {}
+    for movie_id, genre_id in db.session.query(
+        movie_genres.c.movie_id, movie_genres.c.genre_id
+    ).filter(movie_genres.c.movie_id.in_(anchors or [0])):
+        genres_of.setdefault(movie_id, set()).add(genre_id)
+
     pairs = []
     paired = set()
     for i, first in enumerate(anchors):
         for second in anchors[i + 1 :]:
+            genres_a = genres_of.get(first)
+            genres_b = genres_of.get(second)
+            if genres_a and genres_b and not (genres_a & genres_b):
+                continue
             joint = neighbors[first] & neighbors[second]
             if len(joint) < MIN_SHELF_FILMS:
                 continue
@@ -411,6 +433,7 @@ def _copref_shelves(interest, pool, rng, count, shown):
 
     shelves = []
     used_anchors = set()
+    used_genres = set()
     singles = 0
     for first, second, joint in _weighted_order(rng, pairs):
         if len(shelves) >= count:
@@ -418,6 +441,20 @@ def _copref_shelves(interest, pool, rng, count, shown):
         if first in used_anchors or second in used_anchors:
             continue
         if second is None and singles >= MAX_SINGLE_ANCHOR_SHELVES:
+            continue
+
+        # One load's copref shelves never repeat a common-ground genre
+        # (Glenn, Aug 30 2026: two "Their common ground: Drama" shelves
+        # on one page) — a candidate whose shared genres overlap an
+        # earlier shelf's waits for another load
+
+        if second is None:
+            candidate_genres = genres_of.get(first, set())
+        else:
+            candidate_genres = genres_of.get(first, set()) & genres_of.get(
+                second, set()
+            )
+        if candidate_genres & used_genres:
             continue
         sims_a = sims[tmdb_of[first]]
         sims_b = sims[tmdb_of[second]] if second is not None else sims_a
@@ -442,9 +479,11 @@ def _copref_shelves(interest, pool, rng, count, shown):
                 "criteria": [(key, "loved alongside these")],
                 "anchor_ids": anchor_ids,
                 "movie_ids": picks,
+                "shared_genre_ids": sorted(candidate_genres),
             }
         )
         used_anchors.update(anchor_ids)
+        used_genres.update(candidate_genres)
         shown.update(picks)
     return shelves
 

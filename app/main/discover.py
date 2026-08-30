@@ -38,6 +38,7 @@ from app.models import (
     MovieCast,
     MovieCrew,
     TMDBCredit,
+    TMDBGenre,
     TVCast,
     TVSeries,
     UserMovieReview,
@@ -1762,6 +1763,18 @@ def recommendations():
         for movie in Movie.query.filter(Movie.id.in_(list(wanted) or [0]))
     }
 
+    # The genres a copref shelf's anchors share, named for its subtitle
+    # (Glenn, Aug 30 2026) — resolved in one query across all shelves
+
+    shared_ids = {
+        genre_id for shelf in built for genre_id in shelf.get("shared_genre_ids", ())
+    }
+    genre_names = dict(
+        db.session.query(TMDBGenre.id, TMDBGenre.name).filter(
+            TMDBGenre.id.in_(list(shared_ids) or [0])
+        )
+    )
+
     shelves = []
     for shelf in built:
         anchors = [
@@ -1779,6 +1792,11 @@ def recommendations():
                 "labels": [label for _, label in shelf["criteria"]],
                 "anchors": anchors,
                 "movies": films,
+                "shared_genres": sorted(
+                    genre_names[genre_id]
+                    for genre_id in shelf.get("shared_genre_ids", ())
+                    if genre_id in genre_names
+                )[:3],
             }
         )
 

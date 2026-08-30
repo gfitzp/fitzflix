@@ -10,12 +10,16 @@
 <div data-shelf data-criteria="{{ shelf.criteria_param }}">
 	{% if not loop.first %}<hr>{% endif %}
 	{% if shelf.kind == "copref" %}
+	{# The shared-genre clause names the anchors' common ground (Glenn,
+	   Aug 30 2026) — a solo shelf shows its one film's genres, a pair
+	   the intersection; films with no genre data show the plain line #}
+	{% set common = shelf.shared_genres | join(' · ') %}
 	{% if shelf.anchors | length == 1 %}
 	<h4>More like this one</h4>
-	<p class="small text-muted mb-2">Loved by the people who loved it &mdash; from thirty-two million MovieLens ratings, not shared features.</p>
+	<p class="small text-muted mb-2">Loved by the people who loved it &mdash; from thirty-two million MovieLens ratings, not shared features.{% if common %} It's a {{ common }} film, if you're wondering.{% endif %}</p>
 	{% else %}
 	<h4>More like these two</h4>
-	<p class="small text-muted mb-2">Loved by the people who loved both &mdash; from thirty-two million MovieLens ratings, not shared features.</p>
+	<p class="small text-muted mb-2">Loved by the people who loved both &mdash; from thirty-two million MovieLens ratings, not shared features.{% if common %} Their common ground: {{ common }}.{% endif %}</p>
 	{% endif %}
 	{% else %}
 	{# First character upcased by hand — the capitalize filter would
