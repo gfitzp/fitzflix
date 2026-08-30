@@ -499,7 +499,7 @@ def triage_presentation(file_id, track_number):
 # Envelopes are RMS loudness per 50 ms window of an 8 kHz mono decode,
 # correlated across small alignment lags to absorb codec delay.
 
-AUDIO_SAMPLE_QUANTILES = (0.2, 0.5, 0.8)
+AUDIO_SAMPLE_QUANTILES = (0.1, 0.3, 0.5, 0.7, 0.9)
 AUDIO_SAMPLE_SECONDS = 12
 ENVELOPE_WINDOW_SAMPLES = 400
 ENVELOPE_MAX_LAG = 20
