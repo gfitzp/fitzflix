@@ -34,7 +34,7 @@
 <p class="small text-muted">Every file leads with its best audio right now.</p>
 {% endif %}
 {% else %}
-<p class="small text-muted">This file's first audio track is lossy while a lossless track rides behind &mdash; usually the wrong order, sometimes a commentary that only looks redundant. The listening clips sample both tracks at the same moments: matching programme audio tracks each other (correlation near 100%), a commentary doesn't. Promote the lossless track to remux it into the lead, or "Keep as-is" if the pairing is not redundant.</p>
+<p class="small text-muted">This file's first audio track is lossy while a lossless track rides behind &mdash; usually the wrong order, sometimes a commentary that only looks redundant. The verdict correlates the <em>entire</em> tracks &mdash; matching programme audio tracks each other (near 100%), a commentary doesn't &mdash; and the listening clips sample the same moments so your ears can confirm what the number claims. Promote the lossless track to remux it into the lead, or "Keep as-is" if the pairing is not redundant.</p>
 {% if candidates %}
 {% for entry in candidates %}
 {% set file = entry.file %}
@@ -96,6 +96,7 @@
 		<hr>
 		{% for pair in entry.comparison.pairs %}
 		<h6 class="mb-1">Track {{ pair.lossy_track }} (lossy) vs track {{ pair.lossless_track }} (lossless)
+			{% if pair.percent is not none %}<span class="text-muted fw-normal ms-1">full-track correlation {{ pair.percent }}%</span>{% endif %}
 			{% if pair.verdict == "match" %}<span class="badge text-bg-success ms-1">Same programme audio</span>
 			{% elif pair.verdict == "differs" %}<span class="badge text-bg-danger ms-1">Diverging &mdash; possibly a commentary</span>
 			{% endif %}

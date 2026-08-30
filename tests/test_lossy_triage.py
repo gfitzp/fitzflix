@@ -352,6 +352,7 @@ def test_presentation_renders_clocks_percentages_and_verdicts(app):
                         {
                             "lossy_track": 1,
                             "lossless_track": 2,
+                            "correlation": 0.98,
                             "samples": [
                                 {
                                     "at": 1200.0,
@@ -391,6 +392,21 @@ def test_presentation_renders_clocks_percentages_and_verdicts(app):
                                 },
                             ],
                         },
+                        {
+                            # Full-track verdict outranks flattering
+                            # clips: high local numbers, low overall
+                            "lossy_track": 1,
+                            "lossless_track": 4,
+                            "correlation": 0.44,
+                            "samples": [
+                                {
+                                    "at": 1200.0,
+                                    "lossy": "t1-1.m4a",
+                                    "lossless": "t4-1.m4a",
+                                    "correlation": 0.95,
+                                },
+                            ],
+                        },
                     ]
                 },
                 handle,
@@ -403,12 +419,24 @@ def test_presentation_renders_clocks_percentages_and_verdicts(app):
 
             shutil.rmtree(out_dir, ignore_errors=True)
 
-    programme, commentary = presented["pairs"]
+    programme, commentary, divergent = presented["pairs"]
+
+    # New shape: the full-track correlation is the verdict and the
+    # headline percentage
     assert programme["verdict"] == "match"
+    assert programme["percent"] == 98
     assert programme["samples"][0]["clock"] == "0:20:00"
     assert programme["samples"][0]["percent"] == 96
     assert programme["samples"][2]["percent"] is None
+
+    # Old shape (no pair-level correlation): median of the clips
+    # decides, with no headline percentage
     assert commentary["verdict"] == "differs"
+    assert commentary["percent"] is None
+
+    # Full-track verdict outranks a flattering clip
+    assert divergent["verdict"] == "differs"
+    assert divergent["percent"] == 44
 
     with app.app_context():
         assert lossy_audio_presentation(999999) is None

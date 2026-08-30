@@ -21,10 +21,11 @@ generate, just the candidates query over what's already stored.
 
 So does the lossy-audio triage (#212): files whose first audio track
 is lossy while a lossless track rides behind. Its inspection aids
-(#223) are listening clips of both tracks at sampled points plus a
-loudness-envelope correlation — programme audio correlates near 1.0
-with itself across codecs, a commentary against the programme doesn't
-— so the pairing can be confirmed before the remux acts on it.
+(#223) are a loudness-envelope correlation of the ENTIRE tracks —
+programme audio correlates near 1.0 with itself across codecs, a
+commentary against the programme doesn't — plus listening clips at
+sampled points so the ears can confirm what the number claims before
+the remux acts on it.
 """
 
 import array
@@ -34,6 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 
 from flask import current_app
@@ -494,14 +496,21 @@ def triage_presentation(file_id, track_number):
     }
 
 
-# The lossy-audio comparison (#223). Clip sampling spreads across the
-# runtime rather than across cues — programme audio is everywhere.
-# Envelopes are RMS loudness per 50 ms window of an 8 kHz mono decode,
-# correlated across small alignment lags to absorb codec delay.
+# The lossy-audio comparison (#223). The verdict correlates the ENTIRE
+# tracks: one ffmpeg pass decodes every track of interest to 8 kHz
+# mono (audio-only decode runs ~450x realtime from the SSD, so this
+# rides free inside an import), envelopes are RMS loudness per 50 ms
+# window, and correlation runs across small alignment lags to absorb
+# codec delay. The clips at the sample quantiles exist for LISTENING —
+# their per-position numbers are slices of the same full envelopes,
+# shown so a local divergence (a diverging credits mix, say) is
+# visible next to the clip that plays it.
 
 AUDIO_SAMPLE_QUANTILES = (0.1, 0.3, 0.5, 0.7, 0.9)
 AUDIO_SAMPLE_SECONDS = 12
+AUDIO_DECODE_RATE = 8000
 ENVELOPE_WINDOW_SAMPLES = 400
+ENVELOPE_WINDOWS_PER_SECOND = AUDIO_DECODE_RATE // ENVELOPE_WINDOW_SAMPLES
 ENVELOPE_MAX_LAG = 20
 AUDIO_MATCH_THRESHOLD = 0.75
 
@@ -557,33 +566,13 @@ def _extract_audio_clip(file_path, streamorder, at, out_path):
     return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
 
-def _clip_envelope(clip_path):
-    """RMS loudness per 50 ms window of a clip, decoded to 8 kHz mono."""
+def _pcm_envelope(pcm_path):
+    """RMS loudness per 50 ms window of a raw s16le mono decode."""
 
-    try:
-        result = subprocess.run(
-            [
-                current_app.config["FFMPEG_BIN"],
-                "-v",
-                "error",
-                "-i",
-                clip_path,
-                "-ac",
-                "1",
-                "-ar",
-                "8000",
-                "-f",
-                "s16le",
-                "-",
-            ],
-            capture_output=True,
-            timeout=120,
-        )
-    except Exception:
-        current_app.logger.warning(traceback.format_exc())
-        return []
+    with open(pcm_path, "rb") as handle:
+        data = handle.read()
     samples = array.array("h")
-    samples.frombytes(result.stdout[: len(result.stdout) // 2 * 2])
+    samples.frombytes(data[: len(data) // 2 * 2])
     if sys.byteorder == "big":
         samples.byteswap()
     windows = []
@@ -593,6 +582,49 @@ def _clip_envelope(clip_path):
         chunk = samples[start : start + ENVELOPE_WINDOW_SAMPLES]
         windows.append(math.sqrt(sum(s * s for s in chunk) / ENVELOPE_WINDOW_SAMPLES))
     return windows
+
+
+def _track_envelopes(file_path, streamorders):
+    """Full-track loudness envelopes for several streams, decoded in
+    ONE pass over the container — reading the file is the whole cost
+    when it lives on the NAS, so every track shares the read."""
+
+    envelopes = {}
+    with tempfile.TemporaryDirectory() as scratch:
+        command = [
+            current_app.config["FFMPEG_BIN"],
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            file_path,
+        ]
+        pcm_paths = {}
+        for streamorder in streamorders:
+            pcm_path = os.path.join(scratch, f"{int(streamorder)}.pcm")
+            command.extend(
+                [
+                    "-map",
+                    f"0:{int(streamorder)}",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    str(AUDIO_DECODE_RATE),
+                    "-f",
+                    "s16le",
+                    pcm_path,
+                ]
+            )
+            pcm_paths[streamorder] = pcm_path
+        try:
+            subprocess.run(command, capture_output=True, timeout=3600)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            return {}
+        for streamorder, pcm_path in pcm_paths.items():
+            if os.path.isfile(pcm_path):
+                envelopes[streamorder] = _pcm_envelope(pcm_path)
+    return envelopes
 
 
 def _envelope_correlation(a, b, max_lag=ENVELOPE_MAX_LAG):
@@ -625,8 +657,8 @@ def _envelope_correlation(a, b, max_lag=ENVELOPE_MAX_LAG):
 
 
 def generate_audio_comparison(file_id):
-    """Task: build the lossy-vs-lossless listening clips and their
-    envelope correlations for one candidate file (#223). A file whose
+    """Task: correlate the full lossy and lossless tracks of one
+    candidate file and cut its listening clips (#223). A file whose
     comparison already exists is left alone, so re-runs are free."""
 
     with app.app_context():
@@ -656,30 +688,49 @@ def generate_audio_comparison(file_id):
         first = entry["tracks"][0]
         if first.streamorder is None:
             return True
+        lossless_tracks = [
+            track for track in entry["lossless_tracks"] if track.streamorder is not None
+        ]
+        if not lossless_tracks:
+            return True
         os.makedirs(out_dir, exist_ok=True)
 
-        # The lossy lead is one half of every pair: clip and envelope
-        # it once, then run each lossless track against it
+        # Every verdict comes from the FULL tracks, all decoded in one
+        # pass over the container
 
-        lead_samples = {}
+        envelopes = _track_envelopes(
+            file_path,
+            [first.streamorder] + [track.streamorder for track in lossless_tracks],
+        )
+        lead_envelope = envelopes.get(first.streamorder, [])
+
+        # The clips exist for listening; the lossy lead is one half of
+        # every pair, so it's cut once
+
+        lead_clips = {}
         for number, quantile in enumerate(AUDIO_SAMPLE_QUANTILES, 1):
             at = duration * quantile
             name = f"t{first.track}-{number}.m4a"
             if _extract_audio_clip(
                 file_path, first.streamorder, at, os.path.join(out_dir, name)
             ):
-                lead_samples[number] = {
-                    "at": at,
-                    "name": name,
-                    "envelope": _clip_envelope(os.path.join(out_dir, name)),
-                }
+                lead_clips[number] = {"at": at, "name": name}
+
+        def local_correlation(other_envelope, at):
+            """The clip window's slice of the full envelopes."""
+
+            start = int(at * ENVELOPE_WINDOWS_PER_SECOND)
+            span = AUDIO_SAMPLE_SECONDS * ENVELOPE_WINDOWS_PER_SECOND
+            return _envelope_correlation(
+                lead_envelope[start : start + span],
+                other_envelope[start : start + span],
+            )
 
         pairs = []
-        for lossless in entry["lossless_tracks"]:
-            if lossless.streamorder is None:
-                continue
+        for lossless in lossless_tracks:
+            lossless_envelope = envelopes.get(lossless.streamorder, [])
             samples = []
-            for number, lead in sorted(lead_samples.items()):
+            for number, lead in sorted(lead_clips.items()):
                 name = f"t{lossless.track}-{number}.m4a"
                 if not _extract_audio_clip(
                     file_path,
@@ -693,16 +744,16 @@ def generate_audio_comparison(file_id):
                         "at": lead["at"],
                         "lossy": lead["name"],
                         "lossless": name,
-                        "correlation": _envelope_correlation(
-                            lead["envelope"],
-                            _clip_envelope(os.path.join(out_dir, name)),
-                        ),
+                        "correlation": local_correlation(lossless_envelope, lead["at"]),
                     }
                 )
             pairs.append(
                 {
                     "lossy_track": first.track,
                     "lossless_track": lossless.track,
+                    "correlation": _envelope_correlation(
+                        lead_envelope, lossless_envelope
+                    ),
                     "samples": samples,
                 }
             )
@@ -735,9 +786,11 @@ def maybe_enqueue_audio_comparison(file_id):
 
 def lossy_audio_presentation(file_id):
     """Render-ready comparison for one candidate file, or None while it
-    hasn't been generated: per lossless track, the clip pairs with
-    clock strings, correlation percentages, and a median-correlation
-    verdict."""
+    hasn't been generated: per lossless track, the full-track
+    correlation percentage and its verdict, plus the clip pairs with
+    clock strings and their local percentages. A comparison written
+    before the verdict went full-track falls back to the median of its
+    clip correlations."""
 
     comparison_path = os.path.join(audio_comparison_dir(file_id), "comparison.json")
     if not os.path.isfile(comparison_path):
@@ -760,9 +813,15 @@ def lossy_audio_presentation(file_id):
                 correlations.append(sample["correlation"])
             else:
                 sample["percent"] = None
-        if correlations:
-            median = sorted(correlations)[len(correlations) // 2]
-            pair["verdict"] = "match" if median >= AUDIO_MATCH_THRESHOLD else "differs"
+        overall = pair.get("correlation")
+        if overall is None and correlations:
+            overall = sorted(correlations)[len(correlations) // 2]
+            pair["percent"] = None
         else:
-            pair["verdict"] = None
+            pair["percent"] = round(overall * 100) if overall is not None else None
+        pair["verdict"] = (
+            None
+            if overall is None
+            else "match" if overall >= AUDIO_MATCH_THRESHOLD else "differs"
+        )
     return {"pairs": pairs}
