@@ -781,42 +781,6 @@ class TMDBMixin(object):
             current_app.logger.debug(f"{r.url}: {r.json()}")
             tmdb_info = r.json()
 
-            # Episode payloads: the base payload lists the seasons;
-            # fetch each one's episode block in appended batches (TMDB
-            # caps append_to_response at 20). A failed batch is logged
-            # and skipped — the apply side only touches seasons present
-            # in the payload, so a miss leaves that season's stored
-            # episodes alone instead of deleting them.
-
-            season_numbers = [
-                season.get("season_number")
-                for season in tmdb_info.get("seasons", [])
-                if season.get("season_number") is not None
-            ]
-            for start in range(0, len(season_numbers), 20):
-                batch = season_numbers[start : start + 20]
-                appended = ",".join(f"season/{n}" for n in batch)
-                try:
-                    r = tmdb_get(
-                        tmdb_api_url + "/tv/" + str(tmdb_id),
-                        params={
-                            "api_key": tmdb_api_key,
-                            "append_to_response": appended,
-                        },
-                    )
-                    r.raise_for_status()
-                except requests.exceptions.RequestException:
-                    current_app.logger.warning(
-                        f"{self} Season batch '{appended}' failed, skipping"
-                    )
-                    continue
-
-                season_payload = r.json()
-                for n in batch:
-                    block = season_payload.get(f"season/{n}")
-                    if block:
-                        tmdb_info[f"season/{n}"] = block
-
         return tmdb_info or None
 
     def tmdb_tv_apply(self, tmdb_info):
@@ -1117,77 +1081,14 @@ class TMDBMixin(object):
                         )
                     )
 
-        # Episode rows: sync tv_episode slots for every season
-        # block the fetch delivered. Only fetched seasons are touched —
-        # a season absent from the payload keeps its stored rows, so a
-        # failed season batch can never mass-delete episodes. A series
-        # whose episodes Sonarr owns (#162) is left alone entirely:
-        # its rows follow TVDB's numbering, which TMDB's season blocks
-        # would clobber.
-
-        if self.episode_source == "sonarr":
-            return self
-
-        for key, block in tmdb_info.items():
-            if not key.startswith("season/") or not isinstance(block, dict):
-                continue
-
-            season_number = block.get("season_number")
-            if season_number is None:
-                continue
-
-            existing = {
-                row.episode: row
-                for row in self.episodes.filter_by(season=season_number).all()
-            }
-            fetched_numbers = set()
-            for ep in block.get("episodes") or []:
-                episode_number = ep.get("episode_number")
-                if episode_number is None:
-                    continue
-
-                fetched_numbers.add(episode_number)
-                row = existing.get(episode_number)
-                if row is None:
-                    row = TVEpisode(season=season_number, episode=episode_number)
-                    self.episodes.append(row)
-                name = ep.get("name")
-                row.tmdb_episode_id = ep.get("id")
-                row.title = name[:256] if name else None
-                row.overview = ep.get("overview") or None
-                row.air_date = (
-                    datetime.strptime(ep.get("air_date"), "%Y-%m-%d")
-                    if ep.get("air_date")
-                    else None
-                )
-                row.runtime = ep.get("runtime")
-                row.tmdb_still_path = ep.get("still_path")
-                row.tmdb_data_as_of = datetime.now(timezone.utc)
-
-            # A stored slot TMDB no longer lists in this season was
-            # renumbered or removed upstream — drop it rather than let
-            # it mislabel
-
-            for episode_number, row in existing.items():
-                if episode_number not in fetched_numbers:
-                    db.session.delete(row)
-
         return self
 
     def tmdb_tv_clear(self):
-        """Detach this series from TMDB; see tmdb_movie_clear.
-
-        Also drops the stored episode rows: without an id there is
-        nothing to refresh them from, and a season list left behind from
-        a deleted TMDB entry would go stale forever (#207).
-        """
+        """Detach this series from TMDB; see tmdb_movie_clear."""
 
         TVCast.query.filter_by(tv_id=self.id).delete()
         TVCrew.query.filter_by(tv_id=self.id).delete()
         invalidate_people_ranking()
-
-        for episode in self.episodes.all():
-            db.session.delete(episode)
 
         for related in (
             self.genres,
@@ -1201,7 +1102,6 @@ class TMDBMixin(object):
 
         self.imdb_id = None
         self.tvdb_id = None
-        self.episode_source = "tmdb"
         self.tmdb_id = None
         self.tmdb_backdrop_path = None
         self.tmdb_first_air_date = None
@@ -1930,24 +1830,8 @@ class TVSeries(db.Model, TMDBMixin):
 
     tvdb_id = db.Column(db.Integer)
 
-    # Which service owns this series' tv_episode rows (#162): "tmdb"
-    # (the default, synced by tmdb_tv_refresh) or "sonarr" (synced from
-    # the local Sonarr's TVDB metadata by sync_sonarr_episodes, whose
-    # numbering matches the library's files because Sonarr named them).
-    # Series-level metadata (cast, crew, posters) stays TMDB's either way.
-
-    episode_source = db.Column(
-        db.String(16), nullable=False, default="tmdb", server_default="tmdb"
-    )
-
     files = db.relationship(
         "File", backref="tv_series", lazy="dynamic", cascade="all,delete,delete-orphan"
-    )
-    episodes = db.relationship(
-        "TVEpisode",
-        backref="series",
-        lazy="dynamic",
-        cascade="all,delete,delete-orphan",
     )
     cast = db.relationship(
         "TVCast",
@@ -1999,42 +1883,6 @@ class TVSeries(db.Model, TMDBMixin):
 
     def __repr__(self):
         return f"<TVSeries '{self.title}'>"
-
-
-class TVEpisode(db.Model):
-    """One TMDB episode of a TV series: the season/episode slot's
-    title, overview, air date, runtime, and still.
-
-    Joined from File.season/File.episode at render time; a missing row
-    is normal (year-style seasons, custom-numbered specials, series TMDB
-    doesn't know) and must surface as today's number-only display, never
-    an error. Where File.edition is set, it outranks this title.
-    """
-
-    id = db.Column(db.Integer, primary_key=True)
-    series_id = db.Column(
-        db.Integer,
-        db.ForeignKey("tv_series.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-    season = db.Column(db.Integer, nullable=False)
-    episode = db.Column(db.Integer, nullable=False)
-    tmdb_episode_id = db.Column(db.Integer)
-    title = db.Column(db.String(256))
-    overview = db.Column(db.Text)
-    air_date = db.Column(db.DateTime)
-    runtime = db.Column(db.Integer)
-    tmdb_still_path = db.Column(db.String(64))
-    tmdb_data_as_of = db.Column(db.DateTime)
-
-    # The unique constraint doubles as the lookup index: its leftmost
-    # prefixes cover the by-series and by-season queries, so there is no
-    # separate series_id index
-
-    __table_args__ = (db.UniqueConstraint("series_id", "season", "episode"),)
-
-    def __repr__(self):
-        return f"<TVEpisode {self.series_id} S{self.season:02d}E{self.episode:02d}>"
 
 
 class File(db.Model):

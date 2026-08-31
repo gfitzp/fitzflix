@@ -67,7 +67,6 @@
 <hr>
 <h3>TV episode titles</h3>
 <p class="small text-muted">How well each series' TMDB episode titles agree with the titles Plex gave the same files &mdash; a series whose numbering diverges is flagged so episode titles never mislabel.</p>
-<a class="btn btn-sm btn-{{ "warning" if tv_suspect_count else "outline-secondary" }}" href="{{ url_for('main.tv_title_validation') }}" role="button">Review title verdicts <span class="badge text-bg-light">{{ tv_suspect_count }}</span></a>
 <hr>
 <h3>Filename tester</h3>
 <p class="small text-muted">Preview how a filename would be parsed and filed on import, without importing anything.</p>

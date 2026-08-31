@@ -7,7 +7,7 @@ default (utc_timestamp()) only exists on MySQL/MariaDB, not SQLite.
 from datetime import datetime
 
 from app import db
-from app.models import File, Movie, RefFeatureType, RefQuality, TVEpisode, TVSeries
+from app.models import File, Movie, RefFeatureType, RefQuality, TVSeries
 
 
 def quality(quality_title):
@@ -30,13 +30,6 @@ def make_tv_series(title, **kwargs):
     db.session.add(series)
     db.session.flush()
     return series
-
-
-def make_tv_episode(series, season, episode, **kwargs):
-    row = TVEpisode(series_id=series.id, season=season, episode=episode, **kwargs)
-    db.session.add(row)
-    db.session.flush()
-    return row
 
 
 def make_file(basename, dirname, plex_title, media_library, quality_title, **kwargs):

@@ -7,97 +7,8 @@ import json
 
 from app import db
 from app.models import TMDBCredit, TMDBGenre, TVCast, TVSeries
-from app.tv_validation import VALIDATION_KEY
 
-from tests.factories import make_tv_episode, make_tv_file, make_tv_series
-
-
-def _suspect_verdict(series_id):
-    return json.dumps(
-        {
-            "name": "whatever",
-            "compared": 10,
-            "agreed": 0,
-            "rate": 0.0,
-            "suspect": True,
-            "examples": [],
-        }
-    )
-
-
-def test_season_page_shows_guide_and_title_column(app, admin_client):
-    with app.app_context():
-        series = make_tv_series("Doctor Who (1963)", tmdb_id=121)
-        make_tv_episode(
-            series,
-            1,
-            1,
-            title="An Unearthly Child",
-            overview="Two teachers follow a strange pupil home.",
-        )
-        make_tv_episode(series, 1, 2, title="The Cave of Skulls")
-        make_tv_file(series, 1, 1, "DVD")
-        db.session.commit()
-        series_id = series.id
-
-    response = admin_client.get(f"/tv/{series_id}/1")
-    assert response.status_code == 200
-    assert b"Episodes" in response.data
-    assert b"An Unearthly Child" in response.data
-    assert b"The Cave of Skulls" in response.data
-    assert b"In library" in response.data
-
-
-def test_season_page_episode_badges_wear_shopping_colors(app, admin_client):
-    """The guide's In-library badge is amber or green like every other
-    one (#191): the WEBDL episode is worth upgrading, while the DVD is
-    the only release that will ever exist, so it reads settled."""
-
-    with app.app_context():
-        series = make_tv_series("Quality Show", tmdb_id=1212)
-        make_tv_episode(series, 1, 1, title="The Lagging One")
-        make_tv_episode(series, 1, 2, title="The Settled One")
-        make_tv_file(series, 1, 1, "WEBDL-720p")
-        make_tv_file(series, 1, 2, "DVD")
-        db.session.commit()
-        series_id = series.id
-
-    page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
-    lagging = page[page.index("The Lagging One") :]
-    settled = page[page.index("The Settled One") :]
-    assert "text-bg-warning" in lagging[: lagging.index("In library")]
-    assert "text-bg-success" in settled[: settled.index("In library")]
-
-
-def test_season_page_suspect_series_stays_plain(app, admin_client):
-    with app.app_context():
-        series = make_tv_series("Cursed Show", tmdb_id=999)
-        make_tv_episode(series, 1, 1, title="Wrong Title")
-        make_tv_file(series, 1, 1, "DVD")
-        db.session.commit()
-        series_id = series.id
-        app.redis.hset(VALIDATION_KEY, str(series_id), _suspect_verdict(series_id))
-
-    response = admin_client.get(f"/tv/{series_id}/1")
-    assert response.status_code == 200
-    assert b"Wrong Title" not in response.data
-
-
-def test_search_finds_episode_titles_but_not_suspect_ones(app, admin_client):
-    with app.app_context():
-        good = make_tv_series("Columbo", tmdb_id=1041)
-        make_tv_episode(good, 1, 1, title="Murder by the Book")
-        cursed = make_tv_series("Cursed Show", tmdb_id=999)
-        make_tv_episode(cursed, 1, 1, title="Murder by the Wrong Book")
-        db.session.commit()
-        good_id = good.id
-        app.redis.hset(VALIDATION_KEY, str(cursed.id), _suspect_verdict(cursed.id))
-
-    response = admin_client.get("/search?q=Murder+by+the")
-    assert response.status_code == 200
-    assert b"Murder by the Book" in response.data
-    assert f"/tv/{good_id}/1".encode() in response.data
-    assert b"Murder by the Wrong Book" not in response.data
+from tests.factories import make_tv_file, make_tv_series
 
 
 def test_people_page_counts_tv_credits(app, admin_client):
@@ -599,32 +510,27 @@ def test_a_tied_worst_copy_prefers_the_upgradable_episode(app):
         assert series_upgradable([series.id]) == {series.id: True}
 
 
-def test_tv_library_search_splits_series_and_episode_matches(app, admin_client):
-    """The TV library's own search (#210, revised): the series list
-    holds only series whose TITLE matches; episodes whose TMDB titles
-    match render as their own section below, the main search page's
-    grammar — a matched episode never drags its series into the series
-    list (searching "venture" must not surface Bob's Burgers)."""
+def test_tv_library_search_matches_series_titles_only(app, admin_client):
+    """The TV library's own search (#210, revised again): the series
+    list holds only series whose TITLE (or TMDB name) matches. No
+    episode metadata is stored, so there is no episode section."""
 
     import re
 
-    from tests.factories import make_movie, make_movie_file, make_tv_episode
+    from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
         by_title = make_tv_series("Quincke's Casebook")
         make_tv_file(by_title, 1, 1, "SDTV")
         by_tmdb_name = make_tv_series("Folder Name Only", tmdb_name="Quincke Files")
         make_tv_file(by_tmdb_name, 1, 1, "SDTV")
-        by_episode_title = make_tv_series("Anthology Hour")
-        make_tv_file(by_episode_title, 2, 3, "SDTV")
-        make_tv_episode(by_episode_title, 2, 3, title="The Quincke Emergency Broadcast")
         unrelated = make_tv_series("Unrelated Show")
         make_tv_file(unrelated, 1, 1, "SDTV")
         # A movie sharing the term must never leak into the TV library
         movie = make_movie("Quincke The Movie", 1999)
         make_movie_file(movie, "DVD")
         db.session.commit()
-        title_id, episode_series_id = by_title.id, by_episode_title.id
+        title_id = by_title.id
 
     page = admin_client.get("/library/tv?q=quincke").get_data(as_text=True)
     assert "TV library matches for &#39;quincke&#39;" in page
@@ -632,14 +538,7 @@ def test_tv_library_search_splits_series_and_episode_matches(app, admin_client):
     assert "Quincke Files" in page
     assert "Unrelated Show" not in page
     assert "Quincke The Movie" not in page
-    assert "2 series titles and 1 episode title match" in page
-
-    # The episode-only match renders as an episode row landing on its
-    # season page — never as a series row
-
-    assert "The Quincke Emergency Broadcast" in page
-    assert f'href="/tv/{episode_series_id}/2"' in page
-    assert f'href="/tv/{episode_series_id}"' not in page
+    assert "2 series titles match" in page
     assert f'href="/tv/{title_id}"' in page
 
     # The search box posts and redirects into ?q=
@@ -657,10 +556,8 @@ def test_tv_library_search_splits_series_and_episode_matches(app, admin_client):
     assert response.status_code == 302
     assert "q=quincke" in response.headers["Location"]
 
-    # No matches offers the whole library back — and a bare SxxEyy slot
-    # is no longer a match on its own (episode matching is TMDB titles)
+    # No matches offers the whole library back
 
-    for miss in ("zzzzzz", "S02E03"):
-        page = admin_client.get(f"/library/tv?q={miss}").get_data(as_text=True)
-        assert "No TV series or episodes match" in page
-        assert "Show the whole TV library" in page
+    page = admin_client.get("/library/tv?q=zzzzzz").get_data(as_text=True)
+    assert "No TV series match" in page
+    assert "Show the whole TV library" in page

@@ -23,32 +23,6 @@
 		{% endif %}
 	</div>
 </div>
-{% if episode_guide %}
-{# The season's episode guide: every episode the series' source
-   (TMDB, or Sonarr's TVDB data for Sonarr-managed series, #162)
-   knows, owned or not — TMDB-sourced numbering-suspect series get
-   no guide at all #}
-<h4>Episodes</h4>
-<div class="list-group mb-3">
-	{% for episode in episode_guide %}
-	<div class="list-group-item">
-		<div class="d-flex align-items-start">
-			{% if episode.tmdb_still_path %}
-			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ episode.tmdb_still_path }}" loading="lazy" alt="" class="rounded me-3 flex-shrink-0" style="width: 138px;">
-			{% endif %}
-			<div style="min-width: 0;">
-				<div class="fw-bold">{{ episode.episode }}. {{ episode.title }}
-					{% if episode.episode in owned_episodes %}<span class="badge text-bg-{{ "warning" if episode.episode in upgradable_episodes else "success" }} ms-1" title="{{ "Worth upgrading" if episode.episode in upgradable_episodes else "Settled" }}">In library</span>{% endif %}
-				</div>
-				{% if episode.air_date %}<div class="small text-muted">{{ moment(episode.air_date).format("LL") }}{% if episode.runtime %} &middot; {{ episode.runtime }} min{% endif %}</div>{% endif %}
-				{% if episode.overview %}<div class="small text-muted" style="display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">{{ episode.overview }}</div>{% endif %}
-			</div>
-		</div>
-	</div>
-	{% endfor %}
-</div>
-<h4>Files</h4>
-{% endif %}
 <table class="table table-striped">
 	<thead class="table-light">
 		<tr>
@@ -66,10 +40,9 @@
 		<tr>
 			<th scope="row" class="align-middle">{{ file.id }}</th>
 			<td class="align-middle">{{ file.episode }}{% if file.episode != file.last_episode %}-{{ file.last_episode }}{% endif %}</td>
-			{# The edition IS the title where one exists (the curated
-			   specials); the fetched TMDB/Sonarr title otherwise,
-			   TMDB-sourced suspect series stay blank #}
-			<td class="align-middle">{% if file.edition %}{{ file.edition }}{% elif episodes.get(file.episode) %}{{ episodes[file.episode].title }}{% endif %}</td>
+			{# The edition IS the title where one exists (the
+			   curated specials); no other episode titles are stored #}
+			<td class="align-middle">{% if file.edition %}{{ file.edition }}{% endif %}</td>
 			<td class="align-middle"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 			<td class="align-middle">{{ quality.quality_title }}</td>
 			<td class="align-middle">{% if quality.physical_media %}<span class="badge text-bg-success">Physical media</span>{% endif %}</td>

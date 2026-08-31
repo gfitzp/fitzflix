@@ -21,7 +21,6 @@ from app.models import (
     Movie,
     RefQuality,
     TMDBCredit,
-    TVEpisode,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -115,38 +114,6 @@ def _movie_search_results(wildcard, limit=50):
                 "excluded": movie.shopping_list_exclude == 1,
             }
         )
-    return results
-
-
-def _episode_search_results(wildcard, limit=12):
-    """Episodes whose fetched titles match, each linking into its
-    season page. Numbering-suspect series are excluded — a matched
-    title on a misnumbered series would send the user to the wrong
-    slot — unless Sonarr owns their rows (#162): Sonarr numbered the
-    files themselves, so its titles land on the right slots."""
-
-    from app.tv_validation import series_is_suspect
-
-    rows = (
-        db.session.query(TVEpisode, TVSeries)
-        .join(TVSeries, TVSeries.id == TVEpisode.series_id)
-        .filter(TVEpisode.title.ilike(f"%{wildcard}%"))
-        .order_by(TVSeries.title.asc(), TVEpisode.season.asc(), TVEpisode.episode.asc())
-        .limit(limit * 3)
-        .all()
-    )
-    results = []
-    verdicts = {}
-    for episode, series in rows:
-        if series.id not in verdicts:
-            verdicts[series.id] = (
-                series.episode_source != "sonarr" and series_is_suspect(series.id)
-            )
-        if verdicts[series.id]:
-            continue
-        results.append({"episode": episode, "series": series})
-        if len(results) >= limit:
-            break
     return results
 
 
@@ -322,7 +289,6 @@ def search():
     q = (request.args.get("q") or "").strip()
     movie_results = []
     tv_results = []
-    episode_results = []
     people_results = []
 
     if q:
@@ -331,7 +297,6 @@ def search():
         wildcard = q.replace(" ", "%")
         movie_results = _movie_search_results(wildcard)
         tv_results = _tv_search_results(wildcard)
-        episode_results = _episode_search_results(wildcard)
         people_results = _people_search_results(wildcard)
 
         # The personal funnel badges: "Might interest you" (in the
@@ -375,7 +340,6 @@ def search():
         q=q,
         movie_results=movie_results,
         tv_results=tv_results,
-        episode_results=episode_results,
         people_results=people_results,
     )
 

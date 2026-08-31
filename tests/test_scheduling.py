@@ -272,13 +272,7 @@ def test_every_cron_table_schedule_gets_a_written_description():
     from app.main.admin import _cron_description
 
     entries = cron_table(
-        {
-            "AWS_SQS_URL": "sqs",
-            "PLEX_URL": "plex",
-            "PLEX_TOKEN": "token",
-            "SONARR_URL": "sonarr",
-            "SONARR_API_KEY": "key",
-        }
+        {"AWS_SQS_URL": "sqs", "PLEX_URL": "plex", "PLEX_TOKEN": "token"}
     )
 
     raw = {

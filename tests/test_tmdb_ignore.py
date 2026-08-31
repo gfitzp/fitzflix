@@ -19,11 +19,10 @@ from app.models import (
     TMDBCredit,
     TMDBGenre,
     TVCast,
-    TVEpisode,
     TVSeries,
 )
 
-from tests.factories import make_movie, make_tv_episode, make_tv_series
+from tests.factories import make_movie, make_tv_series
 
 
 def csrf_token_from(page_html):
@@ -86,8 +85,6 @@ def enriched_series():
     db.session.add(credit)
     db.session.flush()
     db.session.add(TVCast(tv_id=series.id, credit_id=credit.id, character="Himself"))
-    make_tv_episode(series, 1, 1, title="Pilot")
-    make_tv_episode(series, 1, 2, title="Second")
     db.session.flush()
     return series
 
@@ -142,7 +139,6 @@ def test_tv_clear_empties_fields_cast_and_episodes(app):
         assert stored.tmdb_ignored is True
 
         assert TVCast.query.filter_by(tv_id=series_id).count() == 0
-        assert TVEpisode.query.filter_by(series_id=series_id).count() == 0
         assert stored.title == "Rifftrax"
 
 
@@ -299,7 +295,6 @@ def test_remove_button_detaches_the_series(app, admin_client):
         stored = db.session.get(TVSeries, series_id)
         assert stored.tmdb_id is None
         assert stored.tmdb_ignored is True
-        assert TVEpisode.query.filter_by(series_id=series_id).count() == 0
 
 
 def test_entering_an_id_by_hand_reattaches_an_ignored_series(app, admin_client):

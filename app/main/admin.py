@@ -634,8 +634,6 @@ def maintenance():
             "details": evaluate_filename(test_filename, log=False),
         }
 
-    from app.tv_validation import validation_report
-
     return render_template(
         "maintenance.html",
         title="Library Maintenance",
@@ -644,7 +642,6 @@ def maintenance():
         lossy_triage_count=len(lossy_audio_candidates()),
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
         runtime_mismatch_count=len(runtime_mismatch_candidates()),
-        tv_suspect_count=sum(1 for e in validation_report() if e["suspect"]),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -654,31 +651,6 @@ def maintenance():
         sync_form=sync_form,
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
-    )
-
-
-@bp.route("/maintenance/tv-titles")
-@login_required
-@admin_required
-def tv_title_validation():
-    """Per-series episode-title verdicts: how well fetched episode
-    titles agree with Plex's for the same files, suspects first. A
-    suspect verdict only suppresses titles on TMDB-sourced series —
-    Sonarr-sourced ones (#162) are numbered by the service that named
-    the files, so they're badged instead."""
-
-    from app.tv_validation import MIN_COMPARED, SUSPECT_BELOW, validation_report
-
-    sources = dict(db.session.query(TVSeries.id, TVSeries.episode_source))
-
-    return render_template(
-        "tv_validation.html",
-        title="TV episode titles",
-        entries=validation_report(),
-        sources=sources,
-        sonarr_sourced=sum(1 for source in sources.values() if source == "sonarr"),
-        min_compared=MIN_COMPARED,
-        suspect_below=SUSPECT_BELOW,
     )
 
 

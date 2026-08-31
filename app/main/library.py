@@ -66,7 +66,6 @@ from app.models import (
     TMDBGenre,
     TVCast,
     TVCrew,
-    TVEpisode,
     TVSeries,
     UserMovieReview,
     UserMovieStatus,
@@ -2076,12 +2075,8 @@ def tv_library():
         )
 
     series_query = TVSeries.query.join(File, (File.series_id == TVSeries.id)).distinct()
-    episode_results = []
     if q:
-        # Spaces become wildcards like the movie library's search. The
-        # series list matches titles alone; matching episodes get the
-        # main search page's own episode rows (lazy import — search.py
-        # imports from this module)
+        # Spaces become wildcards like the movie library's search
 
         wildcard = q.replace(" ", "%")
         series_query = series_query.filter(
@@ -2090,10 +2085,6 @@ def tv_library():
                 TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
             )
         )
-
-        from app.main.search import _episode_search_results
-
-        episode_results = _episode_search_results(wildcard)
 
     tv = []
     for series in series_query.order_by(
@@ -2119,7 +2110,6 @@ def tv_library():
         "library_tv.html",
         title=f"TV library matches for '{q}'" if q else "TV Library",
         series=tv,
-        episode_results=episode_results,
         q=q,
         library_search_form=library_search_form,
     )
@@ -2533,55 +2523,12 @@ def season(series_id, season):
 
         return redirect(url_for("main.season", series_id=series_id, season=season))
 
-    # Episode metadata for the guide and the files table's title column
-    # — withheld for numbering-suspect series, where a title is likelier
-    # to mislabel than to inform, unless Sonarr owns the rows (#162):
-    # Sonarr numbered these very files, so its titles fit them by
-    # construction and the suspicion doesn't apply. File editions
-    # outrank fetched titles in the template.
-
-    from app.tv_validation import series_is_suspect
-
-    episodes = {}
-    episode_guide = []
-    if tv.episode_source == "sonarr" or not series_is_suspect(series_id):
-        episodes = {
-            row.episode: row
-            for row in TVEpisode.query.filter_by(
-                series_id=series_id, season=season
-            ).all()
-        }
-        episode_guide = sorted(episodes.values(), key=lambda row: row.episode)
-
-    # Each episode's In-library badge wears the same shopping colors as
-    # every other one (#191): amber when its best copy is worth
-    # upgrading, green once it's settled. Physical-media copies (DVD,
-    # SD/720p Blu-ray) are often the only release that will ever exist,
-    # so they never count as upgradable
-
-    upgrade_threshold = _upgrade_threshold()
-    owned_episodes = set()
-    upgradable_episodes = set()
-    for file, _, quality, rank in files:
-        span = range(file.episode, (file.last_episode or file.episode) + 1)
-        owned_episodes.update(span)
-        if (
-            rank == 1
-            and not quality.physical_media
-            and quality.preference < upgrade_threshold
-        ):
-            upgradable_episodes.update(span)
-
     return render_template(
         "season.html",
         title=title,
         tv=tv,
         season=season,
         files=files,
-        episodes=episodes,
-        episode_guide=episode_guide,
-        owned_episodes=owned_episodes,
-        upgradable_episodes=upgradable_episodes,
         season_restore_form=season_restore_form,
         season_restore_estimate=season_restore_estimate,
     )
