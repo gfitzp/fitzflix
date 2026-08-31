@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">Channel {{ channel.number }} &middot; {{ channel.name }}</h2>
+<p class="text-muted small mb-2">
+	Stream id <code>{{ channel.slug }}</code> (frozen &mdash; Plex maps the channel by it)
+	&middot; {{ program_count }} program{{ "s" if program_count != 1 }} in the current lineup
+	&middot; <a href="{{ url_for('main.dvr_channels') }}">back to the dial</a>
+</p>
+<hr>
+
+<form action="" method="post" style="max-width: 40rem;">
+	{{ form.csrf_token() }}
+	{{ form.channel_id() }}
+	<div class="row g-2">
+		<div class="col-8">
+			{{ form.name.label(class_="form-label mb-0 small") }}
+			{{ form.name(class_="form-control form-control-sm") }}
+		</div>
+		<div class="col-4">
+			{{ form.number.label(class_="form-label mb-0 small") }}
+			{{ form.number(class_="form-control form-control-sm") }}
+		</div>
+	</div>
+	<div class="form-check mt-2">
+		{{ form.enabled(class_="form-check-input") }}
+		{{ form.enabled.label(class_="form-check-label") }}
+	</div>
+
+	<h6 class="mt-3 mb-1">Rule-matched members</h6>
+	<div class="form-check">
+		{{ form.include_movies(class_="form-check-input") }}
+		{{ form.include_movies.label(class_="form-check-label") }}
+	</div>
+	<div class="form-check">
+		{{ form.include_tv(class_="form-check-input") }}
+		{{ form.include_tv.label(class_="form-check-label") }}
+	</div>
+	<div class="row g-2 mt-1">
+		<div class="col-6">
+			{{ form.genres.label(class_="form-label mb-0 small") }}
+			{{ form.genres(class_="form-control form-control-sm", list="genre-options", placeholder="Comedy, Sci-Fi & Fantasy") }}
+			<datalist id="genre-options">
+				{% for name in genre_names %}<option value="{{ name }}">{% endfor %}
+			</datalist>
+		</div>
+		<div class="col-6">
+			{{ form.keywords.label(class_="form-label mb-0 small") }}
+			{{ form.keywords(class_="form-control form-control-sm", placeholder="sitcom, game show") }}
+		</div>
+	</div>
+	<div class="row g-2 mt-1">
+		<div class="col-6">
+			{{ form.title_pins.label(class_="form-label mb-0 small") }}
+			{{ form.title_pins(class_="form-control form-control-sm", placeholder="match game") }}
+		</div>
+		<div class="col-6">
+			{{ form.network_country.label(class_="form-label mb-0 small") }}
+			{{ form.network_country(class_="form-control form-control-sm", placeholder="GB") }}
+		</div>
+	</div>
+	<p class="text-muted small mt-1 mb-2">Comma-separated, any-of matching. Genres and keywords apply to whichever libraries are included above; the network country applies to TV series; a title pin pulls a matching title in past every other rule.</p>
+	<div class="form-check">
+		{{ form.criterion_only(class_="form-check-input") }}
+		{{ form.criterion_only.label(class_="form-check-label") }}
+	</div>
+	<div class="form-check">
+		{{ form.leaving_only(class_="form-check-input") }}
+		{{ form.leaving_only.label(class_="form-check-label") }}
+	</div>
+	<div class="mt-2">
+		{{ form.save_submit(class_="btn btn-sm btn-primary") }}
+	</div>
+</form>
+
+<h4 class="mt-4">Explicit picks</h4>
+<p class="text-muted small mb-2">Always on the channel, regardless of the rules. Movies resolve as &ldquo;Title (Year)&rdquo; or a unique fragment; series by title.</p>
+
+<div class="row g-3" style="max-width: 50rem;">
+	<div class="col-md-6">
+		<h6>Movies</h6>
+		{% for movie in movies %}
+		<form action="" method="post" class="d-flex align-items-center mb-1">
+			{{ member_form.csrf_token() }}
+			<input type="hidden" name="member_kind" value="movie">
+			<input type="hidden" name="member_id" value="{{ movie.id }}">
+			<span class="me-auto small">{{ movie.title }} ({{ movie.year }})</span>
+			<button class="btn btn-sm btn-outline-danger" name="remove_submit" value="Remove" type="submit">&times;</button>
+		</form>
+		{% else %}
+		<p class="text-muted small">None.</p>
+		{% endfor %}
+		<form action="" method="post" class="d-flex mt-2">
+			{{ member_form.csrf_token() }}
+			<input class="form-control form-control-sm me-2" type="text" name="member_title" placeholder="Jaws (1975)">
+			<button class="btn btn-sm btn-secondary text-nowrap" name="add_movie_submit" value="Add movie" type="submit">Add movie</button>
+		</form>
+	</div>
+	<div class="col-md-6">
+		<h6>TV series</h6>
+		{% for show in series %}
+		<form action="" method="post" class="d-flex align-items-center mb-1">
+			{{ member_form.csrf_token() }}
+			<input type="hidden" name="member_kind" value="series">
+			<input type="hidden" name="member_id" value="{{ show.id }}">
+			<span class="me-auto small">{{ show.title }}</span>
+			<button class="btn btn-sm btn-outline-danger" name="remove_submit" value="Remove" type="submit">&times;</button>
+		</form>
+		{% else %}
+		<p class="text-muted small">None.</p>
+		{% endfor %}
+		<form action="" method="post" class="d-flex mt-2">
+			{{ member_form.csrf_token() }}
+			<input class="form-control form-control-sm me-2" type="text" name="member_title" placeholder="Doctor Who (1963)">
+			<button class="btn btn-sm btn-secondary text-nowrap" name="add_series_submit" value="Add series" type="submit">Add series</button>
+		</form>
+	</div>
+</div>
+{% endblock %}

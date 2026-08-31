@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block app_content %}
+<h2 class="mt-n2">{{ title }}</h2>
+<hr>
+<p class="text-muted">The virtual DVR dial: each channel airs owned media matched by its rules and explicit picks. Edits rebuild the lineups automatically; Plex shows the new dial after its next guide refresh.</p>
+
+<form action="" method="post" class="d-inline">
+	{{ action_form.csrf_token() }}
+	<button class="btn btn-sm btn-warning" name="rebuild_submit" value="Rebuild lineups now" type="submit">Rebuild lineups now</button>
+</form>
+
+<table class="table table-sm mt-3 align-middle">
+	<thead>
+		<tr>
+			<th>#</th>
+			<th>Name</th>
+			<th>Rules</th>
+			<th class="text-end">Programs</th>
+			<th></th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for channel in channels %}
+		<tr{% if not channel.enabled %} class="text-muted"{% endif %}>
+			<td>{{ channel.number }}</td>
+			<td>
+				<a href="{{ url_for('main.dvr_channel_edit', channel_id=channel.id) }}">{{ channel.name }}</a>
+				{% if not channel.enabled %}<span class="badge text-bg-secondary ms-1">disabled</span>{% endif %}
+			</td>
+			<td class="small">{{ summaries[channel.id] }}</td>
+			<td class="text-end">{{ counts[channel.id] }}</td>
+			<td class="text-end">
+				<form action="" method="post" class="d-inline">
+					{{ action_form.csrf_token() }}
+					<input type="hidden" name="channel_id" value="{{ channel.id }}">
+					<button class="btn btn-sm btn-danger" name="delete_submit" value="Delete" type="submit" onclick="return confirm('Delete channel {{ channel.number }} ({{ channel.name }})?');">Delete</button>
+				</form>
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+
+<h4 class="mt-4">New channel</h4>
+<form action="" method="post" class="mt-2" style="max-width: 40rem;">
+	{{ form.csrf_token() }}
+	<div class="row g-2">
+		<div class="col-8">
+			{{ form.name.label(class_="form-label mb-0 small") }}
+			{{ form.name(class_="form-control form-control-sm") }}
+		</div>
+		<div class="col-4">
+			{{ form.number.label(class_="form-label mb-0 small") }}
+			{{ form.number(class_="form-control form-control-sm") }}
+		</div>
+	</div>
+	<div class="form-check mt-2">
+		{{ form.include_movies(class_="form-check-input") }}
+		{{ form.include_movies.label(class_="form-check-label") }}
+	</div>
+	<div class="form-check">
+		{{ form.include_tv(class_="form-check-input") }}
+		{{ form.include_tv.label(class_="form-check-label") }}
+	</div>
+	<div class="form-check">
+		{{ form.enabled(class_="form-check-input", checked=True) }}
+		{{ form.enabled.label(class_="form-check-label") }}
+	</div>
+	<p class="text-muted small mt-2 mb-2">Rules are optional and comma-separated; the editor page has the full set, plus explicit picks by title.</p>
+	{{ form.save_submit(class_="btn btn-sm btn-primary") }}
+</form>
+{% endblock %}

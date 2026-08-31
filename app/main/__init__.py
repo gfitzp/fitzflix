@@ -11,6 +11,7 @@ from app.main import (  # noqa: E402
     admin,
     discover,
     dvr,
+    dvr_admin,
     game,
     library,
     posters,

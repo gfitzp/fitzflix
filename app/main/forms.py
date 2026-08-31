@@ -20,6 +20,8 @@ from wtforms.validators import (
     DataRequired,
     Email,
     EqualTo,
+    Length,
+    NumberRange,
     Optional,
     ValidationError,
 )
@@ -523,3 +525,49 @@ class GuessFrameForm(FlaskForm):
     # Extra Difficult again: surrender a round that's past its first
     # zoom-out — it ends as a miss (Glenn's ask, Aug 27 2026)
     give_up = SubmitField("I give up")
+
+
+class DVRChannelForm(FlaskForm):
+    """DVR channel editor (#182): create or edit one channel's
+    definition. Rule fields are comma-separated term lists; the slug is
+    derived from the name at creation and never changes after."""
+
+    channel_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    name = StringField("Name", validators=[DataRequired(), Length(max=64)])
+    number = IntegerField(
+        "Number", validators=[DataRequired(), NumberRange(min=1, max=9999)]
+    )
+    enabled = BooleanField("Enabled", default=True)
+    include_movies = BooleanField("Movies matching the rules")
+    include_tv = BooleanField("TV series matching the rules")
+    genres = StringField("Genres", validators=[Optional(), Length(max=1024)])
+    keywords = StringField("Keywords", validators=[Optional(), Length(max=1024)])
+    network_country = StringField(
+        "Network country", validators=[Optional(), Length(max=16)]
+    )
+    title_pins = StringField("Title pins", validators=[Optional(), Length(max=1024)])
+    criterion_only = BooleanField("Only films streaming on the Criterion Channel")
+    leaving_only = BooleanField("Only films leaving the Criterion Channel")
+    save_submit = SubmitField("Save channel")
+
+
+class DVRChannelActionForm(FlaskForm):
+    """DVR channel list actions: delete a channel or trigger a lineup
+    rebuild."""
+
+    channel_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    delete_submit = SubmitField("Delete")
+    rebuild_submit = SubmitField("Rebuild lineups now")
+
+
+class DVRMemberForm(FlaskForm):
+    """DVR channel editor: add or remove an explicit movie/series
+    member, resolved by title text server-side."""
+
+    channel_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    member_title = StringField("Title", validators=[Optional(), Length(max=255)])
+    member_kind = StringField(widget=HiddenInput(), validators=[Optional()])
+    member_id = IntegerField(validators=[Optional()], widget=HiddenInput())
+    add_movie_submit = SubmitField("Add movie")
+    add_series_submit = SubmitField("Add series")
+    remove_submit = SubmitField("Remove")

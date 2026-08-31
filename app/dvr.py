@@ -36,6 +36,7 @@ from app import db, get_app
 from app.availability_alerts import _leaving_set
 from app.leaving_criterion import CRITERION_PROVIDER_ID
 from app.models import (
+    DVRChannel,
     File,
     FileAudioTrack,
     Movie,
@@ -45,6 +46,7 @@ from app.models import (
     TMDBNetwork,
     TVSeries,
     movie_genres,
+    movie_keywords,
     tv_file_rank,
     tv_genres,
     tv_keywords,
@@ -336,22 +338,80 @@ def _series_catalog():
     return catalog
 
 
-def _theme_matches(entry, spec):
-    """Whether a series belongs on a themed channel: a title pin wins
-    outright, otherwise every predicate the spec declares must hold."""
+def _movie_keywords_by_movie(movie_ids):
+    """Map of movie id -> set of lowercase keyword names, one query for
+    the whole candidate pool."""
 
-    title = entry["series"].title.lower()
-    if any(pin in title for pin in spec.get("titles", ())):
-        return True
-    if spec.get("genre") and spec["genre"] not in entry["genres"]:
-        return False
-    keywords = spec.get("keywords")
-    if keywords and not any(keyword in entry["keywords"] for keyword in keywords):
-        return False
-    country = spec.get("network_country")
-    if country and country not in entry["countries"]:
-        return False
-    return True
+    if not movie_ids:
+        return {}
+    rows = (
+        db.session.query(movie_keywords.c.movie_id, TMDBKeyword.name)
+        .join(TMDBKeyword, TMDBKeyword.id == movie_keywords.c.keyword_id)
+        .filter(movie_keywords.c.movie_id.in_(movie_ids))
+        .all()
+    )
+    names = {}
+    for movie_id, name in rows:
+        names.setdefault(movie_id, set()).add((name or "").lower())
+    return names
+
+
+def _channel_members(channel, ctx):
+    """Resolve one channel row to its members: explicit picks plus
+    rule matches. Returns (movie_ids, series_entries).
+
+    Genres and keywords are any-of matches against whichever library
+    the include flags open, network_country applies to series,
+    criterion/leaving restrict the rule-matched film pool, and a title
+    pin pulls a matching title in past every other filter — pins exist
+    for titles whose TMDB metadata is too thin to match by rule.
+    """
+
+    genre_terms = set(channel.rule_list("genres"))
+    keyword_terms = set(channel.rule_list("keywords"))
+    pin_terms = channel.rule_list("title_pins")
+    country = (channel.network_country or "").strip().upper() or None
+
+    movie_ids = {movie.id for movie in channel.movies if movie.id in ctx["best"]}
+    if channel.include_movies:
+        for movie_id in ctx["best"]:
+            if genre_terms and not genre_terms & ctx["movie_genres"].get(
+                movie_id, set()
+            ):
+                continue
+            if keyword_terms and not keyword_terms & ctx["movie_keywords"].get(
+                movie_id, set()
+            ):
+                continue
+            if channel.criterion_only and movie_id not in ctx["criterion"]:
+                continue
+            if channel.leaving_only and movie_id not in ctx["leaving"]:
+                continue
+            movie_ids.add(movie_id)
+    if pin_terms:
+        for movie_id, (movie, _) in ctx["best"].items():
+            title = (movie.tmdb_title or movie.title or "").lower()
+            if any(pin in title for pin in pin_terms):
+                movie_ids.add(movie_id)
+
+    chosen = {series.id for series in channel.series if series.id in ctx["catalog"]}
+    if channel.include_tv:
+        for series_id, entry in ctx["catalog"].items():
+            if genre_terms and not genre_terms & {
+                genre.lower() for genre in entry["genres"]
+            }:
+                continue
+            if keyword_terms and not keyword_terms & entry["keywords"]:
+                continue
+            if country and country not in entry["countries"]:
+                continue
+            chosen.add(series_id)
+    if pin_terms:
+        for series_id, entry in ctx["catalog"].items():
+            if any(pin in entry["series"].title.lower() for pin in pin_terms):
+                chosen.add(series_id)
+
+    return sorted(movie_ids), [ctx["catalog"][series_id] for series_id in chosen]
 
 
 def _channel_window(members, day, cap):
@@ -438,62 +498,132 @@ def _episode_program(series, file, duration):
     }
 
 
-def _tv_channels(day):
-    """The TV dial: (number, slug, name, window) tuples — the deepest
-    TMDB TV genres as auto channels, then the themed channels from
-    TV_THEME_SPECS, each window a multi-series interleave. A channel
-    needs MIN_SERIES_EPISODES owned episodes across its members."""
+def _merge_programs(movie_programs, episode_programs):
+    """A mixed channel's schedule: episodes carry the rhythm and the
+    movies space themselves evenly through the cycle, like a station's
+    nightly feature presentation."""
 
-    cap = current_app.config["DVR_CHANNEL_EPISODES"]
+    if not movie_programs or not episode_programs:
+        return movie_programs or episode_programs
+    merged = []
+    movies = list(movie_programs)
+    step = len(episode_programs) / len(movie_programs)
+    next_at = step
+    for position, program in enumerate(episode_programs, start=1):
+        merged.append(program)
+        while movies and position >= next_at - 1e-9:
+            merged.append(movies.pop(0))
+            next_at += step
+    merged.extend(movies)
+    return merged
+
+
+def seed_default_channels():
+    """Create the default dial as editable rows, run once when the
+    channel table is empty: the all-library mix, the deepest movie
+    genres, the Criterion and Leaving Soon overlays, the deepest TV
+    genres ("TV"-suffixed), and the starter themes. From then on the
+    dial belongs to the admin editor and never reseeds."""
+
+    best = _best_files_by_movie()
+    genres_by_movie = _genre_names_by_movie(list(best))
+    counts = {}
+    for movie_id in best:
+        for name in genres_by_movie.get(movie_id, []):
+            counts[name] = counts.get(name, 0) + 1
+    deep = [name for name, count in counts.items() if count >= MIN_GENRE_FILMS]
+    top_movie = sorted(
+        sorted(deep, key=counts.get, reverse=True)[
+            : current_app.config["DVR_GENRE_CHANNELS"]
+        ]
+    )
+
+    rows = [
+        DVRChannel(
+            number=MIX_CHANNEL_NUMBER,
+            name=MIX_CHANNEL_NAME,
+            slug=MIX_CHANNEL_SLUG,
+            include_movies=True,
+        )
+    ]
+    for offset, name in enumerate(top_movie, start=1):
+        rows.append(
+            DVRChannel(
+                number=MIX_CHANNEL_NUMBER + offset,
+                name=name,
+                slug=_slugify(name),
+                include_movies=True,
+                genres=name,
+            )
+        )
+    rows.append(
+        DVRChannel(
+            number=CRITERION_CHANNEL_NUMBER,
+            name="Criterion",
+            slug="criterion",
+            include_movies=True,
+            criterion_only=True,
+        )
+    )
+    rows.append(
+        DVRChannel(
+            number=LEAVING_CHANNEL_NUMBER,
+            name="Leaving Soon",
+            slug="leaving-soon",
+            include_movies=True,
+            leaving_only=True,
+        )
+    )
+
     catalog = _series_catalog()
-    if not catalog:
-        return []
-
     totals = {}
     for entry in catalog.values():
         for name in entry["genres"]:
             totals[name] = totals.get(name, 0) + entry["episodes"]
-    deep = [name for name, count in totals.items() if count >= MIN_SERIES_EPISODES]
-    top = sorted(
-        sorted(deep, key=totals.get, reverse=True)[
+    deep_tv = [name for name, count in totals.items() if count >= MIN_SERIES_EPISODES]
+    top_tv = sorted(
+        sorted(deep_tv, key=totals.get, reverse=True)[
             : current_app.config["DVR_TV_CHANNELS"]
         ]
     )
-
-    channels = []
-    for offset, name in enumerate(top):
-        members = [e for e in catalog.values() if name in e["genres"]]
+    for offset, name in enumerate(top_tv):
         # "TV" suffix so the guide never shows a movie genre channel
         # and a TV genre channel under the same name (Comedy collides)
-        channels.append(
-            (
-                TV_CHANNEL_NUMBER + offset,
-                f"tv-{_slugify(name)}",
-                f"{name} TV",
-                _channel_window(members, day, cap),
+        rows.append(
+            DVRChannel(
+                number=TV_CHANNEL_NUMBER + offset,
+                name=f"{name} TV",
+                slug=f"tv-{_slugify(name)}",
+                include_tv=True,
+                genres=name,
             )
         )
     for offset, spec in enumerate(TV_THEME_SPECS):
-        members = [e for e in catalog.values() if _theme_matches(e, spec)]
-        if sum(m["episodes"] for m in members) < MIN_SERIES_EPISODES:
-            continue
-        channels.append(
-            (
-                TV_THEME_NUMBER + offset,
-                f"tv-{_slugify(spec['name'])}",
-                spec["name"],
-                _channel_window(members, day, cap),
+        rows.append(
+            DVRChannel(
+                number=TV_THEME_NUMBER + offset,
+                name=spec["name"],
+                slug=f"tv-{_slugify(spec['name'])}",
+                include_tv=True,
+                keywords=", ".join(spec.get("keywords", ())) or None,
+                network_country=spec.get("network_country"),
+                title_pins=", ".join(spec.get("titles", ())) or None,
             )
         )
-    return channels
+    db.session.add_all(rows)
+    db.session.commit()
+    current_app.logger.info(f"DVR: seeded {len(rows)} default channels")
+    return True
 
 
 def build_channel_lineups(day=None):
-    """Build the day's channel lineups and store them in Redis: the
-    all-library mix, the deepest genres, the Criterion and Leaving
-    Soon overlays (when deep enough), and the per-series TV channels.
-    Movie channels are seeded shuffles capped at DVR_CHANNEL_FILMS; TV
-    channels are broadcast-order windows.
+    """Build every enabled channel's lineup from its stored definition
+    (the dvr_channel table, the admin editor's domain), seeding the
+    default dial on the very first run. Rule-matched films are seeded
+    daily shuffles capped at DVR_CHANNEL_FILMS; series air as
+    interleaved broadcast-order windows capped at DVR_CHANNEL_EPISODES;
+    a channel carrying both spaces its films evenly through the
+    episode cycle.
 
     Runs nightly on the maintenance queue. Probing durations is the
     only real cost, and the per-file cache makes every build after a
@@ -503,62 +633,30 @@ def build_channel_lineups(day=None):
     with app.app_context():
         redis_client = current_app.redis
         day = day or date.today()
-        cap = current_app.config["DVR_CHANNEL_FILMS"]
+        film_cap = current_app.config["DVR_CHANNEL_FILMS"]
+        episode_cap = current_app.config["DVR_CHANNEL_EPISODES"]
+
+        if DVRChannel.query.count() == 0:
+            seed_default_channels()
+        channels = DVRChannel.query.order_by(DVRChannel.number.asc()).all()
 
         best = _best_files_by_movie()
         genres_by_movie = _genre_names_by_movie(list(best))
-
-        # Movie channels: the mix, the deepest genres alphabetically,
-        # then the themed overlays when they have the bench for it.
-        # Each is (number, slug, name, eligible movie ids, guide note)
-
-        counts = {}
-        for movie_id in best:
-            for name in genres_by_movie.get(movie_id, []):
-                counts[name] = counts.get(name, 0) + 1
-        deep = [name for name, count in counts.items() if count >= MIN_GENRE_FILMS]
-        top = sorted(
-            sorted(deep, key=counts.get, reverse=True)[
-                : current_app.config["DVR_GENRE_CHANNELS"]
-            ]
-        )
-
-        movie_channels = [
-            (MIX_CHANNEL_NUMBER, MIX_CHANNEL_SLUG, MIX_CHANNEL_NAME, list(best), None)
-        ]
-        for offset, name in enumerate(top, start=1):
-            eligible = [
-                movie_id
-                for movie_id in best
-                if name in genres_by_movie.get(movie_id, [])
-            ]
-            movie_channels.append(
-                (MIX_CHANNEL_NUMBER + offset, _slugify(name), name, eligible, None)
-            )
-
-        criterion_ids = _criterion_movie_ids(best)
-        if len(criterion_ids) >= MIN_SPECIAL_FILMS:
-            movie_channels.append(
-                (
-                    CRITERION_CHANNEL_NUMBER,
-                    "criterion",
-                    "Criterion",
-                    criterion_ids,
-                    None,
-                )
-            )
-
+        ctx = {
+            "best": best,
+            "movie_genres": {
+                movie_id: {name.lower() for name in names}
+                for movie_id, names in genres_by_movie.items()
+            },
+            "movie_keywords": _movie_keywords_by_movie(list(best)),
+            "catalog": _series_catalog(),
+            "criterion": set(),
+            "leaving": set(),
+        }
+        if any(c.enabled and c.criterion_only for c in channels):
+            ctx["criterion"] = set(_criterion_movie_ids(best))
         leaving_ids, departs = _leaving_owned(best)
-        if departs and len(leaving_ids) >= MIN_SPECIAL_FILMS:
-            movie_channels.append(
-                (
-                    LEAVING_CHANNEL_NUMBER,
-                    "leaving-soon",
-                    "Leaving Soon",
-                    leaving_ids,
-                    f"Leaving the Criterion Channel {departs.strftime('%B %-d')}.",
-                )
-            )
+        ctx["leaving"] = set(leaving_ids)
 
         epoch = datetime.now(timezone.utc).timestamp()
         index = []
@@ -580,12 +678,28 @@ def build_channel_lineups(day=None):
             redis_client.set(LINEUP_KEY.format(slug=slug), json.dumps(lineup))
             index.append({"number": number, "slug": slug, "name": name})
 
-        for number, slug, name, eligible, note in movie_channels:
-            Random(f"dvr:{slug}:{day.isoformat()}").shuffle(eligible)
-            programs = []
-            for movie_id in eligible:
-                if len(programs) >= cap:
-                    break
+        for channel in channels:
+            if not channel.enabled:
+                continue
+            movie_ids, series_entries = _channel_members(channel, ctx)
+
+            # The Criterion/Leaving overlays keep their bench: a one-
+            # or two-film loop reads as broken, not as a marathon
+
+            if (channel.criterion_only or channel.leaving_only) and not series_entries:
+                if len(movie_ids) < MIN_SPECIAL_FILMS:
+                    current_app.logger.info(
+                        f"DVR: channel {channel.slug} is below the "
+                        f"{MIN_SPECIAL_FILMS}-film bench; skipping"
+                    )
+                    continue
+            note = None
+            if channel.leaving_only and departs:
+                note = f"Leaving the Criterion Channel {departs.strftime('%B %-d')}."
+
+            Random(f"dvr:{channel.slug}:{day.isoformat()}").shuffle(movie_ids)
+            movie_programs = []
+            for movie_id in movie_ids[:film_cap]:
                 movie, file = best[movie_id]
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
@@ -598,22 +712,35 @@ def build_channel_lineups(day=None):
                 )
                 if note:
                     program["overview"] = f"{note} {program['overview']}".strip()
-                programs.append(program)
-            store(number, slug, name, programs)
+                movie_programs.append(program)
 
-        for number, slug, name, window in _tv_channels(day):
-            programs = []
-            for series, file in window:
+            episode_programs = []
+            for series, file in _channel_window(series_entries, day, episode_cap):
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
                     current_app.logger.warning(
                         f"DVR: no duration for {file.file_path}; skipping"
                     )
                     continue
-                programs.append(_episode_program(series, file, duration))
-            store(number, slug, name, programs)
+                episode_programs.append(_episode_program(series, file, duration))
+
+            store(
+                channel.number,
+                channel.slug,
+                channel.name,
+                _merge_programs(movie_programs, episode_programs),
+            )
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
+
+        # A deleted or emptied channel's stored lineup would otherwise
+        # keep answering its stream URL forever
+
+        kept = {LINEUP_KEY.format(slug=entry["slug"]) for entry in index}
+        for key in redis_client.scan_iter(match=LINEUP_KEY.format(slug="*")):
+            if key.decode() not in kept:
+                redis_client.delete(key)
+
         current_app.logger.info(
             f"DVR: built {len(index)} channel lineups "
             f"({len(best)} owned films in pool)"

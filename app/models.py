@@ -2832,6 +2832,81 @@ def load_user(id):
     return db.session.get(User, int(id))
 
 
+dvr_channel_movies = db.Table(
+    "dvr_channel_movies",
+    db.Column("channel_id", db.Integer, db.ForeignKey("dvr_channel.id")),
+    db.Column("movie_id", db.Integer, db.ForeignKey("movie.id")),
+)
+
+
+dvr_channel_series = db.Table(
+    "dvr_channel_series",
+    db.Column("channel_id", db.Integer, db.ForeignKey("dvr_channel.id")),
+    db.Column("series_id", db.Integer, db.ForeignKey("tv_series.id")),
+)
+
+
+class DVRChannel(db.Model):
+    """An admin-defined virtual DVR channel (#182).
+
+    A channel's members are its explicit picks (the movie/series
+    relationships) plus whatever matches its rule columns: genres and
+    keywords match either library when the matching include flag is
+    set, network_country applies to series, criterion/leaving restrict
+    the rule-matched film pool to what's streaming on / departing the
+    Criterion Channel, and title_pins pull titles in past every other
+    filter. The comma-separated rule columns follow the free-text
+    convention rather than JSON.
+
+    The slug is frozen at creation: it is the channel's tvg-id and
+    stream URL, which Plex maps by — renaming a channel must never
+    move its stream.
+    """
+
+    id = db.Column(db.Integer, primary_key=True)
+    number = db.Column(db.Integer, nullable=False, unique=True)
+    name = db.Column(db.String(64), nullable=False, unique=True)
+    slug = db.Column(db.String(64), nullable=False, unique=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    include_movies = db.Column(db.Boolean, nullable=False, default=False)
+    include_tv = db.Column(db.Boolean, nullable=False, default=False)
+    genres = db.Column(db.Text)
+    keywords = db.Column(db.Text)
+    network_country = db.Column(db.String(16))
+    title_pins = db.Column(db.Text)
+    criterion_only = db.Column(db.Boolean, nullable=False, default=False)
+    leaving_only = db.Column(db.Boolean, nullable=False, default=False)
+    date_created = db.Column(
+        db.DateTime, nullable=False, default=db.func.utc_timestamp()
+    )
+
+    movies = db.relationship(
+        "Movie",
+        secondary=dvr_channel_movies,
+        backref=db.backref("dvr_channels", lazy="dynamic"),
+        lazy="dynamic",
+    )
+    series = db.relationship(
+        "TVSeries",
+        secondary=dvr_channel_series,
+        backref=db.backref("dvr_channels", lazy="dynamic"),
+        lazy="dynamic",
+    )
+
+    def rule_list(self, column):
+        """One comma-separated rule column as a clean list of
+        lowercase terms."""
+
+        return [
+            term.strip().lower()
+            for term in (getattr(self, column) or "").split(",")
+            if term.strip()
+        ]
+
+    def __repr__(self):
+        return f"<DVRChannel {self.number} '{self.name}'>"
+
+
 def movie_file_rank():
     """Rank each movie file within its title/feature/edition group by quality."""
 
