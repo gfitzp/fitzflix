@@ -300,7 +300,7 @@ class AvailabilityAlertsForm(FlaskForm):
     """
 
     notify_availability = BooleanField(
-        "Email me when films on my watchlist become available"
+        "Email me when films on my watchlist become available or are leaving a service"
     )
     notify_rentals = BooleanField("Also tell me when they become available to rent")
     alerts_submit = SubmitField("Save Alert Settings")
