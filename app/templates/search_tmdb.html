@@ -55,8 +55,11 @@
 				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center ms-2" data-card-watchlist>
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="from_card" value="1">
-					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
-					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
+					{# Outline on purpose, like the gallery tiles (Glenn,
+					   Aug 31 2026): the toggle repeats on every result
+					   row, so it stays quiet #}
+					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
+					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
 				</form>
 				<br/>
 				{% endif %}

@@ -79,7 +79,8 @@
 		</div>
 		{% endif %}
 		<p class="mb-1">
-			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-primary">&#9654;&nbsp;Watch live</a>
+			{# Green like every other play control (Glenn, Aug 31 2026) #}
+			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-success">&#9654;&nbsp;Watch live</a>
 			{% if now_playing.more_url %}
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary">More</a>
 			{% endif %}
