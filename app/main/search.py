@@ -1,6 +1,7 @@
 """Local search (the routes.py split): the library search page, the
 navbar type-ahead JSON, and the TMDB lookup page."""
 
+import re
 import traceback
 
 
@@ -49,7 +50,30 @@ from app.streaming import (
 )
 
 
-def _movie_search_results(wildcard, limit=50):
+def _parse_query(q):
+    """Split modifier tokens out of a search query (#185).
+
+    'jaws y:1975' → ('jaws', (1975, 1975)); 'y:1980-1989' spans a
+    range, and 'year:' works as the long form. Unrecognized or
+    malformed tokens ('y:83') stay in the text, so they search
+    literally instead of guessing."""
+
+    years = None
+    words = []
+    for token in q.split():
+        match = re.fullmatch(
+            r"(?:y|year):(\d{4})(?:-(\d{4}))?", token, flags=re.IGNORECASE
+        )
+        if match:
+            first = int(match.group(1))
+            second = int(match.group(2)) if match.group(2) else first
+            years = (min(first, second), max(first, second))
+        else:
+            words.append(token)
+    return " ".join(words), years
+
+
+def _movie_search_results(wildcard, limit=50, years=None):
     """Movies whose titles match, each with its best owned copy.
 
     Only films with a local main-feature file appear: review-only
@@ -82,15 +106,26 @@ def _movie_search_results(wildcard, limit=50):
     )
 
     results = []
-    movies = (
-        Movie.query.filter(
+    query = Movie.query.filter(
+        db.or_(
+            Movie.title.ilike(f"%{wildcard}%"),
+            Movie.tmdb_title.ilike(f"%{wildcard}%"),
+        )
+    ).filter(Movie.files.any(File.feature_type_id.is_(None)))
+
+    # A y: modifier (#185) matches either year a film answers to — its
+    # library identity year or TMDB's release year — since the two
+    # commonly differ by one around festival releases
+
+    if years:
+        query = query.filter(
             db.or_(
-                Movie.title.ilike(f"%{wildcard}%"),
-                Movie.tmdb_title.ilike(f"%{wildcard}%"),
+                Movie.year.between(*years),
+                db.extract("year", Movie.tmdb_release_date).between(*years),
             )
         )
-        .filter(Movie.files.any(File.feature_type_id.is_(None)))
-        .order_by(match_rank, Movie.title.asc(), Movie.year.asc())
+    movies = (
+        query.order_by(match_rank, Movie.title.asc(), Movie.year.asc())
         .limit(limit)
         .all()
     )
@@ -117,7 +152,7 @@ def _movie_search_results(wildcard, limit=50):
     return results
 
 
-def _tv_search_results(wildcard, limit=50):
+def _tv_search_results(wildcard, limit=50, years=None):
     """TV series whose titles match, each season summarized by the worst
     quality among its best (rank-1) episode files.
 
@@ -146,16 +181,22 @@ def _tv_search_results(wildcard, limit=50):
         ),
         else_=2,
     )
-    series_list = (
-        TVSeries.query.filter(
-            db.or_(
-                TVSeries.title.ilike(f"%{wildcard}%"),
-                TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
-            )
+    series_query = TVSeries.query.filter(
+        db.or_(
+            TVSeries.title.ilike(f"%{wildcard}%"),
+            TVSeries.tmdb_name.ilike(f"%{wildcard}%"),
         )
-        .order_by(match_rank, TVSeries.title.asc())
-        .limit(limit)
-        .all()
+    )
+
+    # A y: modifier (#185) means the year the series premiered; series
+    # TMDB has no first-air date for drop out while the filter is active
+
+    if years:
+        series_query = series_query.filter(
+            db.extract("year", TVSeries.tmdb_first_air_date).between(*years)
+        )
+    series_list = (
+        series_query.order_by(match_rank, TVSeries.title.asc()).limit(limit).all()
     )
     if not series_list:
         return []
@@ -287,17 +328,21 @@ def search():
     """Search movies and TV series from one box, anywhere in the app."""
 
     q = (request.args.get("q") or "").strip()
+    text, years = _parse_query(q)
     movie_results = []
     tv_results = []
     people_results = []
 
     if q:
-        # Spaces become wildcards so word order and punctuation don't matter
+        # Spaces become wildcards so word order and punctuation don't
+        # matter. A modifier-only query ('y:1983') matches every title,
+        # turning the year filter into a browse — but people results
+        # stay text-driven, since a year means nothing for a person
 
-        wildcard = q.replace(" ", "%")
-        movie_results = _movie_search_results(wildcard)
-        tv_results = _tv_search_results(wildcard)
-        people_results = _people_search_results(wildcard)
+        wildcard = text.replace(" ", "%")
+        movie_results = _movie_search_results(wildcard, years=years)
+        tv_results = _tv_search_results(wildcard, years=years)
+        people_results = _people_search_results(wildcard) if text else []
 
         # The personal funnel badges: "Might interest you" (in the
         # stored recommendations — the library rail's own set) →
@@ -338,6 +383,7 @@ def search():
         "search.html",
         title=f"Search results for '{q}'" if q else "Search",
         q=q,
+        q_text=text,
         movie_results=movie_results,
         tv_results=tv_results,
         people_results=people_results,
@@ -353,9 +399,10 @@ def search_json():
     results = []
 
     if len(q) >= 2:
-        wildcard = q.replace(" ", "%")
+        text, years = _parse_query(q)
+        wildcard = text.replace(" ", "%")
 
-        for result in _movie_search_results(wildcard, limit=5):
+        for result in _movie_search_results(wildcard, limit=5, years=years):
             movie = result["movie"]
             display_title = movie.tmdb_title if movie.tmdb_title else movie.title
             display_year = (
@@ -372,7 +419,7 @@ def search_json():
                 }
             )
 
-        for result in _tv_search_results(wildcard, limit=5):
+        for result in _tv_search_results(wildcard, limit=5, years=years):
             series = result["series"]
             seasons = result["seasons"]
             if seasons:
@@ -392,7 +439,9 @@ def search_json():
                 }
             )
 
-        for person in _people_search_results(wildcard, limit=5):
+        # People results stay text-driven; a year means nothing for a person
+        people = _people_search_results(wildcard, limit=5) if text else []
+        for person in people:
             results.append(
                 {
                     "type": "Person",
@@ -426,28 +475,57 @@ def search_tmdb():
     error = None
     streaming_attribution = False
 
+    text, years = _parse_query(q)
+
     if q and not current_app.config["TMDB_API_KEY"]:
         error = "TMDB_API_KEY is not configured, so TMDB can't be searched."
 
+    elif q and not text:
+        # TMDB's search endpoints need a title; a year alone can't
+        # browse them the way it browses the local library
+        error = "Add a title to the year filter — TMDB can't be searched by year alone."
+
     elif q:
-        params = {"api_key": current_app.config["TMDB_API_KEY"], "query": q}
+        # A single-year y: modifier (#185) rides the API's own year
+        # parameter, which also improves TMDB's ranking; ranges (which
+        # the search endpoints can't express) are enforced by the
+        # release-date filter below either way
+
+        params = {"api_key": current_app.config["TMDB_API_KEY"], "query": text}
         try:
-            searches = [("/search/movie", movie_matches, "title", "release_date")]
+            searches = [
+                ("/search/movie", movie_matches, "title", "release_date"),
+            ]
             if not movies_only:
                 searches.append(("/search/tv", tv_matches, "name", "first_air_date"))
             for url, bucket, title_key, date_key in searches:
+                request_params = dict(params)
+                if years and years[0] == years[1]:
+                    year_param = (
+                        "primary_release_year"
+                        if url == "/search/movie"
+                        else "first_air_date_year"
+                    )
+                    request_params[year_param] = years[0]
                 r = tmdb_get(
                     current_app.config["TMDB_API_URL"] + url,
-                    params=params,
+                    params=request_params,
                     timeout=10,
                 )
                 r.raise_for_status()
-                for result in (r.json().get("results") or [])[:10]:
+                for result in r.json().get("results") or []:
+                    if len(bucket) >= 10:
+                        break
+                    year = (result.get(date_key) or "")[:4]
+                    if years and not (
+                        year.isdigit() and years[0] <= int(year) <= years[1]
+                    ):
+                        continue
                     bucket.append(
                         {
                             "tmdb_id": result.get("id"),
                             "title": result.get(title_key),
-                            "year": (result.get(date_key) or "")[:4],
+                            "year": year,
                             "overview": result.get("overview"),
                             "poster_path": result.get("poster_path"),
                             "genre_ids": result.get("genre_ids") or [],

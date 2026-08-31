@@ -977,3 +977,139 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
     page = admin_client.get("/search/tmdb?q=scoped").get_data(as_text=True)
     assert "Scoped Show" in page
     assert any(url.endswith("/search/tv") for url in calls)
+
+
+def test_search_year_modifier_filters_results(app, admin_client):
+    """A y:NNNN token (#185) restricts results to that year — matching
+    either the library identity year or TMDB's release year — y:A-B
+    spans a range, and a modifier-only query browses the whole year."""
+
+    from datetime import datetime
+
+    with app.app_context():
+        build_library(app)  # Jaws 1975 (DVD), Jurassic Park 1993, Jeopardy TV
+
+        # A film whose TMDB year differs from its identity year by one
+        offset = make_movie(
+            "Jawbreaker",
+            1998,
+            tmdb_title="Jawbreaker",
+            tmdb_release_date=datetime(1999, 2, 19),
+        )
+        make_movie_file(offset, "DVD")
+
+        dated_series = make_tv_series(
+            "Jazz Age Stories", tmdb_first_air_date=datetime(1984, 9, 10)
+        )
+        make_tv_file(dated_series, 1, 1, "SDTV")
+        db.session.commit()
+
+    page = admin_client.get("/search", query_string={"q": "j y:1975"}).get_data(
+        as_text=True
+    )
+    assert "Jaws" in page
+    assert "Jurassic Park" not in page
+
+    page = admin_client.get("/search", query_string={"q": "j y:1990-1999"}).get_data(
+        as_text=True
+    )
+    assert "Jurassic Park" in page
+    assert "Jaws (1975)" not in page
+
+    # Either year a film answers to satisfies the filter
+    for year in ("1998", "1999"):
+        page = admin_client.get(
+            "/search", query_string={"q": f"jawbreaker y:{year}"}
+        ).get_data(as_text=True)
+        assert "Jawbreaker" in page, year
+
+    # TV filters on the first-air year; series without one drop out
+    page = admin_client.get("/search", query_string={"q": "j y:1984"}).get_data(
+        as_text=True
+    )
+    assert "Jazz Age Stories" in page
+    assert "Jeopardy (1984)" not in page  # the SERIES record has no air date
+
+    # A modifier-only query browses the year — and people results stay
+    # text-driven, so the People section never renders for one
+    page = admin_client.get("/search", query_string={"q": "y:1975"}).get_data(
+        as_text=True
+    )
+    assert "Jaws" in page
+    assert "Jurassic Park" not in page
+    assert "<h4>People</h4>" not in page
+
+    # A malformed modifier searches literally instead of guessing
+    page = admin_client.get("/search", query_string={"q": "jaws y:75"}).get_data(
+        as_text=True
+    )
+    assert "Nothing in the library matches" in page
+
+
+def test_search_json_honors_year_modifier(app, admin_client):
+    with app.app_context():
+        build_library(app)
+
+    data = admin_client.get("/search.json", query_string={"q": "ja y:1975"}).get_json()
+    titles = [hit["title"] for hit in data["results"]]
+    assert "Jaws (1975)" in titles
+    assert all("Jurassic Park" not in title for title in titles)
+
+
+def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
+    """A single-year modifier rides TMDB's own year parameter and the
+    query text drops the token; ranges post-filter by release date; a
+    modifier with no title text explains itself instead of searching."""
+
+    import app.main.search as search
+
+    class FakeResponse:
+        def __init__(self, results):
+            self._results = results
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self._results}
+
+    captured = {}
+
+    def fake_get(url, params=None, timeout=None):
+        captured[url.rsplit("/", 1)[-1]] = dict(params)
+        if url.endswith("/search/movie"):
+            return FakeResponse(
+                [
+                    {"id": 578, "title": "Jaws", "release_date": "1975-06-20"},
+                    {"id": 579, "title": "Jaws 2", "release_date": "1978-06-16"},
+                ]
+            )
+        return FakeResponse([])
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(search, "tmdb_get", fake_get)
+
+    page = admin_client.get("/search/tmdb", query_string={"q": "jaws y:1975"}).get_data(
+        as_text=True
+    )
+    assert captured["movie"]["query"] == "jaws"
+    assert captured["movie"]["primary_release_year"] == 1975
+    assert captured["tv"]["first_air_date_year"] == 1975
+    assert "Jaws" in page
+    assert "Jaws 2" not in page  # the 1978 sequel post-filters out
+
+    # A range can't ride the API parameter; the post-filter carries it
+    captured.clear()
+    page = admin_client.get(
+        "/search/tmdb", query_string={"q": "jaws y:1975-1979"}
+    ).get_data(as_text=True)
+    assert "primary_release_year" not in captured["movie"]
+    assert "Jaws" in page and "Jaws 2" in page
+
+    # Year alone can't browse TMDB the way it browses the library
+    captured.clear()
+    page = admin_client.get("/search/tmdb", query_string={"q": "y:1975"}).get_data(
+        as_text=True
+    )
+    assert "Add a title to the year filter" in page
+    assert not captured

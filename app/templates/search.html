@@ -94,14 +94,19 @@
 	</a>
 	{% endfor %}
 </div>
-<p class="mb-4"><a class="small" href="{{ url_for('main.people', q=q) }}">All people matching &ldquo;{{ q }}&rdquo;</a></p>
+<p class="mb-4"><a class="small" href="{{ url_for('main.people', q=q_text) }}">All people matching &ldquo;{{ q_text }}&rdquo;</a></p>
 {% endif %}
 
 {% if not movie_results and not tv_results and not people_results %}
 <p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 {% endif %}
 
+{# The TMDB lookup understands the same y: modifiers as this page, so
+   it gets the full query; the filename search doesn't, so it gets the
+   bare text #}
 <a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
-<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.files', q=q) }}">Search filenames</a>
+{% if current_user.admin %}
+<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.files', q=q_text) }}">Search filenames</a>
+{% endif %}
 {% endif %}
 {% endblock %}
