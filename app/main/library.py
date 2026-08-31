@@ -1562,11 +1562,27 @@ def movie(movie_id):
 
     transcode_form = TranscodeForm()
 
+    # The Movie Data forms are admin tools (#186 follow-up): the section
+    # only renders for admins, and each branch bounces stray posts from
+    # anyone else rather than silently processing them
+
     # Form to detach a movie from TMDB altogether, for a film TMDB has no
-    # entry for (#207)
+    # entry for (#207) — which a record with no local files can never be:
+    # it was created FROM a TMDB id and mirrors that entry, so detaching
+    # would leave a husk nothing can re-enrich
 
     tmdb_remove_form = TMDBRemoveForm()
     if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.movie", movie_id=movie.id))
+        if not films and not features:
+            flash(
+                f"'{title}' has no local files — its record mirrors TMDB "
+                f"and can't be detached",
+                "warning",
+            )
+            return redirect(url_for("main.movie", movie_id=movie.id))
         movie.tmdb_movie_clear()
         db.session.commit()
         flash(
@@ -1580,6 +1596,52 @@ def movie(movie_id):
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
+        # A record with no local files IS its TMDB entry — the id came
+        # straight from TMDB at creation and the diary rows hang off it,
+        # so the only operation is refreshing the stored id. Never
+        # re-point: a smuggled id in the post is ignored
+
+        if not films and not features:
+            if not movie.tmdb_id:
+                flash(
+                    f"'{title}' isn't matched to TMDB, so there's nothing "
+                    f"to refresh",
+                    "warning",
+                )
+                return redirect(url_for("main.movie", movie_id=movie.id))
+            refresh_job = current_app.sql_queue.enqueue(
+                "app.videos.refresh_tmdb_info",
+                args=("Movies", movie.id, movie.tmdb_id),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"Refreshing TMDB data for '{movie.title} ({movie.year})'",
+                at_front=True,
+            )
+            waited_seconds = 0
+            while refresh_job.result == None and waited_seconds < 10:
+                time.sleep(1)
+                waited_seconds = waited_seconds + 1
+            if refresh_job.result:
+                flash(
+                    f"Refreshed TMDB data for '{movie.title} ({movie.year})'",
+                    "success",
+                )
+            else:
+                flash(
+                    Markup(
+                        "Refreshing TMDB data for '{}' ({}) – <a href='{}'>Reload this page</a>"
+                    ).format(
+                        movie.title,
+                        movie.year,
+                        url_for("main.movie", movie_id=movie.id),
+                    ),
+                    "info",
+                )
+            return redirect(url_for("main.movie", movie_id=movie.id))
+
         # A blank id asks TMDB to search by title and takes the first hit,
         # which on an already-matched film silently re-points it at some
         # other movie. Only offer that for a film with nothing to lose —
@@ -1675,6 +1737,9 @@ def movie(movie_id):
     criterion_form.quality.choices = [(str(id), title) for (id, title) in qualities]
     criterion_form.quality.default = movie.criterion_quality_id
     if criterion_form.criterion_submit.data and criterion_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.movie", movie_id=movie.id))
         movie.criterion_spine_number = criterion_form.spine_number.data
         if criterion_form.set_title.data:
             movie.criterion_set_title = criterion_form.set_title.data

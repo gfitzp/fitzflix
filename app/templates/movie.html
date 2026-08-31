@@ -241,11 +241,16 @@
 	{% endif %}
 </div>
 </div>
+{# Movie Data is an admin section (#186 follow-up): the route bounces
+   stray posts from everyone else, so hiding it here is presentation,
+   not the protection #}
+{% if current_user.admin %}
 <hr>
 <h5>Movie Data</h5>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>
 <div class="row">
 	<div class="col-sm-4">
+		{% if films or features %}
 		<form action="" method="post">
 			{{ tmdb_lookup_form.hidden_tag() }}
 			<div class="mb-3">
@@ -259,6 +264,18 @@
 			{{ tmdb_remove_form.hidden_tag() }}
 			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDB ID from this movie? Its TMDB details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
 		</form>
+		{% endif %}
+		{% else %}
+		{# A record with no local files mirrors its TMDB entry: the id is
+		   the record's identity, shown for reference only — refresh
+		   re-fetches the same id, and there's no re-point or detach #}
+		<p class="mb-2">TMDB ID: {{ movie.tmdb_id if movie.tmdb_id else "not matched" }}</p>
+		{% if movie.tmdb_id %}
+		<form action="" method="post">
+			{{ tmdb_lookup_form.hidden_tag() }}
+			{{ tmdb_lookup_form.lookup_submit(class_="btn btn-sm btn-warning", value="Refresh TMDB Data") }}
+		</form>
+		{% endif %}
 		{% endif %}
 		{# tmdb_data_as_of lags tmdb_id on a just-created record: the page
 		   renders immediately after a watchlist add or log, while the
@@ -300,9 +317,14 @@
 		</form>
 		<hr class="d-block d-sm-none">
 	</div>
+	{# Poster curation is a library tool: a record with no local files
+	   wears its TMDB poster #}
+	{% if films or features %}
 	<div class="col-sm-4">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.movie_poster', movie_id=movie.id) }}" role="button">Change poster&hellip;</a>
 		<p class="small text-muted mt-1 mb-0">Pick from the TMDB gallery or upload an image.</p>
 	</div>
+	{% endif %}
 </div>
+{% endif %}
 {% endblock %}

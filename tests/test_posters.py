@@ -97,6 +97,8 @@ def make_galleried_movie(app):
 def test_picker_gallery_defaults_to_english_with_language_pills(app, admin_client):
     with app.app_context():
         movie = make_galleried_movie(app)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
         movie_id = movie.id
 
     page = admin_client.get(f"/movie/{movie_id}/poster").get_data(as_text=True)
@@ -123,6 +125,7 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
         movie = make_movie(
             "Default Poster Film", 1968, tmdb_id=579, tmdb_poster_path="/english.jpg"
         )
+        make_movie_file(movie, "DVD")
         db.session.commit()
         app.redis.set(
             f"fitzflix:tmdb:movie:{movie.tmdb_id}:posters", json.dumps(GALLERY), ex=600
@@ -144,6 +147,7 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
 def test_picker_without_tmdb_id_offers_upload_only(app, admin_client):
     with app.app_context():
         movie = make_movie("No TMDB Film", 1980)
+        make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
 
@@ -197,6 +201,7 @@ def test_uploading_a_poster_runs_the_pipeline(app, admin_client, poster_pipeline
 
     with app.app_context():
         movie = make_movie("Upload Film", 1985)
+        make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
 
@@ -222,6 +227,7 @@ def test_bad_poster_path_is_rejected_before_any_fetch(
 ):
     with app.app_context():
         movie = make_galleried_movie(app)
+        make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
 
@@ -407,6 +413,7 @@ def test_removing_file_poster_restores_movie_precedence(app, admin_client):
 def test_remove_without_custom_poster_warns(app, admin_client):
     with app.app_context():
         movie = make_movie("Plain Film", 2010)
+        make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
 

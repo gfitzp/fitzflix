@@ -40,6 +40,7 @@ from app.models import (
     tmdb_get,
 )
 from app.main import bp
+from app.main.helpers import admin_required
 
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
@@ -368,11 +369,21 @@ def _poster_gallery_context(posters):
 
 @bp.route("/movie/<int:movie_id>/poster", methods=["GET", "POST"])
 @login_required
+@admin_required
 def movie_poster(movie_id):
-    """Poster picker: choose from the TMDB gallery or upload an image."""
+    """Poster picker: choose from the TMDB gallery or upload an image.
+
+    An admin tool, and a library one (#186 follow-up): a record with no
+    local files wears its TMDB poster, so the picker declines it."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
+    if File.query.filter_by(movie_id=movie.id).first() is None:
+        flash(
+            f"'{title}' has no local files, so its poster follows TMDB.",
+            "warning",
+        )
+        return redirect(url_for("main.movie", movie_id=movie.id))
 
     custom_poster_form = CustomPosterUploadForm()
     poster_select_form = TMDBPosterSelectForm()

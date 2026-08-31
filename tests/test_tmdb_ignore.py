@@ -22,7 +22,7 @@ from app.models import (
     TVSeries,
 )
 
-from tests.factories import make_movie, make_tv_series
+from tests.factories import make_movie, make_movie_file, make_tv_series
 
 
 def csrf_token_from(page_html):
@@ -378,6 +378,7 @@ def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
 
     with app.app_context():
         movie = make_movie("Family Reunion Tape", 1994, tmdb_ignored=True)
+        make_movie_file(movie, "DVD")
         db.session.commit()
         movie_id = movie.id
 
@@ -397,3 +398,118 @@ def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
 
     with app.app_context():
         assert db.session.get(Movie, movie_id).tmdb_ignored is True
+
+
+def test_movie_data_section_is_admin_only(app, admin_client, user_client):
+    """The Movie Data forms are admin tools (#186 follow-up): the section
+    doesn't render for regular users, and hand-crafted posts bounce
+    server-side without touching the record."""
+
+    with app.app_context():
+        movie = make_movie("Members Film", 1988, tmdb_id=41414)
+        make_movie_file(movie, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+
+    page = user_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Movie Data" not in page
+    assert "lookup_submit" not in page
+    assert "remove_submit" not in page
+    assert "criterion_submit" not in page
+    assert f"/movie/{movie_id}/poster" not in page
+
+    admin_page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Movie Data" in admin_page
+    assert "lookup_submit" in admin_page
+
+    for tampered in (
+        {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"},
+        {"remove_submit": "Remove TMDB ID"},
+        {
+            "spine_number": "7",
+            "quality": "1",
+            "criterion_submit": "Update Criterion Info",
+        },
+    ):
+        response = user_client.post(
+            f"/movie/{movie_id}",
+            data={"csrf_token": csrf_token_from(page), **tampered},
+            follow_redirects=True,
+        )
+        assert "admin" in response.get_data(as_text=True)
+    assert app.sql_queue.count == 0
+
+    with app.app_context():
+        stored = db.session.get(Movie, movie_id)
+        assert stored.tmdb_id == 41414
+        assert stored.criterion_spine_number is None
+
+
+def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
+    """A record with no local files mirrors its TMDB entry: admins see
+    the id read-only with a refresh-only button — no re-point, no
+    detach — and a smuggled id in the post is ignored, so the diary rows
+    stay on the film they were logged against."""
+
+    import app.main.library as library
+
+    monkeypatch.setattr(library.time, "sleep", lambda seconds: None)
+
+    with app.app_context():
+        movie = make_movie("Logged Only Film", 2001, tmdb_id=52520)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "TMDB ID: 52520" in page
+    assert 'name="tmdb_id"' not in page
+    assert "Remove TMDB ID" not in page
+    assert f"/movie/{movie_id}/poster" not in page
+    assert "Refresh TMDB Data" in page
+    assert "criterion_submit" in page  # the Criterion form stays
+
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "tmdb_id": "999",
+            "lookup_submit": "Refresh TMDB Data",
+        },
+    )
+    assert response.status_code == 302
+
+    jobs = [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.refresh_tmdb_info"
+    ]
+    assert jobs and jobs[0].args == ("Movies", movie_id, 52520)
+
+    with app.app_context():
+        assert db.session.get(Movie, movie_id).tmdb_id == 52520
+
+
+def test_fileless_record_refuses_detach(app, admin_client):
+    """Even an admin can't detach a file-less record: it has nothing but
+    its TMDB mirror behind it, so tmdb_movie_clear would leave a husk."""
+
+    with app.app_context():
+        movie = make_movie("Logged Only Film", 2001, tmdb_id=52520)
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    response = admin_client.post(
+        f"/movie/{movie_id}",
+        data={
+            "csrf_token": csrf_token_from(page),
+            "remove_submit": "Remove TMDB ID",
+        },
+        follow_redirects=True,
+    )
+    assert "mirrors TMDB" in response.get_data(as_text=True)
+
+    with app.app_context():
+        stored = db.session.get(Movie, movie_id)
+        assert stored.tmdb_id == 52520
+        assert stored.tmdb_ignored is not True
