@@ -454,6 +454,7 @@ def movie_poster(movie_id):
 
 @bp.route("/file/<int:file_id>/poster", methods=["GET", "POST"])
 @login_required
+@admin_required
 def file_poster(file_id):
     """The poster picker's file-scoped twin: one file's custom poster.
 

@@ -1248,8 +1248,12 @@ def queue():
 
 @bp.route("/library/files", methods=["GET", "POST"])
 @login_required
+@admin_required
 def files():
-    """Show a list of all the files in the library."""
+    """Show a list of all the files in the library.
+
+    An admin page (#186 follow-up): a whole-library file inventory whose
+    every row links into the file management pages."""
 
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)

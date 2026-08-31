@@ -46,7 +46,9 @@
 						<a class="dropdown-item" href="{{ url_for('main.movie_library') }}">Movies</a>
 						<a class="dropdown-item" href="{{ url_for('main.tv_library') }}">TV Shows</a>
 						<a class="dropdown-item" href="{{ url_for('main.people') }}">People</a>
+						{% if current_user.admin %}
 						<a class="dropdown-item" href="{{ url_for('main.files') }}">Files</a>
+						{% endif %}
 						<div class="dropdown-divider"></div>
 						<a class="dropdown-item" href="{{ url_for('main.criterion_collection') }}">Criterion Collection</a>
 						<a class="dropdown-item" href="{{ url_for('main.newly_added') }}">Newly added to streaming</a>

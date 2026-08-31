@@ -148,9 +148,13 @@
 		</form>
 	</div>
 	{% endfor %}
+	{# The file pages are admin tools (#186 follow-up), so only admins
+	   get the door to them #}
+	{% if current_user.admin %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>
+	{% endif %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
 		<div class="btn-group show w-100">
 			{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}

@@ -81,6 +81,7 @@ from app.infuse_player import infuse_only_formats
 from app.infuse_player import play_movie as infuse_play_movie
 from app.plex_player import play_movie, remote_playback_configured
 from app.main.helpers import (
+    admin_required,
     _card_fetch,
     _enqueue_profile_recompute,
     _ladder_fetch,
@@ -2009,8 +2010,12 @@ def people():
 
 @bp.route("/movie/<int:movie_id>/files")
 @login_required
+@admin_required
 def movie_files(movie_id):
-    """Show all files for a particular movie, regardless of ranking."""
+    """Show all files for a particular movie, regardless of ranking.
+
+    An admin page (#186 follow-up): every row links into the file
+    management pages, which are admin tools."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"Files for \"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})\""
@@ -2587,6 +2592,12 @@ def season(series_id, season):
         season_restore_form.season_restore_submit.data
         and season_restore_form.validate_on_submit()
     ):
+        # The restore is an admin tool like the series page's (#186
+        # follow-up); the season page itself stays open to everyone
+        # for its episode listing
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.season", series_id=series_id, season=season))
         if not current_user.check_password(season_restore_form.password.data):
             flash("Incorrect password provided!", "danger")
 
@@ -2623,8 +2634,13 @@ def season(series_id, season):
 
 @bp.route("/file/<int:file_id>", methods=["GET", "POST"])
 @login_required
+@admin_required
 def file(file_id):
-    """Show the details for a particular video file."""
+    """Show the details for a particular video file.
+
+    An admin page (#186 follow-up): everything on it — track edits,
+    remux, transcode, upload/download, delete — is library management,
+    so the whole page is gated rather than each form."""
 
     # if request.form:
     #         forced_subtitle_tracks = []

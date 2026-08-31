@@ -576,3 +576,67 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
         stored = db.session.get(TVSeries, series_id)
         assert stored is not None  # the delete never ran
         assert stored.tmdb_id == 110230
+
+
+def test_file_pages_are_admin_only(app, admin_client, user_client):
+    """The file management surfaces — /file pages, the per-movie and
+    library-wide file listings, the file poster picker — are whole-page
+    admin tools (#186 follow-up). The season page stays open for its
+    episode listing, but its restore form and file links are the
+    admin's, and a stray restore post bounces server-side."""
+
+    from tests.factories import make_movie_file, make_tv_file
+
+    with app.app_context():
+        movie = make_movie("Filed Film", 1991, tmdb_id=222333)
+        movie_file = make_movie_file(movie, "DVD")
+        series = make_tv_series("Filed Show", tmdb_id=333444)
+        tv_file = make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        movie_id = movie.id
+        file_id = movie_file.id
+        series_id = series.id
+        tv_file_id = tv_file.id
+
+    for path in (
+        f"/file/{file_id}",
+        f"/movie/{movie_id}/files",
+        "/library/files",
+        f"/file/{file_id}/poster",
+    ):
+        response = user_client.get(path)
+        assert response.status_code == 302, path
+        assert response.headers["Location"].endswith("/index"), path
+        assert admin_client.get(path).status_code == 200, path
+
+    page = user_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
+    assert "season_restore_submit" not in page
+    assert f"/file/{tv_file_id}" not in page
+    assert "Filed Show" in page  # the episode listing itself stays
+
+    admin_page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
+    assert "season_restore_submit" in admin_page
+    assert f"/file/{tv_file_id}" in admin_page
+
+    token = csrf_token_from(user_client.get("/profile").get_data(as_text=True))
+    response = user_client.post(
+        f"/tv/{series_id}/1",
+        data={
+            "csrf_token": token,
+            "password": "hunter2",
+            "season_restore_submit": "Bulk restore",
+        },
+        follow_redirects=True,
+    )
+    assert "admin" in response.get_data(as_text=True)
+    assert app.request_queue.count == 0
+
+    # The consumer doors to the file surfaces close too: no Files button
+    # on the movie page, no Files entry in the nav's Library dropdown
+
+    movie_page = user_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert f"/movie/{movie_id}/files" not in movie_page
+    assert "/library/files" not in movie_page
+    admin_movie_page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert f"/movie/{movie_id}/files" in admin_movie_page
+    assert "/library/files" in admin_movie_page
