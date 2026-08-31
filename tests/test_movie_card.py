@@ -125,6 +125,40 @@ def test_movie_page_library_badge_wears_shopping_colors(app, admin_client):
     assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
 
 
+def test_movie_page_meta_line_leads_in_the_popup_order(app, admin_client):
+    """The movie page reads like its popover card: one meta line —
+    directed by, runtime, genres (keeping their library-filter links),
+    and the US rating in its bordered box — with the synopsis after."""
+
+    from app.models import RefTMDBCertification, TMDBGenre
+
+    with app.app_context():
+        director = make_person(888011, "Page Director")
+        movie = make_candidate("Page Ordered", 1969, director=director)
+        movie.tmdb_runtime = 95
+        movie.tmdb_overview = "A film about ordering."
+        genre = TMDBGenre(id=888012, name="Page Drama")
+        movie.genres.append(genre)
+        movie.certifications.append(
+            RefTMDBCertification(country="US", certification="R")
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "Page Director" in page
+    assert "95&nbsp;minutes" in page
+    assert 'genre=888012" class="link-secondary text-secondary">Page Drama</a>' in page
+    assert ">R</span>" in page
+    assert (
+        page.index("Page Director")
+        < page.index("95&nbsp;minutes")
+        < page.index("Page Drama</a>")
+        < page.index(">R</span>")
+        < page.index("A film about ordering.")
+    )
+
+
 def test_movie_states_batch_hydration_payload(app, admin_client):
     """/movie_states answers ladder-and-watchlist state for many films
     in one fetch: verdicts, flags, stored estimates, watchlist faces —

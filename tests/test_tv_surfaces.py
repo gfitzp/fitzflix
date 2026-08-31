@@ -163,6 +163,7 @@ def test_tv_card_carries_the_series_facts(app, admin_client):
             tmdb_last_air_date=datetime(1968, 2, 1),
             tmdb_number_of_seasons=1,
             tmdb_number_of_episodes=17,
+            tmdb_content_rating="TV-PG",
         )
         genre = TMDBGenre(id=9101, name="Mystery")
         db.session.add(genre)
@@ -192,6 +193,7 @@ def test_tv_card_carries_the_series_facts(app, admin_client):
     assert "The Prisoner" in page
     assert f"/tv/{series_id}" in page
     assert "1967–1968 · 1 season, 17 episodes · Mystery" in page
+    assert ">TV-PG</span>" in page
     assert "A resigning agent wakes" in page
     assert "Patrick McGoohan" in page
     assert "/library/movie?credit=9102" in page
@@ -251,6 +253,12 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
                 "aggregate_credits": {
                     "cast": [{"id": 9200, "name": "Someone Famous", "order": 0}]
                 },
+                "content_ratings": {
+                    "results": [
+                        {"iso_3166_1": "DE", "rating": "12"},
+                        {"iso_3166_1": "US", "rating": "TV-MA"},
+                    ]
+                },
             }
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
@@ -260,6 +268,8 @@ def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypa
     assert 'class="poster-card"' in page
     assert "Nowhere Show" in page
     assert "1980–1984 · 4 seasons, 52 episodes · Comedy" in page
+    assert ">TV-MA</span>" in page
+    assert ">12</span>" not in page
     assert "Someone Famous" in page
 
     # Nothing owned, so no badge and no shelf count — and with no local
@@ -435,6 +445,10 @@ def test_self_appearances_drop_but_selfridge_survives(app, admin_client, monkeyp
 
 
 def test_tv_page_meta_line(app, admin_client):
+    """The series page's meta line — run, size, genres, and the US
+    content rating in its bordered box — leads, with the synopsis
+    after it: the popover card's order."""
+
     from datetime import datetime
 
     with app.app_context():
@@ -445,14 +459,19 @@ def test_tv_page_meta_line(app, admin_client):
             tmdb_last_air_date=datetime(1989, 12, 6),
             tmdb_number_of_seasons=26,
             tmdb_number_of_episodes=694,
+            tmdb_content_rating="TV-PG",
+            tmdb_overview="A Time Lord wanders time and space.",
         )
         db.session.commit()
         series_id = series.id
 
     response = admin_client.get(f"/tv/{series_id}")
     assert response.status_code == 200
-    assert "1963–1989".encode() in response.data
-    assert b"26 seasons, 694 episodes" in response.data
+    page = response.get_data(as_text=True)
+    assert "1963–1989" in page
+    assert "26 seasons, 694 episodes" in page
+    assert ">TV-PG</span>" in page
+    assert page.index("26 seasons") < page.index("A Time Lord wanders")
 
 
 def test_series_upgradable_reads_physical_from_the_files_own_tier(app):

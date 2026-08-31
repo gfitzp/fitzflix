@@ -73,6 +73,32 @@ def test_tv_apply_empty_genre_list_keeps_stored_rows(app):
         assert [k.name for k in stored.keywords] == ["time travel"]
 
 
+def test_tv_apply_stores_the_us_content_rating(app):
+    """The appended content_ratings block lands its US rating on the
+    series; a payload with no US entry keeps the stored one, like the
+    empty-list guards (#251)."""
+
+    with app.app_context():
+        series = make_tv_series("Rated Series")
+        series.tmdb_tv_apply(
+            {
+                "id": 990005,
+                "content_ratings": {
+                    "results": [
+                        {"iso_3166_1": "DE", "rating": "12"},
+                        {"iso_3166_1": "US", "rating": "TV-MA"},
+                    ]
+                },
+            }
+        )
+        db.session.commit()
+        assert db.session.get(TVSeries, series.id).tmdb_content_rating == "TV-MA"
+
+        series.tmdb_tv_apply({"id": 990005, "content_ratings": {"results": []}})
+        db.session.commit()
+        assert db.session.get(TVSeries, series.id).tmdb_content_rating == "TV-MA"
+
+
 def test_tv_apply_persists_external_ids(app):
     with app.app_context():
         series = make_tv_series("Doctor Who")

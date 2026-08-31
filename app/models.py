@@ -732,7 +732,7 @@ class TMDBMixin(object):
         # aggregate_credits rather than credits: series-wide cast/crew
         # with per-role episode counts, not just the latest season's
 
-        requested_info = "aggregate_credits,external_ids,keywords"
+        requested_info = "aggregate_credits,external_ids,keywords,content_ratings"
         current_app.logger.info(f"{self} Getting TMDB data")
         if tmdb_id == None:
             r = tmdb_get(
@@ -876,6 +876,19 @@ class TMDBMixin(object):
         if tmdb_info.get("status") == "Ended":
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
+
+        # The US content rating rides the appended content_ratings
+        # block; a payload with no US entry keeps the stored rating,
+        # like the empty-list guards above (#251)
+
+        for country_rating in (tmdb_info.get("content_ratings") or {}).get(
+            "results"
+        ) or []:
+            if country_rating.get("iso_3166_1") == "US" and country_rating.get(
+                "rating"
+            ):
+                self.tmdb_content_rating = country_rating.get("rating")
+                break
 
         self.tmdb_original_language = tmdb_info.get(
             "original_language", self.tmdb_original_language
@@ -1803,6 +1816,10 @@ class TVSeries(db.Model, TMDBMixin):
 
     tmdb_id = db.Column(db.Integer)
     tmdb_backdrop_path = db.Column(db.String(64))
+    # The US content rating (TV-PG, TV-MA, ...) — TV's answer to the
+    # movie side's certifications table; one country only, since
+    # nothing surfaces the others
+    tmdb_content_rating = db.Column(db.String(32))
     tmdb_first_air_date = db.Column(db.DateTime)
     tmdb_homepage = db.Column(db.String(128))
     tmdb_poster_path = db.Column(db.String(64))

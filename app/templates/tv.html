@@ -17,11 +17,14 @@
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h3>
+			{# The meta line leads and the synopsis follows — the popover
+			   card's order, so page and popup read the same — with the US
+			   content rating closing the line in the card's bordered box #}
+			{% if meta_line or tv.tmdb_content_rating %}
+			<p class="text-muted mb-2">{{ meta_line }}{% if tv.tmdb_content_rating %}{% if meta_line %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ tv.tmdb_content_rating }}</span>{% endif %}</p>
+			{% endif %}
 			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>
-			{% endif %}
-			{% if meta_line %}
-			<p class="text-muted mb-2">{{ meta_line }}</p>
 			{% endif %}
 			{% include "_cast_scroller.html" %}
 			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>

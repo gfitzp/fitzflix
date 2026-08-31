@@ -1054,6 +1054,7 @@ def tv_card():
                 series.tmdb_number_of_episodes,
                 [genre.name for genre in series.genres],
             ),
+            content_rating=series.tmdb_content_rating,
             overview=series.tmdb_overview,
             top_cast=top_cast,
             in_library=bool(season_counts),
@@ -1072,7 +1073,7 @@ def tv_card():
             current_app.config["TMDB_API_URL"] + "/tv/" + str(tmdb_id),
             params={
                 "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "aggregate_credits",
+                "append_to_response": "aggregate_credits,content_ratings",
             },
             timeout=10,
         )
@@ -1111,6 +1112,16 @@ def tv_card():
             details.get("number_of_seasons"),
             details.get("number_of_episodes"),
             [genre.get("name") for genre in details.get("genres") or []],
+        ),
+        # The US content rating, the same answer tmdb_tv_apply stores
+        content_rating=next(
+            (
+                country.get("rating")
+                for country in (details.get("content_ratings") or {}).get("results")
+                or []
+                if country.get("iso_3166_1") == "US" and country.get("rating")
+            ),
+            None,
         ),
         overview=details.get("overview"),
         top_cast=top_cast,

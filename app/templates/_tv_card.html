@@ -7,7 +7,8 @@
    person's unowned television credits get a card too.
 
    Same shape as _movie_card.html with the facts TV actually has: the
-   series meta line stands in for "Directed by … · 96 min", and the
+   series meta line stands in for "Directed by … · 96 min" (with the
+   US content rating in the same bordered box the film card wears), and the
    In-library badge keeps its shopping colors (#191 — amber when a
    season still has an episode worth upgrading, green once every
    season is settled) beside a plain count of what's owned. Three
@@ -18,8 +19,8 @@
 {% from "_availability_badges.html" import library_badge %}
 <div class="poster-card">
 	<h6 class="mb-1">{% if href %}<a href="{{ href }}" class="text-body">{{ display_title }}</a>{% else %}{{ display_title }}{% endif %}</h6>
-	{% if meta_line %}
-	<p class="small text-muted mb-1">{{ meta_line }}</p>
+	{% if meta_line or content_rating %}
+	<p class="small text-muted mb-1">{{ meta_line }}{% if content_rating %}{% if meta_line %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ content_rating }}</span>{% endif %}</p>
 	{% endif %}
 	{% if overview %}
 	<p class="small mb-1 poster-card-overview">{{ overview }}</p>

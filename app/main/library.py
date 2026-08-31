@@ -1851,6 +1851,16 @@ def movie(movie_id):
         cast=cast,
         directors=directors,
         genres=genres,
+        # The meta line's US rating — the same answer the popover card
+        # gives, so page and popup read the same
+        certification=next(
+            (
+                c.certification
+                for c in movie.certifications
+                if c.country == "US" and c.certification
+            ),
+            None,
+        ),
         awards=awards,
         review=review,
         films=films,

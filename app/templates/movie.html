@@ -19,16 +19,19 @@
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ title }}</h3>
+			{# The meta line leads and the synopsis follows — the popover
+			   card's order, so page and popup read the same: directed by,
+			   runtime, genres, and the US rating in its bordered box.
+			   Genres keep their library-filter links, the card's genres
+			   are plain text #}
+			{% if directors or movie.tmdb_runtime or genres or certification %}
+				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if movie.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or movie.tmdb_runtime %} &middot; {% endif %}{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or movie.tmdb_runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
+			{% endif %}
 			{# Gated on the overview, not the refresh stamp: a just-created
 			   record's primed fields render while the full refresh is
 			   still in the queue #}
 			{% if movie.tmdb_overview %}
-				<p>
-					{{ movie.tmdb_overview }}{% if movie.tmdb_runtime %} —&nbsp;{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %},&nbsp;{% endif %}{% endfor %}{% endif %}{% for c in movie.certifications %}{% if c.country == "US" %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ c.certification }}</span>{% endif %}{% endfor %}
-				</p>
-			{% endif %}
-			{% if directors %}
-				<p class="text-muted mb-2">Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+				<p>{{ movie.tmdb_overview }}</p>
 			{% endif %}
 			{# The star row is the page's rating control: it shows
 			   the verdict — or the engine's estimate in paler gold until
