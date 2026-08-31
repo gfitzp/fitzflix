@@ -192,8 +192,11 @@ class Config(object):
     # Virtual DVR channels (#182): the token gates the M3U/XMLTV/stream
     # endpoints (unset = feature off, every route 404s); Plex tunes the
     # playlist as an M3U tuner. Channel count and size bound the
-    # nightly lineup build's ffprobe work
+    # nightly lineup build's ffprobe work. DVR_TUNER_URL is the
+    # Fitzflix origin AS PLEX REACHES IT — loopback when Plex runs on
+    # the same machine, so tuning never routes through the public host
     DVR_TOKEN                           = os.environ.get("DVR_TOKEN") or None
+    DVR_TUNER_URL                       = os.environ.get("DVR_TUNER_URL") or "http://127.0.0.1:8000"
     DVR_GENRE_CHANNELS                  = int(os.environ.get("DVR_GENRE_CHANNELS") or 6)
     DVR_CHANNEL_FILMS                   = int(os.environ.get("DVR_CHANNEL_FILMS") or 40)
     DVR_TV_CHANNELS                     = int(os.environ.get("DVR_TV_CHANNELS") or 5)

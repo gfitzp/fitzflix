@@ -5,6 +5,26 @@
 <hr>
 <p class="text-muted">The virtual DVR dial: each channel airs owned media matched by its rules and explicit picks. Edits rebuild the lineups automatically; Plex shows the new dial after its next guide refresh.</p>
 
+{% if setup %}
+<div class="card mb-3" style="max-width: 44rem;">
+	<div class="card-body py-2">
+		<h6 class="card-title mb-2">Plex setup</h6>
+		<label class="form-label mb-0 small">Tuner address &mdash; paste into &ldquo;Enter its network address manually&rdquo; (Settings &rarr; Live TV &amp; DVR)</label>
+		<div class="input-group input-group-sm mb-2">
+			<input class="form-control font-monospace" type="text" value="{{ setup.tuner }}" readonly onclick="this.select();">
+			<button class="btn btn-outline-secondary dvr-copy" type="button">Copy</button>
+		</div>
+		<label class="form-label mb-0 small">XMLTV guide URL &mdash; paste at the channel-setup step (Edit under Country &rarr; XMLTV)</label>
+		<div class="input-group input-group-sm">
+			<input class="form-control font-monospace" type="text" value="{{ setup.guide }}" readonly onclick="this.select();">
+			<button class="btn btn-outline-secondary dvr-copy" type="button">Copy</button>
+		</div>
+	</div>
+</div>
+{% else %}
+<p class="text-muted small">Set <code>DVR_TOKEN</code> in <code>.env</code> to enable the tuner endpoints; the Plex setup URLs will appear here.</p>
+{% endif %}
+
 <form action="" method="post" class="d-inline">
 	{{ action_form.csrf_token() }}
 	<button class="btn btn-sm btn-warning" name="rebuild_submit" value="Rebuild lineups now" type="submit">Rebuild lineups now</button>
@@ -70,4 +90,19 @@
 	<p class="text-muted small mt-2 mb-2">Rules are optional and comma-separated; the editor page has the full set, plus explicit picks by title.</p>
 	{{ form.save_submit(class_="btn btn-sm btn-primary") }}
 </form>
+
+<script>
+// Copy buttons on the Plex setup URLs
+document.querySelectorAll(".dvr-copy").forEach(function (button) {
+	button.addEventListener("click", function () {
+		const input = button.parentElement.querySelector("input");
+		navigator.clipboard.writeText(input.value).then(function () {
+			button.textContent = "Copied";
+			setTimeout(function () { button.textContent = "Copy"; }, 1500);
+		}).catch(function () {
+			input.select();
+		});
+	});
+});
+</script>
 {% endblock %}

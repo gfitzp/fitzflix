@@ -176,6 +176,19 @@ def test_member_add_by_title(app, admin_client):
         assert channel.series.count() == 1
 
 
+def test_list_page_shows_plex_setup_urls(app, admin_client, monkeypatch):
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    assert "http://127.0.0.1:8000/dvr/dvr-test-token" in page
+    assert "http://127.0.0.1:8000/dvr/dvr-test-token/guide.xml" in page
+
+    # Feature off: the hint replaces the URLs
+
+    monkeypatch.setitem(app.config, "DVR_TOKEN", None)
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    assert "dvr-test-token" not in page
+    assert "DVR_TOKEN" in page
+
+
 def test_title_search_returns_canonical_pick_strings(app, admin_client, user_client):
     with app.app_context():
         make_movie("Jaws", 1975)

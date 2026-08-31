@@ -235,6 +235,18 @@ def dvr_channels():
         lineup = channel_lineup(current_app.redis, channel.slug)
         counts[channel.id] = len(lineup["programs"]) if lineup else 0
         summaries[channel.id] = _rules_summary(channel)
+
+    # The two URLs Plex setup asks for, on the address Plex itself
+    # reaches Fitzflix at (DVR_TUNER_URL), ready to copy-paste
+
+    setup = None
+    token = current_app.config["DVR_TOKEN"]
+    if token:
+        base = current_app.config["DVR_TUNER_URL"].rstrip("/")
+        setup = {
+            "tuner": f"{base}/dvr/{token}",
+            "guide": f"{base}/dvr/{token}/guide.xml",
+        }
     return render_template(
         "dvr_channels.html",
         title="DVR Channels",
@@ -243,6 +255,7 @@ def dvr_channels():
         summaries=summaries,
         form=form,
         action_form=action_form,
+        setup=setup,
     )
 
 
