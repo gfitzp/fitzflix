@@ -79,6 +79,7 @@ def enriched_series():
         tmdb_overview="Riffing.",
         tmdb_in_production=True,
         tmdb_status="Returning Series",
+        tmdb_content_rating="TV-14",
         tmdb_data_as_of=datetime(2020, 9, 25),
     )
     credit = TMDBCredit(id=99002, name="Michael J. Nelson")
@@ -135,6 +136,7 @@ def test_tv_clear_empties_fields_cast_and_episodes(app):
         assert stored.tmdb_overview is None
         assert stored.tmdb_in_production is None
         assert stored.tmdb_status is None
+        assert stored.tmdb_content_rating is None
         assert stored.tmdb_data_as_of is None
         assert stored.tmdb_ignored is True
 

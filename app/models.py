@@ -1117,6 +1117,7 @@ class TMDBMixin(object):
         self.tvdb_id = None
         self.tmdb_id = None
         self.tmdb_backdrop_path = None
+        self.tmdb_content_rating = None
         self.tmdb_first_air_date = None
         self.tmdb_homepage = None
         self.tmdb_poster_path = None
