@@ -373,7 +373,15 @@
 			}, { passive: true });
 			document.addEventListener("touchend", function () {
 				if (startY !== null && pulled >= THRESHOLD) {
-					indicator.textContent = "Refreshing…";
+					indicator.replaceChildren();
+					var spinner = document.createElement("div");
+					spinner.className = "spinner-border spinner-border-sm";
+					spinner.setAttribute("role", "status");
+					var spinnerLabel = document.createElement("span");
+					spinnerLabel.className = "visually-hidden";
+					spinnerLabel.textContent = "Refreshing…";
+					spinner.appendChild(spinnerLabel);
+					indicator.appendChild(spinner);
 					location.reload();
 				} else {
 					indicator.style.height = "0";
