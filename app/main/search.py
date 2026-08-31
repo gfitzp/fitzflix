@@ -119,9 +119,11 @@ def _movie_search_results(wildcard, limit=50):
 
 
 def _episode_search_results(wildcard, limit=12):
-    """Episodes whose TMDB titles match, each linking into its season
-    page. Numbering-suspect series are excluded — a matched title on a
-    misnumbered series would send the user to the wrong slot."""
+    """Episodes whose fetched titles match, each linking into its
+    season page. Numbering-suspect series are excluded — a matched
+    title on a misnumbered series would send the user to the wrong
+    slot — unless Sonarr owns their rows (#162): Sonarr numbered the
+    files themselves, so its titles land on the right slots."""
 
     from app.tv_validation import series_is_suspect
 
@@ -137,7 +139,9 @@ def _episode_search_results(wildcard, limit=12):
     verdicts = {}
     for episode, series in rows:
         if series.id not in verdicts:
-            verdicts[series.id] = series_is_suspect(series.id)
+            verdicts[series.id] = (
+                series.episode_source != "sonarr" and series_is_suspect(series.id)
+            )
         if verdicts[series.id]:
             continue
         results.append({"episode": episode, "series": series})

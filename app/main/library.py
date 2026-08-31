@@ -2534,15 +2534,17 @@ def season(series_id, season):
         return redirect(url_for("main.season", series_id=series_id, season=season))
 
     # Episode metadata for the guide and the files table's title column
-    # — withheld entirely for numbering-suspect series,
-    # where a title is likelier to mislabel than to inform. File
-    # editions outrank fetched titles in the template.
+    # — withheld for numbering-suspect series, where a title is likelier
+    # to mislabel than to inform, unless Sonarr owns the rows (#162):
+    # Sonarr numbered these very files, so its titles fit them by
+    # construction and the suspicion doesn't apply. File editions
+    # outrank fetched titles in the template.
 
     from app.tv_validation import series_is_suspect
 
     episodes = {}
     episode_guide = []
-    if not series_is_suspect(series_id):
+    if tv.episode_source == "sonarr" or not series_is_suspect(series_id):
         episodes = {
             row.episode: row
             for row in TVEpisode.query.filter_by(

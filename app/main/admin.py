@@ -661,15 +661,22 @@ def maintenance():
 @login_required
 @admin_required
 def tv_title_validation():
-    """Per-series episode-title verdicts: how well TMDB's
-    titles agree with Plex's for the same files, suspects first."""
+    """Per-series episode-title verdicts: how well fetched episode
+    titles agree with Plex's for the same files, suspects first. A
+    suspect verdict only suppresses titles on TMDB-sourced series —
+    Sonarr-sourced ones (#162) are numbered by the service that named
+    the files, so they're badged instead."""
 
     from app.tv_validation import MIN_COMPARED, SUSPECT_BELOW, validation_report
+
+    sources = dict(db.session.query(TVSeries.id, TVSeries.episode_source))
 
     return render_template(
         "tv_validation.html",
         title="TV episode titles",
         entries=validation_report(),
+        sources=sources,
+        sonarr_sourced=sum(1 for source in sources.values() if source == "sonarr"),
         min_compared=MIN_COMPARED,
         suspect_below=SUSPECT_BELOW,
     )

@@ -8,7 +8,7 @@
 	</ol>
 </nav>
 <h3>TV episode titles</h3>
-<p class="small text-muted">Each series' TMDB episode titles compared against the titles Plex's agents gave the very same files, matched by filename. A series below {{ "%.0f"|format(suspect_below * 100) }}% agreement (with at least {{ min_compared }} comparisons) is numbering-suspect: its episode titles stay hidden rather than risk mislabeling. Series without enough overlap are unverified and trusted.</p>
+<p class="small text-muted">Each series' fetched episode titles compared against the titles Plex's agents gave the very same files, matched by filename. A series below {{ "%.0f"|format(suspect_below * 100) }}% agreement (with at least {{ min_compared }} comparisons) is numbering-suspect: on TMDB-sourced series its episode titles stay hidden rather than risk mislabeling. Series without enough overlap are unverified and trusted. {{ sonarr_sourced }} series source their episode data from Sonarr's TVDB metadata instead &mdash; the numbering that named the files &mdash; so their titles always show.</p>
 {% if entries %}
 <div class="table-responsive">
 	<table class="table table-sm align-middle">
@@ -41,6 +41,9 @@
 					   shape of a just-renamed series awaiting its Plex
 					   rescan — so the older verdict stands #}
 					<span class="badge text-bg-light" title="No files matched in Plex on the last run{% if entry.checked_at %} — verdict from {{ entry.checked_at[:10] }}{% endif %}">Carried forward</span>
+					{% endif %}
+					{% if sources.get(entry.series_id) == "sonarr" %}
+					<span class="badge text-bg-info" title="Episode data comes from Sonarr's TVDB metadata — the numbering that named the files — so a suspect verdict doesn't hide these titles">Sonarr episodes</span>
 					{% endif %}
 				</td>
 			</tr>

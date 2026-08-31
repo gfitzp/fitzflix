@@ -364,6 +364,20 @@ def cron_table(config):
             )
         )
 
+    # Sync episode data from Sonarr's TVDB metadata for every series
+    # it manages (#162) — Sonarr refreshes itself on a ~12-hour
+    # cadence, so a nightly read stays current
+
+    if config.get("SONARR_URL") and config.get("SONARR_API_KEY"):
+        table.append(
+            (
+                "35 4 * * *",
+                "app.sonarr_episodes.sync_sonarr_episodes",
+                1800,
+                "Syncing episode data from Sonarr",
+            )
+        )
+
     # Reconcile the Plex and Fitzflix watchlists both ways; the
     # account-level discover API needs only the token, not the server
 

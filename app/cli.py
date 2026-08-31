@@ -354,6 +354,20 @@ def register(app):
         )
         click.echo(f"Enqueued TV title validation as {job.id}")
 
+    @tv.command()
+    def sonarr():
+        """Sync episode data from Sonarr now instead of waiting for
+        the nightly run."""
+
+        from flask import current_app
+
+        job = current_app.maintenance_queue.enqueue(
+            "app.sonarr_episodes.sync_sonarr_episodes",
+            job_timeout=1800,
+            description="Syncing episode data from Sonarr",
+        )
+        click.echo(f"Enqueued Sonarr episode sync as {job.id}")
+
     @app.cli.group()
     def catalog():
         """Manage the film catalog's exclusion list."""

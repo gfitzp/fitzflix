@@ -1120,7 +1120,13 @@ class TMDBMixin(object):
         # Episode rows: sync tv_episode slots for every season
         # block the fetch delivered. Only fetched seasons are touched —
         # a season absent from the payload keeps its stored rows, so a
-        # failed season batch can never mass-delete episodes.
+        # failed season batch can never mass-delete episodes. A series
+        # whose episodes Sonarr owns (#162) is left alone entirely:
+        # its rows follow TVDB's numbering, which TMDB's season blocks
+        # would clobber.
+
+        if self.episode_source == "sonarr":
+            return self
 
         for key, block in tmdb_info.items():
             if not key.startswith("season/") or not isinstance(block, dict):
@@ -1195,6 +1201,7 @@ class TMDBMixin(object):
 
         self.imdb_id = None
         self.tvdb_id = None
+        self.episode_source = "tmdb"
         self.tmdb_id = None
         self.tmdb_backdrop_path = None
         self.tmdb_first_air_date = None
@@ -1922,6 +1929,16 @@ class TVSeries(db.Model, TMDBMixin):
     )
 
     tvdb_id = db.Column(db.Integer)
+
+    # Which service owns this series' tv_episode rows (#162): "tmdb"
+    # (the default, synced by tmdb_tv_refresh) or "sonarr" (synced from
+    # the local Sonarr's TVDB metadata by sync_sonarr_episodes, whose
+    # numbering matches the library's files because Sonarr named them).
+    # Series-level metadata (cast, crew, posters) stays TMDB's either way.
+
+    episode_source = db.Column(
+        db.String(16), nullable=False, default="tmdb", server_default="tmdb"
+    )
 
     files = db.relationship(
         "File", backref="tv_series", lazy="dynamic", cascade="all,delete,delete-orphan"
