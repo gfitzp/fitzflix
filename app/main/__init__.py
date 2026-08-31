@@ -10,6 +10,7 @@ from app.main import (  # noqa: E402
     account,
     admin,
     discover,
+    dvr,
     game,
     library,
     posters,

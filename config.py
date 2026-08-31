@@ -189,6 +189,15 @@ class Config(object):
     PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
 
+    # Virtual DVR channels (#182): the token gates the M3U/XMLTV/stream
+    # endpoints (unset = feature off, every route 404s); Plex tunes the
+    # playlist as an M3U tuner. Channel count and size bound the
+    # nightly lineup build's ffprobe work
+    DVR_TOKEN                           = os.environ.get("DVR_TOKEN") or None
+    DVR_GENRE_CHANNELS                  = int(os.environ.get("DVR_GENRE_CHANNELS") or 6)
+    DVR_CHANNEL_FILMS                   = int(os.environ.get("DVR_CHANNEL_FILMS") or 40)
+    DVR_VIDEO_BITRATE_KBPS              = int(os.environ.get("DVR_VIDEO_BITRATE_KBPS") or 8000)
+
     # Remote playback via Plex Companion: the server address AS THE
     # PLAYERS REACH IT — an https URI resolvable from the players'
     # networks (not PLEX_URL, which is loopback). Which player to

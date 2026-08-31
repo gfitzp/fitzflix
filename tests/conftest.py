@@ -113,6 +113,7 @@ class TestConfig(Config):
     PLEX_URL = None
     PLEX_TOKEN = None
     PLEX_WEBHOOK_TOKEN = "plex-test-webhook-token"
+    DVR_TOKEN = "dvr-test-token"
     SONARR_URL = "http://127.0.0.1:1"
     SONARR_API_KEY = "sonarr-test-key"
     RADARR_URL = "http://127.0.0.1:1"

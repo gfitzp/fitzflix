@@ -365,6 +365,21 @@ def cron_table(config):
             )
         )
 
+    # Rebuild the virtual DVR channel lineups nightly (#182), rotating
+    # them the way the landing-page shelves rotate; the per-file
+    # duration cache makes every build after a film's first
+    # appearance nearly free
+
+    if config.get("DVR_TOKEN"):
+        table.append(
+            (
+                "40 3 * * *",
+                "app.dvr.build_channel_lineups",
+                3600,
+                "Building virtual DVR channel lineups",
+            )
+        )
+
     return [
         {
             "cron": cron_string,
