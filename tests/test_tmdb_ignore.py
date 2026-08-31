@@ -513,3 +513,66 @@ def test_fileless_record_refuses_detach(app, admin_client):
         stored = db.session.get(Movie, movie_id)
         assert stored.tmdb_id == 52520
         assert stored.tmdb_ignored is not True
+
+
+def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
+    """The TV page's management forms — transcode, restore, delete, and
+    the TMDB pair — are admin tools like the movie page's Movie Data
+    section: hidden from regular users, with every branch bouncing
+    hand-crafted posts server-side before touching anything."""
+
+    from tests.factories import make_tv_file
+
+    with app.app_context():
+        series = make_tv_series("Members Show", tmdb_id=110230)
+        make_tv_file(series, 1, 1, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+    page = user_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    for control in (
+        "lookup_submit",
+        "remove_submit",
+        "transcode_all",
+        "series_restore_submit",
+        "delete_submit",
+    ):
+        assert control not in page, control
+    assert "Seasons" in page  # the consumer-facing controls stay
+
+    admin_page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    for control in (
+        "lookup_submit",
+        "remove_submit",
+        "transcode_all",
+        "series_restore_submit",
+        "delete_submit",
+    ):
+        assert control in admin_page, control
+
+    # The gated page carries no forms for a regular user, so borrow the
+    # session-wide csrf token from a page that still has one
+
+    token = csrf_token_from(user_client.get("/profile").get_data(as_text=True))
+    for tampered in (
+        {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"},
+        {"remove_submit": "Remove TMDB ID"},
+        {"transcode_all": "Transcode All"},
+        {"password": "hunter2", "series_restore_submit": "Bulk restore"},
+        {"delete_submit": "Delete Series"},
+    ):
+        response = user_client.post(
+            f"/tv/{series_id}",
+            data={"csrf_token": token, **tampered},
+            follow_redirects=True,
+        )
+        assert "admin" in response.get_data(as_text=True), tampered
+
+    assert app.sql_queue.count == 0
+    assert app.transcode_queue.count == 0
+    assert app.request_queue.count == 0
+
+    with app.app_context():
+        stored = db.session.get(TVSeries, series_id)
+        assert stored is not None  # the delete never ran
+        assert stored.tmdb_id == 110230

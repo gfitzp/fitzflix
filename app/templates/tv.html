@@ -47,6 +47,12 @@
 			{% include "_shopping_search_dropdown.html" %}
 		</div>
 	</div>
+	{# The series management tools — transcode, restore, delete, and the
+	   TMDB forms below — are admin tools, like the movie page's Movie
+	   Data section (#186 follow-up): the route bounces stray posts from
+	   everyone else, so hiding them here is presentation, not the
+	   protection #}
+	{% if current_user.admin %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
 		<form action="" method="post">
 			{{ transcode_form.hidden_tag() }}
@@ -71,7 +77,9 @@
 			{{ series_delete_form.delete_submit(class_="btn btn-sm btn-danger container") }}
 		</form>
 	</div>
+	{% endif %}
 </div>
+{% if current_user.admin %}
 <hr>
 <div class="row">
 	<div class="col-sm-4">
@@ -98,4 +106,5 @@
 	<div class="col-sm-4">
 	</div>
 </div>
+{% endif %}
 {% endblock %}

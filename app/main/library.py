@@ -2229,10 +2229,19 @@ def tv(series_id):
     seasons.sort()
     seasons = list(set(seasons))
 
+    # The series management forms — transcode, restore, delete, TMDB —
+    # are admin tools, like the movie page's Movie Data section (#186
+    # follow-up): the template hides them and each branch bounces stray
+    # posts from anyone else
+
     # Form to request all the files for this TV series to be transcoded
 
     transcode_form = TranscodeForm()
     if transcode_form.transcode_all.data and transcode_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.tv", series_id=tv.id))
+
         # Subquery to get the best files for this TV series
 
         ranked_files = (
@@ -2299,6 +2308,9 @@ def tv(series_id):
         series_restore_form.series_restore_submit.data
         and series_restore_form.validate_on_submit()
     ):
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.tv", series_id=tv.id))
         if not current_user.check_password(series_restore_form.password.data):
             flash("Incorrect password provided!", "danger")
 
@@ -2328,6 +2340,9 @@ def tv(series_id):
         series_delete_form.delete_submit.data
         and series_delete_form.validate_on_submit()
     ):
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.tv", series_id=tv.id))
         aws_untouched_keys = []
         derived_paths = []
 
@@ -2374,6 +2389,9 @@ def tv(series_id):
 
     tmdb_remove_form = TMDBRemoveForm()
     if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.tv", series_id=tv.id))
         tv.tmdb_tv_clear()
         db.session.commit()
         flash(
@@ -2387,6 +2405,10 @@ def tv(series_id):
 
     tmdb_lookup_form = TMDBLookupForm()
     if tmdb_lookup_form.lookup_submit.data and tmdb_lookup_form.validate_on_submit():
+        if not current_user.admin:
+            flash("Need to be an admin user to do that!", "danger")
+            return redirect(url_for("main.tv", series_id=tv.id))
+
         # A blank id asks TMDB to search by title and takes the first hit,
         # which on an already-matched series silently re-points it at some
         # other show — the merge reported in #207. A detached series is
