@@ -257,3 +257,185 @@ def test_report_page_badges_sonarr_sourced_series(app, admin_client):
     response = admin_client.get("/maintenance/tv-titles")
     assert response.status_code == 200
     assert b"Sonarr episodes" in response.data
+
+
+def test_sync_matches_by_library_folder_before_tvdb_id(app, monkeypatch):
+    with app.app_context():
+
+        # Popeye's shape: TMDB's tvdb external id (417672) points at a
+        # duplicate TVDB entry, but Sonarr manages the series' very own
+        # library folder — the folder wins
+
+        series = make_tv_series("Popeye the Sailor (1933)", tvdb_id=417672)
+        db.session.commit()
+        series_id = series.id
+
+        _sonarr(
+            monkeypatch,
+            {
+                "/api/v3/series": [
+                    {
+                        "id": 9,
+                        "tvdbId": 78435,
+                        "path": "/Volumes/TV Shows/Popeye the Sailor (1933)",
+                    }
+                ],
+                "/api/v3/episode?seriesId=9": [
+                    {
+                        "seasonNumber": 1,
+                        "episodeNumber": 1,
+                        "title": "Popeye the Sailor",
+                    },
+                ],
+            },
+        )
+
+        assert sync_sonarr_episodes() is True
+
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.episode_source == "sonarr"
+        assert series.episodes.one().title == "Popeye the Sailor"
+
+
+def test_sync_skips_an_entry_covering_too_few_file_slots(app, monkeypatch):
+    with app.app_context():
+
+        # You're Under Arrest's shape: the folder matches a 4-episode
+        # OVA listing while the library holds far more files — adopting
+        # it would trade a full TMDB guide for almost nothing
+
+        series = make_tv_series("You're Under Arrest", tvdb_id=80054)
+        for e in range(1, 5):
+            make_tv_episode(series, 1, e, title=f"A Real TMDB Title {e}")
+            make_tv_file(series, 1, e, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+        _sonarr(
+            monkeypatch,
+            {
+                "/api/v3/series": [
+                    {
+                        "id": 3,
+                        "tvdbId": 416781,
+                        "path": "/Volumes/TV Shows/You're Under Arrest",
+                    }
+                ],
+                "/api/v3/episode?seriesId=3": [
+                    {"seasonNumber": 1, "episodeNumber": 1, "title": "And So They Met"},
+                ],
+            },
+        )
+
+        assert sync_sonarr_episodes() is True
+
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.episode_source == "tmdb"
+        assert series.episodes.count() == 4
+
+
+def test_placeholder_slots_still_describe_their_files(app, monkeypatch):
+    with app.app_context():
+
+        # Top Gear's shape: TVDB numbers every slot but titles most
+        # "Episode N" — the numbering describes the files, so the
+        # series flips, and only the real titles become rows
+
+        series = make_tv_series("Top Gear (2002)", tvdb_id=74608)
+        for e in range(1, 5):
+            make_tv_file(series, 1, e, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+        _sonarr(
+            monkeypatch,
+            {
+                "/api/v3/series": [{"id": 2, "tvdbId": 74608}],
+                "/api/v3/episode?seriesId=2": [
+                    {"seasonNumber": 1, "episodeNumber": 1, "title": "The Real One"},
+                    {"seasonNumber": 1, "episodeNumber": 2, "title": "Episode 2"},
+                    {"seasonNumber": 1, "episodeNumber": 3, "title": "Episode 3"},
+                    {"seasonNumber": 1, "episodeNumber": 4, "title": "Episode 4"},
+                ],
+            },
+        )
+
+        assert sync_sonarr_episodes() is True
+
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.episode_source == "sonarr"
+        assert series.episodes.one().title == "The Real One"
+
+
+def test_edition_files_do_not_count_against_coverage(app, monkeypatch):
+    with app.app_context():
+
+        # Doctor Who's shape: custom-numbered edition extras (S00E9001)
+        # that no provider could describe must not drag coverage down
+
+        series = make_tv_series("Doctor Who (1963)", tvdb_id=76107)
+        make_tv_file(series, 1, 1, "DVD")
+        for e in range(9001, 9006):
+            make_tv_file(series, 0, e, "DVD", edition="Making-of featurette")
+        db.session.commit()
+        series_id = series.id
+
+        _sonarr(
+            monkeypatch,
+            {
+                "/api/v3/series": [{"id": 4, "tvdbId": 76107}],
+                "/api/v3/episode?seriesId=4": [
+                    {
+                        "seasonNumber": 1,
+                        "episodeNumber": 1,
+                        "title": "An Unearthly Child",
+                    },
+                ],
+            },
+        )
+
+        assert sync_sonarr_episodes() is True
+
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.episode_source == "sonarr"
+
+
+def test_a_flipped_series_failing_coverage_reverts_to_tmdb(app, monkeypatch):
+    with app.app_context():
+
+        # A series adopted before the guard existed whose entry turns
+        # out not to describe the files is mislabeling right now:
+        # revert it and queue a TMDB refresh to rebuild the guide
+
+        series = make_tv_series(
+            "The State (1994)", tmdb_id=999, tvdb_id=77762, episode_source="sonarr"
+        )
+        make_tv_episode(series, 1, 30, title="Flat-Order Title")
+        for e in range(1, 5):
+            make_tv_file(series, 3, e, "DVD")
+        db.session.commit()
+        series_id = series.id
+
+        _sonarr(
+            monkeypatch,
+            {
+                "/api/v3/series": [{"id": 6, "tvdbId": 77762}],
+                "/api/v3/episode?seriesId=6": [
+                    {"seasonNumber": 1, "episodeNumber": 30, "title": "Episode 30"},
+                ],
+            },
+        )
+
+        assert sync_sonarr_episodes() is True
+
+        db.session.expire_all()
+        series = db.session.get(type(series), series_id)
+        assert series.episode_source == "tmdb"
+        assert series.episodes.count() == 0
+
+        refresh_args = [job.args for job in app.sql_queue.jobs]
+        assert ("TV Shows", series_id, 999) in refresh_args

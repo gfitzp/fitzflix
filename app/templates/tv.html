@@ -94,6 +94,11 @@
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
+		{# Where this series' episode guide comes from (#162): Sonarr's
+		   TVDB data when its library folder matches a Sonarr series,
+		   TMDB otherwise #}
+		<em class="small text-muted">Episode data source: {% if tv.episode_source == "sonarr" %}Sonarr (TheTVDB){% else %}TMDB{% endif %}</em>
+		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">
 	</div>
