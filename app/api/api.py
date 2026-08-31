@@ -72,6 +72,13 @@ def plex_webhook(token):
     if payload.get("event") != "media.scrobble" or metadata.get("type") != "movie":
         return "", 204
 
+    # Live TV airings type as "movie" too, and Plex scrobbles them
+    # repeatedly while a channel plays: a virtual-channel surf (#182)
+    # must never write a diary watch, however Plex matched the airing
+
+    if metadata.get("live"):
+        return "", 204
+
     tmdb_id = None
     for guid in metadata.get("Guid") or []:
         match = re.match(r"tmdb://(\d+)", guid.get("id") or "")

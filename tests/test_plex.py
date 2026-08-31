@@ -110,6 +110,16 @@ def test_webhook_ignores_non_scrobbles_and_tv(app, client):
     assert plex_jobs(app) == []
 
 
+def test_webhook_ignores_live_tv_scrobbles(app, client):
+    """A virtual-channel airing (#182) types as a movie and can carry a
+    matched TMDB guid, but a channel surf is never a diary watch."""
+
+    payload = scrobble_payload()
+    payload["Metadata"]["live"] = "1"
+    assert post_webhook(client, payload).status_code == 204
+    assert plex_jobs(app) == []
+
+
 def test_apply_watch_increments_and_records_diary(app, mapped_admin):
     with app.app_context():
         movie = make_movie("Watched on Plex", 1975, tmdb_id=578)
@@ -284,6 +294,31 @@ def test_poller_enqueues_new_movie_watches_and_advances_cursor(app, plex_server)
         (11, "monica-plex", "history"),
     ]
     assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 300
+
+
+def test_poller_ignores_live_tv_entries(app, plex_server):
+    """Live TV history entries type as movies (#182): they advance the
+    cursor but never enqueue a watch, even with a resolvable guid."""
+
+    cursor = int(time.time()) - 3600
+    app.redis.set("fitzflix:plex:history-cursor", cursor)
+    plex_server.history = [
+        {
+            "type": "movie",
+            "viewedAt": cursor + 100,
+            "accountID": 1,
+            "ratingKey": "42",
+            "live": "1",
+        }
+    ]
+    plex_server.accounts = [{"id": 1, "name": "glenn-plex"}]
+    plex_server.guids = {"42": "tmdb://578"}
+
+    with app.app_context():
+        assert plex_history_poll() is True
+
+    assert plex_jobs(app) == []
+    assert int(app.redis.get("fitzflix:plex:history-cursor")) == cursor + 100
 
 
 def test_poller_caches_guid_lookups(app, plex_server):

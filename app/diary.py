@@ -683,6 +683,12 @@ def plex_history_poll():
             newest = max(newest, viewed_at)
             if entry.get("type") != "movie" or viewed_at <= cursor:
                 continue
+
+            # Live TV airings type as movies too (#182): a
+            # virtual-channel play is never a diary watch
+
+            if entry.get("live"):
+                continue
             tmdb_id = _plex_tmdb_id(entry, headers)
             if tmdb_id is None:
                 current_app.logger.info(
