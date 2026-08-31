@@ -5,11 +5,11 @@
 <hr>
 <h3>Rejected files</h3>
 <p class="small text-muted">Files that couldn't be imported, sorted by the reason they were rejected.</p>
-<a class="btn btn-sm btn-{{ "warning" if rejected_count else "outline-secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if rejected_count else "secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
 <hr>
 <h3>Pipeline activity</h3>
 <p class="small text-muted">Each recent file's journey through import as per-stage status chips &mdash; where a file is right now, which retries are booked, and where anything failed.</p>
-<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>
+<a class="btn btn-sm btn-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>
 <hr>
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}
@@ -50,20 +50,20 @@
 <hr>
 <h3>Unmatched TMDB records</h3>
 <p class="small text-muted">Movies and series with no TMDB id and no verdict &mdash; match each one by hand, or flag it as unmatchable so no refresh path ever answers it with a blind title search.</p>
-<a class="btn btn-sm btn-{{ "warning" if tmdb_triage_count else "outline-secondary" }}" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if tmdb_triage_count else "secondary" }}" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
 <hr>
 <h3>Runtime mismatches</h3>
 <p class="small text-muted">Files whose estimated length disagrees hard with the film's TMDb runtime &mdash; the shape of a mislabelled recording, or a truncated download.</p>
-<a class="btn btn-sm btn-{{ "warning" if runtime_mismatch_count else "outline-secondary" }}" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if runtime_mismatch_count else "secondary" }}" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
 <hr>
 <h3>Possibly-forced subtitles</h3>
 <p class="small text-muted">Unforced subtitle tracks that are far smaller than a same-language sibling in the same file &mdash; the shape of a foreign-parts-only track that should carry the forced flag.</p>
-<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "outline-secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
+<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
 <hr>
 <h3>Lossy-audio leads</h3>
 <p class="small text-muted">Files whose first audio track is lossy while a lossless track rides behind &mdash; remux the lossless track into the lead, or keep a commentary pairing as-is.</p>
-<a class="btn btn-sm btn-{{ "warning" if lossy_triage_count else "outline-secondary" }}" href="{{ url_for('main.lossy_audio_triage') }}" role="button">Triage lossy audio <span class="badge text-bg-light">{{ lossy_triage_count }}</span></a>
-<a class="btn btn-sm btn-outline-secondary ms-1" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
+<a class="btn btn-sm btn-{{ "warning" if lossy_triage_count else "secondary" }}" href="{{ url_for('main.lossy_audio_triage') }}" role="button">Triage lossy audio <span class="badge text-bg-light">{{ lossy_triage_count }}</span></a>
+<a class="btn btn-sm btn-secondary ms-1" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
 <hr>
 <h3>TV episode titles</h3>
 <p class="small text-muted">How well each series' TMDB episode titles agree with the titles Plex gave the same files &mdash; a series whose numbering diverges is flagged so episode titles never mislabel.</p>

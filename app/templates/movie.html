@@ -135,19 +135,50 @@
 	{% if plex_playable %}{% set _ = targets.append(("plex", "Play (Plex)" if both_playable else "Play on Apple TV")) %}{% endif %}
 	{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
 	{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
-	{% for player, label in targets %}
+	{% if targets|length > 1 %}
+	{# One Play control (Glenn, Aug 31 2026): the default player IS the
+	   button, the other waits under the split dropdown — like the Find
+	   menu. Both forms post through the shared data-plex-play handler;
+	   the secondary form's status line can't live inside the menu (it
+	   closes on click), so both report into the shared line under the
+	   group via data-plex-play-status-ref. The form wrapping the main
+	   button keeps Bootstrap's group corner rules from reaching it,
+	   so the two halves flatten their meeting corners by hand #}
+	<div class="col-sm-3 col-md-2 my-1">
+		<div class="btn-group w-100">
+			<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post" class="flex-fill d-grid">
+				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+				<input type="hidden" name="player" value="{{ targets[0][0] }}">
+				<button class="btn btn-success btn-sm rounded-end-0 text-nowrap px-1" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
+			</form>
+			<button type="button" class="btn btn-success btn-sm dropdown-toggle dropdown-toggle-split rounded-start-0" data-bs-toggle="dropdown" aria-expanded="false">
+				<span class="visually-hidden">Other players</span>
+			</button>
+			<ul class="dropdown-menu dropdown-menu-end">
+				<li>
+					<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
+						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+						<input type="hidden" name="player" value="{{ targets[1][0] }}">
+						<button class="dropdown-item" type="submit">&#9654;&#xFE0E; {{ targets[1][1] }}</button>
+					</form>
+				</li>
+			</ul>
+		</div>
+		{% if infuse_reasons %}
+		<div class="small text-muted">Recommended — {{ infuse_reasons|join(" and ") }} only play correctly in Infuse.</div>
+		{% endif %}
+		<div class="small" id="play-status-shared"></div>
+	</div>
+	{% elif targets %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<form data-plex-play action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
 			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-			<input type="hidden" name="player" value="{{ player }}">
-			<button class="btn {{ 'btn-success' if loop.first else 'btn-outline-success' }} btn-sm container" type="submit">&#9654;&#xFE0E; {{ label }}</button>
-			{% if both_playable and player == "infuse" and infuse_reasons %}
-			<div class="small text-muted">Recommended — {{ infuse_reasons|join(" and ") }} only play correctly in Infuse.</div>
-			{% endif %}
+			<input type="hidden" name="player" value="{{ targets[0][0] }}">
+			<button class="btn btn-success btn-sm container" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
 			<div class="small" data-plex-play-status></div>
 		</form>
 	</div>
-	{% endfor %}
+	{% endif %}
 	{# The file pages are admin tools (#186 follow-up), so only admins
 	   get the door to them #}
 	{% if current_user.admin %}
@@ -229,8 +260,8 @@
 <div class="mt-2">
 	<form action="" method="post" class="d-inline" data-card-watchlist>
 		{{ watchlist_form.hidden_tag() }}
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
 	</form>
 	{# Not interested (#45b, buttons removed per #184): the ladder's
 	   &#10005; toggle is the one way to declare disinterest — the note
@@ -266,7 +297,7 @@
 		{% if movie.tmdb_id %}
 		<form action="" method="post" class="mt-2">
 			{{ tmdb_remove_form.hidden_tag() }}
-			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDB ID from this movie? Its TMDB details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
+			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-danger", onclick="return confirm('Remove the TMDB ID from this movie? Its TMDB details, cast and crew will be deleted, and the movie will not be looked up again.');") }}
 		</form>
 		{% endif %}
 		{% else %}

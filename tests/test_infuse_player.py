@@ -394,6 +394,15 @@ def test_movie_page_offers_both_apps_and_the_recommendation(
     assert "Recommended" in page
     # Default-first ordering: Plex leads while no default says otherwise
     assert page.index("Play (Plex)") < page.index("Play (Infuse)")
+    # One Play control (Aug 31 2026): the default player is the button,
+    # the other waits under the split dropdown, and both forms report
+    # into the shared status line
+    assert (
+        "dropdown-toggle-split"
+        in page.split("Play (Plex)")[1].split("Play (Infuse)")[0]
+    )
+    assert page.count('data-plex-play-status-ref="play-status-shared"') == 2
+    assert 'id="play-status-shared"' in page
 
 
 def test_movie_page_with_only_infuse_shows_a_single_button(

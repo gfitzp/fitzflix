@@ -45,7 +45,7 @@
 		<form action="" method="post" class="float-end">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
-			{{ triage_form.dismiss_submit(class_="btn btn-sm btn-outline-secondary") }}
+			{{ triage_form.dismiss_submit(class_="btn btn-sm btn-secondary") }}
 		</form>
 	</div>
 	<div class="card-body py-2">
@@ -122,7 +122,7 @@
 		<form action="" method="post" class="d-inline">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
-			{{ triage_form.generate_submit(class_="btn btn-sm btn-outline-primary") }}
+			{{ triage_form.generate_submit(class_="btn btn-sm btn-primary") }}
 		</form>
 		<span class="small text-muted ms-2">No listening clips yet &mdash; generate them to hear both tracks side by side before acting.</span>
 		{% else %}

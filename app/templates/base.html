@@ -975,6 +975,10 @@
 			event.preventDefault();
 			var form = button.closest("[data-plex-play]");
 			var status = form.querySelector("[data-plex-play-status]");
+			// A form whose status line can't live inside it — the Play
+			// split-button's secondary form sits in a dropdown menu that
+			// closes on click — names a shared line by id instead
+			if (!status) status = document.getElementById(form.getAttribute("data-plex-play-status-ref") || "");
 			var label = button.innerHTML;
 			button.disabled = true;
 			button.innerHTML = "Starting…";

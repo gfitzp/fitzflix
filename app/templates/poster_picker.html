@@ -22,7 +22,7 @@
 		{% if has_custom_poster %}
 		<form method="post" class="text-center mt-2">
 			{{ poster_remove_form.hidden_tag() }}
-			{{ poster_remove_form.poster_remove_submit(class_="btn btn-sm btn-outline-danger") }}
+			{{ poster_remove_form.poster_remove_submit(class_="btn btn-sm btn-danger") }}
 		</form>
 		<p class="small text-muted text-center mt-1 mb-0" style="max-width: 250px;">Deletes the custom artwork and reverts to the TMDB poster.</p>
 		{% endif %}
@@ -71,7 +71,7 @@
 			<form method="post">
 				{{ poster_select_form.csrf_token }}
 				{{ poster_select_form.poster_path(value=poster.file_path) }}
-				{{ poster_select_form.poster_select_submit(class_="btn btn-sm btn-outline-primary mt-1", disabled=not upload_enabled) }}
+				{{ poster_select_form.poster_select_submit(class_="btn btn-sm btn-primary mt-1", disabled=not upload_enabled) }}
 			</form>
 			{% if is_default %}<div><span class="badge text-bg-primary">TMDB default</span></div>{% endif %}
 		</div>

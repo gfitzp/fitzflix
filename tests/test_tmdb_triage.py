@@ -69,7 +69,7 @@ def test_empty_state_and_neutral_card(app, admin_client):
     assert "nothing to triage" in page
 
     mpage = admin_client.get("/maintenance").get_data(as_text=True)
-    assert re.search(r'btn-outline-secondary" href="[^"]*/maintenance/tmdb"', mpage)
+    assert re.search(r'btn-secondary" href="[^"]*/maintenance/tmdb"', mpage)
 
 
 def test_flag_marks_movie_and_series_unmatchable(app, admin_client):

@@ -73,15 +73,15 @@
 			<form action="{{ now_action }}" method="post" data-card-watchlist class="mb-1">
 				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 				<input type="hidden" name="from_card" value="1">
-				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
-				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
+				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
+				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
 			</form>
 		</div>
 		{% endif %}
 		<p class="mb-1">
-			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-primary">&#9654;&nbsp;Watch live</a>
+			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-primary">&#9654;&nbsp;Watch live</a>
 			{% if now_playing.more_url %}
-			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-outline-secondary">More</a>
+			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary">More</a>
 			{% endif %}
 		</p>
 		<p class="mb-0 small text-muted" data-now-status>{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }} &middot; {% endif %}From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>

@@ -94,7 +94,7 @@
 		{% if tv.tmdb_id %}
 		<form action="" method="post" class="mt-2">
 			{{ tmdb_remove_form.hidden_tag() }}
-			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-outline-danger", onclick="return confirm('Remove the TMDB ID from this series? Its TMDB details, cast, crew and episode list will be deleted, and the series will not be looked up again.');") }}
+			{{ tmdb_remove_form.remove_submit(class_="btn btn-sm btn-danger", onclick="return confirm('Remove the TMDB ID from this series? Its TMDB details, cast, crew and episode list will be deleted, and the series will not be looked up again.');") }}
 		</form>
 		{% endif %}
 		{% if tv.tmdb_id and tv.tmdb_data_as_of %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}

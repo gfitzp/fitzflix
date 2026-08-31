@@ -12,8 +12,8 @@
 <form class="form-inline mb-3" action="{{ url_for('main.index') }}" method="get">
 	<label class="small text-muted me-2" for="minutes">Only films that fit your evening:</label>
 	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm me-2" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
-	<button type="submit" class="btn btn-sm btn-outline-primary me-2">Filter</button>
-	{% if minutes %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
+	<button type="submit" class="btn btn-sm btn-primary me-2">Filter</button>
+	{% if minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
 </form>
 {% if minutes %}
 <p class="small text-muted">Showing films of {{ minutes }} minutes or less; films with unknown runtimes are hidden.</p>

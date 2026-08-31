@@ -104,9 +104,9 @@
 {# The TMDB lookup understands the same y: modifiers as this page, so
    it gets the full query; the filename search doesn't, so it gets the
    bare text #}
-<a class="btn btn-outline-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
+<a class="btn btn-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
 {% if current_user.admin %}
-<a class="btn btn-outline-secondary btn-sm" href="{{ url_for('main.files', q=q_text) }}">Search filenames</a>
+<a class="btn btn-secondary btn-sm" href="{{ url_for('main.files', q=q_text) }}">Search filenames</a>
 {% endif %}
 {% endif %}
 {% endblock %}

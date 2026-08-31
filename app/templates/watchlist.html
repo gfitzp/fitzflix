@@ -23,7 +23,7 @@
 			</div>
 			{% endfor %}
 			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
-			{% if q or minutes %}<a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			{% if q or minutes %}<a class="btn btn-sm btn-secondary mb-2" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
 		</form>
 	</div>
 </div>
@@ -72,13 +72,13 @@
 				{% set find_year = movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year %}
 				<div class="btn-group">
 					{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ find_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
+						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ find_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
 					{% elif movie.criterion_spine_number or movie.criterion_set_title %}
-						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ find_title|urlencode }} {{ find_year }} Criterion Collection" rel="noreferrer">Find</a>
+						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ find_title|urlencode }} {{ find_year }} Criterion Collection" rel="noreferrer">Find</a>
 					{% else %}
-						<a class="btn btn-sm btn-outline-primary py-0" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ find_title|urlencode }}&yearfrom={{ find_year }}&yearto={{ find_year }}&submit=Search&action=search" rel="noreferrer">Find</a>
+						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ find_title|urlencode }}&yearfrom={{ find_year }}&yearto={{ find_year }}&submit=Search&action=search" rel="noreferrer">Find</a>
 					{% endif %}
-					<button type="button" class="btn btn-sm btn-outline-primary py-0 dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+					<button type="button" class="btn btn-sm btn-primary py-0 dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
 						<span class="visually-hidden">Toggle dropdown</span>
 					</button>
 					{% include "_shopping_search_dropdown.html" %}
@@ -93,7 +93,7 @@
 				<form action="" method="post" class="d-flex" data-card-watchlist data-watchlist-remove-cell>
 					{{ watchlist_form.csrf_token }}
 					{{ watchlist_form.movie_id(value=movie.id) }}
-					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-danger py-0">Remove</button>
+					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-danger py-0">Remove</button>
 				</form>
 			</div>
 			<p class="mb-0 mt-1 small text-muted">Added {{ row.date_added.strftime("%b %-d, %Y") }}</p>

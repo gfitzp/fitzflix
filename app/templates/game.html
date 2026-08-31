@@ -17,7 +17,7 @@
 			<label class="btn btn-outline-primary" for="difficulty-{{ level }}">{{ difficulty_labels[level] }}</label>
 			{% endfor %}
 		</div>
-		<noscript><button type="submit" class="btn btn-outline-secondary ms-1">Go</button></noscript>
+		<noscript><button type="submit" class="btn btn-secondary ms-1">Go</button></noscript>
 	</form>
 	{% if streak or best or seen or (difficulty == "extra" and points) %}
 	<div class="ms-auto">
@@ -44,7 +44,7 @@
 		<input class="form-check-input" type="checkbox" name="unrated" value="1" id="include-unrated"{% if include_unrated %} checked{% endif %} onchange="this.form.submit()">
 		<label class="form-check-label small" for="include-unrated">Include films I haven&rsquo;t rated{% if difficulty == "extra" %} <span class="text-muted">(2x point bonus)</span>{% endif %}</label>
 	</div>
-	<noscript><button type="submit" class="btn btn-sm btn-outline-secondary mt-1">Apply</button></noscript>
+	<noscript><button type="submit" class="btn btn-sm btn-secondary mt-1">Apply</button></noscript>
 </form>
 {% endif %}
 <hr>
@@ -88,8 +88,8 @@
 	<img src="{{ url_for('main.game_brag', token=result.brag) }}" alt="The crop you guessed from" class="rounded border" style="max-height: 5rem;">
 	<div>
 		<p class="small mb-1">Named from just this much &mdash; tell somebody:</p>
-		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-share" hidden>Share&hellip;</button>
-		<button type="button" class="btn btn-sm btn-outline-primary" id="brag-copy-image">Copy image</button>
+		<button type="button" class="btn btn-sm btn-primary" id="brag-share" hidden>Share&hellip;</button>
+		<button type="button" class="btn btn-sm btn-primary" id="brag-copy-image">Copy image</button>
 		<span class="small text-muted d-block mt-1" id="brag-status" role="status"></span>
 	</div>
 </div>
@@ -186,16 +186,16 @@
 	{% endif %}
 	<button type="submit" name="guess_submit" value="y" class="btn btn-primary">Guess</button>
 	{% if difficulty == "extra" and stage and stage < 3 %}
-	<button type="submit" name="zoom_out" value="y" class="btn btn-outline-secondary">Zoom Out</button>
+	<button type="submit" name="zoom_out" value="y" class="btn btn-secondary">Zoom Out</button>
 	{% endif %}
 	{% if difficulty == "extra" and stage and stage > 1 %}
 	{# Past the first zoom-out a round is won or lost (Glenn's rule,
 	   Aug 27 2026): surrender ends it as a miss #}
-	<button type="submit" name="give_up" value="y" class="btn btn-outline-danger">I give up</button>
+	<button type="submit" name="give_up" value="y" class="btn btn-danger">I give up</button>
 	{% else %}
 	{# Extra rounds resume on a plain visit, so Skip abandons the live
 	   round explicitly — and only an untouched one may skip #}
-	<a class="btn btn-outline-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
+	<a class="btn btn-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
 	{% endif %}
 </form>
 {% endif %}
