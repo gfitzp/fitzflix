@@ -806,7 +806,9 @@ def file_activity_card():
 @login_required
 def movie_card():
     """The poster popover's card fragment (#45c): one film's title,
-    credits, synopsis, availability, and at-a-glance badges — keyed
+    credits, meta line (runtime, genres, and the US rating, so the
+    card says what sort of film it is), synopsis, availability, and
+    at-a-glance badges — keyed
     by movie_id for library records, or tmdb_id for films with no
     local row (the streaming rail and the leaving shelf). Purely
     informational since Glenn's Aug 2026 revision: the star ladder
@@ -870,6 +872,15 @@ def movie_card():
             ),
             href=url_for("main.movie", movie_id=movie.id),
             runtime=movie.tmdb_runtime,
+            genres=[genre.name for genre in movie.genres],
+            certification=next(
+                (
+                    c.certification
+                    for c in movie.certifications
+                    if c.country == "US" and c.certification
+                ),
+                None,
+            ),
             overview=movie.tmdb_overview,
             directors=directors,
             top_cast=top_cast,
@@ -910,7 +921,7 @@ def movie_card():
             current_app.config["TMDB_API_URL"] + "/movie/" + str(tmdb_id),
             params={
                 "api_key": current_app.config["TMDB_API_KEY"],
-                "append_to_response": "credits",
+                "append_to_response": "credits,release_dates",
             },
             timeout=10,
         )
@@ -940,11 +951,30 @@ def movie_card():
         if person.get("id") is not None
     ]
 
+    # The US rating, first certified release wins — the same answer the
+    # cataloger stores for library records
+    certification = next(
+        (
+            date.get("certification")
+            for country in (details.get("release_dates") or {}).get("results") or []
+            if country.get("iso_3166_1") == "US"
+            for date in country.get("release_dates") or []
+            if date.get("certification")
+        ),
+        None,
+    )
+
     return render_template(
         "_movie_card.html",
         display_title=f"{film_title} ({release_year})",
         href=url_for("main.review_tmdb", tmdb_id=tmdb_id),
         runtime=details.get("runtime"),
+        genres=[
+            genre.get("name")
+            for genre in details.get("genres") or []
+            if genre.get("name")
+        ],
+        certification=certification,
         overview=details.get("overview"),
         directors=directors,
         top_cast=top_cast,

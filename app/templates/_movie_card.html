@@ -1,6 +1,7 @@
 {# The poster popover's card (#45c): the fragment /movie_card renders
-   for one film — title, credits, synopsis, and the at-a-glance
-   badges — fetched on hover (or first tap) and injected into a
+   for one film — title, credits, a meta line (runtime, genres, and
+   the US rating in its MPAA-style box, so the card says at a glance
+   what sort of film it is), synopsis, and the at-a-glance badges — fetched on hover (or first tap) and injected into a
    Bootstrap popover by the script in base.html, which finds it by the
    shared .poster-card class (_tv_card.html is the series-shaped
    sibling). Served for library records and bare TMDB ids alike. The
@@ -20,8 +21,8 @@
 {% from "_availability_badges.html" import library_badge %}
 <div class="poster-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
-	{% if directors or runtime %}
-	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}</p>
+	{% if directors or runtime or genres or certification %}
+	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{{ genres|join(", ") }}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
 	{% endif %}
 	{% if overview %}
 	<p class="small mb-1 poster-card-overview">{{ overview }}</p>

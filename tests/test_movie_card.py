@@ -16,9 +16,12 @@ from tests.test_recommendations import admin_id, make_cast, make_person
 
 
 def test_movie_card_for_a_library_film(app, admin_client):
-    """A library record's card: linked credits, runtime, synopsis, and
-    the In-library badge in shopping colors — no forms at all, the
-    actions live on the tile."""
+    """A library record's card: linked credits, the meta line (runtime,
+    genres, and the US rating in its box), synopsis, and the In-library
+    badge in shopping colors — no forms at all, the actions live on the
+    tile."""
+
+    from app.models import RefTMDBCertification, TMDBGenre
 
     with app.app_context():
         director = make_person(888001, "Card Director")
@@ -26,6 +29,15 @@ def test_movie_card_for_a_library_film(app, admin_client):
         movie = make_candidate("Card Film", 1968, director=director)
         movie.tmdb_runtime = 101
         movie.tmdb_overview = "A film about cards."
+        movie.genres.append(TMDBGenre(id=888003, name="Card Drama"))
+        movie.genres.append(TMDBGenre(id=888004, name="Card Mystery"))
+        movie.certifications.append(
+            RefTMDBCertification(country="US", certification="PG-13")
+        )
+        # Only the US rating reaches the card
+        movie.certifications.append(
+            RefTMDBCertification(country="GB", certification="15")
+        )
         make_cast(star, movie)
         db.session.commit()
         movie_id = movie.id
@@ -36,6 +48,9 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "Card Director" in page and "credit=888001" in page
     assert "Card Star" in page and "credit=888002" in page
     assert "101 min" in page
+    assert "Card Drama, Card Mystery" in page
+    assert ">PG-13</span>" in page
+    assert ">15</span>" not in page
     assert "A film about cards." in page
     assert "In library" in page
 
@@ -340,6 +355,8 @@ def test_movie_card_for_a_bare_tmdb_id(app, admin_client, monkeypatch):
     page = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
     assert "Jaws 2 (1978)" in page
     assert "116 min" in page
+    assert "Horror, Thriller" in page
+    assert ">PG</span>" in page
     assert "The shark is back." in page
     assert "Roy Scheider" in page and "credit=4430" in page
     assert 'href="/review/tmdb/579"' in page
