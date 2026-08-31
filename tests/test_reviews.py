@@ -642,7 +642,14 @@ JAWS_2_DETAILS = {
                 "order": 9,
                 "character": "Beach Extra",
             },
-        ]
+        ],
+        # Two credit rows for the same director (a common TMDB artifact)
+        # collapse to one directed-by entry; other crew never appear
+        "crew": [
+            {"id": 56512, "name": "Jeannot Szwarc", "job": "Director"},
+            {"id": 56512, "name": "Jeannot Szwarc", "job": "Director"},
+            {"id": 491, "name": "John Williams", "job": "Original Music Composer"},
+        ],
     },
 }
 
@@ -768,6 +775,22 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "116&nbsp;minutes" in page
     assert "Horror" in page and "Thriller" in page
     assert ">PG</span>" in page
+    # The directed-by line, deduped and linked to the filmography page
+    # (#186); crew in other jobs stay off the page
+    assert page.count("Jeannot Szwarc") == 1
+    assert "credit=56512" in page
+    assert "John Williams" not in page
+    # The log-a-viewing form (date + review text), like the movie page —
+    # the route has always handled both fields
+    assert 'name="date_watched"' in page
+    assert 'name="review"' in page
+    assert "Log a viewing" in page
+    # The watchlist toggle matches the movie page's live markup: both
+    # faces render inside a data-watchlist-scope with the badge
+    assert "data-card-watchlist" in page
+    assert 'name="add_watchlist_submit"' in page
+    assert 'name="remove_watchlist_submit"' in page
+    assert "data-watchlist-badge" in page
     # The cast scroller shows every credited actor and everyone links to
     # a filmography page — the page serves any TMDB person id, so people
     # without local credit rows browse the same as known ones — and
@@ -788,6 +811,43 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "letterboxd.com/tmdb/579" in page
     assert re.search(r"/movie/\d+/files", page) is None
     assert "exclude_submit" not in page
+    # No profile stored, so the engine stays quiet
+    assert 'title="Estimated' not in page
+    assert "Might interest you" not in page
+
+
+def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monkeypatch):
+    """The record-less page previews the engine the way the movie page
+    does (#186): the shared score source's TMDB-keyed overlay feeds the
+    ladder's estimate, and the coarse scorer awards "Might interest
+    you" against the marker bar."""
+
+    import json
+
+    import app.main.discover as discover
+
+    from app.models import User
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(
+        discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(JAWS_2_DETAILS)
+    )
+
+    with app.app_context():
+        user_id = User.query.first().id
+    profile = {
+        "affinities": {
+            "genre:27": {"class": "genre", "label": "Horror", "count": 4, "score": 0.8}
+        },
+        "movies": 5,
+        "calibration": {"scores": [0.0, 0.5], "stars": [1.0, 5.0]},
+    }
+    app.redis.set(f"fitzflix:recs:profile:{user_id}", json.dumps(profile))
+    app.redis.hset(f"fitzflix:recs:scores:tmdb:{user_id}", "579", 0.25)
+
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    assert "Estimated 3 for you" in page
+    assert "Might interest you" in page
 
 
 def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):

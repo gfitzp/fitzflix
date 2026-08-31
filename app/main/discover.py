@@ -66,7 +66,9 @@ from app.main.helpers import (
 from app.recommendations import (
     TMDB_PATCH_SCORES_KEY,
     TOP_BILLING_CUTOFF,
+    coarse_interest_score,
     estimated_rating,
+    marker_bar,
     not_interested_movie_ids,
     resolved_score,
     resolved_tmdb_score,
@@ -1863,6 +1865,16 @@ def review_tmdb(tmdb_id):
         for person in billed_cast
         if person.get("id") is not None
     ]
+
+    # (person id, name) pairs for the directed-by line, matching the
+    # movie page; the filmography route serves any TMDB person id
+
+    directors = []
+    for person in (details.get("credits") or {}).get("crew") or []:
+        if person.get("job") == "Director" and person.get("id") is not None:
+            pair = (person["id"], person.get("name"))
+            if pair not in directors:
+                directors.append(pair)
     film_title = details.get("title")
     release_year = (details.get("release_date") or "")[:4]
     if not film_title or not release_year.isdigit():
@@ -2026,6 +2038,26 @@ def review_tmdb(tmdb_id):
             flash(f"Logged '{film_title} ({year})' in your history", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
+    # The engine's preview, as on the movie page: the shared score
+    # source's TMDB-keyed lane feeds the ladder's estimate (a record-less
+    # film can't have the user's own stars yet), and "Might interest you"
+    # keeps the coarse-scorer rule the TMDB search results use — minus
+    # the person term, since there's no person context here either
+
+    estimated = None
+    might_interest = False
+    profile = stored_profile(current_app.redis, current_user.id)
+    if profile:
+        score = resolved_tmdb_score(
+            current_app.redis, current_user.id, tmdb_id, profile
+        )
+        if score is not None:
+            estimated = estimated_rating(profile, score)
+        coarse = coarse_interest_score(
+            profile, [genre_id for genre_id, _ in genres if genre_id], str(year)
+        )
+        might_interest = coarse > marker_bar(profile)
+
     # A movie-shaped stand-in so the shared store-search dropdown and the
     # external-site links render for a film with no local record
 
@@ -2054,6 +2086,9 @@ def review_tmdb(tmdb_id):
         genres=genres,
         certification=certification,
         cast=cast,
+        directors=directors,
+        estimated_rating=estimated,
+        might_interest=might_interest,
         movie_review_form=movie_review_form,
         movie=store_lookup,
         streaming=user_streaming(tmdb_id, current_user, negative=True),
