@@ -1,11 +1,20 @@
-"""Virtual DVR channel endpoints (#182): the M3U playlist, the XMLTV
-guide, and the live MPEG-TS streams that Plex tunes as an M3U tuner.
+"""Virtual DVR channel endpoints (#182): an HDHomeRun-flavored virtual
+tuner, the M3U playlist, the XMLTV guide, and the live MPEG-TS streams.
 
-Plex fetches all three with no session cookie, so a secret path
-segment gates them exactly like the Plex webhook (404 when unset or
-wrong, indistinguishable from a missing route). The playlist's tvg-id,
-the guide's channel id, and the stream URL's slug are the same string
-— that identity is how Plex pairs a stream to its guide entries.
+Plex has no native M3U support — its manual "enter its network
+address" flow probes <address>/discover.json and expects the
+HDHomeRun HTTP protocol (the Channels DVR trick works the same way:
+it answers HDHomeRun JSON on its m3u URL). Manual entry skips SSDP
+discovery entirely, so the whole protocol here is three JSON
+documents: discover.json (device identity), lineup_status.json (no
+scanning), and lineup.json (channel number/name/stream URL triples).
+The guide is wired separately: Plex's channel-setup step accepts the
+XMLTV URL. The lineup's GuideNumber and the guide's channel id pair
+the two.
+
+Plex fetches everything with no session cookie, so a secret path
+segment gates all of it exactly like the Plex webhook (404 when unset
+or wrong, indistinguishable from a missing route).
 
 A stream is an endless chunked response: on connect the schedule math
 says what's playing and how far in, ffmpeg joins the file at that
@@ -21,7 +30,7 @@ import subprocess
 from datetime import datetime, timezone
 from xml.etree import ElementTree
 
-from flask import Response, current_app, url_for
+from flask import Response, current_app, request, url_for
 
 from app.dvr import channel_index, channel_lineup, program_at, programs_between
 from app.main import bp
@@ -45,6 +54,17 @@ def _authorized(token):
     return bool(expected) and secrets.compare_digest(token, expected)
 
 
+def _absolute(endpoint, **values):
+    """An absolute URL for the endpoint on the host THIS request
+    arrived at. SERVER_NAME pins url_for(_external=True) to the public
+    hostname, but Plex must get device/stream URLs on the address it
+    actually reached us by (loopback on the same machine) — tuning
+    through the public host would pull endless MPEG-TS through
+    CloudFront."""
+
+    return request.host_url.rstrip("/") + url_for(endpoint, **values)
+
+
 def _xmltv_time(timestamp):
     """An epoch timestamp as an XMLTV time string in the server's local
     zone (YYYYMMDDHHMMSS +HHMM) — Plex schedules in the viewer's clock,
@@ -57,6 +77,69 @@ def _xmltv_time(timestamp):
     )
 
 
+@bp.route("/dvr/<token>/discover.json")
+@bp.route("/dvr/<token>/playlist.m3u/discover.json")
+def dvr_discover(token):
+    """The HDHomeRun device-identity document Plex probes when a tuner
+    address is entered manually. The playlist.m3u alias tolerates the
+    full playlist URL being pasted as the address — Plex concatenates
+    /discover.json onto whatever was typed.
+    """
+
+    if not _authorized(token):
+        return "", 404
+    # Derived from the playlist route because it has exactly one URL
+    # rule — url_for on this endpoint could build either rule
+
+    base = _absolute("main.dvr_playlist", token=token).rsplit("/playlist.m3u", 1)[0]
+    return {
+        "FriendlyName": "Fitzflix DVR",
+        "Manufacturer": "Fitzflix",
+        "ModelNumber": "HDTC-2US",
+        "FirmwareName": "hdhomeruntc_atsc",
+        "FirmwareVersion": "20260831",
+        "DeviceID": "FITZFLIX",
+        "DeviceAuth": "fitzflix",
+        "BaseURL": base,
+        "LineupURL": f"{base}/lineup.json",
+        "TunerCount": 4,
+    }
+
+
+@bp.route("/dvr/<token>/lineup_status.json")
+@bp.route("/dvr/<token>/playlist.m3u/lineup_status.json")
+def dvr_lineup_status(token):
+    """The HDHomeRun scan-status document: a fixed lineup, no channel
+    scanning possible."""
+
+    if not _authorized(token):
+        return "", 404
+    return {
+        "ScanInProgress": 0,
+        "ScanPossible": 0,
+        "Source": "Cable",
+        "SourceList": ["Cable"],
+    }
+
+
+@bp.route("/dvr/<token>/lineup.json")
+@bp.route("/dvr/<token>/playlist.m3u/lineup.json")
+def dvr_lineup(token):
+    """The HDHomeRun channel lineup: number, name, and stream URL per
+    channel — how Plex learns what it can tune."""
+
+    if not _authorized(token):
+        return "", 404
+    return [
+        {
+            "GuideNumber": str(channel["number"]),
+            "GuideName": channel["name"],
+            "URL": _absolute("main.dvr_stream", token=token, slug=channel["slug"]),
+        }
+        for channel in channel_index(current_app.redis)
+    ]
+
+
 @bp.route("/dvr/<token>/playlist.m3u")
 def dvr_playlist(token):
     """The M3U tuner playlist: one entry per channel, tvg-id keyed to
@@ -64,7 +147,7 @@ def dvr_playlist(token):
 
     if not _authorized(token):
         return "", 404
-    logo = url_for("static", filename="apple-touch-icon.png", _external=True)
+    logo = _absolute("static", filename="apple-touch-icon.png")
     lines = ["#EXTM3U"]
     for channel in channel_index(current_app.redis):
         lines.append(
@@ -72,11 +155,7 @@ def dvr_playlist(token):
             f'tvg-chno="{channel["number"]}" tvg-logo="{logo}" '
             f'group-title="Fitzflix",{channel["name"]}'
         )
-        lines.append(
-            url_for(
-                "main.dvr_stream", token=token, slug=channel["slug"], _external=True
-            )
-        )
+        lines.append(_absolute("main.dvr_stream", token=token, slug=channel["slug"]))
     return Response("\n".join(lines) + "\n", mimetype="audio/x-mpegurl")
 
 
@@ -101,6 +180,9 @@ def dvr_guide(token):
         lineups.append(lineup)
         element = ElementTree.SubElement(tv, "channel", {"id": lineup["slug"]})
         ElementTree.SubElement(element, "display-name").text = lineup["name"]
+        # The number too: Plex's channel-mapping step pairs the tuner's
+        # GuideNumber against these names
+        ElementTree.SubElement(element, "display-name").text = str(lineup["number"])
 
     for lineup in lineups:
         for begins, ends, program in programs_between(lineup, start, stop):

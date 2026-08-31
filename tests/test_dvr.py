@@ -18,6 +18,9 @@ ENDPOINTS = [
     "/dvr/{token}/playlist.m3u",
     "/dvr/{token}/guide.xml",
     "/dvr/{token}/stream/fitzflix-mix.ts",
+    "/dvr/{token}/discover.json",
+    "/dvr/{token}/lineup_status.json",
+    "/dvr/{token}/lineup.json",
 ]
 
 
@@ -118,6 +121,45 @@ def test_schedule_math_wraps_the_lineup(app):
     ]
     # Contiguous: each airing stops exactly where the next starts
     assert all(airings[n][1] == airings[n + 1][0] for n in range(len(airings) - 1))
+
+
+def test_hdhomerun_trio_describes_the_tuner(app, client, monkeypatch):
+    """Plex's manual tuner entry probes discover.json (also via the
+    pasted-playlist-URL alias), then reads the lineup; the three
+    documents must agree with the stored channels."""
+
+    _build_library(app, monkeypatch, horror_films=8, other_films=2)
+
+    # SERVER_NAME pins url_for(_external=True) to the public hostname in
+    # production; these documents must ignore it and answer on the host
+    # the request came in on, or Plex tunes through CloudFront
+
+    monkeypatch.setitem(app.config, "SERVER_NAME", "public.example.com")
+
+    discover = client.get(f"/dvr/{TOKEN}/discover.json", base_url="http://localhost")
+    assert discover.status_code == 200
+    device = discover.get_json()
+    assert device["BaseURL"].endswith(f"/dvr/{TOKEN}")
+    assert "public.example.com" not in device["BaseURL"]
+    assert device["BaseURL"].startswith("http://localhost")
+    assert device["LineupURL"] == f'{device["BaseURL"]}/lineup.json'
+    assert device["TunerCount"] == 4
+
+    # The alias answers identically when the playlist URL was pasted
+    # as the device address
+
+    alias = client.get(
+        f"/dvr/{TOKEN}/playlist.m3u/discover.json", base_url="http://localhost"
+    )
+    assert alias.get_json()["BaseURL"] == device["BaseURL"]
+
+    status = client.get(f"/dvr/{TOKEN}/lineup_status.json").get_json()
+    assert status["ScanInProgress"] == 0
+
+    lineup = client.get(f"/dvr/{TOKEN}/lineup.json").get_json()
+    assert [entry["GuideNumber"] for entry in lineup] == ["100", "101"]
+    assert lineup[0]["GuideName"] == "Fitzflix Mix"
+    assert lineup[1]["URL"].endswith(f"/dvr/{TOKEN}/stream/horror.ts")
 
 
 def test_playlist_and_guide_agree_on_channel_ids(app, client, monkeypatch):
