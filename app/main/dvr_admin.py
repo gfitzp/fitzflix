@@ -11,7 +11,16 @@ stream.
 
 import re
 
-from flask import abort, current_app, flash, redirect, render_template, url_for
+from flask import (
+    abort,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from flask_login import login_required
 
 from app import db
@@ -149,6 +158,37 @@ def _resolve_series(text):
         return None, f'No series matches "{text}".'
     options = "; ".join(series.title for series in candidates[:5])
     return None, f'"{text}" is ambiguous — try one of: {options}.'
+
+
+@bp.route("/dvr/title-search.json")
+@login_required
+@admin_required
+def dvr_title_search():
+    """Lookahead for the channel editor's pick fields: canonical title
+    strings — "Title (Year)" for movies, the bare title for series —
+    exactly what the member resolvers parse, so a picked suggestion
+    always resolves unambiguously."""
+
+    query = (request.args.get("q") or "").strip().lower()
+    if len(query) < 2:
+        return jsonify({"results": []})
+    if request.args.get("kind") == "series":
+        rows = (
+            TVSeries.query.filter(db.func.lower(TVSeries.title).like(f"%{query}%"))
+            .order_by(TVSeries.title)
+            .limit(8)
+            .all()
+        )
+        results = [series.title for series in rows]
+    else:
+        rows = (
+            Movie.query.filter(db.func.lower(Movie.title).like(f"%{query}%"))
+            .order_by(Movie.title, Movie.year)
+            .limit(8)
+            .all()
+        )
+        results = [f"{movie.title} ({movie.year})" for movie in rows]
+    return jsonify({"results": results})
 
 
 @bp.route("/dvr/channels", methods=["GET", "POST"])

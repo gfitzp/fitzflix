@@ -176,6 +176,25 @@ def test_member_add_by_title(app, admin_client):
         assert channel.series.count() == 1
 
 
+def test_title_search_returns_canonical_pick_strings(app, admin_client, user_client):
+    with app.app_context():
+        make_movie("Jaws", 1975)
+        make_movie("Jaws 2", 1978)
+        make_tv_series("Doctor Who (1963)")
+        db.session.commit()
+
+    response = admin_client.get("/dvr/title-search.json?kind=movie&q=jaws")
+    assert response.get_json()["results"] == ["Jaws (1975)", "Jaws 2 (1978)"]
+
+    response = admin_client.get("/dvr/title-search.json?kind=series&q=doctor")
+    assert response.get_json()["results"] == ["Doctor Who (1963)"]
+
+    # Under two characters returns nothing; non-admins are bounced
+
+    assert admin_client.get("/dvr/title-search.json?q=j").get_json() == {"results": []}
+    assert user_client.get("/dvr/title-search.json?q=jaws").status_code == 302
+
+
 def test_build_honors_picks_and_disabled(app, monkeypatch):
     from app import dvr
 

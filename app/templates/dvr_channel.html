@@ -92,7 +92,10 @@
 		{% endfor %}
 		<form action="" method="post" class="d-flex mt-2">
 			{{ member_form.csrf_token() }}
-			<input class="form-control form-control-sm me-2" type="text" name="member_title" placeholder="Jaws (1975)">
+			<div class="dropdown flex-grow-1 me-2">
+				<input class="form-control form-control-sm dvr-title-lookahead" data-kind="movie" type="text" name="member_title" placeholder="Jaws (1975)" autocomplete="off">
+				<div class="dropdown-menu w-100 shadow-sm"></div>
+			</div>
 			<button class="btn btn-sm btn-secondary text-nowrap" name="add_movie_submit" value="Add movie" type="submit">Add movie</button>
 		</form>
 	</div>
@@ -111,9 +114,84 @@
 		{% endfor %}
 		<form action="" method="post" class="d-flex mt-2">
 			{{ member_form.csrf_token() }}
-			<input class="form-control form-control-sm me-2" type="text" name="member_title" placeholder="Doctor Who (1963)">
+			<div class="dropdown flex-grow-1 me-2">
+				<input class="form-control form-control-sm dvr-title-lookahead" data-kind="series" type="text" name="member_title" placeholder="Doctor Who (1963)" autocomplete="off">
+				<div class="dropdown-menu w-100 shadow-sm"></div>
+			</div>
 			<button class="btn btn-sm btn-secondary text-nowrap" name="add_series_submit" value="Add series" type="submit">Add series</button>
 		</form>
 	</div>
 </div>
+
+<script>
+// Lookahead on the pick fields: suggestions are the canonical strings
+// the server-side resolvers parse, so a picked title always resolves.
+// Same debounce/dropdown interaction as the global search in base.html.
+document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
+	const menu = input.parentElement.querySelector(".dropdown-menu");
+	let timer = null;
+	let active = -1;
+
+	function hide() {
+		menu.classList.remove("show");
+		menu.innerHTML = "";
+		active = -1;
+	}
+
+	function render(results) {
+		menu.innerHTML = "";
+		results.forEach(function (title) {
+			const item = document.createElement("button");
+			item.type = "button";
+			item.className = "dropdown-item text-truncate";
+			item.textContent = title;
+			// mousedown, not click: it fires before the input's blur
+			item.addEventListener("mousedown", function (event) {
+				event.preventDefault();
+				input.value = title;
+				hide();
+			});
+			menu.appendChild(item);
+		});
+		menu.classList.toggle("show", results.length > 0);
+		active = -1;
+	}
+
+	input.addEventListener("input", function () {
+		clearTimeout(timer);
+		const q = input.value.trim();
+		if (q.length < 2) {
+			hide();
+			return;
+		}
+		timer = setTimeout(function () {
+			const url = "{{ url_for('main.dvr_title_search') }}?kind=" +
+				input.dataset.kind + "&q=" + encodeURIComponent(q);
+			fetch(url)
+				.then(function (response) { return response.ok ? response.json() : { results: [] }; })
+				.then(function (data) { render(data.results || []); })
+				.catch(hide);
+		}, 250);
+	});
+
+	input.addEventListener("keydown", function (event) {
+		const items = menu.querySelectorAll(".dropdown-item");
+		if (!items.length) return;
+		if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+			event.preventDefault();
+			active = (active + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+			items.forEach(function (el, i) { el.classList.toggle("active", i === active); });
+		} else if (event.key === "Enter" && active >= 0) {
+			// Fill the input; a second Enter (or the button) submits
+			event.preventDefault();
+			input.value = items[active].textContent;
+			hide();
+		} else if (event.key === "Escape") {
+			hide();
+		}
+	});
+
+	input.addEventListener("blur", function () { setTimeout(hide, 150); });
+});
+</script>
 {% endblock %}
