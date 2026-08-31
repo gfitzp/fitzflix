@@ -196,6 +196,7 @@ class Config(object):
     DVR_TOKEN                           = os.environ.get("DVR_TOKEN") or None
     DVR_GENRE_CHANNELS                  = int(os.environ.get("DVR_GENRE_CHANNELS") or 6)
     DVR_CHANNEL_FILMS                   = int(os.environ.get("DVR_CHANNEL_FILMS") or 40)
+    DVR_TV_CHANNELS                     = int(os.environ.get("DVR_TV_CHANNELS") or 5)
     DVR_VIDEO_BITRATE_KBPS              = int(os.environ.get("DVR_VIDEO_BITRATE_KBPS") or 8000)
 
     # Remote playback via Plex Companion: the server address AS THE

@@ -33,7 +33,19 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
-from app.models import File, Movie, RefQuality, FileAudioTrack, TMDBGenre, movie_genres
+from app.availability_alerts import _leaving_set
+from app.leaving_criterion import CRITERION_PROVIDER_ID
+from app.models import (
+    File,
+    FileAudioTrack,
+    Movie,
+    RefQuality,
+    TMDBGenre,
+    TVSeries,
+    movie_genres,
+    tv_file_rank,
+)
+from app.streaming import batch_title_availability, streaming_matches
 
 # This process's app instance, resolved lazily so the nightly task can
 # run on a worker without building a second application
@@ -57,6 +69,22 @@ MIX_CHANNEL_SLUG = "fitzflix-mix"
 # feeds the mix
 
 MIN_GENRE_FILMS = 8
+
+# Themed channels built from external signals (Criterion availability,
+# the leaving set) sit in their own number band and can run much
+# shallower — a three-film last-call marathon is authentically cable
+
+CRITERION_CHANNEL_NUMBER = 140
+LEAVING_CHANNEL_NUMBER = 141
+MIN_SPECIAL_FILMS = 3
+
+# Per-series TV channels: broadcast order in a windowed slice that
+# advances a few episodes each day, so the channel marches through the
+# series across rebuilds instead of looping the same premiere block
+
+TV_CHANNEL_NUMBER = 200
+MIN_SERIES_EPISODES = 8
+TV_WINDOW_ADVANCE = 5
 
 # AC-3 tops out at 5.1; sources with more channels downmix, sources
 # with fewer keep their layout
@@ -191,14 +219,145 @@ def _program(movie, file, duration, genres):
     }
 
 
+def _criterion_movie_ids(best):
+    """Owned films streaming on the Criterion Channel right now, per
+    the availability cache. Cache-only reads: the nightly refresh keeps
+    every owned film's payload warm, and a cold entry just waits for
+    the next build."""
+
+    by_tmdb = {}
+    for movie_id, (movie, _) in best.items():
+        if movie.tmdb_id:
+            by_tmdb.setdefault(movie.tmdb_id, movie_id)
+    if not by_tmdb:
+        return []
+    payloads, _ = batch_title_availability(list(by_tmdb), fetch_limit=0)
+    return [
+        by_tmdb[tmdb_id]
+        for tmdb_id, payload in payloads.items()
+        if payload and streaming_matches(payload, {CRITERION_PROVIDER_ID})
+    ]
+
+
+def _leaving_owned(best):
+    """Owned films in the current leaving-Criterion set, plus the
+    departure date. The channel airs OUR copies — the files aren't
+    going anywhere, the streaming availability is, so "leaving" is a
+    last-call programming cue, not a storage fact."""
+
+    leaving, departs = _leaving_set()
+    if not leaving:
+        return [], None
+    ids = [
+        movie_id for movie_id, (movie, _) in best.items() if movie.tmdb_id in leaving
+    ]
+    return ids, departs
+
+
+def _series_pool(limit):
+    """The series with enough owned episodes to sustain a channel,
+    deepest first, capped at the configured channel count. Specials
+    (season 0) don't count toward the bench."""
+
+    rows = (
+        db.session.query(
+            TVSeries, db.func.count(db.func.distinct(File.season * 1000 + File.episode))
+        )
+        .join(File, File.series_id == TVSeries.id)
+        .filter(File.season > 0)
+        .group_by(TVSeries.id)
+        .all()
+    )
+    deep = [(series, count) for series, count in rows if count >= MIN_SERIES_EPISODES]
+    deep.sort(key=lambda pair: pair[1], reverse=True)
+    return [series for series, _ in deep[:limit]]
+
+
+def _series_episodes(series_id):
+    """The series' best copy of every regular episode in broadcast
+    order — the same per-episode quality ranking the library pages
+    use, specials excluded."""
+
+    ranked = (
+        db.session.query(File.id, tv_file_rank())
+        .join(TVSeries, TVSeries.id == File.series_id)
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .subquery()
+    )
+    return (
+        File.query.join(ranked, ranked.c.id == File.id)
+        .filter(File.series_id == series_id)
+        .filter(File.season > 0)
+        .filter(ranked.c.rank == 1)
+        .order_by(File.season.asc(), File.episode.asc())
+        .all()
+    )
+
+
+def _episode_program(series, file, duration):
+    """The stored program record for one episode: the series carries
+    the artwork, overview, and guide title; the file carries the
+    numbering and the optional episode title (File.edition, the house
+    convention)."""
+
+    span = f"S{file.season:02d}E{file.episode:02d}"
+    if file.last_episode and file.last_episode != file.episode:
+        span = f"{span}-E{file.last_episode:02d}"
+    return {
+        "series_id": series.id,
+        "tmdb_id": series.tmdb_id,
+        "title": series.title,
+        "subtitle": file.edition or None,
+        "episode_num": span,
+        "year": (
+            series.tmdb_first_air_date.year if series.tmdb_first_air_date else None
+        ),
+        "overview": series.tmdb_overview or "",
+        "poster_path": series.tmdb_poster_path,
+        "file_path": file.file_path,
+        "duration": round(duration, 3),
+        "audio_channels": _first_audio_channels(file.id),
+        "genres": [],
+    }
+
+
+def _tv_channels(day):
+    """The per-series channels: (number, slug, name, window) tuples,
+    numbered alphabetically in their own band. Each window is a
+    contiguous broadcast-order slice that starts a little further into
+    the series every day."""
+
+    cap = current_app.config["DVR_CHANNEL_FILMS"]
+    pool = _series_pool(current_app.config["DVR_TV_CHANNELS"])
+    channels = []
+    for offset, series in enumerate(sorted(pool, key=lambda s: s.title.lower())):
+        episodes = _series_episodes(series.id)
+        if not episodes:
+            continue
+        start = (day.toordinal() * TV_WINDOW_ADVANCE) % len(episodes)
+        window = (episodes + episodes)[start : start + min(cap, len(episodes))]
+        channels.append(
+            (
+                TV_CHANNEL_NUMBER + offset,
+                f"tv-{_slugify(series.title)}",
+                series.title,
+                series,
+                window,
+            )
+        )
+    return channels
+
+
 def build_channel_lineups(day=None):
     """Build the day's channel lineups and store them in Redis: the
-    all-library mix plus the deepest genres, each a seeded shuffle of
-    its eligible films capped at DVR_CHANNEL_FILMS.
+    all-library mix, the deepest genres, the Criterion and Leaving
+    Soon overlays (when deep enough), and the per-series TV channels.
+    Movie channels are seeded shuffles capped at DVR_CHANNEL_FILMS; TV
+    channels are broadcast-order windows.
 
     Runs nightly on the maintenance queue. Probing durations is the
     only real cost, and the per-file cache makes every build after a
-    film's first appearance free.
+    file's first appearance free.
     """
 
     with app.app_context():
@@ -209,7 +368,9 @@ def build_channel_lineups(day=None):
         best = _best_files_by_movie()
         genres_by_movie = _genre_names_by_movie(list(best))
 
-        # Channels: the mix, then the deepest genres alphabetically
+        # Movie channels: the mix, the deepest genres alphabetically,
+        # then the themed overlays when they have the bench for it.
+        # Each is (number, slug, name, eligible movie ids, guide note)
 
         counts = {}
         for movie_id in best:
@@ -222,20 +383,65 @@ def build_channel_lineups(day=None):
             ]
         )
 
-        channels = [(MIX_CHANNEL_NUMBER, MIX_CHANNEL_SLUG, MIX_CHANNEL_NAME, None)]
+        movie_channels = [
+            (MIX_CHANNEL_NUMBER, MIX_CHANNEL_SLUG, MIX_CHANNEL_NAME, list(best), None)
+        ]
         for offset, name in enumerate(top, start=1):
-            channels.append((MIX_CHANNEL_NUMBER + offset, _slugify(name), name, name))
-
-        epoch = datetime.now(timezone.utc).timestamp()
-        index = []
-        for number, slug, name, genre in channels:
             eligible = [
                 movie_id
                 for movie_id in best
-                if genre is None or genre in genres_by_movie.get(movie_id, [])
+                if name in genres_by_movie.get(movie_id, [])
             ]
-            Random(f"dvr:{slug}:{day.isoformat()}").shuffle(eligible)
+            movie_channels.append(
+                (MIX_CHANNEL_NUMBER + offset, _slugify(name), name, eligible, None)
+            )
 
+        criterion_ids = _criterion_movie_ids(best)
+        if len(criterion_ids) >= MIN_SPECIAL_FILMS:
+            movie_channels.append(
+                (
+                    CRITERION_CHANNEL_NUMBER,
+                    "criterion",
+                    "Criterion",
+                    criterion_ids,
+                    None,
+                )
+            )
+
+        leaving_ids, departs = _leaving_owned(best)
+        if departs and len(leaving_ids) >= MIN_SPECIAL_FILMS:
+            movie_channels.append(
+                (
+                    LEAVING_CHANNEL_NUMBER,
+                    "leaving-soon",
+                    "Leaving Soon",
+                    leaving_ids,
+                    f"Leaving the Criterion Channel {departs.strftime('%B %-d')}.",
+                )
+            )
+
+        epoch = datetime.now(timezone.utc).timestamp()
+        index = []
+
+        def store(number, slug, name, programs):
+            """Write one channel's lineup and index it, dropping empty
+            channels."""
+
+            if not programs:
+                current_app.logger.warning(f"DVR: channel {slug} has no programs")
+                return
+            lineup = {
+                "slug": slug,
+                "name": name,
+                "number": number,
+                "epoch": epoch,
+                "programs": programs,
+            }
+            redis_client.set(LINEUP_KEY.format(slug=slug), json.dumps(lineup))
+            index.append({"number": number, "slug": slug, "name": name})
+
+        for number, slug, name, eligible, note in movie_channels:
+            Random(f"dvr:{slug}:{day.isoformat()}").shuffle(eligible)
             programs = []
             for movie_id in eligible:
                 if len(programs) >= cap:
@@ -247,22 +453,25 @@ def build_channel_lineups(day=None):
                         f"DVR: no duration for {file.file_path}; skipping"
                     )
                     continue
-                programs.append(
-                    _program(movie, file, duration, genres_by_movie.get(movie_id, []))
+                program = _program(
+                    movie, file, duration, genres_by_movie.get(movie_id, [])
                 )
+                if note:
+                    program["overview"] = f"{note} {program['overview']}".strip()
+                programs.append(program)
+            store(number, slug, name, programs)
 
-            if not programs:
-                current_app.logger.warning(f"DVR: channel {slug} has no programs")
-                continue
-            lineup = {
-                "slug": slug,
-                "name": name,
-                "number": number,
-                "epoch": epoch,
-                "programs": programs,
-            }
-            redis_client.set(LINEUP_KEY.format(slug=slug), json.dumps(lineup))
-            index.append({"number": number, "slug": slug, "name": name})
+        for number, slug, name, series, window in _tv_channels(day):
+            programs = []
+            for file in window:
+                duration = _cached_duration(redis_client, file)
+                if duration is None:
+                    current_app.logger.warning(
+                        f"DVR: no duration for {file.file_path}; skipping"
+                    )
+                    continue
+                programs.append(_episode_program(series, file, duration))
+            store(number, slug, name, programs)
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
         current_app.logger.info(

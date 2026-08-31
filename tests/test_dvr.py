@@ -7,10 +7,12 @@ import io
 import json
 import xml.etree.ElementTree as ElementTree
 
+from datetime import date
+
 import pytest
 
 from app.models import TMDBGenre, db
-from tests.factories import make_movie, make_movie_file
+from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
 TOKEN = "dvr-test-token"
 
@@ -97,6 +99,143 @@ def test_build_makes_genre_channels_from_deep_genres(app, monkeypatch):
     assert len(horror["programs"]) == 8
     assert all("Horror" in program["genres"] for program in horror["programs"])
     assert len(dvr.channel_lineup(app.redis, "fitzflix-mix")["programs"]) == 10
+
+
+def test_build_makes_criterion_channel_from_availability(app, monkeypatch):
+    """Owned films flat-rate on provider 258 get the Criterion channel;
+    below the special-channel bench, no channel appears."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    streaming = {
+        "link": None,
+        "flatrate": [
+            {
+                "provider_id": 258,
+                "provider_name": "The Criterion Channel",
+                "logo_path": None,
+            }
+        ],
+        "ads": [],
+        "rent": [],
+        "buy": [],
+    }
+    nothing = {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
+
+    def fake_availability(tmdb_ids, **kwargs):
+        return {t: (streaming if t < 9500 else nothing) for t in tmdb_ids}, []
+
+    monkeypatch.setattr(dvr, "batch_title_availability", fake_availability)
+    with app.app_context():
+        for n in range(3):
+            make_movie_file(
+                make_movie(f"Criterion {n}", 1950 + n, tmdb_id=9000 + n),
+                "Bluray-1080p",
+            )
+        make_movie_file(make_movie("Other", 1990, tmdb_id=9500), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+
+    channels = {c["slug"]: c for c in dvr.channel_index(app.redis)}
+    assert channels["criterion"]["number"] == 140
+    lineup = dvr.channel_lineup(app.redis, "criterion")
+    assert {p["title"] for p in lineup["programs"]} == {
+        "Criterion 0",
+        "Criterion 1",
+        "Criterion 2",
+    }
+
+    # One film drops off Criterion: only two remain, below the bench
+
+    def fake_thinner(tmdb_ids, **kwargs):
+        return {t: (streaming if t < 9002 else nothing) for t in tmdb_ids}, []
+
+    monkeypatch.setattr(dvr, "batch_title_availability", fake_thinner)
+    with app.app_context():
+        assert dvr.build_channel_lineups() is True
+    assert "criterion" not in {c["slug"] for c in dvr.channel_index(app.redis)}
+
+
+def test_build_makes_leaving_channel_with_last_call_note(app, monkeypatch):
+    """Owned films in the leaving set air as a last-call marathon, the
+    departure date leading every guide description."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    monkeypatch.setattr(
+        dvr, "_leaving_set", lambda: ({7000, 7001, 7002}, date(2026, 9, 30))
+    )
+    with app.app_context():
+        for n in range(3):
+            make_movie_file(
+                make_movie(f"Departing {n}", 1960 + n, tmdb_id=7000 + n),
+                "Bluray-1080p",
+            )
+        make_movie_file(make_movie("Staying", 1990, tmdb_id=7900), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+
+    channels = {c["slug"]: c for c in dvr.channel_index(app.redis)}
+    assert channels["leaving-soon"]["number"] == 141
+    lineup = dvr.channel_lineup(app.redis, "leaving-soon")
+    assert len(lineup["programs"]) == 3
+    assert all(
+        p["overview"].startswith("Leaving the Criterion Channel September 30.")
+        for p in lineup["programs"]
+    )
+
+    # The mix channel's copies of the same films carry no note
+
+    mix = dvr.channel_lineup(app.redis, "fitzflix-mix")
+    assert not any(p["overview"].startswith("Leaving") for p in mix["programs"])
+
+
+def test_build_makes_tv_channels_in_broadcast_order(app, client, monkeypatch):
+    """A deep series gets its own channel: best copy per episode in
+    broadcast order, specials excluded, window rotating daily, and the
+    guide carrying sub-title/episode-num."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
+    day = date(2026, 8, 31)
+    with app.app_context():
+        series = make_tv_series(
+            "Doctor Who (1963)",
+            tmdb_id=57243,
+            tmdb_overview="The Doctor travels.",
+            tmdb_poster_path="/dw.jpg",
+        )
+        for episode in range(1, 10):
+            make_tv_file(series, 1, episode, "Bluray-1080p")
+        make_tv_file(series, 0, 1, "Bluray-1080p")  # a special: never airs
+        # A shallow series stays off the dial
+        thin = make_tv_series("One-Off")
+        make_tv_file(thin, 1, 1, "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups(day=day) is True
+
+    channels = {c["slug"]: c for c in dvr.channel_index(app.redis)}
+    assert channels["tv-doctor-who-1963"]["number"] == 200
+    assert "tv-one-off" not in channels
+
+    lineup = dvr.channel_lineup(app.redis, "tv-doctor-who-1963")
+    nums = [p["episode_num"] for p in lineup["programs"]]
+    start = (day.toordinal() * dvr.TV_WINDOW_ADVANCE) % 9
+    assert nums == [f"S01E{((start + n) % 9) + 1:02d}" for n in range(9)]
+    program = lineup["programs"][0]
+    assert program["title"] == "Doctor Who (1963)"
+    assert program["overview"] == "The Doctor travels."
+
+    guide = client.get(f"/dvr/{TOKEN}/guide.xml")
+    tv = ElementTree.fromstring(guide.get_data(as_text=True))
+    airing = next(
+        p for p in tv.findall("programme") if p.get("channel") == "tv-doctor-who-1963"
+    )
+    assert airing.find("episode-num").get("system") == "onscreen"
+    assert airing.find("episode-num").text.startswith("S01E")
 
 
 def test_schedule_math_wraps_the_lineup(app):

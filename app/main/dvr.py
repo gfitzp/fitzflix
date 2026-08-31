@@ -193,6 +193,16 @@ def dvr_guide(token):
             }
             programme = ElementTree.SubElement(tv, "programme", attributes)
             ElementTree.SubElement(programme, "title").text = program["title"]
+            # Episode programs carry the series as title plus these two
+            # (.get: movie programs and pre-upgrade lineups lack them)
+            if program.get("subtitle"):
+                ElementTree.SubElement(programme, "sub-title").text = program[
+                    "subtitle"
+                ]
+            if program.get("episode_num"):
+                ElementTree.SubElement(
+                    programme, "episode-num", {"system": "onscreen"}
+                ).text = program["episode_num"]
             if program["year"]:
                 ElementTree.SubElement(programme, "date").text = str(program["year"])
             if program["overview"]:

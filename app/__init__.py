@@ -367,13 +367,14 @@ def cron_table(config):
 
     # Rebuild the virtual DVR channel lineups nightly (#182), rotating
     # them the way the landing-page shelves rotate; the per-file
-    # duration cache makes every build after a film's first
-    # appearance nearly free
+    # duration cache makes every build after a file's first appearance
+    # nearly free. After the 4:30 availability refresh so the Criterion
+    # channel reads tonight's cache, not yesterday's
 
     if config.get("DVR_TOKEN"):
         table.append(
             (
-                "40 3 * * *",
+                "0 6 * * *",
                 "app.dvr.build_channel_lineups",
                 3600,
                 "Building virtual DVR channel lineups",
