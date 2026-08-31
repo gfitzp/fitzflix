@@ -506,7 +506,7 @@ def triage_presentation(file_id, track_number):
 # shown so a local divergence (a diverging credits mix, say) is
 # visible next to the clip that plays it.
 
-AUDIO_SAMPLE_QUANTILES = (0.1, 0.3, 0.5, 0.7, 0.9)
+AUDIO_SAMPLE_QUANTILES = (0.08, 0.25, 0.42, 0.58, 0.75, 0.92)
 AUDIO_SAMPLE_SECONDS = 12
 AUDIO_DECODE_RATE = 8000
 ENVELOPE_WINDOW_SAMPLES = 400
