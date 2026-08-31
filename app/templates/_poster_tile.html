@@ -71,11 +71,15 @@
 		{{ rating_ladder(compact=true, live=true) }}
 	</form>
 	{% if watchlist %}
+	{# The one deliberate outline exception (Glenn, Aug 31 2026): a
+	   gallery repeats this toggle under every poster, and a page of
+	   solid-filled buttons shouts — the tile's quiet outline is the
+	   point. Standalone page buttons stay filled #}
 	<form action="{{ action }}" method="post" data-card-watchlist>
 		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 		<input type="hidden" name="from_card" value="1">
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary py-0">Add to Watchlist</button>
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary py-0 d-none">Remove from Watchlist</button>
+		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0">Add to Watchlist</button>
+		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0 d-none">Remove from Watchlist</button>
 	</form>
 	{% endif %}
 </div>
