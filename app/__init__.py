@@ -257,6 +257,18 @@ def cron_table(config):
             3600,
             "Refreshing the Name That Frame pool",
         ),
+        # Sweep TMDB's change feeds and refresh just the library records
+        # that were edited since the last sweep — TMDB stores no
+        # last-updated stamp, so the changes lists are how edits reach
+        # the library without a bulk re-fetch. Adjacent to the 3:45
+        # in-production sweep (whose coverage it deliberately excludes)
+        # so the TMDB-heavy window stays contiguous
+        (
+            "35 3 * * *",
+            "app.tmdb_changes.refresh_changed_records",
+            1800,
+            "Refreshing TMDB-changed records",
+        ),
         # Re-fetch episode data for in-production TV series nightly,
         # clear of the 3:05 frame pool and 3:25 Plex title windows
         (
