@@ -41,9 +41,14 @@ from app.models import (
     Movie,
     RefQuality,
     TMDBGenre,
+    TMDBKeyword,
+    TMDBNetwork,
     TVSeries,
     movie_genres,
     tv_file_rank,
+    tv_genres,
+    tv_keywords,
+    tv_networks,
 )
 from app.streaming import batch_title_availability, streaming_matches
 
@@ -78,13 +83,37 @@ CRITERION_CHANNEL_NUMBER = 140
 LEAVING_CHANNEL_NUMBER = 141
 MIN_SPECIAL_FILMS = 3
 
-# Per-series TV channels: broadcast order in a windowed slice that
-# advances a few episodes each day, so the channel marches through the
-# series across rebuilds instead of looping the same premiere block
+# TV channels are genre- and theme-based, not per-series: several
+# series share a channel, airing in short interleaved blocks like
+# syndication. Auto genre channels (200+) come from the deepest TMDB
+# TV genres; themed channels (240+) come from the spec table below.
+# Each series' slot share is proportional to its episode depth, and
+# its cursor advances through broadcast order day over day
 
 TV_CHANNEL_NUMBER = 200
+TV_THEME_NUMBER = 240
 MIN_SERIES_EPISODES = 8
-TV_WINDOW_ADVANCE = 5
+TV_BLOCK = 2
+
+# Themed TV channels. A series belongs when it satisfies EVERY
+# predicate the spec declares — "genre" (TMDB TV genre name),
+# "keywords" (any-of, lowercase TMDB keywords), "network_country"
+# (any network registered to that country) — OR when its title
+# contains a "titles" pin (for series whose TMDB metadata is too thin
+# to match otherwise, e.g. Match Game PM carries no keywords at all)
+
+TV_THEME_SPECS = (
+    {
+        "name": "Game Shows",
+        "keywords": ("game show", "quiz show", "panel show"),
+        "titles": ("match game",),
+    },
+    {
+        "name": "British Sitcoms",
+        "keywords": ("sitcom",),
+        "network_country": "GB",
+    },
+)
 
 # AC-3 tops out at 5.1; sources with more channels downmix, sources
 # with fewer keep their layout
@@ -254,23 +283,111 @@ def _leaving_owned(best):
     return ids, departs
 
 
-def _series_pool(limit):
-    """The series with enough owned episodes to sustain a channel,
-    deepest first, capped at the configured channel count. Specials
-    (season 0) don't count toward the bench."""
+def _series_catalog():
+    """Every series with owned regular episodes, annotated with its
+    episode count, TMDB genre names, lowercase keywords, and network
+    countries — the pool every TV channel selects from, built in four
+    queries."""
 
-    rows = (
+    counts = dict(
         db.session.query(
-            TVSeries, db.func.count(db.func.distinct(File.season * 1000 + File.episode))
+            File.series_id,
+            db.func.count(db.func.distinct(File.season * 1000 + File.episode)),
         )
-        .join(File, File.series_id == TVSeries.id)
+        .filter(File.series_id != None)  # noqa: E711
         .filter(File.season > 0)
-        .group_by(TVSeries.id)
+        .group_by(File.series_id)
         .all()
     )
-    deep = [(series, count) for series, count in rows if count >= MIN_SERIES_EPISODES]
-    deep.sort(key=lambda pair: pair[1], reverse=True)
-    return [series for series, _ in deep[:limit]]
+    if not counts:
+        return {}
+    catalog = {
+        series.id: {
+            "series": series,
+            "episodes": counts[series.id],
+            "genres": set(),
+            "keywords": set(),
+            "countries": set(),
+        }
+        for series in TVSeries.query.filter(TVSeries.id.in_(counts)).all()
+    }
+    for tv_id, name in (
+        db.session.query(tv_genres.c.tv_id, TMDBGenre.name)
+        .join(TMDBGenre, TMDBGenre.id == tv_genres.c.genre_id)
+        .filter(tv_genres.c.tv_id.in_(catalog))
+        .all()
+    ):
+        catalog[tv_id]["genres"].add(name)
+    for tv_id, name in (
+        db.session.query(tv_keywords.c.tv_id, TMDBKeyword.name)
+        .join(TMDBKeyword, TMDBKeyword.id == tv_keywords.c.keyword_id)
+        .filter(tv_keywords.c.tv_id.in_(catalog))
+        .all()
+    ):
+        catalog[tv_id]["keywords"].add((name or "").lower())
+    for tv_id, country in (
+        db.session.query(tv_networks.c.tv_id, TMDBNetwork.origin_country)
+        .join(TMDBNetwork, TMDBNetwork.id == tv_networks.c.network_id)
+        .filter(tv_networks.c.tv_id.in_(catalog))
+        .all()
+    ):
+        if country:
+            catalog[tv_id]["countries"].add(country)
+    return catalog
+
+
+def _theme_matches(entry, spec):
+    """Whether a series belongs on a themed channel: a title pin wins
+    outright, otherwise every predicate the spec declares must hold."""
+
+    title = entry["series"].title.lower()
+    if any(pin in title for pin in spec.get("titles", ())):
+        return True
+    if spec.get("genre") and spec["genre"] not in entry["genres"]:
+        return False
+    keywords = spec.get("keywords")
+    if keywords and not any(keyword in entry["keywords"] for keyword in keywords):
+        return False
+    country = spec.get("network_country")
+    if country and country not in entry["countries"]:
+        return False
+    return True
+
+
+def _channel_window(members, day, cap):
+    """The day's program window for a multi-series channel, as
+    (series, file) pairs: each series gets slots proportional to its
+    depth, aired as short interleaved blocks like syndication, and its
+    cursor starts a little further into broadcast order every day."""
+
+    members = sorted(members, key=lambda m: m["series"].title.lower())
+    total = sum(m["episodes"] for m in members)
+    cursors = []
+    for member in members:
+        episodes = _series_episodes(member["series"].id)
+        if not episodes:
+            continue
+        quota = min(len(episodes), max(1, round(cap * len(episodes) / total)))
+        start = (day.toordinal() * quota) % len(episodes)
+        cursors.append([member["series"], episodes[start:] + episodes[:start], quota])
+
+    window = []
+    while len(window) < cap:
+        progressed = False
+        for cursor in cursors:
+            series, rotated, remaining = cursor
+            if remaining <= 0:
+                continue
+            take = min(TV_BLOCK, remaining, cap - len(window))
+            for _ in range(take):
+                window.append((series, rotated.pop(0)))
+            cursor[2] = remaining - take
+            progressed = True
+            if len(window) >= cap:
+                break
+        if not progressed:
+            break
+    return window
 
 
 def _series_episodes(series_id):
@@ -322,27 +439,50 @@ def _episode_program(series, file, duration):
 
 
 def _tv_channels(day):
-    """The per-series channels: (number, slug, name, window) tuples,
-    numbered alphabetically in their own band. Each window is a
-    contiguous broadcast-order slice that starts a little further into
-    the series every day."""
+    """The TV dial: (number, slug, name, window) tuples — the deepest
+    TMDB TV genres as auto channels, then the themed channels from
+    TV_THEME_SPECS, each window a multi-series interleave. A channel
+    needs MIN_SERIES_EPISODES owned episodes across its members."""
 
-    cap = current_app.config["DVR_CHANNEL_FILMS"]
-    pool = _series_pool(current_app.config["DVR_TV_CHANNELS"])
+    cap = current_app.config["DVR_CHANNEL_EPISODES"]
+    catalog = _series_catalog()
+    if not catalog:
+        return []
+
+    totals = {}
+    for entry in catalog.values():
+        for name in entry["genres"]:
+            totals[name] = totals.get(name, 0) + entry["episodes"]
+    deep = [name for name, count in totals.items() if count >= MIN_SERIES_EPISODES]
+    top = sorted(
+        sorted(deep, key=totals.get, reverse=True)[
+            : current_app.config["DVR_TV_CHANNELS"]
+        ]
+    )
+
     channels = []
-    for offset, series in enumerate(sorted(pool, key=lambda s: s.title.lower())):
-        episodes = _series_episodes(series.id)
-        if not episodes:
-            continue
-        start = (day.toordinal() * TV_WINDOW_ADVANCE) % len(episodes)
-        window = (episodes + episodes)[start : start + min(cap, len(episodes))]
+    for offset, name in enumerate(top):
+        members = [e for e in catalog.values() if name in e["genres"]]
+        # "TV" suffix so the guide never shows a movie genre channel
+        # and a TV genre channel under the same name (Comedy collides)
         channels.append(
             (
                 TV_CHANNEL_NUMBER + offset,
-                f"tv-{_slugify(series.title)}",
-                series.title,
-                series,
-                window,
+                f"tv-{_slugify(name)}",
+                f"{name} TV",
+                _channel_window(members, day, cap),
+            )
+        )
+    for offset, spec in enumerate(TV_THEME_SPECS):
+        members = [e for e in catalog.values() if _theme_matches(e, spec)]
+        if sum(m["episodes"] for m in members) < MIN_SERIES_EPISODES:
+            continue
+        channels.append(
+            (
+                TV_THEME_NUMBER + offset,
+                f"tv-{_slugify(spec['name'])}",
+                spec["name"],
+                _channel_window(members, day, cap),
             )
         )
     return channels
@@ -461,9 +601,9 @@ def build_channel_lineups(day=None):
                 programs.append(program)
             store(number, slug, name, programs)
 
-        for number, slug, name, series, window in _tv_channels(day):
+        for number, slug, name, window in _tv_channels(day):
             programs = []
-            for file in window:
+            for series, file in window:
                 duration = _cached_duration(redis_client, file)
                 if duration is None:
                     current_app.logger.warning(

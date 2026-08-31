@@ -11,7 +11,7 @@ from datetime import date
 
 import pytest
 
-from app.models import TMDBGenre, db
+from app.models import TMDBGenre, TMDBKeyword, TMDBNetwork, db
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
 
 TOKEN = "dvr-test-token"
@@ -192,50 +192,104 @@ def test_build_makes_leaving_channel_with_last_call_note(app, monkeypatch):
     assert not any(p["overview"].startswith("Leaving") for p in mix["programs"])
 
 
-def test_build_makes_tv_channels_in_broadcast_order(app, client, monkeypatch):
-    """A deep series gets its own channel: best copy per episode in
-    broadcast order, specials excluded, window rotating daily, and the
-    guide carrying sub-title/episode-num."""
+def test_build_makes_genre_tv_channels_with_interleaved_blocks(
+    app, client, monkeypatch
+):
+    """A deep TV genre gets a channel airing its series in short
+    interleaved blocks: each series in cyclic broadcast order rotated
+    by the day, specials excluded, sub-title/episode-num in the
+    guide."""
 
     from app import dvr
 
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
     day = date(2026, 8, 31)
     with app.app_context():
-        series = make_tv_series(
-            "Doctor Who (1963)",
-            tmdb_id=57243,
-            tmdb_overview="The Doctor travels.",
-            tmdb_poster_path="/dw.jpg",
-        )
-        for episode in range(1, 10):
-            make_tv_file(series, 1, episode, "Bluray-1080p")
-        make_tv_file(series, 0, 1, "Bluray-1080p")  # a special: never airs
-        # A shallow series stays off the dial
-        thin = make_tv_series("One-Off")
-        make_tv_file(thin, 1, 1, "Bluray-1080p")
+        animation = TMDBGenre(id=16, name="Animation")
+        db.session.add(animation)
+        first = make_tv_series("Alpha Toons", tmdb_overview="Toons all day.")
+        second = make_tv_series("Beta Toons")
+        for series in (first, second):
+            series.genres.append(animation)
+            for episode in range(1, 10):
+                make_tv_file(series, 1, episode, "Bluray-1080p")
+        make_tv_file(first, 0, 1, "Bluray-1080p")  # a special: never airs
         db.session.commit()
         assert dvr.build_channel_lineups(day=day) is True
 
     channels = {c["slug"]: c for c in dvr.channel_index(app.redis)}
-    assert channels["tv-doctor-who-1963"]["number"] == 200
-    assert "tv-one-off" not in channels
+    assert channels["tv-animation"]["number"] == 200
 
-    lineup = dvr.channel_lineup(app.redis, "tv-doctor-who-1963")
-    nums = [p["episode_num"] for p in lineup["programs"]]
-    start = (day.toordinal() * dvr.TV_WINDOW_ADVANCE) % 9
-    assert nums == [f"S01E{((start + n) % 9) + 1:02d}" for n in range(9)]
-    program = lineup["programs"][0]
-    assert program["title"] == "Doctor Who (1963)"
-    assert program["overview"] == "The Doctor travels."
+    programs = dvr.channel_lineup(app.redis, "tv-animation")["programs"]
+    assert len(programs) == 18
+    assert all(p["episode_num"].startswith("S01") for p in programs)
+
+    # Blocks of two, alternating series, both fully represented
+
+    assert [p["title"] for p in programs[:4]] == [
+        "Alpha Toons",
+        "Alpha Toons",
+        "Beta Toons",
+        "Beta Toons",
+    ]
+
+    # Each series airs in cyclic broadcast order from its day-rotated
+    # start (equal depth: quota is the full series)
+
+    start = (day.toordinal() * 9) % 9
+    expected = [f"S01E{((start + n) % 9) + 1:02d}" for n in range(9)]
+    for title in ("Alpha Toons", "Beta Toons"):
+        aired = [p["episode_num"] for p in programs if p["title"] == title]
+        assert aired == expected
 
     guide = client.get(f"/dvr/{TOKEN}/guide.xml")
     tv = ElementTree.fromstring(guide.get_data(as_text=True))
     airing = next(
-        p for p in tv.findall("programme") if p.get("channel") == "tv-doctor-who-1963"
+        p for p in tv.findall("programme") if p.get("channel") == "tv-animation"
     )
     assert airing.find("episode-num").get("system") == "onscreen"
     assert airing.find("episode-num").text.startswith("S01E")
+
+
+def test_build_makes_themed_tv_channels(app, monkeypatch):
+    """Theme specs: British Sitcoms needs the sitcom keyword AND a
+    GB-registered network; Game Shows matches the keyword or a title
+    pin (Match Game PM carries no keywords at all)."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 1500.0)
+    with app.app_context():
+        sitcom = TMDBKeyword(id=1, name="Sitcom")
+        game_show = TMDBKeyword(id=2, name="game show")
+        bbc = TMDBNetwork(id=1, name="BBC One", origin_country="GB")
+        cbs = TMDBNetwork(id=2, name="CBS", origin_country="US")
+        db.session.add_all([sitcom, game_show, bbc, cbs])
+
+        brit = make_tv_series("Fawlty Towers")
+        brit.keywords.append(sitcom)
+        brit.networks.append(bbc)
+        yank = make_tv_series("Cheers Clone")
+        yank.keywords.append(sitcom)
+        yank.networks.append(cbs)
+        host = make_tv_series("The Match Game")
+        host.keywords.append(game_show)
+        pinned = make_tv_series("Match Game PM")  # no keywords: title pin
+        for series in (brit, yank, host, pinned):
+            for episode in range(1, 10):
+                make_tv_file(series, 1, episode, "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+
+    channels = {c["slug"]: c for c in dvr.channel_index(app.redis)}
+    assert channels["tv-game-shows"]["number"] == 240
+    assert channels["tv-british-sitcoms"]["number"] == 241
+
+    games = dvr.channel_lineup(app.redis, "tv-game-shows")["programs"]
+    assert {p["title"] for p in games} == {"The Match Game", "Match Game PM"}
+
+    brits = dvr.channel_lineup(app.redis, "tv-british-sitcoms")["programs"]
+    assert {p["title"] for p in brits} == {"Fawlty Towers"}
 
 
 def test_schedule_math_wraps_the_lineup(app):
