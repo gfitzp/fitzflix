@@ -1,6 +1,6 @@
 Hello {{ user.email }},
 
-There are new ways to watch films on your watchlist:
+There are availability updates for films on your watchlist:
 {% if events.local %}
 Added to the library:
 {% for item in events.local %}  - {{ item.title }} ({{ item.year }}): {{ url_for("main.movie", movie_id=item.movie_id, _external=True) }}
