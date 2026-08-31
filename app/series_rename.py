@@ -155,12 +155,14 @@ def rename_tv_series_task(series_id, new_title):
                 file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
             db.session.commit()
 
+        # Junk-aware, not just rmdir: the old series folder usually
+        # keeps a poster.png (Sonarr's or a hand-placed one) that used
+        # to immortalize the husk until the weekly sweep
+
+        from app.maintenance import clear_leftover_directory
+
         for old_dir in sorted(old_dirs, key=len, reverse=True):
-            try:
-                os.rmdir(old_dir)
-                os.rmdir(os.path.dirname(old_dir))
-            except OSError:
-                pass
+            clear_leftover_directory(old_dir)
 
         series.title = new_title
         db.session.commit()

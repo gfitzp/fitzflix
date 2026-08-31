@@ -1150,6 +1150,60 @@ def _leftover_junk_scan(path, cutoff):
     return True, junk_files
 
 
+def clear_leftover_directory(path):
+    """Remove a directory a delete or rename just emptied of media,
+    when its entire remaining contents are leftover junk — the poster
+    art planted beside a film for Plex, OS metadata, @eaDir trees —
+    then climb toward the library root clearing junk-only parents, the
+    way os.removedirs climbs empty ones. Unlike the weekly sweep's
+    directory pass there is no age gate: the caller deleted or moved
+    the folder's media on purpose, so a poster-only husk is already
+    known to be a husk. Anything that isn't junk keeps the folder (and
+    everything above it) alive, the configured roots themselves never
+    fall, and a path outside them entirely is refused. Returns the
+    directories removed, deepest first.
+    """
+
+    config = current_app.config
+    roots = {
+        os.path.realpath(config[name])
+        for name in (
+            "LIBRARY_DIR",
+            "STAGING_DIR",
+            "MOVIE_LIBRARY",
+            "TV_LIBRARY",
+            "IMPORT_DIR",
+            "REJECTS_DIR",
+            "TRANSCODES_DIR",
+        )
+        if config.get(name)
+    }
+    removed = []
+    current = os.path.realpath(path)
+    while (
+        current not in roots
+        and any(current.startswith(root + os.sep) for root in roots)
+        and os.path.isdir(current)
+    ):
+        junk_only, junk_files = _leftover_junk_scan(current, float("inf"))
+        if not junk_only:
+            break
+        try:
+            if junk_files:
+                shutil.rmtree(current)
+            else:
+                os.rmdir(current)
+        except OSError as e:
+            current_app.logger.warning(
+                f"'{current}' Couldn't clear leftover directory: {e}"
+            )
+            break
+        current_app.logger.info(f"'{current}' Cleared leftover directory")
+        removed.append(current)
+        current = os.path.dirname(current)
+    return removed
+
+
 def cleanup_orphaned_files():
     """Delete the hidden partial files that failed tasks strand, plus a
     failed restore drill's leftover scratch database.

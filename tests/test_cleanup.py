@@ -170,6 +170,101 @@ def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
                 os.rmdir(leftover_dir)
 
 
+def test_clear_leftover_directory_is_junk_aware_and_climbs(app):
+    """clear_leftover_directory — the delete/rename-time cousin of the
+    weekly sweep's directory pass: no age gate (a fresh poster-only
+    folder is already known to be a husk), the climb clears the
+    poster-anchored parent too, real media keeps everything alive, the
+    roots never fall, and a path outside them is refused."""
+
+    with app.app_context():
+        tv = app.config["TV_LIBRARY"]
+
+        season = os.path.join(tv, "Husk Show", "Season 2023")
+        os.makedirs(season)
+        plant(os.path.join(season, "poster.png"))  # fresh, not aged
+        plant(os.path.join(tv, "Husk Show", "poster.png"))
+        removed = maintenance.clear_leftover_directory(season)
+        assert len(removed) == 2
+        assert not os.path.exists(os.path.join(tv, "Husk Show"))
+        assert os.path.isdir(tv)
+
+        kept = os.path.join(tv, "Kept Show", "Season 01")
+        os.makedirs(kept)
+        plant(os.path.join(kept, "Kept Show - S01E01 - [DVD].mkv"))
+        assert maintenance.clear_leftover_directory(kept) == []
+        assert os.path.isdir(kept)
+
+        assert maintenance.clear_leftover_directory("/etc") == []
+        assert maintenance.clear_leftover_directory(tv) == []
+        assert os.path.isdir(tv)
+
+
+def _admin_csrf_token(admin_client, path):
+    import re
+
+    page = admin_client.get(path).get_data(as_text=True)
+    return re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+
+
+def test_series_delete_clears_poster_husks(app, admin_client):
+    """Deleting a series removes the poster-only season and series
+    folders right away, instead of leaving husks for the weekly sweep
+    (the Legacy on Ice leftovers, Aug 2026)."""
+
+    from app import db
+    from tests.factories import make_tv_file, make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Husk Special")
+        file = make_tv_file(series, 2023, 1, "HDTV-720p")
+        db.session.commit()
+        series_id = series.id
+        file_path = file.file_path
+
+    lib = app.config["LIBRARY_DIR"]
+    plant(os.path.join(lib, file_path))
+    plant(os.path.join(os.path.dirname(os.path.join(lib, file_path)), "poster.png"))
+    plant(os.path.join(lib, "TV Shows", "Husk Special", "poster.png"))
+
+    token = _admin_csrf_token(admin_client, f"/tv/{series_id}")
+    response = admin_client.post(
+        f"/tv/{series_id}",
+        data={"csrf_token": token, "delete_submit": "Delete Series"},
+    )
+    assert response.status_code == 302
+    assert not os.path.exists(os.path.join(lib, "TV Shows", "Husk Special"))
+    assert os.path.isdir(os.path.join(lib, "TV Shows"))
+
+
+def test_file_delete_clears_a_movie_poster_husk(app, admin_client):
+    """Deleting a movie's last file clears the folder its planted
+    poster.jpg would otherwise hold open."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Husk Film", 2001)
+        file = make_movie_file(movie, "DVD")
+        db.session.commit()
+        file_id = file.id
+        file_path = file.file_path
+
+    lib = app.config["LIBRARY_DIR"]
+    movie_dir = os.path.dirname(os.path.join(lib, file_path))
+    plant(os.path.join(lib, file_path))
+    plant(os.path.join(movie_dir, "poster.jpg"))
+
+    token = _admin_csrf_token(admin_client, f"/file/{file_id}")
+    response = admin_client.post(
+        f"/file/{file_id}",
+        data={"csrf_token": token, "delete_submit": "Delete File"},
+    )
+    assert response.status_code == 302
+    assert not os.path.exists(movie_dir)
+
+
 def test_cleanup_stays_quiet_when_nothing_is_stranded(app, monkeypatch):
     sent = []
     monkeypatch.setattr(

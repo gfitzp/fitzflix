@@ -590,12 +590,14 @@ def apply_tmdb_refresh(
                     except FileNotFoundError:
                         pass
 
-                    try:
-                        # delete the old directory tree if it's empty
-                        os.removedirs(old_directory)
+                    # Clear the old directory tree — junk-aware, not
+                    # just empty: the poster assets moved above, but OS
+                    # metadata or a straggler image used to keep the
+                    # husk alive for the weekly sweep
 
-                    except OSError:
-                        pass
+                    from app.maintenance import clear_leftover_directory
+
+                    clear_leftover_directory(old_directory)
 
                     # The path fields were already updated inside the
                     # savepoint, before the physical rename

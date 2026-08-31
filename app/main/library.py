@@ -2360,6 +2360,7 @@ def tv(series_id):
             return redirect(url_for("main.tv", series_id=tv.id))
         aws_untouched_keys = []
         derived_paths = []
+        leftover_dirs = set()
 
         from app.transcodes import derived_paths_for, purge_derived_paths
 
@@ -2369,6 +2370,9 @@ def tv(series_id):
                 if file.aws_untouched_key:
                     aws_untouched_keys.append(file.aws_untouched_key)
                 derived_paths += derived_paths_for(file)
+                leftover_dirs.add(
+                    os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
+                )
                 file.delete_local_file(delete_directory_tree=True)
                 db.session.delete(file)
 
@@ -2393,6 +2397,17 @@ def tv(series_id):
             )
 
         purge_derived_paths(derived_paths)
+
+        # The folders themselves: delete_local_file only removes EMPTY
+        # directories, so the poster art planted beside the episodes
+        # (by Fitzflix for movies, Sonarr or hand for TV) used to
+        # leave husks for the weekly sweep. An explicit delete clears
+        # junk-only folders right away
+
+        from app.maintenance import clear_leftover_directory
+
+        for leftover_dir in sorted(leftover_dirs):
+            clear_leftover_directory(leftover_dir)
 
         flash(
             f"Deleted TV series '{title}' and its files from the database.", "success"
@@ -3084,6 +3099,7 @@ def file(file_id):
     delete_form = FileDeleteForm()
     if delete_form.delete_submit.data and delete_form.validate_on_submit():
         aws_untouched_key = file.aws_untouched_key
+        leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
         # The file's transcoded copies go with it: paths noted
         # before the delete (the rows cascade away with the File),
@@ -3114,6 +3130,14 @@ def file(file_id):
             )
 
         purge_derived_paths(derived_paths)
+
+        # Clear the folder if only planted poster art and OS metadata
+        # remain — deleting a movie's last file used to leave its
+        # poster.jpg husk for the weekly sweep
+
+        from app.maintenance import clear_leftover_directory
+
+        clear_leftover_directory(leftover_dir)
 
         flash(f"Deleted '{file.basename}' and removed from database.", "success")
 
