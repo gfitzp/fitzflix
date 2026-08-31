@@ -42,6 +42,27 @@
 		   to the real inset if we ever go edge-to-edge */
 		body { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 
+		/* Badges are STATUS, buttons are ACTIONS. Badges shared the
+		   buttons' saturated text-bg-* fills at button-ish sizes, so
+		   the two were hard to tell apart at a glance (Glenn's ask,
+		   Aug 31 2026). Two redundant channels now separate them:
+		   badges are PILLS in the SUBTLE tint of their hue (Bootstrap
+		   5.3's *-bg-subtle/*-text-emphasis tokens, which follow
+		   data-bs-theme into dark mode), while only pressable controls
+		   keep a saturated fill and the squarer button radius. Hues
+		   are untouched, so the amber/green shopping semantics (#191)
+		   read the same — just quieter. !important matches Bootstrap's
+		   own on .text-bg-*. */
+		.badge { border-radius: 50rem; }
+		.badge.text-bg-primary { background-color: var(--bs-primary-bg-subtle) !important; color: var(--bs-primary-text-emphasis) !important; border: 1px solid var(--bs-primary-border-subtle); }
+		.badge.text-bg-secondary { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-secondary-text-emphasis) !important; border: 1px solid var(--bs-secondary-border-subtle); }
+		.badge.text-bg-success { background-color: var(--bs-success-bg-subtle) !important; color: var(--bs-success-text-emphasis) !important; border: 1px solid var(--bs-success-border-subtle); }
+		.badge.text-bg-danger { background-color: var(--bs-danger-bg-subtle) !important; color: var(--bs-danger-text-emphasis) !important; border: 1px solid var(--bs-danger-border-subtle); }
+		.badge.text-bg-warning { background-color: var(--bs-warning-bg-subtle) !important; color: var(--bs-warning-text-emphasis) !important; border: 1px solid var(--bs-warning-border-subtle); }
+		.badge.text-bg-info { background-color: var(--bs-info-bg-subtle) !important; color: var(--bs-info-text-emphasis) !important; border: 1px solid var(--bs-info-border-subtle); }
+		.badge.text-bg-light { background-color: var(--bs-light-bg-subtle) !important; color: var(--bs-light-text-emphasis) !important; border: 1px solid var(--bs-light-border-subtle); }
+		.badge.text-bg-dark { background-color: var(--bs-dark-bg-subtle) !important; color: var(--bs-dark-text-emphasis) !important; border: 1px solid var(--bs-dark-border-subtle); }
+
 		/* Bootstrap 5 dropped .form-inline; this is OUR class now,
 		   replicating the BS4 behavior the templates were written for:
 		   controls flow inline at their natural width */
@@ -208,7 +229,9 @@
 		   left-aligned lines within the popover's fixed width instead
 		   of stretching it — the fix for labels that used to overflow
 		   the gallery cells (Glenn's Aug 2026 revision) */
-		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; }
+		/* …and a wrapped two-line badge as a full pill reads as a
+		   lozenge, so the card's badges take a softer rounding */
+		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; }
 		/* Gallery tiles (Glenn's variant 4): each cell is a flex
 		   column with its actions pinned to the bottom — Bootstrap's
 		   row already stretches cells in a row to equal height, so
