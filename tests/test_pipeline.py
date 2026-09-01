@@ -507,3 +507,93 @@ def test_running_banners_hold_first_run_order(app, admin_client):
     order = [item["id"] for item in payload["running"]]
     assert order == ["order-a-move", "order-b-localize"]
     assert payload["running"][0]["first_run"] == "2026-01-01 10:00:00"
+
+
+def test_a_cancelled_jobs_stranded_chip_heals_away(app):
+    """A queued job cancelled and deleted outside the pipeline leaves
+    a "queued" stamp nothing will ever advance (the cancelled scaffold
+    re-archives, Aug 2026). Once rq no longer knows the job, the queue
+    page's read prunes the chip — and deletes the trail outright when
+    nothing else remains, instead of showing a phantom job until the
+    TTL runs out."""
+
+    from app.pipeline import ACTIVE_KEY, pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Orphan (2025) - [DVD].mkv",),
+        )
+
+    assert len(pipeline_trails(app.redis)) == 1
+
+    job.delete()
+    assert pipeline_trails(app.redis) == []
+    assert app.redis.zcard(ACTIVE_KEY) == 0
+    assert pipeline_trails(app.redis) == []
+
+
+def test_a_cancelled_deferred_retrys_chip_heals_away(app):
+    """The scheduled variant: a deferred retry deleted before it comes
+    back strands a "scheduled" stamp, which heals like a queued one."""
+
+    from app.pipeline import pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue_in(
+            timedelta(minutes=10),
+            "app.videos.localization_task",
+            args=("/import/Trail Orphan Retry (2025) - [DVD].mkv",),
+        )
+
+    assert len(pipeline_trails(app.redis)) == 1
+    job.delete()
+    assert pipeline_trails(app.redis) == []
+
+
+def test_healing_keeps_terminal_history(app):
+    """Pruning takes only the waiting chips of vanished jobs: finished
+    chips are history and survive even after rq's own job hash expires,
+    so a cancelled follow-up disappears without erasing the completed
+    stages that share its trail."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    with app.app_context():
+        finished = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Mixed (2025) - [DVD].mkv",),
+        )
+        record_job_event(app.redis, finished, "started")
+        record_job_event(app.redis, finished, "done")
+        followup = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Mixed (2025) - [DVD].mkv",),
+        )
+
+    # The finished job's hash expiring (result TTL) must not take its
+    # done chip with it — only the cancelled follow-up's chip goes
+
+    finished.delete()
+    followup.delete()
+
+    trails = pipeline_trails(app.redis)
+    assert len(trails) == 1
+    assert [entry["status"] for entry in trails[0]["entries"]] == ["done"]
+
+
+def test_a_live_waiting_chip_never_heals(app):
+    """The guard: a chip whose job rq still holds is real work in line,
+    not an orphan, no matter how long it waits."""
+
+    from app.pipeline import pipeline_trails
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Waiting (2025) - [DVD].mkv",),
+        )
+
+    trails = pipeline_trails(app.redis)
+    assert trails[0]["entries"][0]["status"] == "queued"
+    assert app.redis.exists(f"rq:job:{job.id}")

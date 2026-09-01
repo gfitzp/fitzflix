@@ -449,6 +449,83 @@ def first_run(connection, job):
         return None
 
 
+def _heal_orphaned_entries(connection, digest, entries):
+    """Drop trail entries stranded by jobs rq no longer knows about.
+
+    A queued job cancelled and deleted outside the pipeline leaves its
+    "queued" stamp on the trail forever — nothing will ever advance it,
+    so the queue page shows a phantom job until the whole trail's TTL
+    runs out (the nine cancelled scaffold re-archives of Aug 29 2026,
+    plus the stray tenth found Aug 31). The stamp is only ever written
+    after rq's own job hash exists, so a waiting or running chip whose
+    job hash is gone is genuinely orphaned, not early.
+
+    Prunes those entries — terminal chips (done/failed) are history and
+    always stay. Returns the surviving entries, or None when the whole
+    trail was orphaned and deleted. Advisory like every trail write:
+    any failure returns the entries as they were.
+    """
+
+    from redis import WatchError
+
+    waiting = ("queued", "scheduled", "started")
+    try:
+        candidates = {
+            entry.get("job")
+            for entry in entries
+            if entry.get("status") in waiting and entry.get("job")
+        }
+        if not candidates or all(
+            connection.exists(f"rq:job:{job_id}") for job_id in candidates
+        ):
+            return entries
+
+        key = FILE_KEY.format(digest=digest)
+        with connection.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+
+                # Re-read and re-verify under WATCH: a re-enqueue can
+                # reuse a deterministic job id (safe_job_id), and its
+                # hash is created before its trail stamp — checking
+                # again here keeps a just-revived job's chip alive
+
+                trail = _decode_trail(pipe.hget(key, "trail"))
+                kept = [
+                    entry
+                    for entry in trail
+                    if not (
+                        entry.get("status") in waiting
+                        and entry.get("job") in candidates
+                        and not pipe.exists(f"rq:job:{entry.get('job')}")
+                    )
+                ]
+                if len(kept) == len(trail):
+                    return kept
+                pipe.multi()
+                if kept:
+                    # hset keeps the key's remaining TTL — healing
+                    # neither extends the trail's life nor bumps its
+                    # recency in the active set
+                    pipe.hset(key, "trail", json.dumps(kept))
+                else:
+                    pipe.delete(key)
+                    pipe.delete(ALIAS_KEY.format(digest=digest))
+                    pipe.zrem(ACTIVE_KEY, digest)
+                pipe.execute()
+                return kept or None
+            except WatchError:
+                return entries
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
+        return entries
+
+
 def pipeline_trails(connection, limit=25):
     """The newest file trails for the queue page, most recent first:
     [{basename, updated, entries: [{stage, status, at, job}, …]}, …].
@@ -472,6 +549,11 @@ def pipeline_trails(connection, limit=25):
                 )
                 for k, v in data.items()
             }
+            raw_entries = _heal_orphaned_entries(
+                connection, digest, json.loads(decoded.get("trail") or "[]")
+            )
+            if raw_entries is None:
+                continue
             entries = [
                 {
                     "stage": entry.get("stage"),
@@ -479,7 +561,7 @@ def pipeline_trails(connection, limit=25):
                     "at": entry.get("at"),
                     "job": entry.get("job"),
                 }
-                for entry in json.loads(decoded.get("trail") or "[]")
+                for entry in raw_entries
             ]
             trails.append(
                 {
