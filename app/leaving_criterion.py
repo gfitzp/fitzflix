@@ -6,9 +6,10 @@ film carrying title, director, and year; no feed or API exists (the
 JSON/RSS variants 404, JustWatch has no public leaving API, and TMDB
 doesn't license departure data). Scraping this one official page for
 title extraction is a narrow, deliberate exception to the no-scraping
-rule. A monthly task parses the collection, matches each film to TMDB
-by title and year, embeds the enriched payloads (so the shelf outlives
-every shorter cache), and stores the set with its departure date; the
+rule. A daily task — a no-op while the stored set is still current —
+parses the collection, matches each film to TMDB by title and year,
+embeds the enriched payloads (so the shelf outlives every shorter
+cache), and stores the set with its departure date; the
 landing page ranks it against the viewer's taste profile for Criterion
 subscribers.
 
@@ -309,12 +310,19 @@ def match_tmdb_id(title, year, director=None):
 
 
 def refresh_leaving_criterion():
-    """Monthly task: scrape the leaving collection, match each film to
+    """Daily task: scrape the leaving collection, match each film to
     TMDB, embed the enriched payloads, and store the set with its
-    departure date. The stored set has no TTL — the shelf simply hides
-    once the departure date passes."""
+    departure date. A no-op while the stored set's departure is still
+    ahead — the daily cadence exists to retry until Criterion publishes
+    the new month's page, which appears sometime after the old set
+    departs, not on a knowable schedule. The stored set has no TTL —
+    the shelf simply hides once the departure date passes."""
 
     with app.app_context():
+        stored = current_app.redis.get(LEAVING_KEY)
+        if stored and date.fromisoformat(json.loads(stored)["departs"]) >= date.today():
+            return True
+
         departs, source, films = fetch_leaving_films()
         if not films:
             current_app.logger.warning(

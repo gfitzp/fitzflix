@@ -320,6 +320,47 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["items"][1]["year"] == 2015
 
 
+def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
+    # The daily cadence only exists to retry across the month boundary;
+    # while the stored set's departure is still ahead, the task must
+    # not touch the network or the stored payload
+
+    import app.leaving_criterion as leaving_criterion
+
+    planted = json.dumps({"departs": date.today().isoformat(), "items": []})
+    app.redis.set(leaving_criterion.LEAVING_KEY, planted)
+
+    def unexpected_get(*args, **kwargs):
+        raise AssertionError("a current stored set must not be re-scraped")
+
+    monkeypatch.setattr(leaving_criterion.requests, "get", unexpected_get)
+
+    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
+
+
+def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
+    import app.leaving_criterion as leaving_criterion
+
+    app.redis.set(
+        leaving_criterion.LEAVING_KEY,
+        json.dumps(
+            {"departs": (date.today() - timedelta(days=1)).isoformat(), "items": []}
+        ),
+    )
+
+    calls = []
+
+    def fake_requests_get(url, params=None, timeout=None):
+        calls.append(url)
+        return FakeResponse(text="<html>empty</html>")
+
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+
+    assert leaving_criterion.refresh_leaving_criterion() is True
+    assert calls  # departed set: the scrape ran
+
+
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
     """A stored leaving-set item: the trimmed enriched payload."""
 

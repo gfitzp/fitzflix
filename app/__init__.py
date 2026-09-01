@@ -206,9 +206,15 @@ def cron_table(config):
             300,
             "Checking the Criterion24/7 poller's pulse",
         ),
-        # Refresh the leaving-Criterion set monthly
+        # Refresh the leaving-Criterion set: daily attempts, but the
+        # task no-ops while the stored set's departure is still ahead,
+        # so this is really a monthly scrape that retries each morning
+        # (surviving a down server or an unpublished page) until the
+        # new month's page appears — it wasn't up yet the night before
+        # Sept 1 2026, so a single small-hours shot on the 1st would
+        # blank the shelf for the whole month
         (
-            "30 3 1 * *",
+            "0 6 * * *",
             "app.leaving_criterion.refresh_leaving_criterion",
             3600,
             "Refreshing the leaving-Criterion film set",
@@ -369,12 +375,13 @@ def cron_table(config):
     # them the way the landing-page shelves rotate; the per-file
     # duration cache makes every build after a file's first appearance
     # nearly free. After the 4:30 availability refresh so the Criterion
-    # channel reads tonight's cache, not yesterday's
+    # channel reads tonight's cache, not yesterday's, and after the
+    # 6:00 leaving-Criterion attempt
 
     if config.get("DVR_TOKEN"):
         table.append(
             (
-                "0 6 * * *",
+                "30 6 * * *",
                 "app.dvr.build_channel_lineups",
                 3600,
                 "Building virtual DVR channel lineups",
