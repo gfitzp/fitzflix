@@ -230,6 +230,24 @@ def cron_table(config):
             1800,
             "Refreshing the newly-added streaming feeds",
         ),
+        # Month-start catch-up for both Criterion feeds: the Channel
+        # publishes the new month's pages sometime on the 1st — after
+        # the 5:00 and 6:00 morning runs, on Sept 1 2026 — so check
+        # again at noon rather than waiting for the next morning. The
+        # newly-added diff re-runs harmlessly, and the leaving task's
+        # currency guard makes its noon pass free when 6:00 succeeded
+        (
+            "0 12 1 * *",
+            "app.newly_added.refresh_newly_added",
+            1800,
+            "Month-start check of the newly-added streaming feeds",
+        ),
+        (
+            "0 12 1 * *",
+            "app.leaving_criterion.refresh_leaving_criterion",
+            3600,
+            "Month-start check of the leaving-Criterion film set",
+        ),
         # Refresh film awards from Wikidata weekly, early Monday
         (
             "15 4 * * 1",
