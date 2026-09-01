@@ -35,31 +35,30 @@
 					<a class="nav-link" href="{{ url_for('main.index') }}">Home</a>
 				</li>
 				{% if not current_user.is_anonymous %}
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.file_activity') }}">File Activity</a>
-				</li>
 				<li class="nav-item dropdown">
-					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarLibraryMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 						Library
 					</a>
-					<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+					<div class="dropdown-menu" aria-labeledby="navbarLibraryMenuLink">
 						<a class="dropdown-item" href="{{ url_for('main.movie_library') }}">Movies</a>
 						<a class="dropdown-item" href="{{ url_for('main.tv_library') }}">TV Shows</a>
 						<a class="dropdown-item" href="{{ url_for('main.people') }}">People</a>
-						{% if current_user.admin %}
-						<a class="dropdown-item" href="{{ url_for('main.files') }}">Files</a>
-						{% endif %}
 						<div class="dropdown-divider"></div>
 						<a class="dropdown-item" href="{{ url_for('main.criterion_collection') }}">Criterion Collection</a>
 						<a class="dropdown-item" href="{{ url_for('main.newly_added') }}">Newly added to streaming</a>
 						<a class="dropdown-item" href="{{ url_for('main.leaving') }}">Leaving the Criterion Channel</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('main.file_activity') }}">File Activity</a>
+						{% if current_user.admin %}
+						<a class="dropdown-item" href="{{ url_for('main.files') }}">Files</a>
+						{% endif %}
 					</div>
 				</li>
 				<li class="nav-item dropdown">
-					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarShoppingMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 						Shopping Lists
 					</a>
-					<div class="dropdown-menu" aria-labeledby="navbarDropdownMenuLink">
+					<div class="dropdown-menu" aria-labeledby="navbarShoppingMenuLink">
 						<a class="dropdown-item" href="{{ url_for('main.movie_shopping') }}">Movies</a>
 						<a class="dropdown-item" href="{{ url_for('main.tv_shopping') }}">TV Shows</a>
 						<div class="dropdown-divider"></div>
@@ -70,17 +69,17 @@
 						<a class="dropdown-item" href="{{ url_for('main.movie_shopping', min_quality='3', max_quality='21') }}">HDTV Quality</a>
 					</div>
 				</li>
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.history') }}">My History</a>
-				</li>
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.watchlist') }}">My Watchlist</a>
-				</li>
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.recommendations') }}">Recommendations</a>
-				</li>
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.name_that_frame') }}">Name That Frame</a>
+				<li class="nav-item dropdown">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarMyStuffMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+						My Stuff
+					</a>
+					<div class="dropdown-menu" aria-labeledby="navbarMyStuffMenuLink">
+						<a class="dropdown-item" href="{{ url_for('main.history') }}">My History</a>
+						<a class="dropdown-item" href="{{ url_for('main.watchlist') }}">My Watchlist</a>
+						<a class="dropdown-item" href="{{ url_for('main.recommendations') }}">Recommendations</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('main.name_that_frame') }}">Name That Frame</a>
+					</div>
 				</li>
 				{% endif %}
 			</ul>
@@ -105,27 +104,26 @@
 				</li>
 				{% if current_user.admin %}
 				<li class="nav-item dropdown">
-					<a class="nav-link dropdown-toggle" href="#" id="navbarDropdownMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarAdminMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
 						Admin
 					</a>
-					<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarDropdownMenuLink">
+					<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarAdminMenuLink">
 						<a class="dropdown-item" href="{{ url_for('main.maintenance') }}">Library Maintenance</a>
 						<a class="dropdown-item" href="{{ url_for('main.system') }}">System</a>
 						<a class="dropdown-item" href="{{ url_for('main.dvr_channels') }}">DVR Channels</a>
-						<div class="dropdown-divider"></div>
-						<a class="dropdown-item" href="{{ url_for('main.profile') }}">Profile</a>
 					</div>
 				</li>
-				{% else %}
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.profile') }}">Profile</a>
-				</li>
 				{% endif %}
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('main.about') }}">About</a>
-				</li>
-				<li class="nav-item">
-					<a class="nav-link" href="{{ url_for('auth.logout') }}">Logout</a>
+				<li class="nav-item dropdown">
+					<a class="nav-link dropdown-toggle" href="#" id="navbarAccountMenuLink" role="button" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+						Account
+					</a>
+					<div class="dropdown-menu dropdown-menu-end" aria-labeledby="navbarAccountMenuLink">
+						<a class="dropdown-item" href="{{ url_for('main.profile') }}">Profile</a>
+						<a class="dropdown-item" href="{{ url_for('main.about') }}">About</a>
+						<div class="dropdown-divider"></div>
+						<a class="dropdown-item" href="{{ url_for('auth.logout') }}">Logout</a>
+					</div>
 				</li>
 				{% endif %}
 			</ul>
