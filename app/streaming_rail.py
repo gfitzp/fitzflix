@@ -447,7 +447,9 @@ def compute_user_rail(user):
     )
     verified = []
     for score, popularity, tmdb_id, entry in candidates:
-        matches = streaming_matches(availability.get(tmdb_id), provider_ids)
+        matches = streaming_matches(
+            availability.get(tmdb_id), provider_ids, tmdb_id=tmdb_id
+        )
         if matches:
             verified.append((tmdb_id, entry, matches))
         if len(verified) == ENRICH_DEPTH:

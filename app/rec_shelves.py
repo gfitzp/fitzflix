@@ -316,7 +316,9 @@ def eligible_films(user):
         availability, _ = batch_title_availability(tmdb_of.values(), fetch_limit=0)
         for movie_id in extras:
             tmdb_id = tmdb_of.get(movie_id)
-            if tmdb_id and streaming_matches(availability.get(tmdb_id), provider_ids):
+            if tmdb_id and streaming_matches(
+                availability.get(tmdb_id), provider_ids, tmdb_id=tmdb_id
+            ):
                 pool.append(movie_id)
     return pool
 

@@ -194,10 +194,15 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="newly-added-shelf-258"' in body
     assert "Newly added to the Criterion Channel" in body
-    assert "Arrival Fresh (1956)" in body
-    # Watchlisted arrivals belong to the watchlist shelf (and with no
-    # availability cached, nowhere at all tonight), never this one
-    assert "Arrival Wanted" not in body
+    arrivals_section = body.split('id="newly-added-shelf-258"')[1].split("<h4 ")[0]
+    assert "Arrival Fresh (1956)" in arrivals_section
+    # Watchlisted arrivals belong to the watchlist shelf, never this
+    # one — and the feed itself is first-party proof they're watchable,
+    # so the synthesized Criterion match surfaces one there even with
+    # no TMDB availability cached
+    assert "Arrival Wanted" not in arrivals_section
+    watchlist_section = body.split('id="watchlist-shelf"')[1].split("<h4 ")[0]
+    assert "Arrival Wanted (1956)" in watchlist_section
     assert "Arrival Owned" not in body
     assert "Arrival Dismissed" not in body
     assert "Arrival Planted" not in body

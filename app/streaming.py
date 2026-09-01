@@ -228,6 +228,28 @@ def user_provider_ids(user):
     return {row.provider_id for row in user.streaming_providers}
 
 
+def _criterion_provider():
+    """The provider registry's Criterion Channel entry — the name and
+    logo a synthesized match renders with — or a logo-less stand-in
+    when the registry can't be read (the badge template skips the
+    image for a null logo_path)."""
+
+    from app.leaving_criterion import CRITERION_PROVIDER_ID
+
+    for provider in provider_registry():
+        if provider["provider_id"] == CRITERION_PROVIDER_ID:
+            return {
+                "provider_id": provider["provider_id"],
+                "provider_name": provider["provider_name"],
+                "logo_path": provider["logo_path"],
+            }
+    return {
+        "provider_id": CRITERION_PROVIDER_ID,
+        "provider_name": "Criterion Channel",
+        "logo_path": None,
+    }
+
+
 def streaming_matches(availability, provider_ids, tmdb_id=None):
     """Providers carrying the film that the user subscribes to —
     streaming kinds only (flatrate, then free-with-ads); rent and buy
@@ -235,14 +257,23 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
     Channel match also learns whether the film is on the month's
     leaving set: its "leaving" key carries the departure date ("August
     31") so the badge can light up wherever it renders (Glenn's ask,
-    Aug 2026 — watch it before it goes)."""
+    Aug 2026 — watch it before it goes).
 
-    if not availability or not provider_ids:
+    A film in the scraped newly-added or leaving store gets a
+    Criterion match synthesized outright (Glenn, Sept 1 2026): those
+    stores are the Channel's own catalog pages — first-party word the
+    film streams there — while TMDB's JustWatch-fed payload lags them
+    by days around the month turnover, which is exactly when the
+    discovery shelves push the film hardest. Synthesis (like the
+    annotations) needs the tmdb_id, so the owned-film callers that
+    deliberately pass None skip both."""
+
+    if not provider_ids:
         return []
     matches = []
     seen = set()
     for kind in ("flatrate", "ads"):
-        for provider in availability.get(kind) or []:
+        for provider in (availability or {}).get(kind) or []:
             if provider["provider_id"] in provider_ids:
                 if provider["provider_id"] not in seen:
                     seen.add(provider["provider_id"])
@@ -253,6 +284,12 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
         # circular
         from app.leaving_criterion import CRITERION_PROVIDER_ID, leaving_departure
         from app.newly_added import newly_added_since
+
+        if CRITERION_PROVIDER_ID in provider_ids and CRITERION_PROVIDER_ID not in seen:
+            if newly_added_since(tmdb_id, CRITERION_PROVIDER_ID) or leaving_departure(
+                tmdb_id
+            ):
+                matches.append({**_criterion_provider(), "kind": "flatrate"})
 
         for match in matches:
             if match["provider_id"] == CRITERION_PROVIDER_ID:

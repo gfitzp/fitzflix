@@ -114,7 +114,7 @@ def watchlist_shopping_groups():
             if user.id not in provider_sets:
                 provider_sets[user.id] = user_provider_ids(user)
             provider_ids = provider_sets[user.id]
-            if streaming_matches(payload, provider_ids):
+            if streaming_matches(payload, provider_ids, tmdb_id=movie.tmdb_id):
                 state = "streaming"
             elif rental_matches(payload, provider_ids):
                 state = "rent"

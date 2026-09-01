@@ -157,6 +157,117 @@ def test_streaming_matches_only_subscription_kinds(app):
     assert by_name == {"Netflix": "flatrate", "Tubi TV": "ads"}
 
 
+CRITERION = {
+    "provider_id": 258,
+    "provider_name": "Criterion Channel",
+    "logo_path": "/criterion.jpg",
+}
+
+
+def plant_newly_added(app, tmdb_id, first_seen):
+    """Store a scraped newly-added feed entry, as the diff would."""
+
+    from app.newly_added import NEWLY_ADDED_KEY
+
+    app.redis.set(
+        NEWLY_ADDED_KEY.format(provider_id=258),
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "tmdb_id": tmdb_id,
+                        "first_seen": first_seen.isoformat(),
+                        "scraped_title": "x",
+                        "scraped_year": 1981,
+                    }
+                ]
+            }
+        ),
+    )
+
+
+def test_scraped_arrival_synthesizes_criterion_match(app, monkeypatch):
+    # Sept 1 2026: films live on the Channel's own newly-added page
+    # showed no Criterion service because TMDB's JustWatch feed hadn't
+    # caught up — the scrape is first-party word, so it wins
+
+    from datetime import date
+
+    from app.streaming import streaming_matches
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    plant_registry(app, [CRITERION])
+    plant_newly_added(app, 22171, date.today())
+    availability = {"link": None, "flatrate": [NETFLIX], "ads": [], "rent": []}
+
+    with app.app_context():
+        matches = streaming_matches(availability, {8, 258}, tmdb_id=22171)
+
+    criterion = [m for m in matches if m["provider_id"] == 258]
+    assert len(criterion) == 1
+    assert criterion[0]["kind"] == "flatrate"
+    assert criterion[0]["logo_path"] == "/criterion.jpg"
+    assert criterion[0]["new_since"] == date.today().strftime("%B %-d")
+
+
+def test_leaving_set_synthesizes_criterion_match_even_unfetched(app):
+    # The leaving store is equally first-party, and synthesis holds up
+    # even while the TMDB payload is unknown (None)
+
+    import calendar
+    from datetime import date
+
+    from app.leaving_criterion import LEAVING_KEY
+    from app.streaming import streaming_matches
+
+    today = date.today()
+    departs = date(
+        today.year, today.month, calendar.monthrange(today.year, today.month)[1]
+    )
+    app.redis.set(
+        LEAVING_KEY,
+        json.dumps({"departs": departs.isoformat(), "items": [{"tmdb_id": 42}]}),
+    )
+
+    with app.app_context():
+        matches = streaming_matches(None, {258}, tmdb_id=42)
+
+    assert [m["provider_id"] for m in matches] == [258]
+    assert matches[0]["kind"] == "flatrate"
+    assert matches[0]["leaving"] == departs.strftime("%B %-d")
+    # The registry stand-in still renders — the badge just has no logo
+    assert matches[0]["provider_name"] == "Criterion Channel"
+    assert matches[0]["logo_path"] is None
+
+
+def test_no_synthesis_when_tmdb_already_lists_criterion(app):
+    from datetime import date
+
+    from app.streaming import streaming_matches
+
+    plant_newly_added(app, 22171, date.today())
+    availability = {"link": None, "flatrate": [CRITERION], "ads": [], "rent": []}
+
+    with app.app_context():
+        matches = streaming_matches(availability, {258}, tmdb_id=22171)
+
+    assert [m["provider_id"] for m in matches] == [258]
+    assert matches[0]["new_since"] == date.today().strftime("%B %-d")
+
+
+def test_no_synthesis_without_criterion_subscription(app):
+    from datetime import date
+
+    from app.streaming import streaming_matches
+
+    plant_newly_added(app, 22171, date.today())
+
+    with app.app_context():
+        assert streaming_matches(None, {8}, tmdb_id=22171) == []
+        # And the owned-film callers' tmdb_id=None skips synthesis too
+        assert streaming_matches(None, {258}, tmdb_id=None) == []
+
+
 def test_profile_picker_saves_and_removes_services(app, admin_client, monkeypatch):
     from app.models import User, UserStreamingProvider
 

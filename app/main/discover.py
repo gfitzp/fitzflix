@@ -191,7 +191,9 @@ def watchlist_shelf_rows(user):
         streaming = bool(
             provider_ids
             and movie.tmdb_id
-            and streaming_matches(availability.get(movie.tmdb_id), provider_ids)
+            and streaming_matches(
+                availability.get(movie.tmdb_id), provider_ids, tmdb_id=movie.tmdb_id
+            )
         )
         if owned or streaming:
             watchable.append((movie, owned, streaming))

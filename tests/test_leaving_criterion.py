@@ -490,12 +490,21 @@ def test_shelf_ranks_and_excludes(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="leaving-shelf"' in body
-    assert "Shelf Fresh (1956)" in body
-    assert "Shelf Wanted" not in body
+    leaving_section = body.split('id="leaving-shelf"')[1].split("<h4 ")[0]
+    assert "Shelf Fresh (1956)" in leaving_section
+    assert "Shelf Wanted" not in leaving_section
     assert "Shelf Owned" not in body
     assert "Shelf Dismissed" not in body
     assert "Western" in body
     assert "criterionchannel.com" in body
+
+    # The watchlisted departure surfaces on the watchlist shelf instead
+    # — the leaving store is first-party proof it's watchable tonight,
+    # so the synthesized Criterion match makes it lead the landing page
+    # even with no TMDB availability cached
+
+    watchlist_section = body.split('id="watchlist-shelf"')[1].split("<h4 ")[0]
+    assert "Shelf Wanted (1956)" in watchlist_section
 
     # The heading's "See more…" opens the in-app departure inventory
 
