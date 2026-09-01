@@ -597,3 +597,113 @@ def test_a_live_waiting_chip_never_heals(app):
     trails = pipeline_trails(app.redis)
     assert trails[0]["entries"][0]["status"] == "queued"
     assert app.redis.exists(f"rq:job:{job.id}")
+
+
+def test_the_enqueued_time_holds_still_across_queue_hops(app, admin_client):
+    """The Enqueued column anchors to when the FILE first entered the
+    pipeline: each hop to a new queue is a new job with a fresh
+    enqueued_at of its own, which used to make the time jump forward
+    at every stage."""
+
+    from app.pipeline import FILE_KEY, _digest, record_job_event
+
+    basename = "Trail Anchor (2026) - [DVD].mkv"
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+        record_job_event(app.redis, localize, "started")
+        move = app.file_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/{basename}", {"basename": basename}),
+            description=f"Moving {basename}",
+        )
+        record_job_event(app.redis, localize, "done")
+
+    # Pin the anchor the first enqueue stamped to a known value so the
+    # assertion doesn't race the clock's seconds
+
+    key = FILE_KEY.format(digest=_digest(basename))
+    app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    entry = next(task for task in payload["all"] if task["id"] == move.id)
+    assert entry["enqueued_at"] == "Fri, 02 Jan 2026 03:04:05 GMT"
+
+
+def test_a_waiting_stamp_never_moves_a_journeys_anchor(app):
+    """Mid-journey enqueues — the move job booked while localization
+    still runs, a retry after a failure — leave the anchor where the
+    first detection put it."""
+
+    from app.pipeline import FILE_KEY, _digest, record_job_event
+
+    basename = "Trail Anchor Hold (2026) - [DVD].mkv"
+    key = FILE_KEY.format(digest=_digest(basename))
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+        record_job_event(app.redis, localize, "started")
+        app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
+        app.file_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/{basename}", {"basename": basename}),
+        )
+    assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
+
+    with app.app_context():
+        record_job_event(app.redis, localize, "failed")
+        app.import_queue.enqueue_in(
+            timedelta(minutes=10),
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+        )
+    assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
+
+
+def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
+    """A waiting stamp landing on a fully settled trail — a re-import,
+    or a later re-archive of a landed file — is a NEW journey through
+    the pipeline, so its Enqueued time starts over instead of showing
+    the old journey's."""
+
+    from app.pipeline import FILE_KEY, _digest, record_job_event
+
+    basename = "Trail Anchor Fresh (2026) - [DVD].mkv"
+    key = FILE_KEY.format(digest=_digest(basename))
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+        record_job_event(app.redis, localize, "started")
+        record_job_event(app.redis, localize, "done")
+
+    app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
+
+    with app.app_context():
+        app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+    assert app.redis.hget(key, "first_enqueued") != b"2026-01-02 03:04:05"
+
+
+def test_a_mid_flight_rename_carries_the_enqueue_anchor(app):
+    """migrate_trail moves the anchor with the journey, like first_run
+    — a canonicalized title keeps the Enqueued time of its detection."""
+
+    from app.pipeline import FILE_KEY, _digest, migrate_trail
+
+    old = "Trail Anchor Old (2026) - [DVD].mkv"
+    new = "Trail Anchor New (2026) - [DVD].mkv"
+    with app.app_context():
+        app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{old}",)
+        )
+
+    old_key = FILE_KEY.format(digest=_digest(old))
+    app.redis.hset(old_key, "first_enqueued", "2026-01-02 03:04:05")
+
+    migrate_trail(app.redis, old, new)
+    new_key = FILE_KEY.format(digest=_digest(new))
+    assert app.redis.hget(new_key, "first_enqueued") == b"2026-01-02 03:04:05"

@@ -38,7 +38,7 @@ import os
 import time
 import traceback
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from rq import Queue, SimpleWorker
 
@@ -193,6 +193,7 @@ def _write_trail_entry(
 
     for _ in range(10):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fresh_journey = False
         with connection.pipeline() as pipe:
             try:
                 pipe.watch(key)
@@ -227,6 +228,18 @@ def _write_trail_entry(
                     # chips then read in pipeline order, not in order of
                     # first stamp, which the job-level entry always wins
                     # by existing from enqueue time (Glenn, Aug 2026)
+
+                    # A waiting stamp landing on an empty or fully
+                    # settled trail opens a NEW journey through the
+                    # pipeline (a re-import, or a later re-archive of a
+                    # landed file) — its enqueue anchor starts over. A
+                    # retry after a failure is the same journey
+                    # continuing, so the anchor holds
+
+                    if status in ("queued", "scheduled") and not before_job:
+                        fresh_journey = not trail or all(
+                            existing.get("status") == "done" for existing in trail
+                        )
 
                     index = len(trail)
                     if before_job:
@@ -265,6 +278,20 @@ def _write_trail_entry(
 
                 if status == "started":
                     pipe.hsetnx(key, "first_run", now)
+
+                # The file's first ENQUEUE anchors the queue page's
+                # Enqueued column the same way: it holds still as the
+                # work hops queues, each hop a new job with its own
+                # enqueued_at. Stored as naive UTC to match rq's
+                # enqueued_at convention (the trail's other stamps are
+                # local wall clock, for the chips) — see first_enqueued
+
+                if status in ("queued", "scheduled"):
+                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                    if fresh_journey:
+                        pipe.hset(key, "first_enqueued", stamp)
+                    else:
+                        pipe.hsetnx(key, "first_enqueued", stamp)
 
                 pipe.hset(
                     key,
@@ -317,6 +344,7 @@ def migrate_trail(connection, old_basename, new_basename):
                     pipe.watch(old_key, new_key)
                     old_trail = _decode_trail(pipe.hget(old_key, "trail"))
                     old_first = pipe.hget(old_key, "first_run")
+                    old_enqueued = pipe.hget(old_key, "first_enqueued")
 
                     # Nothing recorded under the old name (expired, or
                     # the hooks never fired): just leave the redirect
@@ -337,6 +365,8 @@ def migrate_trail(connection, old_basename, new_basename):
                     pipe.multi()
                     if old_first is not None:
                         pipe.hsetnx(new_key, "first_run", old_first)
+                    if old_enqueued is not None:
+                        pipe.hsetnx(new_key, "first_enqueued", old_enqueued)
                     pipe.hset(
                         new_key,
                         mapping={
@@ -445,6 +475,33 @@ def first_run(connection, job):
         basename = _resolve_basename(connection, found[0])
         value = connection.hget(FILE_KEY.format(digest=_digest(basename)), "first_run")
         return value.decode() if isinstance(value, bytes) else value
+    except Exception:
+        return None
+
+
+def first_enqueued(connection, job):
+    """When the job's FILE first entered the pipeline on its current
+    journey, as an aware-UTC datetime matching rq's own enqueued_at
+    (rq 2 stamps aware datetimes; mixing in a naive one would blow up
+    the queue list's sort) — the queue page's Enqueued column holds
+    this still while the work hops queues. None for jobs outside the
+    pipeline, or files whose trail has no anchor (so callers fall back
+    to the job's own time)."""
+
+    try:
+        found = _stage_for(job)
+        if found is None:
+            return None
+        basename = _resolve_basename(connection, found[0])
+        value = connection.hget(
+            FILE_KEY.format(digest=_digest(basename)), "first_enqueued"
+        )
+        if value is None:
+            return None
+        value = value.decode() if isinstance(value, bytes) else value
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
     except Exception:
         return None
 

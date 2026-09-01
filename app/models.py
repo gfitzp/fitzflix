@@ -1317,7 +1317,7 @@ class User(UserMixin, db.Model):
         # survives the hops; jobs without a trail sort by their own
         # start, converted to the trail's local wall clock.
 
-        from app.pipeline import first_run
+        from app.pipeline import first_enqueued, first_run
 
         def first_run_anchor(job):
             """The job's stable sort key among the running banners."""
@@ -1328,6 +1328,14 @@ class User(UserMixin, db.Model):
             if job.started_at:
                 return job.started_at.astimezone().strftime("%Y-%m-%d %H:%M:%S")
             return "9999"
+
+        def enqueue_anchor(job):
+            """When the job's FILE first entered the pipeline — the
+            Enqueued column holds still as the work hops queues, each
+            hop a new job with a fresh enqueued_at of its own. Jobs
+            outside the pipeline keep their own enqueue time."""
+
+            return first_enqueued(current_app.redis, job) or job.enqueued_at
 
         def banner_worthy(job):
             """Whether a running job earns a top-of-page alert. Frame
@@ -1352,7 +1360,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1370,7 +1378,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1388,7 +1396,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1411,7 +1419,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1425,7 +1433,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1439,7 +1447,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1453,7 +1461,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1467,7 +1475,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1481,7 +1489,7 @@ class User(UserMixin, db.Model):
                     {
                         "id": job.id,
                         "status": job.get_status(),
-                        "enqueued_at": job.enqueued_at,
+                        "enqueued_at": enqueue_anchor(job),
                         "started_at": job.started_at,
                         "ended_at": job.ended_at,
                         "description": job.meta.get("description", job.description),
@@ -1511,7 +1519,7 @@ class User(UserMixin, db.Model):
                         {
                             "id": job.id,
                             "status": "scheduled",
-                            "enqueued_at": job.enqueued_at,
+                            "enqueued_at": enqueue_anchor(job),
                             "started_at": None,
                             "ended_at": None,
                             "scheduled_for": registry.get_scheduled_time(job_id),
