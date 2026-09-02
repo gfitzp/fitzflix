@@ -23,14 +23,13 @@ def sonarr_add(payload):
     """Endpoint for Sonarr to notify Fitzflix when a new video file is added."""
 
     response = jsonify(request.get_json())
-    downloaded_file_path = downloaded_path(
-        "Sonarr",
-        payload["series"].get("path"),
-        payload["episodeFile"].get("relativePath"),
-    )
+    folder = payload["series"].get("path")
+    relative = payload["episodeFile"].get("relativePath")
+    downloaded_file_path = downloaded_path("Sonarr", folder, relative)
     if downloaded_file_path is None:
         current_app.logger.warning(
-            "Sonarr webhook named a file outside the library root; refusing it"
+            f"Sonarr webhook named a file outside SONARR_ROOT_FOLDERS "
+            f"({folder!r} + {relative!r}); refusing it"
         )
         response.status_code = 400
         return response

@@ -25,11 +25,15 @@ import json
 import os
 import re
 import subprocess
+import time
 
 from datetime import date, datetime, timezone
 from random import Random
 
 from flask import current_app
+from rq.exceptions import NoSuchJobError
+from rq.job import Job, JobStatus
+from rq.registry import StartedJobRegistry
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -63,6 +67,7 @@ CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
 REBUILD_FUNC = "app.dvr.build_channel_lineups"
+REBUILD_JOB_ID = "dvr-lineup-rebuild"
 
 # Channel numbering: the all-library mix leads, genre channels follow
 # alphabetically. Numbers restate themselves every build, so a genre
@@ -188,9 +193,14 @@ def _first_audio_channels(file_id):
         .first()
     )
     if track and track.channels:
-        match = re.search(r"\d+", str(track.channels))
+        # The scan stores layouts the way they're spoken — "5.1" is six
+        # channels, the ".1" being the LFE — so the count is the whole
+        # number plus one for a ".1"; a digits-only read gave 5 and
+        # ffmpeg dropped the subwoofer from every 5.1 airing
+        match = re.fullmatch(r"\s*(\d+)(?:\.(\d))?\s*", str(track.channels))
         if match:
-            return min(int(match.group()), AC3_MAX_CHANNELS)
+            total = int(match.group(1)) + (1 if match.group(2) == "1" else 0)
+            return min(total, AC3_MAX_CHANNELS)
     return AC3_MAX_CHANNELS
 
 
@@ -656,6 +666,21 @@ def seed_default_channels():
     return True
 
 
+def _job_live(queue, job_id):
+    """Whether a job record with this id is still in flight."""
+
+    try:
+        job = Job.fetch(job_id, connection=queue.connection)
+    except NoSuchJobError:
+        return False
+    return job.get_status() in (
+        JobStatus.QUEUED,
+        JobStatus.STARTED,
+        JobStatus.DEFERRED,
+        JobStatus.SCHEDULED,
+    )
+
+
 def enqueue_lineup_rebuild(reason, tmdb_ids=None):
     """Queue a lineup rebuild so the stored dial catches up the same
     day — the admin editor's saves, and the Criterion scrapers when a
@@ -679,11 +704,23 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
         )
         if not owned:
             return None
+    # Deterministic job ids make the dedupe one id-list read, not a
+    # fetch of every queued job. A rebuild that is RUNNING — or was
+    # just dequeued and isn't in the started registry yet (live
+    # drill, Sept 2 2026: reusing the id in that window overwrote the
+    # running job's record) — keeps its id, so a trigger arriving
+    # mid-build queues under a timestamped one
     queue = current_app.maintenance_queue
-    if any(job.func_name == REBUILD_FUNC for job in queue.jobs):
+    if any(job_id.startswith(REBUILD_JOB_ID) for job_id in queue.job_ids):
         return None
+    job_id = REBUILD_JOB_ID
+    if job_id in StartedJobRegistry(queue=queue).get_job_ids() or _job_live(
+        queue, job_id
+    ):
+        job_id = f"{REBUILD_JOB_ID}-{int(time.time())}"
     return queue.enqueue(
         REBUILD_FUNC,
+        job_id=job_id,
         job_timeout=3600,
         description=f"Building virtual DVR channel lineups ({reason})",
     )

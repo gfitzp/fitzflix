@@ -50,6 +50,10 @@ def import_event_webhook(service):
                 response.status_code = 401
                 return response
             if not user.admin:
+                current_app.logger.warning(
+                    f"{service} webhook authenticated as non-admin "
+                    f"'{user.email}'; the webhook needs an admin's API key"
+                )
                 response.status_code = 403
                 return response
 
@@ -78,23 +82,28 @@ def import_event_webhook(service):
 
 def downloaded_path(service, folder, relative):
     """The absolute path of the file a webhook payload names, or None
-    when it doesn't sit under the service's library root — Radarr's
-    is MOVIE_LIBRARY, Sonarr's TV_LIBRARY, the root folders the apps
-    import into. The handlers rename, delete, and enqueue by this
-    path, so the payload's two halves aren't trusted to compose one:
-    an absolute or parent-hopping relativePath, or a folder outside
-    the root, is refused (security review, Sept 2026)."""
+    when it doesn't sit under one of the service's root folders —
+    RADARR_ROOT_FOLDERS / SONARR_ROOT_FOLDERS, which default to the
+    movie and TV library directories because that is where this
+    deployment's apps import into. The handlers rename, delete, and
+    enqueue by this path, so the payload's two halves aren't trusted
+    to compose one: an absolute or parent-hopping relativePath, or a
+    folder outside every root, is refused (security review, Sept
+    2026)."""
 
-    root = current_app.config["MOVIE_LIBRARY" if service == "Radarr" else "TV_LIBRARY"]
+    roots = current_app.config[
+        "RADARR_ROOT_FOLDERS" if service == "Radarr" else "SONARR_ROOT_FOLDERS"
+    ]
     if not folder or not relative or os.path.isabs(relative):
         return None
     if os.pardir in relative.split(os.sep):
         return None
     path = os.path.realpath(os.path.join(folder, relative))
-    root = os.path.realpath(root)
-    if os.path.commonpath([path, root]) != root:
-        return None
-    return path
+    for root in roots:
+        root = os.path.realpath(root)
+        if os.path.commonpath([path, root]) == root:
+            return path
+    return None
 
 
 def downgrade_quality_title(original_quality, custom_format_score):

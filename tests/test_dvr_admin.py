@@ -249,3 +249,21 @@ def test_build_honors_picks_and_disabled(app, monkeypatch):
     # bolting onto the end
     assert programs[-1]["title"] == "Jaws" or programs[-2]["title"] == "Jaws"
     assert len(programs) == 4
+
+
+def test_manual_rebuild_reports_when_nothing_was_queued(app, admin_client):
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    token = csrf_token_from(page)
+    first = admin_client.post(
+        "/dvr/channels",
+        data={"csrf_token": token, "rebuild_submit": "1"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "Rebuilding the channel lineups" in first
+    second = admin_client.post(
+        "/dvr/channels",
+        data={"csrf_token": token, "rebuild_submit": "1"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "No rebuild queued" in second
+    assert len(rebuild_jobs(app)) == 1

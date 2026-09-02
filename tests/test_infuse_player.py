@@ -782,3 +782,18 @@ def test_profile_default_player_choice_sticks(app, user_client, member_players):
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
         assert user.default_player == "infuse"
         assert user.preferred_player == "infuse"
+
+
+def test_infuse_profile_rejects_a_hostname(app, monkeypatch, user_client):
+    import app.main.account as account
+
+    started = []
+    monkeypatch.setattr(
+        account, "start_pairing", lambda user_id, address: started.append(address)
+    )
+    r = _profile_post(
+        user_client,
+        {"infuse_player_address": "appletv.local", "infuse_player_submit": "1"},
+    )
+    assert "private-network" in r.get_data(as_text=True)
+    assert started == []

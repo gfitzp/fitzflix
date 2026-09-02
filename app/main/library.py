@@ -1929,7 +1929,8 @@ def movie_play(movie_id):
                 ),
                 400,
             )
-        abort(400)
+        flash("That page had gone stale — please try again.", "warning")
+        return redirect(url_for("main.movie", movie_id=movie_id))
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     infuse_possible = bool(movie.tmdb_id) and current_user.infuse_player_configured

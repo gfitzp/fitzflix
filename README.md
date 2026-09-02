@@ -154,7 +154,9 @@ Fitzflix can sit downstream of Sonarr and Radarr, importing every file they down
 
 - URL: `http://<fitzflix host>:8000/api/sonarr/add` (Sonarr) or `http://<fitzflix host>:8000/api/radarr/add` (Radarr)
 - Method: `POST`, triggered **On Import** / **On Upgrade**
-- Credentials (HTTP Basic authentication): a Fitzflix account's email as the username, and its **API key** shown on the user's Fitzflix admin page as the password. (The account password is not accepted; the key can be regenerated from the admin page without changing your login password.)
+- Credentials (HTTP Basic authentication): an **admin** account's email as the username, and its **API key** shown on the user's Fitzflix admin page as the password — the webhook renames and imports files by the paths in the payload, so a member account's key is refused (403). (The account password is not accepted; the key can be regenerated from the admin page without changing your login password.)
+
+Fitzflix only acts on files under the apps' root folders as this host sees them: `RADARR_ROOT_FOLDERS` and `SONARR_ROOT_FOLDERS` in `.env` (colon-separated), defaulting to the `Movies` and `TV Shows` library directories. A webhook naming a file elsewhere is refused with a 400 and a log line.
 
 When a download completes, Fitzflix renames the file with a *downgraded* quality title before importing — physical-media quality names are reserved for files ripped from actual discs, and `Remux` isn't used to label downloads:
 
@@ -216,7 +218,7 @@ Restart Fitzflix after setting it. (Without it, the Profile page doesn't offer t
 
 ### Per-user device setup (on the Profile page)
 
-Each user enters their device's IP address or hostname under **Profile → Playback Device** (the port is optional; Companion's default `32500` is assumed):
+Each user enters their device's private-network IP address under **Profile → Playback Device** (the port is optional; Companion's default `32500` is assumed). Hostnames aren't accepted — the play command carries a Plex token, so the address must be a literal on a private range (RFC1918, link-local, or Tailscale's 100.64/10):
 
 1. Find the device's IP — on an Apple TV, **Settings → Network**, or your router's client list — and give it a DHCP reservation or static IP so the address doesn't drift. (Plex's own player discovery isn't used: its UDP broadcasts die at any VLAN or subnet boundary, while a direct address works everywhere.)
 2. On the device, open the Plex app and enable **Settings → Advertise as Player**.

@@ -15,11 +15,12 @@ from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL, MEMBER_API_KEY, MEMBER_EM
 
 @pytest.fixture(autouse=True)
 def arr_roots(app, monkeypatch, tmp_path):
-    """The webhooks only act on files under the apps' library roots;
-    each test's tmp_path plays both."""
+    """The webhooks only act on files under the apps' configured root
+    folders; each test's tmp_path plays both (and is deliberately NOT
+    the library directory, proving the roots are their own setting)."""
 
-    monkeypatch.setitem(app.config, "MOVIE_LIBRARY", str(tmp_path))
-    monkeypatch.setitem(app.config, "TV_LIBRARY", str(tmp_path))
+    monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(tmp_path)])
+    monkeypatch.setitem(app.config, "SONARR_ROOT_FOLDERS", [str(tmp_path)])
 
 
 def auth_header(email=ADMIN_EMAIL, key=ADMIN_API_KEY):

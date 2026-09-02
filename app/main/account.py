@@ -4,7 +4,6 @@ its per-row editors, review editing, and the profile."""
 import csv
 import io
 import json
-import re
 import secrets
 
 
@@ -48,7 +47,12 @@ from app.infuse_player import (
     start_pairing,
     submit_pin,
 )
-from app.plex_player import probe_player, remote_playback_configured, player_address
+from app.plex_player import (
+    forget_home_token,
+    player_address,
+    probe_player,
+    remote_playback_configured,
+)
 from app.models import (
     Movie,
     User,
@@ -632,8 +636,11 @@ def profile():
     plex_form = PlexUsernameForm()
     if plex_form.plex_submit.data and plex_form.validate_on_submit():
         plex_username = (plex_form.plex_username.data or "").strip() or None
+        # Case-insensitive, the way the Plex Home match reads it
         taken = (
-            User.query.filter(User.plex_username == plex_username)
+            User.query.filter(
+                db.func.lower(User.plex_username) == plex_username.lower()
+            )
             .filter(User.id != current_user.id)
             .first()
             if plex_username
@@ -644,6 +651,8 @@ def profile():
         else:
             current_user.plex_username = plex_username
             db.session.commit()
+            # A cached Home token was minted for the OLD name
+            forget_home_token(current_user.id)
             if plex_username:
                 flash(
                     f"Plex watches by '{plex_username}' now count as yours.", "success"
@@ -653,10 +662,11 @@ def profile():
         return redirect(url_for("main.profile"))
 
     # This user's playback device: the Plex player their play buttons
-    # send films to. The user enters just an address (ip or hostname,
-    # port optional — Companion's 32500 is assumed); Fitzflix probes it
-    # and reads the machine id off the player itself, so a device is
-    # only ever saved verified-reachable. Blank removes the device
+    # send films to. The user enters a private-network IP (port optional
+    # — Companion's 32500 is assumed; hostnames are refused, see
+    # player_address); Fitzflix probes it and reads the machine id off
+    # the player itself, so a device is only ever saved
+    # verified-reachable. Blank removes the device
 
     plex_player_form = PlexPlayerForm()
     if (
@@ -712,11 +722,16 @@ def profile():
             current_user.infuse_player_credentials = None
             db.session.commit()
             flash("Removed your Infuse player.", "success")
-        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+        elif player_address(address, default_port=COMPANION_PORT) is None:
+            # The same fence as the Plex device: the server connects to
+            # this address, so it's a private-network literal or nothing
+            flash(
+                "That doesn't look like a private-network ip:port. Hostnames "
+                "aren't accepted.",
+                "danger",
+            )
         else:
-            if ":" not in address.strip("[]"):
-                address = f"{address}:{COMPANION_PORT}"
+            address = player_address(address, default_port=COMPANION_PORT)
             if start_pairing(current_user.id, address):
                 flash(
                     "Look at the Apple TV — it should show a PIN within a "

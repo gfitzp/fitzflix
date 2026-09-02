@@ -632,3 +632,62 @@ def test_enqueue_lineup_rebuild_gates_and_dedupes(app, monkeypatch):
         assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[9500, 9000]) is not None
         assert dvr.enqueue_lineup_rebuild("again") is None
         assert len(dvr_rebuild_jobs(app)) == 1
+
+
+@pytest.mark.parametrize(
+    "stored, expected",
+    [("5.1", 6), ("7.1", 6), ("2.0", 2), ("1.0", 1), ("6.0", 6), ("16", 6), ("4.1", 5)],
+)
+def test_first_audio_channels_counts_the_lfe(app, stored, expected):
+    """The scan stores "5.1" for six channels; a digits-only read gave
+    five and ffmpeg dropped the subwoofer from every 5.1 airing."""
+
+    from app import dvr
+    from app.models import FileAudioTrack
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Loud", 1990), "Bluray-1080p")
+        db.session.add(
+            FileAudioTrack(
+                file_id=file.id,
+                track=1,
+                language="eng",
+                language_name="English",
+                channels=stored,
+                default=True,
+            )
+        )
+        db.session.commit()
+        assert dvr._first_audio_channels(file.id) == expected
+
+
+def test_enqueue_lineup_rebuild_queues_beside_a_running_build(app, monkeypatch):
+    """A rebuild already RUNNING may have read old inputs, so a new
+    trigger still queues — under a timestamped id, since the running
+    job holds the deterministic one."""
+
+    from rq.registry import StartedJobRegistry
+
+    from app import dvr
+    from tests.conftest import dvr_rebuild_jobs
+
+    with app.app_context():
+        monkeypatch.setitem(app.config, "DVR_TOKEN", TOKEN)
+        queue = app.maintenance_queue
+        registry = StartedJobRegistry(queue=queue)
+        queue.connection.zadd(registry.key, {dvr.REBUILD_JOB_ID: 9999999999})
+        job = dvr.enqueue_lineup_rebuild("mid-build")
+        assert job is not None and job.id.startswith(dvr.REBUILD_JOB_ID + "-")
+        assert dvr.enqueue_lineup_rebuild("again") is None
+        assert len(dvr_rebuild_jobs(app)) == 1
+        queue.connection.zrem(registry.key, dvr.REBUILD_JOB_ID)
+        queue.empty()
+
+        # The window between dequeue and registration: the job record
+        # exists and is not finished, but no registry lists it yet
+        first = dvr.enqueue_lineup_rebuild("first")
+        assert first.id == dvr.REBUILD_JOB_ID
+        queue.connection.lrem(queue.key, 0, first.id)  # dequeued, not yet started
+        second = dvr.enqueue_lineup_rebuild("second")
+        assert second is not None and second.id != first.id
+        assert first.get_status() == "queued"  # the live record was not overwritten

@@ -7,8 +7,9 @@ their own player instead (User.plex_player_address / _id, set on the
 Profile page, which probes the address and reads the machine id off
 the player itself): user A's play buttons target their Apple TV,
 user B's target theirs. A remote household's device works the same
-way once it's network-reachable (a VPN address like Tailscale's);
-the server side is already reachable from anywhere because
+way once it's network-reachable at a private-network IP (Tailscale's
+100.64/10 addresses qualify; names don't — see player_address); the
+server side is already reachable from anywhere because
 PLEX_PLAYER_SERVER_URI is a public HTTPS address.
 
 The command flow is the one validated by hand on 2026-08-21: resolve
@@ -68,23 +69,27 @@ PLAYER_NETWORKS = [
 ]
 
 # A non-admin's play command carries a token for THEIR Plex Home user,
-# minted through plex.tv and kept for a while
+# minted through plex.tv and kept for a while; a miss (no such Home
+# user) is remembered briefly so an unlinked member's clicks don't each
+# wait on plex.tv
 HOME_TOKEN_KEY = "fitzflix:plex:home-token:{user_id}"
 HOME_TOKEN_SECONDS = 12 * 3600
+HOME_TOKEN_MISS_SECONDS = 300
 
 
-def player_address(text):
+def player_address(text, default_port=PLAYER_PORT):
     """The normalized "ip:port" of a player address, or None when it
     isn't a literal IP on a private network (PLAYER_NETWORKS) with a
-    sane port. A bare IP takes Companion's port; IPv6 goes in
-    brackets. The Profile page validates with this and play_movie
-    re-checks the stored value, so a hostname can't reach the play
-    command by any route."""
+    sane port. A bare IP takes the default port (Plex Companion's
+    unless told otherwise — the Infuse block passes Apple's); IPv6
+    goes in brackets. The Profile page validates with this and
+    play_movie re-checks the stored value, so a hostname can't reach
+    the play command by any route."""
 
     text = (text or "").strip()
     if not text:
         return None
-    host, port = text, PLAYER_PORT
+    host, port = text, default_port
     if text.startswith("["):
         end = text.find("]")
         if end == -1:
@@ -118,23 +123,39 @@ def player_token(user):
     answered at the address, not that it's a Plex player (security
     review, Sept 2026)."""
 
-    if getattr(user, "admin", False):
+    if user.admin:
         return current_app.config["PLEX_TOKEN"]
-    if not getattr(user, "plex_username", None):
+    if not user.plex_username:
         return None
     key = HOME_TOKEN_KEY.format(user_id=user.id)
     cached = current_app.redis.get(key)
-    if cached:
-        return cached.decode()
+    if cached is not None:
+        return cached.decode() or None
     token = _home_user_token(user.plex_username)
     if token:
         current_app.redis.set(key, token, ex=HOME_TOKEN_SECONDS)
+    else:
+        current_app.redis.set(key, "", ex=HOME_TOKEN_MISS_SECONDS)
     return token
 
 
-def _home_user_token(plex_username):
-    """A token for the named Plex Home user, or None."""
+def forget_home_token(user_id):
+    """Drop the user's cached Home token — the Profile page calls
+    this when the Plex username changes, so the next play is minted
+    for the newly linked user rather than the old one."""
 
+    current_app.redis.delete(HOME_TOKEN_KEY.format(user_id=user_id))
+
+
+def _home_user_token(plex_username):
+    """A token for the named Plex Home user, or None. The Home user
+    flagged admin — the server's owner — is never switched to: a
+    member who claims the owner's name on their Profile page must not
+    be able to mint the owner's token this way."""
+
+    wanted = plex_username.strip().lower()
+    if not wanted:
+        return None
     headers = {
         "Accept": "application/json",
         "X-Plex-Client-Identifier": CLIENT_IDENTIFIER,
@@ -142,14 +163,13 @@ def _home_user_token(plex_username):
     }
     r = requests.get(f"{PLEX_TV}/api/v2/home/users", headers=headers, timeout=15)
     r.raise_for_status()
-    wanted = plex_username.strip().lower()
     for home_user in r.json().get("users") or []:
         names = {
             (home_user.get("username") or "").lower(),
             (home_user.get("title") or "").lower(),
         }
         if wanted in names and home_user.get("uuid"):
-            if home_user.get("protected"):
+            if home_user.get("protected") or home_user.get("admin"):
                 return None
             r = requests.post(
                 f"{PLEX_TV}/api/v2/home/users/{home_user['uuid']}/switch",

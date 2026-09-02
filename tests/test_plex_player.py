@@ -660,10 +660,12 @@ def test_play_route_refuses_a_post_without_a_csrf_token(
     assert json.loads(r.data)["ok"] is False
     assert fake.player_gets == [] and fake.queue_posts == []
 
-    # A plain form post is refused the same way
+    # A plain form post is sent back to the movie page with a flash
     r = user_client.post(f"/movie/{movie_id}/play", data={"player": "plex"})
-    assert r.status_code == 400
+    assert r.status_code == 302 and f"/movie/{movie_id}" in r.headers["Location"]
     assert fake.player_gets == []
+    # ...and the token itself never ages out of a long-open page
+    assert app.config["WTF_CSRF_TIME_LIMIT"] is None
 
 
 def test_remember_cookie_is_samesite_lax(app, client):
@@ -692,3 +694,107 @@ def test_remember_cookie_is_samesite_lax(app, client):
         if header.startswith("remember_token=")
     ]
     assert remember and "SameSite=Lax" in remember[0]
+
+
+def _home_users_calls(monkeypatch, fake):
+    """Count plex.tv Home-user list reads on top of the fake."""
+
+    import app.plex_player as plex_player
+
+    calls = []
+    original = fake.player_get
+
+    def counting_get(url, **kwargs):
+        if url.endswith("/home/users"):
+            calls.append(url)
+        return original(url, **kwargs)
+
+    monkeypatch.setattr(plex_player.requests, "get", counting_get)
+    return calls
+
+
+def test_owner_home_user_is_never_switched_to(app, monkeypatch, server_config):
+    """A member who claims the owner's Plex name gets nothing: the Home
+    user flagged admin is refused at the point tokens are minted."""
+
+    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    plex_player = _wire(monkeypatch, fake)
+    movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
+    with app.app_context():
+        ok, message = plex_player.play_movie(
+            movie, device_user(admin=False, plex_username="OWNER")
+        )
+    assert ok is False and "Plex Home" in message
+    assert fake.player_gets == [] and fake.queue_posts == []
+
+
+def test_blank_username_matches_no_managed_user(app, monkeypatch, server_config):
+    fake = FakePlex()
+    plex_player = _wire(monkeypatch, fake)
+    calls = _home_users_calls(monkeypatch, fake)
+    with app.app_context():
+        assert (
+            plex_player.player_token(device_user(admin=False, plex_username=" "))
+            is None
+        )
+    assert calls == []
+
+
+def test_home_user_miss_is_remembered_briefly(app, monkeypatch, server_config):
+    fake = FakePlex()
+    plex_player = _wire(monkeypatch, fake)
+    calls = _home_users_calls(monkeypatch, fake)
+    user = device_user(admin=False, plex_username="nobody")
+    with app.app_context():
+        assert plex_player.player_token(user) is None
+        assert plex_player.player_token(user) is None
+    assert len(calls) == 1
+    assert 0 < app.redis.ttl(plex_player.HOME_TOKEN_KEY.format(user_id=user.id)) <= 300
+
+
+def _plex_username_post(client, name):
+    return client.post(
+        "/profile",
+        data={
+            "csrf_token": page_csrf_token(client),
+            "plex_username": name,
+            "plex_submit": "Update Plex Mapping",
+        },
+        follow_redirects=True,
+    )
+
+
+def test_changing_the_plex_username_forgets_the_cached_home_token(app, user_client):
+    from app.models import User
+    from app.plex_player import HOME_TOKEN_KEY
+    from tests.conftest import MEMBER_EMAIL
+
+    with app.app_context():
+        user_id = User.query.filter_by(email=MEMBER_EMAIL).one().id
+    key = HOME_TOKEN_KEY.format(user_id=user_id)
+    app.redis.set(key, "HOME-TOKEN-OLD")
+    try:
+        r = _plex_username_post(user_client, "member")
+        assert "now count as yours" in r.get_data(as_text=True)
+        assert app.redis.get(key) is None
+    finally:
+        _plex_username_post(user_client, "")
+
+
+def test_plex_username_uniqueness_ignores_case(app, user_client):
+    from app import db
+    from app.models import User
+    from tests.conftest import ADMIN_EMAIL, MEMBER_EMAIL
+
+    with app.app_context():
+        User.query.filter_by(email=ADMIN_EMAIL).one().plex_username = "Owner"
+        db.session.commit()
+    try:
+        r = _plex_username_post(user_client, "owner")
+        assert "already mapped" in r.get_data(as_text=True)
+        with app.app_context():
+            assert User.query.filter_by(email=MEMBER_EMAIL).one().plex_username is None
+    finally:
+        with app.app_context():
+            User.query.filter_by(email=ADMIN_EMAIL).one().plex_username = None
+            db.session.commit()
