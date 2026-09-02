@@ -1,8 +1,8 @@
 """Test the ad-hoc Radarr hand-off.
 
 The tests cover the per-film request and withdrawal with the house
-settings, the Find-menu entries on the watchlist and the movie page,
-and the badge cache."""
+settings. They also cover the Find-menu entries on the watchlist and
+the movie page, and the badge cache."""
 
 import re
 

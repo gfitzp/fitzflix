@@ -1,11 +1,11 @@
 """Read and rewrite the streams inside a media file (the split from app.videos).
 
 This module has the MediaInfo scan and the stored track metadata
-(this includes the Dolby Vision profile parse), the mkvpropedit flag
-editor, the mkvmerge remuxer with their task wrappers that hold the
-locks, the subtitle inspection (possibly-forced flags, removal of
-empty tracks), and the planner and remuxers for the lossless-audio
-supplements.
+(this includes the Dolby Vision profile parse). It has the mkvpropedit
+flag editor and the mkvmerge remuxer, with their task wrappers that
+hold the locks. It has the subtitle inspection (possibly-forced flags,
+removal of empty tracks). It also has the planner and the remuxers for
+the lossless-audio supplements.
 
 app.videos exports each name here again. Thus, the stored rq job
 strings ("app.videos.mkvmerge_task") and the import sites continue to
@@ -322,9 +322,9 @@ def save_track_metadata(file_id, details, lock=None):
 def track_metadata_scan(file_id):
     """Scan the metadata of a file again on demand.
 
-    If a different task holds the lock of this title (for example, a
-    remux, a property edit, or a transcode in progress), this function
-    returns False without a scan.
+    A different task can hold the lock of this title (for example, a
+    remux, a property edit, or a transcode in progress). Then this
+    function returns False without a scan.
     """
 
     file = File.query.filter_by(id=file_id).first()
@@ -1390,8 +1390,8 @@ def flag_possibly_forced_subtitles(file, subtitle_tracks):
     """Find the subtitle tracks that can be forced subtitle tracks.
 
     A track qualifies if it has elements, but not more than 1/3 of the
-    elements of the first subtitle track, and it is not marked as
-    forced. This function sets the forced flag of that track to unknown
+    elements of the first subtitle track. The track must not be marked
+    as forced. This function sets the forced flag of that track to unknown
     (None). It reports that the file can have a forced subtitle track.
     """
 

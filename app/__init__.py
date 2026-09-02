@@ -77,8 +77,8 @@ def retry_job_id(task, target, *attempt):
 
     rq saves the payload of a job again when the job returns. Thus, a
     retry scheduled under the id of the job that schedules it is
-    overwritten with the stale kwargs of that job when the job
-    completes. The attempt counters never advance. The chain retries
+    overwritten. The retry gets the stale kwargs of that job when the
+    job completes. The attempt counters never advance. The chain retries
     forever and never gives up. This function puts the counters into
     the id. Thus, a deferred attempt keeps the replacement semantics,
     and each new attempt gets an id of its own.
@@ -322,8 +322,8 @@ def cron_table(config):
             "Refreshing streaming availability",
         ),
         # Compare the availability of the watchlisted films with the
-        # snapshot of the previous night and alert the watchers
-        # (#156/#230). The task writes badge records for everyone and 1
+        # snapshot of the previous night. Then alert the watchers (#156
+        # and #230). The task writes badge records for everyone and 1
         # digest email per opted-in user. It runs after the 04:30
         # refresh. Thus, the comparison reads the cache of tonight, not
         # of yesterday.

@@ -1,8 +1,9 @@
 """Test the derived files.
 
-The tests cover the record of transcode outputs, the adoption sweep,
-the linked delete (the rows cascade, and the physical purge enqueues),
-and the structural exclusion from the ranking surfaces."""
+The tests cover the record of transcode outputs and the adoption sweep.
+They cover the linked delete (the rows cascade, and the physical purge
+enqueues). They also cover the structural exclusion from the ranking
+surfaces."""
 
 import os
 

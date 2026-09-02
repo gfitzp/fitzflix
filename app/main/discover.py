@@ -1,8 +1,8 @@
 """Serve the discovery surfaces (the routes.py split).
 
-The surfaces are the landing rails, the Recommendations page, the TMDB
-log page, the poster popover cards (film and series), the watchlist,
-and the Radarr hand-off."""
+The surfaces are the landing rails, the Recommendations page, and the
+TMDB log page. They also include the poster popover cards (film and
+series), the watchlist, and the Radarr hand-off."""
 
 import os
 import traceback
@@ -157,8 +157,8 @@ def watchlist_shelf_rows(user):
     `urgent` is the films that leave soon. These are the streaming
     departures that the fold rules already treat as the loudest badge
     of the page. They are sorted best-first by suggested rating. They
-    hold the leading slots of the shelf in order, because a watchlisted
-    film that leaves soon is the most urgent card on the whole page.
+    hold the leading slots of the shelf in order. A watchlisted film
+    that leaves soon is the most urgent card on the whole page.
     `rows` is everything else, sorted best-first by suggested rating
     from the shared score source. Owned films never count as leaving.
     The disc does not go anywhere."""
@@ -1015,9 +1015,10 @@ def tv_card():
     """Render the card fragment of the poster popover for one TV series.
 
     This is the shape of the film card in TV terms. It shows the title,
-    the meta line of the run, the synopsis, the billed cast, the
-    In-library badge in its shopping colors, and how much of the run is
-    on the shelf. The key is series_id for library records, or tmdb_id
+    the meta line of the run, the synopsis, and the billed cast. It
+    also shows the In-library badge in its shopping colors, and how
+    much of the run is on the shelf. The key is series_id for library
+    records, or tmdb_id
     for a series with no local row (the unowned television credits of a
     person). The browser fetches the card only when the user hovers or
     taps a poster. Thus, the TV Library and filmography pages stay
@@ -1256,15 +1257,15 @@ def movie_states():
     # #246): the per-user corner overlays that every gallery tile paints
     # through this one batched fetch. The fold is green for a watchlist
     # film that recently became available (the record of the nightly
-    # alert diff), or for a film that recently arrived on the newly-added
-    # feed of a subscribed provider. The fold is red for a film in the
-    # leaving-Criterion set, for subscribers only. The client paints at
-    # most one fold. Red outranks green. Ownership overrides it all
-    # (Glenn, 2026-08-27). The copy of an owned film does not go
-    # anywhere. Thus, it never shows the red fold. Its only green fold is
-    # the recent arrival of the local file itself. Movie-keyed tiles need
-    # their tmdb ids for both lookups. One query covers them. Each set
-    # parses one time per request on flask.g.
+    # alert diff). It is also green for a film that recently arrived on
+    # the newly-added feed of a subscribed provider. The fold is red for
+    # a film in the leaving-Criterion set, for subscribers only. The
+    # client paints at most one fold. Red outranks green. Ownership
+    # overrides it all (Glenn, 2026-08-27). The copy of an owned film
+    # does not go anywhere. Thus, it never shows the red fold. Its only
+    # green fold is the recent arrival of the local file itself.
+    # Movie-keyed tiles need their tmdb ids for both lookups. One query
+    # covers them. Each set parses one time per request on flask.g.
 
     recent = recent_availability(current_user)
     provider_ids = set(user_provider_ids(current_user))

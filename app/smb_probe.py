@@ -491,8 +491,8 @@ def recheck():
     A file whose SHARE is unmounted goes into `skipped` and keeps its
     record unchanged. Every file on an unmounted share reports ENOENT at
     one time. If Fitzflix took that for departure, it would drop the
-    whole record, with the durations that exist nowhere else, when a
-    recheck ran during a remount. This function health-checks each share
+    whole record when a recheck ran during a remount. The durations in
+    that record exist nowhere else. This function health-checks each share
     ONCE, through a watchdog, before it probes the files of that share
     (#237). A wedged share hangs the open that the probe would make.
     Thus, a direct question to the file is what must not occur.

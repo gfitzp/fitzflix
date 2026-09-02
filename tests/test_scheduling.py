@@ -1,9 +1,10 @@
 """Test the deferred-retry scheduling.
 
-The tests cover the deterministic job ids that replace and do not stack,
-the scheduled jobs that bind to their target functions (the enqueue_in
-kwarg-leak bug class), the native ScheduledJobRegistry defers, the cron
-table, and the import-directory watchdog.
+The tests cover the deterministic job ids that replace and do not stack.
+They cover the scheduled jobs that bind to their target functions (the
+enqueue_in kwarg-leak bug class). They also cover the native
+ScheduledJobRegistry defers, the cron table, and the import-directory
+watchdog.
 """
 
 import inspect

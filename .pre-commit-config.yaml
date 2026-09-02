@@ -1,4 +1,5 @@
-# Formats staged Python files with black and lints them with pyflakes
+# Formats staged Python files with black, lints them with pyflakes, and
+# checks the docstrings and the Simplified Technical English of the prose
 # before each commit. One-time setup per clone: venv/bin/pre-commit install
 repos:
   - repo: local
@@ -20,5 +21,12 @@ repos:
         entry: venv/bin/python tests/test_docstrings.py
         language: system
         types: [python]
+        exclude: ^migrations/
+        pass_filenames: false
+      - id: ste
+        name: simplified technical english
+        entry: venv/bin/python tests/test_ste.py
+        language: system
+        files: \.(py|html|js|css|md)$
         exclude: ^migrations/
         pass_filenames: false

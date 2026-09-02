@@ -116,12 +116,12 @@ def downgrade_quality_title(original_quality, custom_format_score):
     not use a physical-media quality title. Thus, it uses the next highest
     quality. "Remux" also does not identify a Bluray rip:
 
-        DVD                 -> WEBDL-480p
-        Bluray-480p         -> WEBDL-480p
-        Bluray-720p         -> WEBDL-720p
-        Bluray-1080p        -> WEBDL-1080p
-        Bluray-1080p Remux  -> WEBDL-1080p
-        Remux-1080p         -> WEBDL-1080p
+        - DVD                 -> WEBDL-480p
+        - Bluray-480p         -> WEBDL-480p
+        - Bluray-720p         -> WEBDL-720p
+        - Bluray-1080p        -> WEBDL-1080p
+        - Bluray-1080p Remux  -> WEBDL-1080p
+        - Remux-1080p         -> WEBDL-1080p
 
     A download with a score below the custom-format threshold gets the
     label WEBRip instead of WEBDL.

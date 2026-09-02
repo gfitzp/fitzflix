@@ -246,9 +246,9 @@ def _taste_queries(profile, provider_ids):
 def _excluded_tmdb_ids(user_id):
     """Return the TMDB ids that the rail must never recommend.
 
-    These are the films with a local main-feature file, the films
+    These are the films with a local main-feature file, and the films
     already in the diary of this user (owned records and review-only
-    records), and the films that the user dismissed."""
+    records). The films that the user dismissed are also here."""
 
     owned = db.session.query(Movie.tmdb_id).filter(
         Movie.tmdb_id.isnot(None),
@@ -416,10 +416,11 @@ def compute_user_rail(user):
     """Return the ranked streaming rail for one user, or None.
 
     The result is None when the user has no taste profile or no
-    provider picks. Pipeline: shared provider pools + taste-shaped
-    queries -> coarse affinity ranking -> per-title availability
-    verification (discover lies, the watch-provider cache does not) ->
-    credits enrichment and full-feature rescoring of the survivors.
+    provider picks. The pipeline has 4 steps. First, the shared
+    provider pools and the taste-shaped queries. Second, the coarse
+    affinity ranking. Third, the per-title availability verification
+    (discover lies, the watch-provider cache does not). Fourth, the
+    credits enrichment and the full-feature rescoring of the survivors.
     """
 
     profile = stored_profile(current_app.redis, user.id)

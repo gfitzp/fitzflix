@@ -683,4 +683,12 @@ The suite covers:
 
 ## Language notes
 
-This document uses ASD-STE100 Simplified Technical English. Product names, file names, settings, and commands are technical names. These words are technical verbs, because the domain has no plain replacement: casefold, commit, dismiss, enqueue, log, merge, mount, parse, pin, poll, probe, queue, remux, rename, restore, scan, scrobble, stream, sync, transcode, and upload.
+This document, the page text, and the code comments use ASD-STE100 Simplified Technical English. The test `tests/test_ste.py` checks the prose for these mechanical rules:
+
+- no contractions
+- no em dashes
+- no semicolons that join clauses
+- no words from a short list that STE does not permit
+- a maximum of 25 words in a sentence
+
+The pre-commit hooks run the test before each commit. Product names, file names, settings, and commands are technical names. These words are technical verbs, because the domain has no plain replacement: casefold, commit, dismiss, enqueue, log, merge, mount, parse, pin, poll, probe, queue, remux, rename, restore, scan, scrobble, stream, sync, transcode, and upload.

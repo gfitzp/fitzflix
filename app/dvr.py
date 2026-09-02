@@ -607,10 +607,10 @@ def seed_default_channels():
     """Create the default dial as editable rows.
 
     This function runs 1 time, when the channel table is empty. The
-    dial is the all-library mix, the deepest movie genres, the
-    Criterion and Leaving Soon overlays, the deepest TV genres (with a
-    "TV" suffix), and the starter themes. From then on, the dial
-    belongs to the admin editor. It never seeds again."""
+    dial has the all-library mix, the deepest movie genres, and the
+    Criterion and Leaving Soon overlays. It also has the deepest TV
+    genres (with a "TV" suffix) and the starter themes. From then on,
+    the dial belongs to the admin editor. It never seeds again."""
 
     best = _best_files_by_movie()
     genres_by_movie = _genre_names_by_movie(list(best))

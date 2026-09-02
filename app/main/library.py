@@ -2024,8 +2024,9 @@ def people():
 
     # The browse path (no search) pages through the cached ranking.
     # Before 2026-08, the full aggregation over the cast and crew tables
-    # ran 2 times per visit (1 time for the page, 1 time for the count
-    # of paginate) at half a second each. A search still queries live.
+    # ran 2 times per visit. That was 1 time for the page and 1 time for
+    # the count of paginate, at half a second each. A search still
+    # queries live.
     # The name filter narrows it. The single-title people that it admits
     # are not in the ranking.
 
@@ -2454,10 +2455,10 @@ def tv(series_id):
         purge_derived_paths(derived_paths)
 
         # The folders themselves. delete_local_file removes only EMPTY
-        # directories. Thus, the poster art placed beside the episodes
-        # (by Fitzflix for movies, by Sonarr or by hand for TV) used to
-        # leave husks for the weekly sweep. An explicit delete clears
-        # the junk-only folders immediately.
+        # directories. Poster art sits beside the episodes (placed by
+        # Fitzflix for movies, by Sonarr or by hand for TV). Thus, that
+        # art used to leave husks for the weekly sweep. An explicit
+        # delete clears the junk-only folders immediately.
 
         from app.maintenance import clear_leftover_directory
 
@@ -2469,8 +2470,9 @@ def tv(series_id):
         )
         return redirect(url_for("main.tv_library"))
 
-    # The form to detach a series from TMDB completely, for a series that
-    # TMDB has no entry for, or an id that TMDB deleted later (#207)
+    # The form to detach a series from TMDB completely (#207). It is for
+    # a series that TMDB has no entry for, or an id that TMDB deleted
+    # later.
 
     tmdb_remove_form = TMDBRemoveForm()
     if tmdb_remove_form.remove_submit.data and tmdb_remove_form.validate_on_submit():
@@ -2936,10 +2938,10 @@ def file(file_id):
                 if not language:
                     unresolved.append(submitted.strip())
 
-                # The comparison uses resolved codes. Thus, a box that
-                # still holds a stored ISO 639-2/T spelling ("deu") does
-                # not read as a request to rewrite the track to the
-                # bibliographic spelling.
+                # The comparison uses resolved codes. Thus, a box can
+                # still hold a stored ISO 639-2/T spelling ("deu"). That
+                # box does not read as a request to rewrite the track to
+                # the bibliographic spelling.
 
                 elif language != (
                     resolve_language_code(track.language) or track.language

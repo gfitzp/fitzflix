@@ -1,9 +1,9 @@
 """Test the per-user watchlist, the funnel stage before the shopping list.
 
-These tests cover the toggles on the film pages, the /watchlist page
-with availability, the automatic removal when a watch arrives from any
-source, the Letterboxd watchlist.csv import, and the landing-page
-integrations."""
+These tests cover the toggles on the film pages and the /watchlist page
+with availability. They cover the automatic removal when a watch
+arrives from any source. They also cover the Letterboxd watchlist.csv
+import and the landing-page integrations."""
 
 import io
 import json

@@ -1,8 +1,8 @@
 """Test the Criterion Collection refresh from Wikidata.
 
 The tests cover the SPARQL response parser, the access etiquette headers,
-the match order (TMDB id first, then title and year), the protection of
-hand-set fields, and the Redis cache.
+and the match order (TMDB id first, then title and year). They also cover
+the protection of hand-set fields and the Redis cache.
 """
 
 import json

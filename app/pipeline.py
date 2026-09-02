@@ -98,9 +98,9 @@ def _basename_from_file_id(args, kwargs):
 
 
 # Each per-file pipeline task, by rq function name. The value is the
-# stage label that the trail shows, and the function that derives the
-# basename of the file from the arguments of the job. A task that is
-# not listed leaves no trail.
+# stage label that the trail shows, and a function. The function
+# derives the basename of the file from the arguments of the job. A
+# task that is not listed leaves no trail.
 
 STAGES = {
     "app.videos.localization_task": ("Localizing", _basename_from_path),
@@ -233,10 +233,10 @@ def _write_trail_entry(
                     # job-level entry always wins that order, because it
                     # exists from the enqueue time (Glenn, 2026-08).
 
-                    # A waiting stamp that arrives on an empty or fully
-                    # settled trail opens a NEW journey through the
-                    # pipeline (a re-import, or a later re-archive of a
-                    # file that arrived). Its enqueue anchor starts again.
+                    # A waiting stamp can arrive on an empty or fully
+                    # settled trail. Then it opens a NEW journey through
+                    # the pipeline (a re-import, or a later re-archive of
+                    # a file that arrived). Its enqueue anchor starts again.
                     # A retry after a failure continues the same journey.
                     # Thus, the anchor holds.
 

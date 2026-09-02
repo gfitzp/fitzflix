@@ -1,9 +1,9 @@
-"""Test the watchlist availability alerts (#156/#230).
+"""Test the watchlist availability alerts (#156 and #230).
 
-These tests cover the nightly snapshot diff, the 3 event kinds and
-their precedence, the leaving-Criterion warning, the digest batching
-and duplicate removal, the Profile opt-ins, and the recently-available
-badge on the watchlist page."""
+These tests cover the nightly snapshot diff, the 3 event kinds, and
+their precedence. They also cover the leaving-Criterion warning, the
+digest batching, and the duplicate removal. The Profile opt-ins and the
+recently-available badge on the watchlist page complete the set."""
 
 import json
 

@@ -334,9 +334,10 @@ def _build_options(answer_id, difficulty, rated_only=False):
     film among strangers gives the round away through the ears of
     Spock. Then come the same-genre films in the era, then each film in
     the era, then the same-genre films outside the era. Each rung tries
-    the tight year window of the difficulty before the wide window
-    (±5 then ±10 on Easy, ±2 then ±5 on Hard, the rule of Glenn,
-    2026-08-20). An option that is decades away gives the answer away.
+    the tight year window of the difficulty before the wide window. The
+    windows are ±5 then ±10 on Easy, and ±2 then ±5 on Hard (the rule
+    of Glenn, 2026-08-20). An option that is decades away gives the
+    answer away.
     Easy walks the ladder over the rated films of the user first. The
     same applies to a difficulty with the rated-films filter on,
     because an unrated option would mark the answer by elimination.
@@ -492,8 +493,9 @@ def _enqueue_frame_replacement(movie):
     """Queue the per-round pool top-up (requested by Glenn, 2026-08-27).
 
     After Fitzflix grades a round, the transcode queue swaps the frame
-    of its film for a frame of a film that is not in the pool. Thus,
-    the pool turns over continuously and does not wait for the nightly
+    of its film. The replacement is a frame of a film that is not in
+    the pool. Thus, the pool turns over continuously and does not wait
+    for the nightly
     pass. This runs only on a reveal. A skipped frame keeps its slot."""
 
     current_app.transcode_queue.enqueue(

@@ -676,10 +676,11 @@ def localization_task(
                     )
                     output_audio_langs = native_language
 
-                # If the first audio track is not in the native language, but
-                # the native language is present, export the tracks in the first
-                # language and all native-language audio. The file is probably a
-                # dub, or it has native-language commentary tracks.
+                # The first audio track can be in a language that is not the
+                # native language, while the native language is present. Then
+                # export the tracks in the first language and all
+                # native-language audio. The file is probably a dub, or it has
+                # native-language commentary tracks.
 
                 elif native_language in [track["language"] for track in audio_tracks]:
                     current_app.logger.info(

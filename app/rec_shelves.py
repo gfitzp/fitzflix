@@ -11,9 +11,10 @@ Sometimes a shelf fronts a SINGLE anchor (#249). This occurs at most
 1 time per load, for both kinds together. It applies only where the
 pair rule blocks variety. The first case is a copref anchor whose
 neighborhood pairs with no other anchor. The second case is a
-specific feature (a person, a keyword, or an award, never a genre or
-a decade) that exactly 1 rated-or-liked film has. The suggestions of
-a shelf are films that the user never logged or dismissed. They have
+specific feature that exactly 1 rated-or-liked film has. The feature
+is a person, a keyword, or an award, never a genre or a decade. The
+suggestions of a shelf are films that the user never logged or
+dismissed. They have
 the same criteria, and the user can watch them tonight. The film is
 in the local library, or it streams on one of the services of the
 user. Only films with records qualify. The answer comes from the
@@ -23,11 +24,12 @@ never a TMDB call at render time.
 Unlike the landing rails, nothing here is frozen for the day. Each
 reload draws a new set of shelves. The criteria shelves have weights
 toward the strongest interests of the user. The copref anchors and
-pairs are uniformly random. When the user acts on a suggestion (a
-rating, a watchlist add, or a dismissal), the tile endpoint replaces
-only that film with the next candidate that matches the criteria of
-the shelf. This page replaced the old /rate drive. A rating of a
-suggestion in place is now how the taste profile grows.
+pairs are uniformly random. The user can act on a suggestion (a
+rating, a watchlist add, or a dismissal). Then the tile endpoint
+replaces only that film. The replacement is the next candidate that
+matches the criteria of the shelf. This page replaced the old /rate
+drive. A rating of a suggestion in place is now how the taste profile
+grows.
 """
 
 import random
@@ -71,10 +73,11 @@ from app.streaming import (
 
 SHELF_CLASSES = ("genre", "keyword", "decade", "actor") + tuple(CREW_ROLE_JOBS)
 
-# These are the number of shelves that a page load tries to build, the
-# number of films that each shelf shows (5 suggestions, because the
-# anchor slot takes the first column of the row), and the minimum
-# number of films for a criteria set to get a shelf
+# These are the number of shelves that a page load tries to build, and
+# the number of films that each shelf shows. That number is 5
+# suggestions, because the anchor slot takes the first column of the
+# row. The last is the minimum number of films for a criteria set to
+# get a shelf.
 
 SHELF_COUNT = 10
 SHELF_SIZE = 5

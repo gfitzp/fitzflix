@@ -1,9 +1,9 @@
 """Test the film awards from Wikidata.
 
 These tests cover the batched SPARQL refresh with its current-truth
-replacement semantics, the person-item craft backfill that merges on
-top of it, the movie-page award strip, and the capped quality prior
-that the recommendation engine adds."""
+replacement semantics. They cover the person-item craft backfill that
+merges on top of it. They also cover the movie-page award strip and the
+capped quality prior that the recommendation engine adds."""
 
 from datetime import datetime
 
@@ -112,12 +112,13 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
 def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
     """Test that the craft backfill attributes for-work awards to films.
 
-    Person items hold the craft categories. An award statement that
-    names a library film as its "for work" attributes to the film
-    through the ids of the film (the IMDb batch first, then the TMDB
-    fallback). The rows merge without duplicates of what the film items
-    already list. A film row without a year still suppresses its dated
-    person copy. A win goes in when only the nomination is on record."""
+    Person items hold the craft categories. An award statement can name
+    a library film as its "for work". Then the award attributes to the
+    film through the ids of the film (the IMDb batch first, then the
+    TMDB fallback). The rows merge without duplicates of what the film
+    items already list. A film row without a year still suppresses its
+    dated person copy. A win goes in when only the nomination is on
+    record."""
 
     import app.awards as awards
 

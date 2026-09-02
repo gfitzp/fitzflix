@@ -157,17 +157,18 @@ PATCH_SCORES_TTL = 60 * 60 * 48
 
 TMDB_PATCH_SCORES_KEY = "fitzflix:recs:scores:tmdb:{user_id}"
 
-# This depth lets the no-repeat partition of the landing page (12
-# films a day, 1 for each quality tier) cycle the full set about each
-# month. The library pool measured more than 2,800 positive-scoring
-# films. Thus, the depth costs only Redis bytes.
+# The no-repeat partition of the landing page shows 12 films a day, 1
+# for each quality tier. This depth lets that partition cycle the full
+# set about each month. The library pool measured more than 2,800
+# positive-scoring films. Thus, the depth costs only Redis bytes.
 
 STORED_RECOMMENDATIONS = 400
 
 # The "Might interest you" markers: the maximum number of films that a
-# filmography page marks, the absolute minimum that a film must pass,
-# and the percentile of the own candidate library of the user that sets
-# the real bar. A saturated profile scores almost each film highly on
+# filmography page marks, and the absolute minimum that a film must
+# pass. The last is the percentile of the own candidate library of the
+# user. That percentile sets the real bar. A saturated profile scores
+# almost each film highly on
 # raw affinity. Thus, the badge means "much above your typical film",
 # not "matches a liked genre".
 

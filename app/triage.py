@@ -64,8 +64,9 @@ def forced_subtitle_candidates(file_id=None):
     """Return the subtitle tracks that look forced but have no flag, grouped by file.
 
     A track is suspicious if it is not forced and has 1 quarter or less
-    of the elements of the largest track with the same language in the
-    same file. This is the shape of a foreign-parts-only track next to
+    of the elements of a reference track. The reference track is the
+    largest track with the same language in the same file. This is the
+    shape of a foreign-parts-only track next to
     the full subtitles. Only meaningful comparisons count. The full
     track needs at least 100 elements. The candidate cannot be empty.
     This function excludes the files marked reviewed. It also excludes

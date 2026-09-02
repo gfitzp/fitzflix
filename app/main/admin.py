@@ -196,9 +196,9 @@ def _scheduled_tasks():
             )
 
     # The most frequent task is first (order requested by Glenn). The
-    # every-X-minutes tasks sort by X, the hourly tasks by minute, the
-    # daily tasks by time, the weekly tasks by day and time, and the
-    # monthly tasks by day of month and time
+    # every-X-minutes tasks sort by X. The hourly tasks sort by minute.
+    # The daily tasks sort by time. The weekly tasks sort by day and
+    # time. The monthly tasks sort by day of month and time.
 
     scheduled_tasks.sort(key=lambda task: _cron_frequency_key(task["cron_string"]))
     return scheduled_tasks
@@ -240,8 +240,8 @@ def _cron_description(cron_string):
 
     Examples: "Daily at 1:45 AM", "Four times hourly at :03, :18, :33,
     and :48". This function generates the text. It does not look it
-    up. The map that it replaced was 9 schedules behind the cron table
-    (app/__init__.py). A lookup stays correct only if the person who
+    up. The map that it replaced (in app/__init__.py) was 9 schedules
+    behind the cron table. A lookup stays correct only if the person who
     adds a job remembers to add a second line here. If the rules below
     do not cover the grammar (ranges, hour steps, a month field), the
     function returns the raw cron string. That string is short but

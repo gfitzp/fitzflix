@@ -1,9 +1,10 @@
 """Test the Criterion24/7 now-playing card.
 
 These tests cover the parse of the whatsonnow page (with its countdown
-typo), the film info page, the self-scheduling poller, and the card on
-the landing page. For the card they cover the gating, the staleness,
-the star row, and the credits with filmography links."""
+typo) and the film info page. They also cover the self-scheduling
+poller and the card on the landing page. For the card they cover the
+gating, the staleness, the star row, and the credits with filmography
+links."""
 
 import json
 import re

@@ -63,9 +63,9 @@ def provider_registry():
         r.raise_for_status()
         results = r.json().get("results") or []
     except Exception:
-        # Fitzflix remembers a failed fetch for a short time. Thus, the
-        # callers that ask for each film (the rec-shelf pool, the DVR
-        # build, the availability alerts) pay 1 timeout for each
+        # Fitzflix remembers a failed fetch for a short time. Some
+        # callers ask for each film (the rec-shelf pool, the DVR build,
+        # the availability alerts). Thus, they pay 1 timeout for each
         # outage, not 1 for each film.
         current_app.logger.warning(traceback.format_exc())
         current_app.redis.set(REGISTRY_KEY, "[]", ex=REGISTRY_RETRY_SECONDS)
@@ -282,9 +282,9 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
     """Return the providers that carry the film and that the user subscribes to.
 
     Only the streaming kinds count (flatrate, then free-with-ads). Rent
-    and buy are not subscriptions. If the caller gives the tmdb_id of
-    the film, a Criterion Channel match also learns if the film is on
-    the leaving set of the month. Its "leaving" key holds the departure
+    and buy are not subscriptions. The caller can give the tmdb_id of
+    the film. Then a Criterion Channel match also learns if the film is
+    on the leaving set of the month. Its "leaving" key holds the departure
     date ("August 31"). Thus, the badge can light up wherever it
     renders (requested by Glenn, 2026-08, to watch it before it goes).
 
@@ -365,8 +365,8 @@ def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
     your services" instead of nothing. Only those pages also list where
     the user can rent the film, because the watch decision is live
     there. Fitzflix filters the rentals to the selected services of the
-    user too (a rental at a different place is 1 click away through the
-    watch-page link). A rental never counts as a subscription match.
+    user too. A rental at a different place is 1 click away through the
+    watch-page link. A rental never counts as a subscription match.
     local=True marks an owned film. The strip then starts with "In your
     library". Thus, a streaming badge never outranks the copy on the
     shelf. The payload survives an empty match list to say so.

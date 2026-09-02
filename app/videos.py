@@ -1,9 +1,9 @@
 """The shared task plumbing and the compatibility shim.
 
 This module keeps the machinery that every pipeline module uses. That
-is the file copy with progress and retries after transient errors, the
-acquire-or-defer sequence for the title lock, the subprocess
-supervision, and the dead-volume probe.
+is the file copy with progress and retries after transient errors, and
+the acquire-or-defer sequence for the title lock. It is also the
+subprocess supervision and the dead-volume probe.
 
 All the other names are re-exports from the modules that the strangler
 split created (aws_storage, criterion_catalog, diary, tracks,

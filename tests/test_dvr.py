@@ -1,9 +1,10 @@
 """Test the virtual DVR channels (#182).
 
-These tests cover the token gate on all 3 endpoints, the nightly lineup
-build (genre channels, duration cache), the cyclic schedule math, the
-agreement between the guide and the playlist, and the roll of the
-stream generator from program to program."""
+These tests cover the token gate on all 3 endpoints and the nightly
+lineup build (genre channels, duration cache). They also cover the
+cyclic schedule math and the agreement between the guide and the
+playlist. The roll of the stream generator from program to program
+completes the set."""
 
 import io
 import json

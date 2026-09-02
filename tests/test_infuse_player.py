@@ -1,11 +1,11 @@
 """Test Infuse playback on the Apple TV of each user (#192).
 
 The tests cover the Companion deep link, the Infuse-only-format
-recommendation, and the app dispatch of the play route (explicit
-choice, per-user default, fallbacks, the recommendation note that goes
-with the result). They also cover the 2 buttons of the movie page and
-the PIN pairing of the Profile page. That pairing runs as a queue task
-with a Redis hand-off."""
+recommendation, and the app dispatch of the play route. The dispatch
+cases are the explicit choice, the per-user default, the fallbacks, and
+the recommendation note that goes with the result. The tests also cover
+the 2 buttons of the movie page and the PIN pairing of the Profile
+page. That pairing runs as a queue task with a Redis hand-off."""
 
 import asyncio
 import json

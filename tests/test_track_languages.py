@@ -2,12 +2,12 @@
 
 When the headers of a disc are vague, MediaInfo falls back to und or
 zxx. The language boxes are the only way to correct those values. Thus,
-the value that reaches mkvpropedit must survive 3 steps: the value that
-the datalist of a browser puts in the box, the diff of the route
-against the stored value, and the argument that Fitzflix gives to
-mkvpropedit. The end-to-end test does the last step against a real
-Matroska file. Without that, a rejected --set language looks like a
-silent no-op.
+the value that reaches mkvpropedit must survive 3 steps. The first step
+is the value that the datalist of a browser puts in the box. The second
+step is the diff of the route against the stored value. The third step
+is the argument that Fitzflix gives to mkvpropedit. The end-to-end test
+does the last step against a real Matroska file. Without that, a
+rejected --set language looks like a silent no-op.
 
 #222 goes with this because it is the same template. A </div> outside
 {% if subtitle_tracks %} closed the left column early on each file

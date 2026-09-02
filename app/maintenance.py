@@ -1243,13 +1243,13 @@ def cleanup_orphaned_files():
     This task also drops the leftover scratch database of a failed
     restore drill. Every pipeline stage that moves media writes it under
     a dot-prefixed name first. Examples are the localization staging
-    file (and its .convert.mkv scratch file), cross-volume library
-    copies, AWS downloads into the import directory, reject moves
-    (.partial), and transcode outputs. The stage promotes the file to
-    the visible name only on success. Thus, a hidden file that is 1 week
-    old can only be the residue of a failed task. The deletions have an
-    age condition. They are limited to those directories. The task sends
-    a summary by email.
+    file (and its .convert.mkv scratch file) and cross-volume library
+    copies. Other examples are AWS downloads into the import directory,
+    reject moves (.partial), and transcode outputs. The stage promotes
+    the file to the visible name only on success. Thus, a hidden file
+    that is 1 week old can only be the residue of a failed task. The
+    deletions have an age condition. They are limited to those
+    directories. The task sends a summary by email.
     """
 
     with app.app_context():

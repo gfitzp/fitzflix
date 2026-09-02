@@ -1,9 +1,10 @@
 """Test the Recommendations page (#235).
 
 The tests cover the criteria-keyed shelves that 2 interest films anchor
-(or sometimes 1 film, #249), the eligibility pool (owned or streaming),
-the new draw on each reload, and the tile endpoint. The tile endpoint
-refills a slot after a rating, a watchlist add, or a wave-off."""
+(or sometimes 1 film, #249). They cover the eligibility pool (owned or
+streaming), the new draw on each reload, and the tile endpoint. The
+tile endpoint refills a slot after a rating, a watchlist add, or a
+wave-off."""
 
 import json
 import random

@@ -320,9 +320,10 @@ def analyze_plex_media(file_paths, retries=0):
             return True
 
         # The files that remain: a file that Plex has not scanned since
-        # it appeared (the usual case, and a first scan analyzes it
-        # anyway), or a file whose mount was down. The quarter-hourly
-        # scan resolves both. Thus, one deferred attempt follows that
+        # it appeared, or a file whose mount was down. The first is the
+        # usual case, and a first scan analyzes it anyway. The
+        # quarter-hourly scan resolves both. Thus, one deferred attempt
+        # follows that
         # scan. Then the task drops the matter. It does not retry
         # forever.
 

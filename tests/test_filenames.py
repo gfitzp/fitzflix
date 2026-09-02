@@ -178,14 +178,14 @@ def test_edge_cases(app, filename, expected):
 @pytest.mark.parametrize(
     "filename",
     [
-        "Jaws (1975) - [Bluray-4K].mkv",  # an unknown quality title
-        "Friends - S01E01 - [Ultra-HD].mkv",  # an unknown quality title (TV)
-        "Jaws - [DVD].mkv",  # a movie without a year
-        "totally random file.mkv",  # matches no format
-        "Jaws (1975).mkv",  # no quality tag at all
-        "Jaws (1975) {bogus-123} - [DVD].mkv",  # an unknown brace tag kind
-        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # the imdb id has no tt prefix
-        "Hamilton {edition-Broadway} - [DVD].mkv",  # a yearless name needs an id tag
+        "Jaws (1975) - [Bluray-4K].mkv",  # an unknown quality title.
+        "Friends - S01E01 - [Ultra-HD].mkv",  # an unknown quality title (TV).
+        "Jaws - [DVD].mkv",  # a movie without a year.
+        "totally random file.mkv",  # matches no format.
+        "Jaws (1975).mkv",  # no quality tag at all.
+        "Jaws (1975) {bogus-123} - [DVD].mkv",  # an unknown brace tag kind.
+        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # the imdb id has no tt prefix.
+        "Hamilton {edition-Broadway} - [DVD].mkv",  # a yearless name needs an id tag.
     ],
 )
 def test_rejected_filenames(app, filename):

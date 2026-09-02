@@ -1,10 +1,11 @@
 """Test the "Streaming on your services" rail.
 
 These tests cover the discover pools as candidate generators, the
-coarse taste ranking, the per-title availability verification, the
-credits enrichment, and the landing-page section with its mandatory
-JustWatch attribution. The provider filters of discover contaminate
-each other. Thus, the pools are never the display truth."""
+coarse taste ranking, and the per-title availability verification.
+They also cover the credits enrichment and the landing-page section
+with its mandatory JustWatch attribution. The provider filters of
+discover contaminate each other. Thus, the pools are never the display
+truth."""
 
 import json
 

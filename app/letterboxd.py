@@ -3,12 +3,12 @@
 The feed is the public account surface of Letterboxd. The real API of
 Letterboxd requires an invitation. The feed has the latest
 approximately 50 diary and review items. Each item has a TMDB id, the
-watched date, the rewatch flag, the like, the half-star rating if the
-user gave one, and the review text. Ingest is a merge, never a blind
-append. The central rule is this: a feed item COMPLETES the bare row
-that a Plex scrobble already wrote for the same film on the same day
-(plus or minus 1 day). Thus, one viewing stays one row when each
-system reports it.
+watched date, the rewatch flag, and the like. It also has the
+half-star rating if the user gave one, and the review text. Ingest is
+a merge, never a blind append. The central rule is this: a feed item
+COMPLETES the bare row that a Plex scrobble already wrote for the same
+film. The day must be the same (plus or minus 1 day). Thus, one
+viewing stays one row when each system reports it.
 """
 
 import html

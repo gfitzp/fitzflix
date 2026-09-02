@@ -147,8 +147,9 @@ def tmdb_get(url, **kwargs):
     """GET a TMDB API resource through a shared rate limiter.
 
     TMDB limits the rate to approximately 40 to 50 requests per second
-    per IP (https://developer.themoviedb.org/docs/rate-limiting). Every
-    worker and web process shares a Redis counter keyed on the current
+    per IP. Refer to https://developer.themoviedb.org/docs/rate-limiting
+    for the rule. Every worker and web process shares a Redis counter
+    keyed on the current
     second. Thus, their combined request rate stays at or below
     TMDB_REQUESTS_PER_SECOND, whatever the number of processes.
     """
@@ -319,9 +320,9 @@ class TMDBMixin(object):
         # genres of 943 films permanently (#251. The credits glitch of
         # 2026-08-22 had the same failure shape). An empty incoming list
         # never deletes the rows that the record already has. Fitzflix
-        # keeps the rows and logs the anomaly. A film that really loses
-        # all its genres or keywords on TMDB is much more rare than TMDB
-        # that serves bad data for a short time.
+        # keeps the rows and logs the anomaly. A film can really lose all
+        # its genres or keywords on TMDB. That is much more rare than bad
+        # data from TMDB for a short time.
 
         if tmdb_info.get("genres") or self.genres.count() == 0:
             for genre in TMDBGenre.query.all():
@@ -1528,8 +1529,9 @@ class User(UserMixin, db.Model):
                 )
 
         # A deferred retry (a file that is still copying in, or a locked
-        # title) is in the ScheduledJobRegistry of each queue, not in the
-        # queue itself. Before, these retries were not visible here. They
+        # title) is in the ScheduledJobRegistry of each queue. It is not
+        # in the queue itself. Before, these retries were not visible
+        # here. They
         # showed only as amber chips on the in-flight list of the File
         # Activity page. The trail chips moved onto the queue rows (Glenn,
         # 2026-08). Now the queue page is the one place that shows all the
@@ -2209,22 +2211,23 @@ class File(db.Model):
         #   file is full screen, always reject the new full screen file.
         #
         # - If the existing and the new files are both non-full screen
-        #   versions, replace the existing file only if the new file has the
-        #   same or better quality.
+        #   versions, compare the quality. Replace the existing file only
+        #   if the new file has the same or better quality.
         #
         # TV Shows:
         #
         # - If the existing file is a full screen version, always replace
-        #   it with a non-full screen version, even if the quality is lower
-        #   or a multi-episode file loses episodes.
+        #   it with a non-full screen version. Do this even if the quality
+        #   is lower, or if a multi-episode file loses episodes.
         #
         # - If the existing file is a non-full screen version, and the new
         #   file is full screen, always reject the new full screen file.
         #
         # - If the existing and the new files are both non-full screen
-        #   versions, replace the existing file only if the new file has the
-        #   same or better quality, and if the new file contains the same
-        #   number of episodes or more.
+        #   versions, compare the quality and the episode count. Replace
+        #   the existing file only if the new file has the same or better
+        #   quality. The new file must also contain the same number of
+        #   episodes or more.
         #
         # Never import full screen versions of movies or TV shows. Then you
         # should be safe. You do not want full screen versions anyway.

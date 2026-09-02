@@ -1,8 +1,8 @@
 """Test the Letterboxd review import and export.
 
-These tests cover the parse of an account-export zip, the film match,
-the load of the user_movie_review table, and the export of a CSV in the
-Letterboxd import format."""
+These tests cover the parse of an account-export zip and the film
+match. They also cover the load of the user_movie_review table and the
+export of a CSV in the Letterboxd import format."""
 
 import inspect
 import io

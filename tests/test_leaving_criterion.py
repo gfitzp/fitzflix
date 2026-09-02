@@ -1,8 +1,8 @@
 """Test the leaving-Criterion shelf.
 
 These tests cover the sanctioned scrape of the official leaving page,
-the TMDB matching, the monthly refresh task, and the taste-ranked
-landing-page shelf with its shopping-list urgency badge."""
+the TMDB matching, and the monthly refresh task. They also cover the
+taste-ranked landing-page shelf with its shopping-list urgency badge."""
 
 import json
 
@@ -799,9 +799,10 @@ def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):
 def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch):
     """Test that a departing film lights its Criterion Channel badge.
 
-    Wherever the Criterion Channel availability badge of a film renders,
-    it shows red with the departure date while the film is on the
-    leaving set of the month. This test covers the strip of the movie
+    The Criterion Channel availability badge of a film can render in
+    many places. While the film is on the leaving set of the month, the
+    badge shows red with the departure date in each of those places.
+    This test covers the strip of the movie
     page and the poster popover. The search results and the filmography
     rows share the macro. Other Criterion films keep the plain badge.
     The highlight clears after the departure date has passed."""

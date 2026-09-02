@@ -1,8 +1,9 @@
 """Test the watchlist sync between Plex and Fitzflix.
 
 These tests cover the union bootstrap, the two-way incremental
-reconcile, the retry semantics for a push failure, and the anomaly
-guard that stops an API glitch from reading as a mass removal."""
+reconcile, and the retry semantics for a push failure. They also cover
+the anomaly guard that stops an API glitch from reading as a mass
+removal."""
 
 import json
 

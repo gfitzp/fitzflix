@@ -20,9 +20,10 @@ from tests.test_recommendations import admin_id, make_cast, make_person
 def test_movie_card_for_a_library_film(app, admin_client):
     """Test the card of a library record.
 
-    The card shows the linked credits, the meta line (runtime, genres,
-    and the US rating in its box), the synopsis, and the In-library badge
-    in shopping colors. It has no forms. The actions are on the tile."""
+    The card shows the linked credits and the meta line (runtime, genres,
+    and the US rating in its box). It also shows the synopsis and the
+    In-library badge in shopping colors. It has no forms. The actions are
+    on the tile."""
 
     from app.models import RefTMDBCertification, TMDBGenre
 

@@ -1,9 +1,10 @@
 """The "On Criterion24/7 now" card of the landing page.
 
 whatsonnow.criterionchannel.com is the public now-playing page of the
-Channel for its 24/7 feed. It shows the title of the current film, a
-More link to the info page of the film, and a server-rendered countdown
-to the next film. The countdown has a literal </snap> typo. Thus, the
+Channel for its 24/7 feed. It shows the title of the current film and
+a More link to the info page of the film. It also shows a
+server-rendered countdown to the next film. The countdown has a
+literal </snap> typo. Thus, the
 parser stays lenient. A poller scrapes the page. It follows the More
 link for the "Directed by X • YYYY • Country" and "Starring …" lines.
 It matches the film to TMDB by title and year for a direct poster link.

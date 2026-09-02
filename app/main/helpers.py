@@ -345,8 +345,8 @@ def series_upgradable(series_ids):
     ).filter(ranked_files.c.rank == 1):
         key = (series_id, season)
         held = worst.get(key)
-        # A tie goes to the non-physical copy. If 2 episodes tie as the
-        # worst of the season and one of them CAN be upgraded, the season
+        # A tie goes to the non-physical copy. 2 episodes can tie as the
+        # worst of the season. If one of them CAN be upgraded, the season
         # still has an episode worth an upgrade.
         if (
             held is None

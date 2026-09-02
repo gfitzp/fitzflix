@@ -1,10 +1,10 @@
 """Test remote playback on the device of each user (Plex Companion).
 
 These tests cover the ratingKey resolution by TMDB guid with a verified
-title-search fallback, the empty-play-queue guard, the exact hand-off
-that was validated with the player, the per-user targeting, the play
-route, the button on the popover card, and the probe-and-save device
-flow on the Profile page."""
+title-search fallback, and the empty-play-queue guard. They cover the
+exact hand-off that was validated with the player, and the per-user
+targeting. They also cover the play route, the button on the popover
+card, and the probe-and-save device flow on the Profile page."""
 
 import json
 import re

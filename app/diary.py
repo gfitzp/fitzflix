@@ -217,9 +217,9 @@ def _pick_tmdb_match(title, year, year_filtered, title_only):
     An exact (normalized) title among the year-filtered results wins.
     If there is none, use the exact match of the title-only search with
     the nearest year. Accept it if the year is within 2 years. Also
-    accept it at any distance if it is the only exact match, because
-    the TMDB year and the Letterboxd year can differ a lot (The Men Who
-    Tread on the Tiger's Tail: 1945 and 1952). Only then use the first
+    accept it at any distance if it is the only exact match. The TMDB
+    year and the Letterboxd year can differ a lot (The Men Who Tread on
+    the Tiger's Tail: 1945 and 1952). Only then use the first
     year-filtered result. That result matched through an alternative
     title in the correct year (Waking Ned Devine to Waking Ned). Do not
     use that first result FIRST. That is how "300" (2006) one time

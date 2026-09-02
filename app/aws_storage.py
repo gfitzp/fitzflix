@@ -1,9 +1,10 @@
 """Talk to AWS storage. This is the first strangler slice out of videos.py.
 
-This module holds each function that talks to S3 and SQS: the
-untouched-original archive uploads, the restores and the downloads,
-the weekly storage audit, the SQS restore-notification poller, and the
-key functions (etags, key sanitizing, the untouched-key handoff guard).
+This module holds each function that talks to S3 and SQS. These are
+the untouched-original archive uploads, the restores, and the
+downloads. They also include the weekly storage audit and the SQS
+restore-notification poller. The key functions (etags, key sanitizing,
+the untouched-key handoff guard) are here too.
 
 The rq job names are strings that live in Redis. Thus, app.videos
 EXPORTS each name here again. The enqueue sites and the stored jobs
@@ -1483,7 +1484,8 @@ def calculate_etag(file_path):
 def get_matching_s3_objects(bucket, prefix="", suffix=""):
     """Iterate through the objects in S3 storage.
 
-    https://alexwlchan.net/2019/07/listing-s3-keys/
+    https://alexwlchan.net/2019/07/listing-s3-keys/ (STE: exempt, licence
+    notice)
 
     Copyright (c) 2012-2019 Alex Chan
 

@@ -177,8 +177,8 @@ class Config(object):
     AWS_DOWNLOAD_PER_GB_COST             = float(os.environ.get("AWS_DOWNLOAD_PER_GB_COST") or 0.09)
 
     # Health monitoring. Alert when the free space of a volume falls below
-    # this value, not on the percent used, because the NAS library volumes
-    # are almost full by design.
+    # this value, not on the percent used. The NAS library volumes are
+    # almost full by design.
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 

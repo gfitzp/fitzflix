@@ -1,9 +1,10 @@
 """Test the TV surfaces.
 
 This covers the episode guide of the season page, the episode search,
-the TV credits of the people page, the Television section of the
-filmography, the meta line of the tv page, and the series popover card
-that the TV Library posters and the filmography posters show."""
+and the TV credits of the people page. It also covers the Television
+section of the filmography and the meta line of the tv page. The series
+popover card that the TV Library posters and the filmography posters
+show completes the set."""
 
 import json
 
