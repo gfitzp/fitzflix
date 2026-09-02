@@ -48,7 +48,7 @@ from app.infuse_player import (
     start_pairing,
     submit_pin,
 )
-from app.plex_player import probe_player, remote_playback_configured
+from app.plex_player import probe_player, remote_playback_configured, player_address
 from app.models import (
     Movie,
     User,
@@ -669,11 +669,14 @@ def profile():
             current_user.plex_player_id = None
             db.session.commit()
             flash("Removed your playback device.", "success")
-        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+        elif player_address(address) is None:
+            flash(
+                "That doesn't look like a private-network ip:port. Hostnames "
+                "aren't accepted — the play command carries a Plex token.",
+                "danger",
+            )
         else:
-            if ":" not in address.strip("[]"):
-                address = f"{address}:32500"
+            address = player_address(address)
             player = probe_player(address)
             if player is None:
                 flash(

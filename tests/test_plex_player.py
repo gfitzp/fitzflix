@@ -20,14 +20,37 @@ SERVER_CONFIG = {
 }
 
 
-def device_user(address="192.168.1.247:32500", machine_id="ATV-MACHINE-ID"):
-    """A stand-in user carrying a playback device."""
+def device_user(
+    address="192.168.1.247:32500",
+    machine_id="ATV-MACHINE-ID",
+    admin=True,
+    plex_username=None,
+):
+    """A stand-in user carrying a playback device — the admin by
+    default, whose play command carries the owner token."""
 
     return SimpleNamespace(
+        id=1,
+        admin=admin,
+        plex_username=plex_username,
         plex_player_address=address,
         plex_player_id=machine_id,
         plex_player_configured=bool(address and machine_id),
     )
+
+
+HOME_USERS = {
+    "users": [
+        {"uuid": "OWNER-UUID", "username": "owner", "title": "owner", "admin": True},
+        {
+            "uuid": "MEMBER-UUID",
+            "username": None,
+            "title": "Member",
+            "protected": False,
+        },
+        {"uuid": "KID-UUID", "username": None, "title": "Kid", "protected": True},
+    ]
+}
 
 
 class FakePlex:
@@ -60,6 +83,10 @@ class FakePlex:
         raise AssertionError(f"unexpected GET {path}")
 
     def post(self, url, params=None, headers=None, timeout=None):
+        if url.startswith("https://plex.tv/api/v2/home/users/"):
+            # The Home switch: a token for that user, not the owner's
+            uuid = url.rsplit("/", 2)[1]
+            return FakeResponse({"authToken": f"HOME-TOKEN-{uuid}"})
         assert url == "http://plex.test/playQueues"
         self.queue_posts.append(params)
         return FakeResponse(
@@ -72,6 +99,8 @@ class FakePlex:
         )
 
     def player_get(self, url, params=None, headers=None, timeout=None):
+        if url == "https://plex.tv/api/v2/home/users":
+            return FakeResponse(HOME_USERS)
         self.player_gets.append({"url": url, "params": params, "headers": headers})
         return FakeResponse({})
 
@@ -107,12 +136,14 @@ def member_device(app):
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
         user.plex_player_address = "192.168.1.63:32500"
         user.plex_player_id = "MEMBER-ATV-ID"
+        user.plex_username = "Member"
         db.session.commit()
     yield
     with app.app_context():
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
         user.plex_player_address = None
         user.plex_player_id = None
+        user.plex_username = None
         db.session.commit()
 
 
@@ -331,6 +362,11 @@ def test_play_route_uses_the_users_device(
     [command] = fake.player_gets
     assert command["url"].startswith("http://192.168.1.63:32500/")
     assert command["headers"]["X-Plex-Target-Client-Identifier"] == "MEMBER-ATV-ID"
+    # A member's device gets a token for THEIR Plex Home user — the
+    # owner token never travels to an address a member chose — and
+    # the play queue was built as that user so the token can fetch it
+    assert command["params"]["token"] == "HOME-TOKEN-MEMBER-UUID"
+    assert fake.queue_posts[0]["X-Plex-Token"] == "HOME-TOKEN-MEMBER-UUID"
 
 
 def test_play_route_without_a_device_reports_kindly(
@@ -494,5 +530,109 @@ def test_profile_rejects_a_malformed_address(
     monkeypatch.setattr(account, "probe_player", lambda address: probed.append(address))
 
     r = _profile_post(user_client, "192.168.1.63/evil?x=1")
-    assert "ip:port or hostname:port" in r.get_data(as_text=True)
+    assert "private-network ip:port" in r.get_data(as_text=True)
     assert probed == []
+
+
+# --- Who gets which token, and where a player may live ---
+
+
+def test_member_without_a_linked_home_user_never_sees_the_owner_token(
+    app, monkeypatch, server_config
+):
+    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    plex_player = _wire(monkeypatch, fake)
+    movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
+    with app.app_context():
+        ok, message = plex_player.play_movie(
+            movie, device_user(admin=False, plex_username=None)
+        )
+    assert ok is False and "Plex Home" in message
+    assert fake.player_gets == [] and fake.queue_posts == []
+
+
+def test_protected_home_user_is_refused(app, monkeypatch, server_config):
+    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    plex_player = _wire(monkeypatch, fake)
+    movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
+    with app.app_context():
+        ok, _ = plex_player.play_movie(
+            movie, device_user(admin=False, plex_username="kid")
+        )
+    assert ok is False
+    assert fake.player_gets == []
+
+
+def test_home_token_is_cached(app, monkeypatch, server_config):
+    fake = FakePlex()
+    plex_player = _wire(monkeypatch, fake)
+    switches = []
+    original_post = fake.post
+
+    def counting_post(url, **kwargs):
+        if "/switch" in url:
+            switches.append(url)
+        return original_post(url, **kwargs)
+
+    monkeypatch.setattr(plex_player.requests, "post", counting_post)
+    user = device_user(admin=False, plex_username="member")
+    with app.app_context():
+        first = plex_player.player_token(user)
+        second = plex_player.player_token(user)
+    assert first == second == "HOME-TOKEN-MEMBER-UUID"
+    assert len(switches) == 1
+
+
+def test_admin_keeps_the_owner_token(app, monkeypatch, server_config):
+    fake = FakePlex()
+    plex_player = _wire(monkeypatch, fake)
+    with app.app_context():
+        assert plex_player.player_token(device_user(admin=True)) == "token"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("192.168.1.63", "192.168.1.63:32500"),
+        ("10.0.0.5:32500", "10.0.0.5:32500"),
+        ("100.101.0.9", "100.101.0.9:32500"),
+        ("[fd12::1]:32500", "[fd12::1]:32500"),
+        ("fe80::1", "[fe80::1]:32500"),
+        ("appletv.local:32500", None),
+        ("attacker.example.com", None),
+        ("8.8.8.8:32500", None),
+        ("192.168.1.63:0", None),
+        ("192.168.1.63:99999", None),
+        ("", None),
+    ],
+)
+def test_player_address_accepts_only_private_literals(text, expected):
+    from app.plex_player import player_address
+
+    assert player_address(text) == expected
+
+
+def test_play_refuses_a_stored_hostname(app, monkeypatch, server_config):
+    # A row edited outside the Profile page still can't send the
+    # token to a name
+    fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
+    plex_player = _wire(monkeypatch, fake)
+    movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
+    with app.app_context():
+        ok, message = plex_player.play_movie(
+            movie, device_user(address="attacker.example.com:32500")
+        )
+    assert ok is False and "private-network" in message
+    assert fake.player_gets == []
+
+
+def test_profile_rejects_a_hostname(app, monkeypatch, user_client, server_config):
+    import app.main.account as account
+
+    probes = []
+    monkeypatch.setattr(
+        account, "probe_player", lambda address: probes.append(address) or None
+    )
+    r = _profile_post(user_client, "appletv.local")
+    assert "private-network" in r.get_data(as_text=True)
+    assert probes == []

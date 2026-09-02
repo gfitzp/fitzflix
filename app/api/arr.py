@@ -40,10 +40,17 @@ def import_event_webhook(service):
                 response.status_code = 401
                 return response
 
-            # The password field must hold the user's API key
+            # The password field must hold the user's API key — an
+            # ADMIN's: the handlers rename, delete, and import files by
+            # the paths the payload names, so a member account's key
+            # must not open them (security review, Sept 2026)
 
-            if authenticate_api_request() is None:
+            user = authenticate_api_request()
+            if user is None:
                 response.status_code = 401
+                return response
+            if not user.admin:
+                response.status_code = 403
                 return response
 
             # If the service is just confirming the connection, return a
@@ -67,6 +74,27 @@ def import_event_webhook(service):
         return wrapper
 
     return decorator
+
+
+def downloaded_path(service, folder, relative):
+    """The absolute path of the file a webhook payload names, or None
+    when it doesn't sit under the service's library root — Radarr's
+    is MOVIE_LIBRARY, Sonarr's TV_LIBRARY, the root folders the apps
+    import into. The handlers rename, delete, and enqueue by this
+    path, so the payload's two halves aren't trusted to compose one:
+    an absolute or parent-hopping relativePath, or a folder outside
+    the root, is refused (security review, Sept 2026)."""
+
+    root = current_app.config["MOVIE_LIBRARY" if service == "Radarr" else "TV_LIBRARY"]
+    if not folder or not relative or os.path.isabs(relative):
+        return None
+    if os.pardir in relative.split(os.sep):
+        return None
+    path = os.path.realpath(os.path.join(folder, relative))
+    root = os.path.realpath(root)
+    if os.path.commonpath([path, root]) != root:
+        return None
+    return path
 
 
 def downgrade_quality_title(original_quality, custom_format_score):
