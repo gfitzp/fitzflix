@@ -6,6 +6,7 @@ import json
 
 from datetime import date, timedelta
 
+from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 
 LEAVING_HTML = """
@@ -301,6 +302,11 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
     monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+    from app import db
+
+    with app.app_context():
+        make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
+        db.session.commit()
 
     assert leaving_criterion.refresh_leaving_criterion() is True
 
@@ -321,28 +327,9 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
     # The new set reaches the DVR dial the same day (Sept 1 2026: the
     # 6:30 build ran before the set landed at 11:38, and the Leaving
-    # Soon channel stayed dark until the next morning)
+    # Soon channel stayed dark until the next morning) — because The
+    # Searchers is owned; a set with no owned film changes no program
     assert len(dvr_rebuild_jobs(app)) == 1
-
-
-def dvr_rebuild_jobs(app):
-    return [
-        job
-        for job in app.maintenance_queue.jobs
-        if job.func_name == "app.dvr.build_channel_lineups"
-    ]
-
-
-def test_dvr_rebuild_waits_on_a_configured_dvr(app, monkeypatch):
-    import app.leaving_criterion as leaving_criterion
-
-    with app.app_context():
-        monkeypatch.setitem(app.config, "DVR_TOKEN", None)
-        leaving_criterion.rebuild_dvr_lineups("test")
-        assert dvr_rebuild_jobs(app) == []
-        monkeypatch.setitem(app.config, "DVR_TOKEN", "dvr-test-token")
-        leaving_criterion.rebuild_dvr_lineups("test")
-        assert len(dvr_rebuild_jobs(app)) == 1
 
 
 def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):

@@ -6,6 +6,7 @@ import json
 
 from datetime import date, timedelta
 
+from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 from tests.test_leaving_criterion import (
     LEAVING_HTML,
@@ -115,6 +116,11 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     scraped.append({"title": "Love & Mercy", "director": "Bill Pohlad", "year": 1956})
     scraped.append({"title": "Obscurity", "director": "Jane Doe", "year": 1956})
     match_calls.clear()
+    from app import db
+
+    with app.app_context():
+        make_movie_file(make_movie("Love & Mercy", 2015, tmdb_id=26302), "DVD")
+        db.session.commit()
     refresh_newly_added()
     stored = json.loads(app.redis.get(key))
     today = date.today().isoformat()
@@ -125,8 +131,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert by_title["Obscurity"]["tmdb_id"] is None
     assert by_title["Obscurity"]["director"] == "Jane Doe"
     assert match_calls == ["Love & Mercy", "Obscurity"]
-    # Fresh arrivals join the Criterion channel via the synthesized
-    # match, so the dial is rebuilt the same day
+    # An OWNED fresh arrival joins the Criterion channel via the
+    # synthesized match, so the dial is rebuilt the same day
     assert len(dvr_rebuild_jobs(app)) == 1
 
     # Third run with the planted film gone: it's pruned, the kept
@@ -613,11 +619,3 @@ def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
     assert "Nothing new right now." in body
     assert "Inventory Quiet" not in body
-
-
-def dvr_rebuild_jobs(app):
-    return [
-        job
-        for job in app.maintenance_queue.jobs
-        if job.func_name == "app.dvr.build_channel_lineups"
-    ]

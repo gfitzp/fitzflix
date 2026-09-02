@@ -347,3 +347,14 @@ def log_capture(app):
     app.logger.addHandler(handler)
     yield handler.records
     app.logger.removeHandler(handler)
+
+
+def dvr_rebuild_jobs(app):
+    """The lineup rebuilds waiting on the maintenance queue — what the
+    DVR editor and the Criterion scrapers enqueue."""
+
+    return [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.dvr.build_channel_lineups"
+    ]

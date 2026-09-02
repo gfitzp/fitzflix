@@ -35,12 +35,9 @@ def _enqueue_rebuild(reason):
     """Queue a lineup rebuild so the stored dial catches up with the
     edited definitions."""
 
-    current_app.maintenance_queue.enqueue(
-        "app.dvr.build_channel_lineups",
-        args=(),
-        job_timeout=3600,
-        description=f"Building virtual DVR channel lineups ({reason})",
-    )
+    from app.dvr import enqueue_lineup_rebuild
+
+    enqueue_lineup_rebuild(reason)
 
 
 def _apply_form(channel, form):

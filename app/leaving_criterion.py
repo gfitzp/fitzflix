@@ -309,25 +309,6 @@ def match_tmdb_id(title, year, director=None):
     return tmdb_id
 
 
-def rebuild_dvr_lineups(reason):
-    """Queue a virtual DVR lineup rebuild (when the DVR is configured)
-    so a freshly stored Criterion set reaches the dial the same day.
-    The nightly build runs at 6:30, but the Channel publishes a new
-    month's pages on its own clock — Sept 1 2026 the leaving set landed
-    at 11:38 and the Leaving Soon channel stayed dark until the next
-    morning's build. Enqueued by name (the DVR module imports this one,
-    so importing it here would be circular)."""
-
-    if not current_app.config.get("DVR_TOKEN"):
-        return
-    current_app.maintenance_queue.enqueue(
-        "app.dvr.build_channel_lineups",
-        args=(),
-        job_timeout=3600,
-        description=f"Building virtual DVR channel lineups ({reason})",
-    )
-
-
 def refresh_leaving_criterion():
     """Daily task: scrape the leaving collection, match each film to
     TMDB, embed the enriched payloads, and store the set with its
@@ -379,7 +360,15 @@ def refresh_leaving_criterion():
             f"Leaving-Criterion: stored {len(items)} of {len(films)} films "
             f"departing {departs.isoformat()}"
         )
-        rebuild_dvr_lineups("new leaving-Criterion set")
+        # The dial's Leaving Soon channel reads this set: rebuild the
+        # same day when an owned film is on it (the Channel publishes
+        # the new month's page on its own clock, after the nightly
+        # build on Sept 1 2026)
+        from app.dvr import enqueue_lineup_rebuild
+
+        enqueue_lineup_rebuild(
+            "new leaving-Criterion set", tmdb_ids=[item["tmdb_id"] for item in items]
+        )
         return True
 
 

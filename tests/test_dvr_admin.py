@@ -4,8 +4,22 @@ definitions (explicit picks air; disabled channels don't)."""
 
 import re
 
+import pytest
+
 from app.models import DVRChannel, db
+from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
+
+
+@pytest.fixture(autouse=True)
+def library_present(monkeypatch):
+    """These tests seed rows, not files: every row reads as on disk
+    and the shares as online."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
+    monkeypatch.setattr(dvr, "_library_online", lambda: True)
 
 
 def csrf_token_from(page_html):
@@ -14,11 +28,7 @@ def csrf_token_from(page_html):
 
 
 def rebuild_jobs(app):
-    return [
-        job
-        for job in app.maintenance_queue.jobs
-        if job.func_name == "app.dvr.build_channel_lineups"
-    ]
+    return dvr_rebuild_jobs(app)
 
 
 def test_editor_requires_admin(client, user_client):

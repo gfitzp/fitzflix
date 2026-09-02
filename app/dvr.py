@@ -47,11 +47,11 @@ from app.models import (
     TVSeries,
     movie_genres,
     movie_keywords,
-    tv_file_rank,
     tv_genres,
     tv_keywords,
     tv_networks,
 )
+from app.smb_probe import library_path, share_responsive
 from app.streaming import batch_title_availability, streaming_matches
 
 # This process's app instance, resolved lazily so the nightly task can
@@ -62,6 +62,7 @@ app = LocalProxy(get_app)
 CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
+REBUILD_FUNC = "app.dvr.build_channel_lineups"
 
 # Channel numbering: the all-library mix leads, genre channels follow
 # alphabetically. Numbers restate themselves every build, so a genre
@@ -166,9 +167,7 @@ def _cached_duration(redis_client, file):
             return float(cached)
         except ValueError:
             pass
-    duration = _probe_duration(
-        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-    )
+    duration = _probe_duration(library_path(file))
     if duration and duration > 0:
         redis_client.hset(DURATIONS_KEY, str(file.id), f"{duration:.3f}")
         return duration
@@ -199,21 +198,31 @@ def _on_disk(file):
     """True when the file's local copy is present. Rows can outlive
     their local file — a superseded edition keeps its row and its S3
     archive, and the WEBDL rebuild leaves rows whose file is a renamed
-    sibling — and none of those can air."""
+    sibling — and none of those can air. Asked only after
+    _library_online, so a wedged share never hangs a stat per row."""
 
-    return os.path.exists(
-        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    return os.path.exists(library_path(file))
+
+
+def _library_online():
+    """Whether both library shares are mounted and answering — asked
+    once per build. Off a dead share every row reads as absent, and a
+    build on that reading would replace the working dial with nothing;
+    the build keeps yesterday's lineups instead."""
+
+    return all(
+        share_responsive(current_app.config[key])
+        for key in ("MOVIE_LIBRARY", "TV_LIBRARY")
     )
 
 
 def _best_files_by_movie():
-    """Each owned movie's best main-feature copy: never a fullscreen
-    copy while a widescreen one exists, then best quality — the same
-    ranking the movie cards use — but only among copies that are on
-    disk, so an absent best row yields to a present lesser one. A
-    movie with no copy on disk keeps its best row (the duration probe
-    skips it), which also keeps an unmounted share from emptying the
-    dial outright."""
+    """Each owned movie's best main-feature copy on disk: never a
+    fullscreen copy while a widescreen one exists, then best quality —
+    the same ranking the movie cards use — skipping rows whose file is
+    absent, so an absent best row yields to a present lesser one and
+    a movie with no copy on disk leaves the pool (nothing to air, and
+    nothing to probe)."""
 
     rows = (
         db.session.query(Movie, File)
@@ -224,15 +233,9 @@ def _best_files_by_movie():
         .all()
     )
     best = {}
-    present = set()
     for movie, file in rows:
-        if movie.id in present:
-            continue
-        if _on_disk(file):
+        if movie.id not in best and _on_disk(file):
             best[movie.id] = (movie, file)
-            present.add(movie.id)
-        else:
-            best.setdefault(movie.id, (movie, file))
     return best
 
 
@@ -287,10 +290,14 @@ def _criterion_movie_ids(best):
     if not by_tmdb:
         return []
     payloads, _ = batch_title_availability(list(by_tmdb), fetch_limit=0)
+    # Every owned film is asked, cached payload or not: the scraped
+    # stores can vouch for a film whose availability entry is cold
     return [
-        by_tmdb[tmdb_id]
-        for tmdb_id, payload in payloads.items()
-        if streaming_matches(payload, {CRITERION_PROVIDER_ID}, tmdb_id=tmdb_id)
+        movie_id
+        for tmdb_id, movie_id in by_tmdb.items()
+        if streaming_matches(
+            payloads.get(tmdb_id), {CRITERION_PROVIDER_ID}, tmdb_id=tmdb_id
+        )
     ]
 
 
@@ -475,24 +482,33 @@ def _channel_window(members, day, cap):
 
 
 def _series_episodes(series_id):
-    """The series' best copy of every regular episode in broadcast
-    order — the same per-episode quality ranking the library pages
-    use, specials excluded."""
+    """The series' best copy on disk of every regular episode in
+    broadcast order — the per-episode quality ranking the library
+    pages use (tv_file_rank's order), specials excluded, and rows
+    whose file is absent skipped the way _best_files_by_movie skips
+    them."""
 
-    ranked = (
-        db.session.query(File.id, tv_file_rank())
-        .join(TVSeries, TVSeries.id == File.series_id)
-        .join(RefQuality, RefQuality.id == File.quality_id)
-        .subquery()
-    )
-    return (
-        File.query.join(ranked, ranked.c.id == File.id)
+    rows = (
+        File.query.join(RefQuality, RefQuality.id == File.quality_id)
         .filter(File.series_id == series_id)
         .filter(File.season > 0)
-        .filter(ranked.c.rank == 1)
-        .order_by(File.season.asc(), File.episode.asc())
+        .order_by(
+            File.season.asc(),
+            File.episode.asc(),
+            File.fullscreen.asc(),
+            RefQuality.preference.desc(),
+            File.last_episode.desc(),
+        )
         .all()
     )
+    episodes = []
+    seen = set()
+    for file in rows:
+        key = (file.season, file.episode)
+        if key not in seen and _on_disk(file):
+            seen.add(key)
+            episodes.append(file)
+    return episodes
 
 
 def _episode_program(series, file, duration):
@@ -640,6 +656,39 @@ def seed_default_channels():
     return True
 
 
+def enqueue_lineup_rebuild(reason, tmdb_ids=None):
+    """Queue a lineup rebuild so the stored dial catches up the same
+    day — the admin editor's saves, and the Criterion scrapers when a
+    new set lands after the nightly build. A no-op without a
+    configured DVR, while a rebuild is already queued (a RUNNING one
+    may have read the old inputs, so it doesn't count), or when the
+    given tmdb_ids include no owned film: the dial only airs owned
+    copies, so a Channel arrival nobody owns can't change a program.
+    Returns the job, or None when nothing was queued."""
+
+    if not current_app.config.get("DVR_TOKEN"):
+        return None
+    if tmdb_ids is not None:
+        ids = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id]
+        owned = ids and (
+            db.session.query(File.id)
+            .join(Movie, Movie.id == File.movie_id)
+            .filter(Movie.tmdb_id.in_(ids))
+            .filter(File.feature_type_id == None)  # noqa: E711
+            .first()
+        )
+        if not owned:
+            return None
+    queue = current_app.maintenance_queue
+    if any(job.func_name == REBUILD_FUNC for job in queue.jobs):
+        return None
+    return queue.enqueue(
+        REBUILD_FUNC,
+        job_timeout=3600,
+        description=f"Building virtual DVR channel lineups ({reason})",
+    )
+
+
 def build_channel_lineups(day=None):
     """Build every enabled channel's lineup from its stored definition
     (the dvr_channel table, the admin editor's domain), seeding the
@@ -659,6 +708,12 @@ def build_channel_lineups(day=None):
         day = day or date.today()
         film_cap = current_app.config["DVR_CHANNEL_FILMS"]
         episode_cap = current_app.config["DVR_CHANNEL_EPISODES"]
+
+        if not _library_online():
+            current_app.logger.error(
+                "DVR: a library share is offline; keeping the stored lineups"
+            )
+            return True
 
         if DVRChannel.query.count() == 0:
             seed_default_channels()
@@ -727,7 +782,7 @@ def build_channel_lineups(day=None):
             Random(f"dvr:{channel.slug}:{day.isoformat()}").shuffle(movie_ids)
             movie_programs = []
             for movie_id in movie_ids:
-                if len(movie_programs) == film_cap:
+                if len(movie_programs) >= film_cap:
                     break
                 movie, file = best[movie_id]
                 duration = _cached_duration(redis_client, file)
@@ -759,6 +814,15 @@ def build_channel_lineups(day=None):
                 channel.name,
                 _merge_programs(movie_programs, episode_programs),
             )
+
+        if not index and (best or ctx["catalog"]):
+            # Files on disk but not one program built: a probe-side
+            # outage (ffprobe missing, share wedged mid-build), not an
+            # empty dial — the stored lineups keep answering
+            current_app.logger.error(
+                "DVR: no channel produced a program; keeping the stored lineups"
+            )
+            return True
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
 

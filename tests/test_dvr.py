@@ -16,6 +16,18 @@ from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_s
 
 TOKEN = "dvr-test-token"
 
+
+@pytest.fixture(autouse=True)
+def library_present(monkeypatch):
+    """These tests seed rows, not files: every row reads as on disk
+    and the shares as online unless a test says otherwise."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
+    monkeypatch.setattr(dvr, "_library_online", lambda: True)
+
+
 ENDPOINTS = [
     "/dvr/{token}/playlist.m3u",
     "/dvr/{token}/guide.xml",
@@ -447,18 +459,27 @@ def test_build_prefers_the_copy_on_disk(app, monkeypatch, tmp_path):
     """A row can outlive its local file (the WEBDL rebuild leaves
     WEBRip rows beside renamed WEBDL files); the better-ranked absent
     row yields to the present one, and a movie with no copy on disk
-    keeps its best row so the probe skips it as before."""
+    leaves the pool — it is neither probed nor aired, even with a
+    duration cached from before its file went."""
+
+    import os
 
     from app import dvr
 
     monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        dvr,
+        "_on_disk",
+        lambda file: os.path.exists(os.path.join(str(tmp_path), file.file_path)),
+    )
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
     with app.app_context():
         movie = make_movie("Rebuilt", 1938)
         make_movie_file(movie, "WEBRip-1080p")
         present = make_movie_file(movie, "WEBDL-720p")
-        make_movie_file(make_movie("Absent", 1990), "Bluray-1080p")
+        absent = make_movie_file(make_movie("Absent", 1990), "Bluray-1080p")
         db.session.commit()
+        app.redis.hset(dvr.DURATIONS_KEY, str(absent.id), "5400.000")
         on_disk = tmp_path / present.file_path
         on_disk.parent.mkdir(parents=True)
         on_disk.write_bytes(b"mkv")
@@ -467,7 +488,7 @@ def test_build_prefers_the_copy_on_disk(app, monkeypatch, tmp_path):
     lineup = dvr.channel_lineup(app.redis, "fitzflix-mix")
     by_title = {p["title"]: p["file_path"] for p in lineup["programs"]}
     assert by_title["Rebuilt"].endswith("[WEBDL-720p].mkv")
-    assert by_title["Absent"].endswith("[Bluray-1080p].mkv")
+    assert "Absent" not in by_title
 
 
 def test_build_fills_the_cap_past_a_failed_probe(app, monkeypatch):
@@ -499,11 +520,12 @@ def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
     from app.newly_added import NEWLY_ADDED_KEY
 
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
-    nothing = {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
+    # A cache-only read answers for nothing: the films' availability
+    # entries are cold (imported since the refresh), as the real
+    # fetch_limit=0 call would report them — the scraped store alone
+    # must carry the match
     monkeypatch.setattr(
-        dvr,
-        "batch_title_availability",
-        lambda tmdb_ids, **kwargs: ({t: nothing for t in tmdb_ids}, []),
+        dvr, "batch_title_availability", lambda tmdb_ids, **kwargs: ({}, [])
     )
     app.redis.set(
         NEWLY_ADDED_KEY.format(provider_id=258),
@@ -532,3 +554,81 @@ def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
         "Criterion 1",
         "Criterion 2",
     }
+
+
+def test_build_keeps_stored_lineups_while_a_share_is_offline(app, monkeypatch):
+    """Off a dead share every row reads as absent; a build on that
+    reading must not replace the working dial with nothing."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_library_online", lambda: False)
+    app.redis.set(dvr.CHANNELS_KEY, json.dumps([{"slug": "fitzflix-mix"}]))
+    app.redis.set(dvr.LINEUP_KEY.format(slug="fitzflix-mix"), json.dumps({"x": 1}))
+    with app.app_context():
+        make_movie_file(make_movie("Drama", 1990), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+    assert json.loads(app.redis.get(dvr.LINEUP_KEY.format(slug="fitzflix-mix"))) == {
+        "x": 1
+    }
+
+
+def test_build_keeps_stored_lineups_when_every_probe_fails(app, monkeypatch):
+    """Files on disk but not one program built is a probe outage, not
+    an empty dial."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: None)
+    app.redis.set(dvr.LINEUP_KEY.format(slug="fitzflix-mix"), json.dumps({"x": 1}))
+    with app.app_context():
+        make_movie_file(make_movie("Drama", 1990), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+    assert app.redis.get(dvr.LINEUP_KEY.format(slug="fitzflix-mix")) is not None
+
+
+def test_series_episodes_prefer_the_copy_on_disk(app, monkeypatch):
+    """The episode selector skips absent rows the way the movie
+    selector does: an absent best copy yields to a present lesser one,
+    and an episode with no copy on disk is left out."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: "HDTV" in file.basename)
+    with app.app_context():
+        series = make_tv_series("Show")
+        make_tv_file(series, 1, 1, "Bluray-1080p")
+        make_tv_file(series, 1, 1, "HDTV-720p")
+        make_tv_file(series, 1, 2, "Bluray-1080p")
+        db.session.commit()
+        episodes = dvr._series_episodes(series.id)
+        assert [(f.season, f.episode, f.quality.quality_title) for f in episodes] == [
+            (1, 1, "HDTV-720p")
+        ]
+
+
+def test_enqueue_lineup_rebuild_gates_and_dedupes(app, monkeypatch):
+    """Rebuilds queue only with a configured DVR, only when the given
+    films include an owned one, and only one at a time."""
+
+    from app import dvr
+    from tests.conftest import dvr_rebuild_jobs
+
+    with app.app_context():
+        make_movie_file(make_movie("Owned", 1990, tmdb_id=9000), "Bluray-1080p")
+        db.session.commit()
+
+        monkeypatch.setitem(app.config, "DVR_TOKEN", None)
+        assert dvr.enqueue_lineup_rebuild("test") is None
+        monkeypatch.setitem(app.config, "DVR_TOKEN", TOKEN)
+
+        # Arrivals nobody owns (or that never matched) change no program
+        assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[9500, None]) is None
+        assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[]) is None
+        assert dvr_rebuild_jobs(app) == []
+
+        assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[9500, 9000]) is not None
+        assert dvr.enqueue_lineup_rebuild("again") is None
+        assert len(dvr_rebuild_jobs(app)) == 1

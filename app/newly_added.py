@@ -40,7 +40,6 @@ from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
     fetch_collection_films,
     match_tmdb_id,
-    rebuild_dvr_lineups,
     user_film_sets,
 )
 from app.models import File, Movie, UserMovieReview, UserWatchlist
@@ -121,6 +120,7 @@ def _refresh_feed(provider_id, feed):
     today = date.today().isoformat()
     items = []
     fresh = 0
+    arrived = []
     for film in films:
         prior = previous_items.get((film["title"].lower(), film["year"]))
         if prior is not None and prior.get("tmdb_id"):
@@ -138,6 +138,10 @@ def _refresh_feed(provider_id, feed):
         tmdb_id = match_tmdb_id(film["title"], film["year"], film["director"])
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
         base = {**payload, "tmdb_id": tmdb_id} if payload else {**film, "tmdb_id": None}
+        if previous is not None and tmdb_id is not None:
+            # New to the page, or on it unmatched until this run: either
+            # way the film can only now count as streaming here
+            arrived.append(tmdb_id)
         items.append(
             {
                 **base,
@@ -165,10 +169,14 @@ def _refresh_feed(provider_id, feed):
             else " (planted)"
         )
     )
-    # A day-one arrival joins the Criterion channel through the
-    # synthesized match, so the dial catches up the same day
-    if fresh and provider_id == CRITERION_PROVIDER_ID:
-        rebuild_dvr_lineups(f"{fresh} newly-added Criterion films")
+    # An owned day-one arrival joins the DVR's Criterion channel through
+    # the synthesized match, so the dial catches up the same day
+    if arrived and provider_id == CRITERION_PROVIDER_ID:
+        from app.dvr import enqueue_lineup_rebuild
+
+        enqueue_lineup_rebuild(
+            f"{len(arrived)} newly-added Criterion films", tmdb_ids=arrived
+        )
 
 
 def newly_added_shelves(user):
