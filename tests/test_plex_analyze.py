@@ -1,18 +1,22 @@
-"""The generic Plex re-analyze: every task that rewrites a library file
-in place asks Plex to re-read it, since the item's path is unchanged
-and nothing else prompts Plex to look again until its next scan (#194).
+"""Test the generic Plex re-analyze.
+
+Each task that rewrites a library file in place asks Plex to read the
+file again. This is necessary because the path of the item does not
+change. Nothing else makes Plex look again before its next scan (#194).
 """
 
 import os
 
 
 class FakePlexServer:
-    """Sections with locations and items, recording which sections were
-    paged and which rating keys were analyzed."""
+    """Fake Plex sections with locations and items.
+
+    Records the sections that Fitzflix paged and the rating keys that
+    Fitzflix analyzed."""
 
     def __init__(self, sections, items=None):
-        # sections: [(key, type, title, [paths])]
-        # items: {section key: [(ratingKey, [part file paths])]}
+        # The shape of sections: [(key, type, title, [paths])]
+        # The shape of items: {section key: [(ratingKey, [part file paths])]}
         self.sections = sections
         self.items = items or {}
         self.paged = []
@@ -56,7 +60,7 @@ class FakePlexServer:
 
 
 def _library(tmp_path):
-    """A movies + TV library on disk, and the film's absolute path."""
+    """Build a movies and TV library on disk. Return the absolute path of the film."""
 
     movies = tmp_path / "Movies"
     movies.mkdir()
@@ -93,12 +97,13 @@ def test_analyze_hits_the_item_holding_the_file(app, monkeypatch, tmp_path):
 
     assert plex_library.analyze_plex_media([film]) is True
 
-    # The film's own item was analyzed, and nothing else
+    # Fitzflix analyzed the item of the film, and nothing else.
 
     assert fake.analyzed == ["202"]
 
-    # Only the section whose location holds the file was paged: a
-    # movie's analyze never walks the (much larger) TV section
+    # Fitzflix paged only the section that has the location of the file.
+    # The analyze of a movie never walks the TV section. That section is
+    # much larger.
 
     assert fake.paged == ["5"]
 
@@ -106,9 +111,10 @@ def test_analyze_hits_the_item_holding_the_file(app, monkeypatch, tmp_path):
 def test_analyze_matches_on_basename_when_plex_mounts_elsewhere(
     app, monkeypatch, tmp_path
 ):
-    """Plex reaching the library by another mount path still resolves:
-    the library's basenames carry title, year and quality, so they
-    identify a file on their own."""
+    """Resolve the file when Plex reaches the library through a different mount path.
+
+    The basenames in the library carry the title, the year, and the
+    quality. Thus, a basename identifies a file on its own."""
 
     movies, tv, film = _library(tmp_path)
     plex_side = "/mnt/plex-media/Movies/" + os.path.basename(film)
@@ -123,9 +129,10 @@ def test_analyze_matches_on_basename_when_plex_mounts_elsewhere(
 
 
 def test_analyze_refuses_a_file_whose_mount_is_gone(app, monkeypatch, tmp_path):
-    """Guarded per file, not per section: a file on a dead or hung
-    mount is left alone rather than analyzed into a record of what Plex
-    couldn't read."""
+    """Guard each file, not each section.
+
+    Fitzflix does not touch a file on a dead or hung mount. An analyze
+    of such a file makes a record of what Plex could not read."""
 
     movies, tv, film = _library(tmp_path)
     fake = FakePlexServer(
@@ -139,7 +146,7 @@ def test_analyze_refuses_a_file_whose_mount_is_gone(app, monkeypatch, tmp_path):
         assert fake.analyzed == []
         assert fake.paged == []
 
-        # Unfinished business is deferred, not dropped
+        # Fitzflix defers the unfinished work. It does not drop the work.
 
         scheduled = app.maintenance_queue.scheduled_job_registry.get_job_ids()
         assert len(scheduled) == 1
@@ -164,8 +171,9 @@ def test_a_file_plex_hasnt_scanned_is_retried_once_then_dropped(
         assert job.args[0] == [film]
         assert job.kwargs["retries"] == 1
 
-        # The retry follows the quarter-hourly scan; after it, the
-        # matter is dropped rather than retried forever
+        # The retry occurs after the scan that runs every 15 minutes.
+        # After that retry, Fitzflix drops the matter. It does not retry
+        # forever.
 
         assert (
             plex_library.analyze_plex_media(
@@ -199,8 +207,8 @@ def test_enqueue_collapses_a_second_edit_onto_the_queued_analyze(
     with app.app_context():
         assert plex_library.enqueue_plex_analyze(path) is True
 
-        # The queued job hasn't read the file yet, so a second edit
-        # needs no second job
+        # The queued job has not read the file yet. Thus, a second edit
+        # does not need a second job.
 
         assert plex_library.enqueue_plex_analyze(path) is False
 

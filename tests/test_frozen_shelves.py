@@ -1,10 +1,13 @@
-"""The day-frozen shelves (#204): a rail shows the same films in the
-same slots all day; a film that stops being eligible mid-day (watched,
-waved off) is replaced in its slot and nothing else moves; the next
-calendar day starts fresh. Plus daily_shelf, the shared shelf recipe
-(Aug 30 2026): urgent rows lead, the rest walk no-repeat quality tiers
-into day-stable shuffled slots, and shelves never repeat a film
-another shelf on the page already claimed."""
+"""Test the day-frozen shelves (#204) and daily_shelf.
+
+A rail shows the same films in the same slots all day. A film can stop
+being eligible during the day (watched, waved off). Then a different
+film replaces it in its slot, and no other film moves. The next
+calendar day starts new. The tests also cover daily_shelf, the shared
+shelf recipe (2026-08-30). The urgent rows lead. The other rows walk
+the no-repeat quality tiers into shuffled slots that are stable for the
+day. A shelf never repeats a film that a different shelf on the page
+already claimed."""
 
 import json
 
@@ -26,19 +29,19 @@ def test_frozen_shelf_replays_and_replaces_in_slot(app):
 
     first = frozen_shelf(app.redis, 1, "unit", eligible, pick, day="2026-08-26")
     assert first == [3, 1, 4, 5]
-    # The replay never re-picks
+    # The replay does not pick again
     again = frozen_shelf(app.redis, 1, "unit", eligible, pick, day="2026-08-26")
     assert again == [3, 1, 4, 5]
     assert len(calls) == 1
 
-    # Film 4 stops being eligible: its slot takes the first eligible id
-    # not already showing (2), and every other slot keeps its position
+    # Film 4 stops being eligible. Its slot takes the first eligible id
+    # that is not shown (2). Each other slot keeps its position
 
     now_eligible = [1, 2, 3, 5, 6, 7]
     replaced = frozen_shelf(app.redis, 1, "unit", now_eligible, pick, day="2026-08-26")
     assert replaced == [3, 1, 2, 5]
 
-    # The replacement is itself remembered
+    # The shelf remembers the replacement
 
     assert frozen_shelf(app.redis, 1, "unit", now_eligible, pick, day="2026-08-26") == [
         3,
@@ -47,8 +50,8 @@ def test_frozen_shelf_replays_and_replaces_in_slot(app):
         5,
     ]
 
-    # No replacement left: the slot closes up rather than repeating a
-    # shown film
+    # No replacement remains. The slot closes. The shelf does not repeat
+    # a shown film
 
     assert frozen_shelf(app.redis, 1, "unit", [3, 1, 2], pick, day="2026-08-26") == [
         3,
@@ -56,21 +59,23 @@ def test_frozen_shelf_replays_and_replaces_in_slot(app):
         2,
     ]
 
-    # A new day starts fresh from pick()
+    # A new day starts new from pick()
 
     fresh = frozen_shelf(app.redis, 1, "unit", eligible, pick, day="2026-08-27")
     assert fresh == [3, 1, 4, 5]
     assert len(calls) == 2
 
-    # Shelves and users key separately
+    # Each shelf and each user has a different key
 
     other = frozen_shelf(app.redis, 2, "unit", eligible, lambda: [7], day="2026-08-26")
     assert other == [7]
 
 
 def test_daily_shelf_urgent_rows_lead_in_order(app):
-    """Urgent rows hold the leading slots in the order given — never
-    shuffled — and the remaining slots fill from the ranked rows."""
+    """Test that the urgent rows hold the leading slots in the given order.
+
+    The shelf never shuffles the urgent rows. The ranked rows fill the
+    remaining slots."""
 
     urgent = [{"id": "u1"}, {"id": "u2"}]
     rows = [{"id": f"r{n}"} for n in range(10)]
@@ -94,8 +99,9 @@ def test_daily_shelf_urgent_rows_lead_in_order(app):
 
 
 def test_daily_shelf_never_repeats_across_the_page(app):
-    """Two shelves fed the same candidates claim disjoint films: the
-    shared `shown` set is the page's no-repeat pool."""
+    """Test that 2 shelves with the same candidates claim different films.
+
+    The shared `shown` set is the no-repeat pool of the page."""
 
     rows = [{"id": f"r{n}"} for n in range(12)]
 
@@ -130,14 +136,15 @@ def test_daily_shelf_never_repeats_across_the_page(app):
 
 
 def test_daily_shelf_freezes_the_day_and_varies_by_day(app):
-    """A frozen shelf replays the same cards all day; the next day
-    draws a different arrangement; freeze=False (the ?minutes= lens)
-    picks live without writing a snapshot."""
+    """Test that a frozen shelf replays all day and changes the next day.
+
+    The next day draws a different arrangement. With freeze=False (the
+    ?minutes= lens), the shelf picks live and does not write a snapshot."""
 
     rows = [{"id": f"r{n}"} for n in range(30)]
 
     def draw(day, shelf="unit-freeze", freeze=True):
-        """One shelf pick for the given day, with a fresh claim set."""
+        """Return one shelf pick for the given day, with a new claim set."""
 
         with app.app_context():
             return [
@@ -159,8 +166,8 @@ def test_daily_shelf_freezes_the_day_and_varies_by_day(app):
     assert draw(date(2026, 8, 30)) == first
     assert draw(date(2026, 8, 31)) != first
 
-    # The live lens picks the same day-deterministic result but leaves
-    # no snapshot behind
+    # The live lens picks the same day-deterministic result. It leaves
+    # no snapshot
 
     assert draw(date(2026, 9, 1), shelf="unit-live", freeze=False) == draw(
         date(2026, 9, 1), shelf="unit-live", freeze=False
@@ -204,8 +211,8 @@ def test_landing_rail_is_stable_and_replaces_only_the_watched_slot(app, admin_cl
     assert len(first) == 12
     assert shown_titles() == first
 
-    # Watch the film in slot 4: only that slot changes, to a film that
-    # wasn't showing, and every other film keeps its position
+    # Watch the film in slot 4. Only that slot changes, to a film that
+    # was not shown. Each other film keeps its position
 
     watched_title = first[4]
     with app.app_context():
@@ -228,6 +235,6 @@ def test_landing_rail_is_stable_and_replaces_only_the_watched_slot(app, admin_cl
     assert second[4] != watched_title
     assert second[4] not in first
 
-    # And the replacement sticks on the next render
+    # The replacement stays on the next render
 
     assert shown_titles() == second

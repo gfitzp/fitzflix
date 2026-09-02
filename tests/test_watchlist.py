@@ -1,7 +1,9 @@
-"""The per-user watchlist: the funnel stage before the shopping list.
-Toggles on film pages, the /watchlist page with availability, automatic
-removal when a watch arrives from any source, the Letterboxd
-watchlist.csv import, and the landing-page integrations."""
+"""Test the per-user watchlist, the funnel stage before the shopping list.
+
+These tests cover the toggles on the film pages, the /watchlist page
+with availability, the automatic removal when a watch arrives from any
+source, the Letterboxd watchlist.csv import, and the landing-page
+integrations."""
 
 import io
 import json
@@ -16,7 +18,7 @@ NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.
 
 
 def csrf_token_from(page_html):
-    """The CSRF token baked into a rendered form."""
+    """Return the CSRF token from a rendered form."""
 
     match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
     assert match, "no csrf token found in page"
@@ -24,7 +26,7 @@ def csrf_token_from(page_html):
 
 
 def admin_id(app):
-    """The seeded admin user's id."""
+    """Return the id of the seeded admin user."""
 
     from app.models import User
 
@@ -33,7 +35,7 @@ def admin_id(app):
 
 
 def entries_for(app, user_id):
-    """The user's watchlist movie ids."""
+    """Return the watchlist movie ids of the user."""
 
     from app.models import UserWatchlist
 
@@ -45,14 +47,16 @@ def entries_for(app, user_id):
 
 
 def remove_form_fields(page_html, movie_id):
-    """The watchlist page's remove form for one movie, submitted the way
-    a browser would: every input the form renders, in DOM order, plus
-    the submit button — so template/route field mismatches surface."""
+    """Return the remove form of the watchlist page for one movie.
 
-    # Match on the movie_id INPUT, not any value attribute — the tile's
-    # star ladder renders buttons whose values collide with small ids —
-    # and require the remove submit, since the Find menu's Radarr form
-    # renders the same hidden fields earlier in the tile
+    The fields are what a browser submits: every input that the form
+    renders, in DOM order, plus the submit button. Thus, a field
+    mismatch between the template and the route shows in the test."""
+
+    # Match on the movie_id INPUT, not on any value attribute. The star
+    # ladder of the tile renders buttons whose values collide with small
+    # ids. Also require the remove submit, because the Radarr form in the
+    # Find menu renders the same hidden fields earlier in the tile.
 
     form_match = re.search(
         r"<form[^>]*>(?:(?!</form>).)*?"
@@ -75,8 +79,10 @@ def remove_form_fields(page_html, movie_id):
 
 
 def pill_counts(page_html):
-    """The filter pills' counts, keyed by bucket — each count renders
-    in a data-watchlist-count span so a live removal can settle it."""
+    """Return the counts of the filter pills, keyed by bucket.
+
+    Each count renders in a data-watchlist-count span. Thus, a live
+    removal can update it."""
 
     return {
         value: int(count)
@@ -100,8 +106,9 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
         db.session.commit()
         unowned_id, owned_id = unowned.id, owned.id
 
-    # Every film offers the add — unowned ones as the pre-shopping
-    # stage, owned ones to track specific interest within the library
+    # Every film offers the add. For an unowned film, the add is the
+    # stage before shopping. For an owned film, the add tracks a specific
+    # interest in the library.
 
     page = admin_client.get(f"/movie/{unowned_id}").get_data(as_text=True)
     assert 'name="add_watchlist_submit"' in page
@@ -117,8 +124,8 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     user_id = admin_id(app)
     assert entries_for(app, user_id) == [unowned_id]
 
-    # The page now shows the Remove face — both faces stay in the DOM
-    # for the live toggle (#187), the off one hidden with d-none
+    # The page now shows the Remove face. Both faces stay in the DOM for
+    # the live toggle (#187). The inactive face is hidden with d-none.
 
     page = admin_client.get(f"/movie/{unowned_id}").get_data(as_text=True)
     assert "data-card-watchlist" in page
@@ -128,7 +135,8 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     assert "d-none" not in re.search(
         r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', page
     ).group(1)
-    # The funnel badge is live too: visible now, hidden before the add
+    # The funnel badge is also live. It is visible now. It was hidden
+    # before the add.
     assert "d-none" not in re.search(
         r'class="([^"]*)" data-watchlist-badge', page
     ).group(1)
@@ -145,9 +153,11 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
 
 
 def test_movie_page_funnel_badges(app, admin_client):
-    """The movie page carries the personal funnel badges: watchlist
-    coexists with might-interest while unseen; logging flips the row to
-    Seen and retires might-interest."""
+    """Test the personal funnel badges on the movie page.
+
+    While the film is unseen, the watchlist badge and the might-interest
+    badge show together. A log flips the row to Seen and removes the
+    might-interest badge."""
 
     from app import db
     from app.models import User, UserMovieReview, UserWatchlist
@@ -190,9 +200,9 @@ def test_movie_page_funnel_badges(app, admin_client):
                 half_stars=0,
             )
         )
-        # The direct diary row bypasses the log path's auto-remove, so
-        # the entry persists — the state a post-watch re-add would
-        # produce: Seen and the watchlist badge coexist
+        # The direct diary row bypasses the auto-remove of the log path.
+        # Thus, the entry persists. This is the state that a re-add after
+        # a watch produces: Seen and the watchlist badge show together.
         db.session.commit()
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
@@ -273,7 +283,7 @@ def test_letterboxd_watchlist_imports_and_watches_clear(app):
         wanted = make_movie("Wanted Import", 1994)
         watched = make_movie("Watched Import", 1995)
 
-        # The watched film sat on the watchlist before the import
+        # The watched film was on the watchlist before the import.
 
         db.session.add(UserWatchlist(user_id=user_id, movie_id=watched.id))
         db.session.commit()
@@ -325,7 +335,7 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkey
         ),
     )
 
-    # An owned watchlisted film sits alongside, wearing the library badge
+    # An owned watchlisted film is also listed. It shows the library badge.
 
     with app.app_context():
         owned = make_movie("Watchlist Owned Tracker", 1995)
@@ -336,36 +346,38 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkey
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Watchlist Page Film (1994)" in page
-    # Availability and ownership badges moved into the popover (Aug
-    # 2026); the tiles carry the hydrated actions instead
+    # The availability and ownership badges moved into the popover
+    # (2026-08). The tiles carry the hydrated actions instead.
     assert 'title="Streaming on Netflix"' not in page
     assert 'title="In your Fitzflix library"' not in page
     assert page.count("data-state-movie=") == 2
-    # The synopsis lives in the poster popover now (#45d)
+    # The synopsis is in the poster popover now (#45d).
     assert "A film worth waiting for." not in page
     assert "data-card-url" in page
     assert "Watchlist Owned Tracker (1995)" in page
 
-    # The unowned film's card serves the availability from the cache
-    # the page warmed, with the mandatory JustWatch credit (the key
-    # only gates the fetch path — the seeded day cache answers)
+    # The card of the unowned film serves the availability from the
+    # cache that the page warmed, with the mandatory JustWatch credit.
+    # The API key only gates the fetch path. The seeded day cache
+    # answers.
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
     card = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
     assert 'title="Streaming on Netflix"' in card
     assert "Streaming data by JustWatch" in card
 
-    # Each tile's poster anchor opens the movie page (#45d — the
-    # stretched-link row overlay is gone with the rows), and every
-    # poster is armed with its popover
+    # The poster anchor of each tile opens the movie page (#45d). The
+    # stretched-link row overlay went away with the rows. Every poster
+    # has its popover.
 
     assert "stretched-link" not in page
     assert page.count('data-card-url="/movie_card') == 2
     assert f'href="/movie/{owned_id}"' in page
 
-    # Removal posts the form EXACTLY as rendered — a handcrafted POST
-    # once hid a template bug where hidden_tag() emitted a second,
-    # empty movie_id input that WTForms read instead of the real one
+    # The removal posts the form EXACTLY as rendered. A handcrafted POST
+    # hid a template bug in the past: hidden_tag() emitted a second,
+    # empty movie_id input, and WTForms read that input instead of the
+    # real one.
 
     response = admin_client.post("/watchlist", data=remove_form_fields(page, movie_id))
     assert response.status_code == 302
@@ -379,7 +391,7 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkey
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Your watchlist is empty." in page
 
-    # The nav links to the page from everywhere
+    # The nav links to the page from every page.
 
     assert 'href="/watchlist"' in page
 
@@ -390,21 +402,21 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
     from app.models import Movie
 
     class FakeTMDB:
-        """Canned TMDB response."""
+        """A canned TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
 
         def raise_for_status(self):
-            """Never an HTTP error."""
+            """Do nothing. The canned response is never an HTTP error."""
 
         def json(self):
-            """The canned payload."""
+            """Return the canned payload."""
 
             return self.payload
 
     def fake_tmdb_get(url, params=None, **kwargs):
-        """Movie details for the unowned film."""
+        """Return the movie details for the unowned film."""
 
         return FakeTMDB(
             {
@@ -446,9 +458,9 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
         ]
         assert len(refresh_jobs) == 1
 
-        # The live payload primes the display fields, so the movie page
-        # the redirect lands on isn't bare while the refresh is queued —
-        # the refresh stamp itself stays unset until the full pass
+        # The live payload primes the display fields. Thus, the movie
+        # page that the redirect opens is not empty while the refresh is
+        # queued. The refresh stamp stays unset until the full pass.
 
         assert movie.tmdb_title == "Wanted Unknown"
         assert movie.tmdb_overview == "Not in the library."
@@ -464,9 +476,10 @@ def test_review_tmdb_watchlist_add_creates_the_record(app, admin_client, monkeyp
 
 
 def test_rail_excludes_watchlisted_films(app, admin_client):
-    """A watchlisted film never rides the streaming rail (Aug 30 2026):
-    the rail is pure discovery now — the watchlist shelf up top is
-    where wanted films surface, and only when they're watchable."""
+    """Test that a watchlisted film never appears on the streaming rail.
+
+    The rail is only discovery now (2026-08-30). Wanted films appear on
+    the watchlist shelf at the top, and only when they are watchable."""
 
     from app import db
     from app.models import UserWatchlist
@@ -479,7 +492,7 @@ def test_rail_excludes_watchlisted_films(app, admin_client):
         db.session.commit()
 
     def rail_item(tmdb_id, title, score):
-        """A minimal stored rail entry."""
+        """Return a minimal stored rail entry."""
 
         return {
             "tmdb_id": tmdb_id,
@@ -507,17 +520,19 @@ def test_rail_excludes_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The wanted film leaves the rail; with no availability cached it
-    # isn't watchable tonight, so the watchlist shelf skips it too
+    # The wanted film leaves the rail. With no availability cached, it is
+    # not watchable tonight. Thus, the watchlist shelf also skips it.
 
     assert "Rail Wanted (1994)" not in body
     assert "Rail Unwanted High (1994)" in body
 
 
 def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
-    """A watchlisted film streaming on a subscribed service is
-    watchable tonight, so it surfaces on the top watchlist shelf —
-    answered from the availability cache, never a live fetch."""
+    """Test that a streaming watchlisted film appears on the top shelf.
+
+    A watchlisted film that streams on a subscribed service is watchable
+    tonight. Thus, it appears on the top watchlist shelf. The answer
+    comes from the availability cache, never from a live fetch."""
 
     from app import db
     from app.models import UserWatchlist
@@ -567,15 +582,16 @@ def test_watchlist_shelf_shows_streaming_watchlisted_films(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "From your watchlist" in body
     assert "Rail Wanted (1994)" in body
-    # Once on the watchlist shelf, the film never repeats on the rail:
-    # the rail was its only other source and it's excluded there
+    # When the film is on the watchlist shelf, it never repeats on the
+    # rail. The rail was its only other source, and the rail excludes it.
     assert body.count("Rail Wanted (1994)") == 1
 
 
 def test_watchlist_shelf_takes_the_wanted_films_whole(app, admin_client):
-    """Twelve watchlisted owned films all surface on the top watchlist
-    shelf (its cap is bigger than a discovery shelf's), and the
-    library rail keeps all twelve of its discovery slots."""
+    """Test that the watchlist shelf shows all 12 watchlisted owned films.
+
+    The cap of the watchlist shelf is larger than the cap of a discovery
+    shelf. The library rail keeps all 12 of its discovery slots."""
 
     from app import db
     from app.models import UserWatchlist
@@ -627,9 +643,10 @@ def test_watchlist_feeds_the_taste_profile(app):
 
 
 def test_library_rail_excludes_watchlisted_films(app, admin_client):
-    """A watchlisted owned film leaves the library rail for the top
-    watchlist shelf: the rail is pure discovery, the shelf is intent —
-    and the film shows exactly once on the page."""
+    """Test that a watchlisted owned film moves from the rail to the shelf.
+
+    The library rail is only discovery. The top watchlist shelf is
+    intent. The film shows exactly 1 time on the page."""
 
     from app import db
     from app.models import UserWatchlist
@@ -660,8 +677,8 @@ def test_library_rail_excludes_watchlisted_films(app, admin_client):
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # The owned wanted film is watchable tonight, so it surfaces on
-    # the watchlist shelf — once — while the rail keeps discovery
+    # The owned wanted film is watchable tonight. Thus, it appears on
+    # the watchlist shelf exactly 1 time. The rail keeps discovery.
 
     assert "From your watchlist" in body
     assert body.count("Library Wanted (1995)") == 1
@@ -671,9 +688,10 @@ def test_library_rail_excludes_watchlisted_films(app, admin_client):
 
 
 def test_watchlist_shelf_leads_the_page(app, admin_client):
-    """The watchlist shelf renders above every discovery shelf: the
-    page reads "what you already want", then ways to find something
-    else (Glenn, Aug 30 2026)."""
+    """Test that the watchlist shelf renders above every discovery shelf.
+
+    The page first shows "what you already want", then the ways to find
+    a different film (requested by Glenn, 2026-08-30)."""
 
     from app import db
     from app.models import UserWatchlist
@@ -710,10 +728,11 @@ def test_watchlist_shelf_leads_the_page(app, admin_client):
 
 
 def test_movie_page_not_interested_toggle(app, admin_client):
-    """The ladder's \u2715 is the one disinterest channel (#184 removed
-    the standalone buttons): a zero quick-rating flags an unowned,
-    unlogged film and clears its watchlist entry, a second zero unflags
-    it, and the buttons render nowhere."""
+    """Test that the \u2715 of the ladder is the only disinterest channel.
+
+    #184 removed the standalone buttons. A zero quick-rating flags an
+    unowned, unlogged film and clears its watchlist entry. A second zero
+    removes the flag. The buttons render nowhere."""
 
     import re
 
@@ -743,7 +762,7 @@ def test_movie_page_not_interested_toggle(app, admin_client):
             ).first()
             is not None
         )
-        # Marking clears the contradicting watchlist entry
+        # The mark clears the watchlist entry that contradicts it.
         assert (
             UserWatchlist.query.filter_by(user_id=user_id, movie_id=record_id).first()
             is None
@@ -768,8 +787,10 @@ def test_movie_page_not_interested_toggle(app, admin_client):
 
 
 def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
-    """A just-created record has its tmdb id but no tmdb_data_as_of yet —
-    the page a watchlist add or log redirects to must render while the
+    """Test that the movie page renders before the TMDB refresh arrives.
+
+    A new record has its tmdb id but no tmdb_data_as_of yet. A watchlist
+    add or a log redirects to this page. The page must render while the
     refresh is still in the queue."""
 
     from app import db
@@ -785,12 +806,14 @@ def test_movie_page_renders_before_enrichment_arrives(app, admin_client):
 
 
 def test_watchlist_availability_filter(app, admin_client):
-    """The Aug 2026 revision: default shows everything; the other
-    pills are exclusive buckets — owned beats streaming beats renting,
-    and UNAVAILABLE catches films with a known-empty availability —
-    with counts on the pills, unfetched films reported as pending
-    instead of filed as unavailable, and the removal redirect keeping
-    the filter."""
+    """Test the availability filter pills of the 2026-08 revision.
+
+    The default pill shows all films. The other pills are exclusive
+    buckets. Owned wins over streaming, and streaming wins over rental.
+    UNAVAILABLE holds the films with a known-empty availability. Each
+    pill shows a count. The page reports unfetched films as pending and
+    does not file them as unavailable. The removal redirect keeps the
+    filter."""
 
     from app import db
     from app.models import UserStreamingProvider, UserWatchlist
@@ -804,17 +827,17 @@ def test_watchlist_availability_filter(app, admin_client):
         )
         owned = make_movie("Filter Owned Film", 1990)
         make_movie_file(owned, "Bluray-1080p")
-        # Owned AND streaming: owning wins, so it files under local only
+        # Owned AND streaming: owned wins. Thus, it files under local only.
         owned_streaming = make_movie("Filter Owned Streaming Film", 1989, tmdb_id=9400)
         make_movie_file(owned_streaming, "Bluray-1080p")
         streaming = make_movie("Filter Streaming Film", 1991, tmdb_id=9401)
         rentable = make_movie("Filter Rentable Film", 1992, tmdb_id=9402)
         warming = make_movie("Filter Warming Film", 1993, tmdb_id=9403)
-        # Streaming AND rentable: the subscription wins over the rental
+        # Streaming AND rentable: the subscription wins over the rental.
         both = make_movie("Filter Both Film", 1994, tmdb_id=9404)
-        # Fetched, and carried by nobody the user subscribes to
+        # Fetched, but no subscribed service of the user carries it.
         nowhere = make_movie("Filter Nowhere Film", 1995, tmdb_id=9405)
-        # No TMDB id at all: known-negative, never pending
+        # No TMDB id at all: this is a known negative, never pending.
         untracked = make_movie("Filter Untracked Film", 1996)
         for movie in (
             owned,
@@ -849,7 +872,7 @@ def test_watchlist_availability_filter(app, admin_client):
     cache(9402, rent=[NETFLIX])
     cache(9404, flatrate=[NETFLIX], rent=[NETFLIX])
     cache(9405)
-    # 9403 stays uncached: availability unknown, warming
+    # 9403 stays uncached: the availability is unknown and warming.
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
     for title in (
@@ -863,8 +886,8 @@ def test_watchlist_availability_filter(app, admin_client):
         "Filter Untracked Film",
     ):
         assert title in page
-    # The buckets partition the list: 2 + 2 + 1 + 2 = 7, plus the one
-    # film still warming
+    # The buckets partition the list: 2 + 2 + 1 + 2 = 7, plus the 1 film
+    # that is still warming.
     assert pill_counts(page) == {
         "all": 8,
         "local": 2,
@@ -908,7 +931,7 @@ def test_watchlist_availability_filter(app, admin_client):
     assert "Filter Owned Film" not in unavailable
     assert "continues to get the streaming availability" in unavailable
 
-    # Removal under a filter redirects back INTO the filter
+    # A removal under a filter redirects back INTO the filter.
 
     import re
 
@@ -926,10 +949,12 @@ def test_watchlist_availability_filter(app, admin_client):
 
 
 def test_watchlist_title_and_runtime_filters(app, admin_client):
-    """The title search (#216) and duration filter (#195): both narrow
-    the list before the availability pills count, match the landing
-    page's runtime semantics (unknown runtimes hide only from filtered
-    views), survive the removal redirect, and clear from one link."""
+    """Test the title search (#216) and the duration filter (#195).
+
+    Both filters narrow the list before the availability pills count.
+    Both use the runtime semantics of the landing page: an unknown
+    runtime hides only from a filtered view. Both survive the removal
+    redirect. One link clears both."""
 
     from app import db
     from app.models import UserWatchlist
@@ -953,8 +978,8 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert pill_counts(page)["all"] == 4
     assert ">Clear</a>" not in page
 
-    # The title search matches the display title AND the TMDB title,
-    # case-insensitively, and the pills count the narrowed set
+    # The title search matches the display title AND the TMDB title. The
+    # match ignores case. The pills count the narrowed set.
 
     page = admin_client.get("/watchlist?q=BRISK").get_data(as_text=True)
     assert "Beta Brisk" in page
@@ -964,8 +989,8 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert pill_counts(page)["all"] == 2
     assert ">Clear</a>" in page
 
-    # The duration filter keeps films that fit, hides unknown runtimes,
-    # says so, and captions each tile with its runtime
+    # The duration filter keeps the films that fit. It hides the unknown
+    # runtimes and says so. It captions each tile with its runtime.
 
     page = admin_client.get("/watchlist?minutes=100").get_data(as_text=True)
     assert "Beta Brisk" in page
@@ -975,7 +1000,7 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert "hides the films that have an unknown runtime" in page
     assert "90 min" in page
 
-    # The filters stack, and a nonsense minutes value is ignored
+    # The filters stack. Fitzflix ignores a nonsense minutes value.
 
     page = admin_client.get("/watchlist?q=brisk&minutes=95").get_data(as_text=True)
     assert "Beta Brisk" in page
@@ -983,13 +1008,13 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     page = admin_client.get("/watchlist?minutes=0").get_data(as_text=True)
     assert pill_counts(page)["all"] == 4
 
-    # A search with no matches offers the whole list back
+    # A search with no matches offers a link back to the full list.
 
     page = admin_client.get("/watchlist?q=zzzzzz").get_data(as_text=True)
     assert "No watchlisted films match this search." in page
     assert "Show all 4 watchlisted films" in page
 
-    # Removal under the filters redirects back INTO them
+    # A removal under the filters redirects back INTO them.
 
     page = admin_client.get("/watchlist?q=brisk&minutes=95").get_data(as_text=True)
     response = admin_client.post(
@@ -1004,10 +1029,11 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
 
 
 def test_watchlist_remove_in_place(app, admin_client):
-    """The tile's Remove posts in the background (#187): the form wears
-    data-card-watchlist plus the remove-cell marker, the cell carries
-    its bucket for the pill bookkeeping, and the card-header post gets
-    JSON back instead of a redirect."""
+    """Test that the Remove button of the tile posts in the background.
+
+    The form shows data-card-watchlist plus the remove-cell marker
+    (#187). The cell carries its bucket for the pill bookkeeping. A post
+    with the card header gets JSON back instead of a redirect."""
 
     from app import db
     from app.models import UserWatchlist

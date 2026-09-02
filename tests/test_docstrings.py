@@ -1,9 +1,10 @@
-"""The docstring gate: every function, class, and method in app/ carries a
-docstring, so the coverage won can't erode.
+"""Make sure that every function, class, and method in app/ has a docstring.
 
-Policy: module-level and class-level definitions need docstrings; dunder
-methods and functions nested inside other functions (closures) are exempt.
-Runs as a test, and pre-commit invokes this file directly.
+This gate keeps the docstring coverage complete. The policy: module-level
+and class-level definitions must have docstrings. Dunder methods are
+exempt. Functions nested inside other functions (closures) are exempt.
+This file runs as a test. The pre-commit hook also runs this file
+directly.
 """
 
 import ast
@@ -16,8 +17,9 @@ SKIP_DIRS = {"__pycache__", "static", "templates"}
 
 
 def missing_docstrings(root=APP_ROOT):
-    """(path, line, name) for every definition the policy requires a
-    docstring on that doesn't have one."""
+    """Return (path, line, name) for each definition that has no docstring.
+
+    Only the definitions that the policy covers are included."""
 
     missing = []
     for dirpath, dirnames, filenames in os.walk(root):

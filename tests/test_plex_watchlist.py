@@ -1,6 +1,8 @@
-"""The Plex ↔ Fitzflix watchlist sync: the union bootstrap, the
-two-way incremental reconcile, push-failure retry semantics, and the
-anomaly guard that keeps an API hiccup from reading as a mass removal."""
+"""Test the watchlist sync between Plex and Fitzflix.
+
+These tests cover the union bootstrap, the two-way incremental
+reconcile, the retry semantics for a push failure, and the anomaly
+guard that stops an API glitch from reading as a mass removal."""
 
 import json
 
@@ -12,12 +14,12 @@ from tests.factories import make_movie
 class FakePlex:
     """A stateful stand-in for the plex.tv discover/metadata APIs.
 
-    Items can carry several tmdb guids (composites, like The
-    Animatrix), and ids in `phantom` accept an add with 200 but never
-    appear on the watchlist — the Buried Loot behavior."""
+    An item can carry several tmdb guids (composites, like The
+    Animatrix). An id in `phantom` accepts an add with 200, but it never
+    appears on the watchlist. This is the Buried Loot behavior."""
 
     def __init__(self, films, unmatched=(), composites=(), phantom=(), shows=()):
-        # films: {tmdb_id: (title, year)} currently on the Plex watchlist
+        # films: {tmdb_id: (title, year)} that are on the Plex watchlist now
         self.items = {
             f"rk{tmdb_id}": {
                 "ids": [tmdb_id],
@@ -37,8 +39,8 @@ class FakePlex:
                 "listed": listed,
                 "type": "movie",
             }
-        # shows: {tmdb_id: (title, year)} — TV items, whose tmdb guids
-        # are TMDB TV-series ids
+        # shows: {tmdb_id: (title, year)} for the TV items. Their tmdb
+        # guids are TMDB TV-series ids.
         for tmdb_id, (title, year) in dict(shows).items():
             self.items[f"tv{tmdb_id}"] = {
                 "ids": [tmdb_id],
@@ -152,7 +154,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
     with app.app_context():
         user_id = setup_user(app)
 
-        # Fitzflix wants B and C; Plex wants A and B; A has no local record
+        # Fitzflix wants B and C. Plex wants A and B. A has no local record.
         movie_b = make_movie("Film B", 2000, tmdb_id=102)
         movie_c = make_movie("Film C", 2001, tmdb_id=103)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=movie_b.id))
@@ -163,7 +165,8 @@ def test_first_run_is_a_full_union(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Union everywhere: Fitzflix gains A (record created), Plex gains C
+        # The union applies to both. Fitzflix gains A (a new record). Plex
+        # gains C.
         assert fitzflix_watchlist_tmdb_ids(user_id) == {101, 102, 103}
         assert fake.adds == [103]
         assert fake.removes == []
@@ -175,7 +178,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
             103,
         }
 
-        # The created record heads into the standard refresh pipeline
+        # The new record goes into the standard refresh pipeline.
         refreshes = [
             job
             for job in app.request_queue.jobs
@@ -184,7 +187,7 @@ def test_first_run_is_a_full_union(app, monkeypatch):
         ]
         assert len(refreshes) == 1
 
-        # Idempotent: a second run changes nothing
+        # Idempotent: a second run changes nothing.
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fitzflix_watchlist_tmdb_ids(user_id) == {101, 102, 103}
         assert fake.adds == [103]
@@ -202,15 +205,15 @@ def test_incremental_reconciles_both_ways(app, monkeypatch):
         db.session.commit()
         app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps([101, 102, 103]))
 
-        # Since the snapshot: Plex removed B and added D; Fitzflix
-        # removed C (its row is already gone above)
+        # After the snapshot, Plex removed B and added D. Fitzflix
+        # removed C. Its row is already gone above.
         fake = FakePlex(
             {101: ("Film A", 1999), 103: ("Film C", 2001), 104: ("Film D", 2002)}
         )
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Both sides converge on {A, D}
+        # Both sides converge on {A, D}.
         assert fitzflix_watchlist_tmdb_ids(user_id) == {101, 104}
         assert set(fake.films) == {101, 104}
         assert fake.removes == [103]
@@ -233,12 +236,13 @@ def test_push_failures_retry_instead_of_reading_as_removals(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Not pushed, but kept locally and left OUT of the snapshot
+        # Not pushed. The film is kept locally and left OUT of the snapshot.
         assert fake.adds == []
         assert fitzflix_watchlist_tmdb_ids(user_id) == {105}
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
 
-        # Next run retries the push; once matchable it lands
+        # The next run retries the push. When Plex can match it, the push
+        # succeeds.
         fake.unmatched.clear()
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fake.adds == [105]
@@ -246,9 +250,11 @@ def test_push_failures_retry_instead_of_reading_as_removals(app, monkeypatch):
 
 
 def test_composite_item_syncs_by_its_tracked_id_only(app, monkeypatch):
-    """A Plex item spraying several tmdb guids (The Animatrix: the
-    compilation plus its segments) is represented by the id Fitzflix
-    tracks — the sibling ids never pour into the watchlist."""
+    """Test that a composite item syncs by its tracked id only.
+
+    A Plex item can carry several tmdb guids (The Animatrix: the
+    compilation plus its segments). The id that Fitzflix tracks
+    represents it. The sibling ids never go into the watchlist."""
 
     import app.plex_watchlist as plex_watchlist
 
@@ -265,23 +271,25 @@ def test_composite_item_syncs_by_its_tracked_id_only(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Stable: no pushes, no segment records, snapshot holds the
-        # compilation alone
+        # Stable: no pushes, no segment records. The snapshot holds the
+        # compilation alone.
 
         assert fake.adds == []
         assert fitzflix_watchlist_tmdb_ids(user_id) == {55931}
         assert Movie.query.filter_by(tmdb_id=24357).first() is None
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [55931]
 
-        # And a second run still changes nothing
+        # A second run still changes nothing.
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fitzflix_watchlist_tmdb_ids(user_id) == {55931}
 
 
 def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
-    """Plex answers 200 for adds it silently drops (Buried Loot). The
-    film must stay on the Fitzflix watchlist, join the unsyncable set,
-    and never read as a Plex-side removal."""
+    """Test that a phantom add goes into the unsyncable set.
+
+    Plex answers 200 for an add that it drops without a message (Buried
+    Loot). The film must stay on the Fitzflix watchlist and join the
+    unsyncable set. It must never read as a removal on the Plex side."""
 
     import app.plex_watchlist as plex_watchlist
 
@@ -295,20 +303,23 @@ def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # The add was attempted, verified missing, and quarantined
+        # Fitzflix tried the add, found the film missing, and quarantined it.
         assert fake.adds == [130344]
         assert fitzflix_watchlist_tmdb_ids(user_id) == {130344}
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
         assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) == {b"130344"}
 
-        # Subsequent runs skip it without churn — no repeat add, row kept
+        # Later runs skip it without churn. No repeat add occurs. The row
+        # stays.
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fake.adds == [130344]
         assert fitzflix_watchlist_tmdb_ids(user_id) == {130344}
 
 
 def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
-    """A show's tmdb guid is a TMDB TV-series id — it must not become
+    """Test that the sync ignores TV shows on the Plex watchlist.
+
+    The tmdb guid of a show is a TMDB TV-series id. It must not become
     a bare Movie row on the Fitzflix watchlist (The Flight Attendant,
     Severance)."""
 
@@ -324,17 +335,19 @@ def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Only the film syncs; the show never grows a record
+        # Only the film syncs. The show never gets a record.
         assert fitzflix_watchlist_tmdb_ids(user_id) == {101}
         assert Movie.query.filter_by(tmdb_id=95396).first() is None
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == [101]
 
 
 def test_previously_leaked_shows_drop_off_without_touching_plex(app, monkeypatch):
-    """A show that leaked in before the type filter (a bare Movie row
-    on the watchlist, its id in the snapshot) falls off the Fitzflix
-    watchlist on the next run — while the show itself stays untouched
-    on the Plex side."""
+    """Test that a leaked show drops off without a change on Plex.
+
+    A show leaked in before the type filter existed: a bare Movie row
+    on the watchlist, with its id in the snapshot. The next run removes
+    it from the Fitzflix watchlist. The show stays as it is on the Plex
+    side."""
 
     import app.plex_watchlist as plex_watchlist
 
@@ -349,7 +362,7 @@ def test_previously_leaked_shows_drop_off_without_touching_plex(app, monkeypatch
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Gone from the Fitzflix watchlist, no removeFromWatchlist sent
+        # Gone from the Fitzflix watchlist. No removeFromWatchlist was sent.
         assert fitzflix_watchlist_tmdb_ids(user_id) == set()
         assert fake.removes == []
         assert fake.films == {95396}
@@ -371,6 +384,7 @@ def test_empty_plex_response_never_mass_removes(app, monkeypatch):
         wire(app, monkeypatch, fake)
         assert plex_watchlist.sync_plex_watchlist() is True
 
-        # Run aborted: watchlist row intact, snapshot untouched
+        # The run aborted. The watchlist row is intact. The snapshot is
+        # unchanged.
         assert fitzflix_watchlist_tmdb_ids(user_id) == {106}
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == snapshot

@@ -1,8 +1,10 @@
-"""The "Streaming on your services" rail: discover pools as candidate
-generators, coarse taste ranking, per-title availability verification
-(discover's provider filters cross-contaminate, so pools are never
-display truth), credits enrichment, and the landing-page section with
-its mandatory JustWatch attribution."""
+"""Test the "Streaming on your services" rail.
+
+These tests cover the discover pools as candidate generators, the
+coarse taste ranking, the per-title availability verification, the
+credits enrichment, and the landing-page section with its mandatory
+JustWatch attribution. The provider filters of discover contaminate
+each other. Thus, the pools are never the display truth."""
 
 import json
 
@@ -14,7 +16,7 @@ NETFLIX = {"provider_id": 8, "provider_name": "Netflix", "logo_path": "/netflix.
 
 
 def plant_profile(app, user_id, affinities):
-    """Store a taste profile as the nightly recompute would."""
+    """Store a taste profile in the same way as the nightly recompute."""
 
     app.redis.set(
         f"fitzflix:recs:profile:{user_id}",
@@ -34,7 +36,7 @@ def plant_availability(app, tmdb_id, flatrate):
 
 
 def subscribe(app, provider_id, name):
-    """Add a streaming service to the admin user's profile."""
+    """Add a streaming service to the profile of the admin user."""
 
     from app import db
     from app.models import User, UserStreamingProvider
@@ -73,11 +75,12 @@ DISCOVER_ITEMS = [
         "original_language": "en",
         "popularity": 5.0,
     },
-    # In the library: excluded before scoring
+    # In the library: excluded before the scoring
     {"id": 5003, "genre_ids": [35], "release_date": "1994-05-01", "popularity": 9.0},
-    # In the user's diary: excluded before scoring
+    # In the diary of the user: excluded before the scoring
     {"id": 5004, "genre_ids": [35], "release_date": "1994-05-01", "popularity": 8.0},
-    # Discover contamination: claims to stream, availability says no
+    # Discover contamination: discover says it streams, availability
+    # says no
     {"id": 5005, "genre_ids": [35], "release_date": "1994-05-01", "popularity": 7.0},
 ]
 
@@ -108,7 +111,7 @@ ENRICHED = {
 
 
 class FakeTMDB:
-    """Canned TMDB response."""
+    """Provide a canned TMDB response."""
 
     def __init__(self, payload):
         self.payload = payload
@@ -117,15 +120,17 @@ class FakeTMDB:
         """Never an HTTP error."""
 
     def json(self):
-        """The canned payload."""
+        """Return the canned payload."""
 
         return self.payload
 
 
 def install_rail_fakes(app, monkeypatch, discover_calls=None):
-    """Fake tmdb_get for the rail and availability modules: discover
-    returns the canned candidates, /movie/{id} returns enrichment
-    payloads, availability misses return nothing streamable."""
+    """Provide a fake tmdb_get for the rail and availability modules.
+
+    Discover returns the canned candidates. /movie/{id} returns the
+    enrichment payloads. An availability miss returns nothing that
+    streams."""
 
     import app.streaming as streaming
     import app.streaming_rail as streaming_rail
@@ -157,7 +162,8 @@ def test_provider_pool_queries_and_caches(app, monkeypatch):
         pool = streaming_rail.provider_pool(8, "Netflix")
         streaming_rail.provider_pool(8, "Netflix")
 
-    # Three sorts x three pages, fetched once then served from cache
+    # 3 sorts x 3 pages. Fitzflix fetches them 1 time, then serves them
+    # from the cache
 
     assert len(calls) == streaming_rail.POOL_PAGES * len(streaming_rail.POOL_SORTS)
     sorts = {params["sort_by"] for params in calls}
@@ -167,8 +173,9 @@ def test_provider_pool_queries_and_caches(app, monkeypatch):
         "primary_release_date.desc",
     }
 
-    # Hygiene on every query: US flatrate on the provider, no adult
-    # titles, a vote floor (the acclaimed variant needs a deeper one)
+    # Every query has the same constraints: US flatrate on the provider,
+    # no adult titles, a vote floor (the acclaimed variant needs a higher
+    # one)
 
     for params in calls:
         assert params["watch_region"] == "US"
@@ -179,23 +186,25 @@ def test_provider_pool_queries_and_caches(app, monkeypatch):
     acclaimed = [p for p in calls if p["sort_by"] == "vote_average.desc"]
     assert all(p["vote_count.gte"] == 200 for p in acclaimed)
 
-    # Provenance tags name the query that produced each candidate
+    # The provenance tag names the query that produced each candidate
 
     assert "popular on Netflix" in pool["5001"]["sources"]
 
 
 def test_deleted_tmdb_id_caches_the_miss(app, monkeypatch):
-    """TMDB deletes films whose credit rows linger on person pages, so a
-    filmography keeps offering an id the movie endpoint 404s. The miss
-    is cached as a null payload: later calls answer None from Redis
-    without re-asking TMDB."""
+    """Test that a deleted movie id is cached as a null payload.
+
+    TMDB deletes some films, but their credit rows stay on person pages.
+    Thus, a filmography continues to offer an id that the movie endpoint
+    answers with 404. Fitzflix caches the miss as a null payload. Later
+    calls answer None from Redis and do not ask TMDB again."""
 
     from app import streaming_rail
 
     calls = []
 
     class Gone:
-        """A TMDB response for a deleted movie id."""
+        """Provide a TMDB response for a deleted movie id."""
 
         status_code = 404
 
@@ -239,8 +248,8 @@ def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
         )
         db.session.commit()
 
-    # 5001 and 5002 genuinely stream on Netflix; 5005 was discover
-    # contamination and must not survive verification
+    # 5001 and 5002 really stream on Netflix. 5005 was discover
+    # contamination and must not survive the verification
 
     plant_availability(app, 5001, [NETFLIX])
     plant_availability(app, 5002, [NETFLIX])
@@ -256,16 +265,16 @@ def test_compute_user_rail_excludes_verifies_and_explains(app, monkeypatch):
     assert 5004 not in ids, "diary film recommended"
     assert 5005 not in ids, "unverified discover contamination shown"
 
-    # The comedy outranks the drama on the full-feature rescore, its
-    # provenance tag leads the explanation, and the enriched credits
+    # The comedy outranks the drama on the full-feature rescore. Its
+    # provenance tag starts the explanation. The enriched credits
     # contribute ("Rail Actor" carries an affinity)
 
     top = items[0]
     assert top["tmdb_id"] == 5001
     assert top["title"] == "Rail Comedy"
 
-    # Providers are stored as full match dicts so the landing page can
-    # render the standard logo badges
+    # Fitzflix stores the providers as full match dicts. Thus, the landing
+    # page can render the standard logo badges
 
     assert [p["provider_name"] for p in top["providers"]] == ["Netflix"]
     assert top["providers"][0]["kind"] == "flatrate"
@@ -294,10 +303,12 @@ def test_recompute_task_stores_rail_payloads(app, monkeypatch):
 
 
 def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
-    """Rail films found on TMDB alone get review-only records and the
-    standard refresh enqueued, so the shared score source can estimate
-    their tiles like any catalogued film's — instead of /movie_states
-    answering their tmdb ids with the empty state."""
+    """Test that a rail film found only on TMDB gets a review-only record.
+
+    Fitzflix also enqueues the standard refresh. Thus, the shared score
+    source can estimate its tile like the tile of any catalogued film.
+    Without the record, /movie_states answers its tmdb id with the empty
+    state."""
 
     from app.models import Movie
     from app.streaming_rail import recompute_streaming_rail
@@ -319,7 +330,7 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
         assert drama is not None and drama.year == 1953
         assert comedy.files.count() == 0
 
-        # Both records await the refresh that stamps tmdb_data_as_of
+        # Both records wait for the refresh that stamps tmdb_data_as_of
 
         refresh_targets = {
             job.args[1]
@@ -328,7 +339,8 @@ def test_recompute_creates_records_for_recordless_rail_films(app, monkeypatch):
         }
         assert {comedy.id, drama.id} <= refresh_targets
 
-    # A second run reuses the records instead of duplicating them
+    # A second run uses the same records again. It does not make
+    # duplicates
 
     assert recompute_streaming_rail() is True
     with app.app_context():
@@ -344,8 +356,8 @@ def test_landing_page_renders_the_rail(app, admin_client):
     with app.app_context():
         user_id = User.query.filter_by(admin=True).first().id
 
-        # One rail film has been acquired since the nightly run and one
-        # was logged since; both must drop out of the display
+        # After the nightly run, the user acquired 1 rail film and logged
+        # a second one. Both must disappear from the display
 
         acquired = make_movie("Rail Acquired Since", 1994, tmdb_id=6002)
         make_movie_file(acquired, "Bluray-1080p")
@@ -403,9 +415,8 @@ def test_landing_page_renders_the_rail(app, admin_client):
     assert "Rail Showpiece (1994)" in body
     assert "/review/tmdb/6001" in body
 
-    # The provider badge moved into the popover (Aug 2026); the tile
-    # keeps the actions, and the taste reason rides the anchor as a
-    # card label
+    # The provider badge moved into the popover (2026-08). The tile keeps
+    # the actions. The taste reason goes with the anchor as a card label
 
     assert 'title="Streaming on Netflix"' not in body
     assert 'data-state-tmdb="6001"' in body
@@ -438,8 +449,11 @@ def test_no_rail_section_without_provider_picks(app, admin_client):
 
 
 def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
-    """The minute limit filters stored rail items by their enriched
-    runtime; zero means unknown and hides only from filtered views."""
+    """Test that the minute limit filters the stored rail items by their
+    enriched runtime.
+
+    0 means unknown. Fitzflix hides such an item only from the filtered
+    views."""
 
     from app.models import User
     from app.streaming_rail import RAIL_KEY
@@ -448,7 +462,7 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
         user_id = User.query.filter_by(admin=True).first().id
 
     def rail_item(tmdb_id, title, runtime):
-        """A minimal stored rail entry."""
+        """Return a minimal stored rail entry."""
 
         return {
             "tmdb_id": tmdb_id,
@@ -487,8 +501,9 @@ def test_runtime_filter_trims_the_streaming_rail(app, admin_client):
 
 
 def test_runtime_filter_says_when_the_rail_empties(app, admin_client):
-    """A filter that trims every streaming film keeps the rail's heading
-    and says why it's empty (GitHub #198)."""
+    """Test a filter that removes every streaming film.
+
+    The rail keeps its heading and says why it is empty (GitHub #198)."""
 
     from app.models import User
     from app.streaming_rail import RAIL_KEY

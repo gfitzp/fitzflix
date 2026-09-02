@@ -1,7 +1,9 @@
-"""Film awards from Wikidata: the batched SPARQL refresh with its
-current-truth replacement semantics, the person-item craft backfill
-that merges on top of it, the movie-page award strip, and the capped
-quality prior the recommendation engine folds in."""
+"""Test the film awards from Wikidata.
+
+These tests cover the batched SPARQL refresh with its current-truth
+replacement semantics, the person-item craft backfill that merges on
+top of it, the movie-page award strip, and the capped quality prior
+that the recommendation engine adds."""
 
 from datetime import datetime
 
@@ -14,7 +16,7 @@ from tests.test_recommendations import admin_id, genre, log_watch
 
 
 def binding(ext, award_q, label, kind, year=None):
-    """A SPARQL result row the shape Wikidata returns."""
+    """Return a SPARQL result row in the shape that Wikidata returns."""
 
     row = {
         "ext": {"value": ext},
@@ -28,9 +30,11 @@ def binding(ext, award_q, label, kind, year=None):
 
 
 def test_refresh_parses_batches_and_replaces(app, monkeypatch):
-    """IMDb-matched and TMDB-fallback films both resolve, duplicate
-    statements dedupe, label-service misses drop, and films the
-    response no longer lists have their stale rows wiped."""
+    """Test that the refresh parses the batches and replaces the rows.
+
+    IMDb-matched films and TMDB-fallback films both resolve. Duplicate
+    statements are removed. Label-service misses drop. When the response
+    no longer lists a film, Fitzflix deletes its stale rows."""
 
     import app.awards as awards
 
@@ -50,7 +54,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
         imdb_movie_id, tmdb_movie_id = by_imdb.id, by_tmdb.id
 
     def fake_sparql(query):
-        """Canned bindings per id-system query."""
+        """Return the canned bindings for each id-system query."""
 
         if "P345" in query:
             assert '"tt0047296"' in query and '"tt0000001"' in query
@@ -62,7 +66,8 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
                     "win",
                     1955,
                 ),
-                # The same statement twice (re-import artifacts) dedupes
+                # The same statement 2 times (re-import artifacts): the
+                # duplicate is removed.
                 binding(
                     "tt0047296",
                     "Q103618",
@@ -77,7 +82,7 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
                     "nomination",
                     1955,
                 ),
-                # A label-service miss echoes the QID back; useless badge
+                # A label-service miss echoes the QID back. That badge is useless.
                 binding("tt0047296", "Q555", "Q555", "win"),
             ]
         assert "P4947" in query and '"901"' in query
@@ -105,12 +110,14 @@ def test_refresh_parses_batches_and_replaces(app, monkeypatch):
 
 
 def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
-    """Award statements naming a library film as their "for work" —
-    the craft categories person items hold — attribute to the film
-    through its own ids (IMDb batch first, TMDB fallback) and merge
-    without duplicating what the film items already list: year-less
-    film rows still suppress their dated person copies, but a win
-    lands when only the nomination is on record."""
+    """Test that the craft backfill attributes for-work awards to films.
+
+    Person items hold the craft categories. An award statement that
+    names a library film as its "for work" attributes to the film
+    through the ids of the film (the IMDb batch first, then the TMDB
+    fallback). The rows merge without duplicates of what the film items
+    already list. A film row without a year still suppresses its dated
+    person copy. A win goes in when only the nomination is on record."""
 
     import app.awards as awards
 
@@ -120,7 +127,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
         )
         ryan = make_movie("Backfill Ryan", 1998, tmdb_id=857)
 
-        # What the film pass already found on the film's own item
+        # This is what the film pass already found on the item of the film.
 
         db.session.add_all(
             [
@@ -150,13 +157,13 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
         waterfront_id, ryan_id = waterfront.id, ryan.id
 
     def fake_sparql(query):
-        """Canned for-work bindings per id-system query."""
+        """Return the canned for-work bindings for each id-system query."""
 
         assert "pq:P1686" in query
         if "P345" in query:
             assert '"tt0047296"' in query
             return [
-                # The craft win the film pass misses
+                # This is the craft win that the film pass misses.
                 binding(
                     "tt0047296",
                     "Q103360",
@@ -164,8 +171,8 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
                     "win",
                     1955,
                 ),
-                # The same award via a second honoree (two writers, one
-                # screenplay) dedupes
+                # The same award through a second honoree (2 writers, 1
+                # screenplay) is removed as a duplicate.
                 binding(
                     "tt0047296",
                     "Q103360",
@@ -173,7 +180,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
                     "win",
                     1955,
                 ),
-                # The film item already lists this win: exact duplicate
+                # The film item already lists this win: an exact duplicate.
                 binding(
                     "tt0047296",
                     "Q103618",
@@ -181,8 +188,8 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
                     "win",
                     1955,
                 ),
-                # The film item has this award with no year recorded:
-                # the dated person copy is still the same event
+                # The film item has this award with no recorded year.
+                # The dated person copy is still the same event.
                 binding(
                     "tt0047296",
                     "Q106291",
@@ -190,12 +197,12 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
                     "nomination",
                     1955,
                 ),
-                # A label-service miss echoes the QID back; useless badge
+                # A label-service miss echoes the QID back. That badge is useless.
                 binding("tt0047296", "Q555", "Q555", "win", 1955),
             ]
         assert "P4947" in query and '"857"' in query
         return [
-            # The IMDb-less film resolves through the TMDB batch
+            # The film without an IMDb id resolves through the TMDB batch.
             binding(
                 "857",
                 "Q131520",
@@ -227,7 +234,7 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
     }
     assert result == "Scanned 2 films for craft awards, added 2 records for 2 films"
 
-    # Standalone reruns are idempotent: everything now dedupes
+    # Standalone reruns are idempotent. Every row is now a duplicate.
 
     with app.app_context():
         rerun = awards.refresh_person_awards()
@@ -236,8 +243,10 @@ def test_craft_backfill_attributes_for_work_awards(app, monkeypatch):
 
 
 def test_award_prior_math(app):
-    """The prior weighs wins over nominations and caps, and the chip
-    text prefers wins."""
+    """Test the math of the award prior.
+
+    The prior weighs wins more than nominations, and it has a cap. The
+    chip text prefers wins."""
 
     from app.recommendations import (
         AWARD_PRIOR_CAP,
@@ -254,9 +263,11 @@ def test_award_prior_math(app):
 
 
 def test_award_prior_reranks_and_explains(app):
-    """Between two candidates the taste profile scores identically, the
-    awarded film ranks first and says why — but awards alone never
-    recommend a film the profile scores at zero."""
+    """Test that the award prior reranks the candidates and explains why.
+
+    When the taste profile scores 2 candidates the same, the awarded
+    film ranks first and says why. Awards alone never recommend a film
+    that the profile scores at 0."""
 
     from app.recommendations import compute_user_recommendations
 
@@ -285,8 +296,9 @@ def test_award_prior_reranks_and_explains(app):
             )
         )
 
-        # Heavily awarded but taste-mismatched (different genre AND
-        # decade, like the engine tests' drama): taste gates the prior
+        # This film has many awards, but it does not match the taste
+        # (different genre AND decade, like the drama in the engine
+        # tests). The taste gates the prior.
 
         drama = genre(18, "Drama")
         mismatched = make_movie("Prior Awarded Mismatch", 1953)
@@ -312,8 +324,10 @@ def test_award_prior_reranks_and_explains(app):
 
 
 def test_movie_page_shows_award_strip(app, admin_client):
-    """The movie page lists wins first with the trophy, marks
-    nominations, and credits Wikidata."""
+    """Test that the movie page shows the award strip.
+
+    The page lists the wins first, with the trophy. It marks the
+    nominations. It credits Wikidata."""
 
     with app.app_context():
         movie = make_movie("Award Strip Film", 1954, tmdb_data_as_of=datetime.utcnow())
@@ -345,7 +359,7 @@ def test_movie_page_shows_award_strip(app, admin_client):
     assert "bi-trophy-fill" in page
     assert "Award data from Wikidata" in page
 
-    # Wins lead the strip regardless of alphabetical order
+    # Wins lead the strip. The alphabetical order is not important.
 
     assert page.index("Academy Award for Best Picture (1955)") < page.index(
         "BAFTA Award for Best Film (1955)"
@@ -353,8 +367,11 @@ def test_movie_page_shows_award_strip(app, admin_client):
 
 
 def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
-    """A throttled query waits out the 429's Retry-After (capped) and
-    retries once — the WDQS manual's condition for staying unbanned."""
+    """Test that the SPARQL client honors Retry-After on a 429.
+
+    A throttled query waits for the Retry-After of the 429 (capped) and
+    retries 1 time. The WDQS manual sets this condition for a client
+    that does not get banned."""
 
     import app.awards as awards
     import app.criterion_catalog as criterion_catalog
@@ -373,7 +390,7 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
         def json(self):
             return {"results": {"bindings": self._bindings}}
 
-    # Header parsing: seconds, absent, date-shaped, and the cap
+    # The header parsing: seconds, absent, date-shaped, and the cap.
 
     assert wikidata_retry_after_seconds(FakeResponse(429, {"Retry-After": "3"})) == 3
     assert wikidata_retry_after_seconds(FakeResponse(429, {})) == 60
@@ -387,7 +404,8 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
         wikidata_retry_after_seconds(FakeResponse(429, {"Retry-After": "9000"})) == 300
     )
 
-    # Both clients: 429 then success — one capped sleep, then the rows
+    # Both clients: a 429, then success. One capped sleep occurs, then the
+    # rows come.
 
     with app.app_context():
         for module, call in (
@@ -413,9 +431,11 @@ def test_sparql_client_honors_retry_after_on_429(app, monkeypatch):
 
 
 def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
-    """When Wikidata fails batch after batch, the refresh waits the
-    longer error pause between tries and then stops entirely instead of
-    hammering out error queries — the weekly cadence self-heals."""
+    """Test that the refresh stops after consecutive failures.
+
+    When Wikidata fails batch after batch, the refresh waits the longer
+    error pause between tries. Then it stops fully. It does not send
+    error query after error query. The weekly schedule heals itself."""
 
     from tests.factories import make_movie
 
@@ -448,10 +468,13 @@ def test_awards_refresh_aborts_after_consecutive_failures(app, monkeypatch):
 
 
 def test_award_badges_can_wrap(app, admin_client):
-    """#199: Bootstrap's .badge sets white-space: nowrap, so a long award
-    name grew a badge wider than a phone and scrolled the whole page
-    sideways — 939px of badge in a 375px viewport, 579px of overflow.
-    The badge has to carry the wrapping utility to override that."""
+    """Test that an award badge can wrap (#199).
+
+    The .badge class of Bootstrap sets white-space: nowrap. Thus, a
+    long award name made a badge wider than a phone, and the whole page
+    scrolled sideways. The badge was 939px in a 375px viewport, 579px of
+    overflow. The badge must carry the wrapping utility to override
+    that."""
 
     from html.parser import HTMLParser
 

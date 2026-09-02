@@ -1,5 +1,7 @@
-"""Series rename: disk moves, row rewrites, resume
-semantics, and the refusal guards. S3 keys must never change."""
+"""Test the series rename.
+
+The tests cover the disk moves, the row rewrites, the resume semantics,
+and the refusal guards. The S3 keys must never change."""
 
 import os
 
@@ -30,8 +32,8 @@ def test_rename_moves_files_and_rewrites_rows(app):
 
         assert rename_tv_series_task(series_id, "Batman (1966)") is True
 
-        # The task commits on its own app-context session; drop this
-        # session's cached instances before re-reading
+        # The task commits on its own app-context session. Remove the
+        # cached instances of this session before you read again
         db.session.expire_all()
         one = db.session.get(File, one.id)
         assert one.basename == "Batman (1966) - S01E01 - [Bluray-1080p].mkv"
@@ -42,7 +44,7 @@ def test_rename_moves_files_and_rewrites_rows(app):
         )
         assert one.plex_title == "Batman (1966) - S01E01"
 
-        # The S3 key is deliberately untouched
+        # The task intentionally does not change the S3 key
         assert one.aws_untouched_key == (
             "untouched/Batman - S01E01 - [Bluray-1080p].mkv"
         )
@@ -54,7 +56,7 @@ def test_rename_moves_files_and_rewrites_rows(app):
                 os.path.join(app.config["LIBRARY_DIR"], file.file_path)
             )
         assert db.session.get(type(series), series_id).title == "Batman (1966)"
-        # Emptied old series directory is gone
+        # The old series directory became empty, and the task removed it
         assert not os.path.isdir(
             os.path.join(app.config["LIBRARY_DIR"], "TV Shows/Batman")
         )
@@ -67,8 +69,8 @@ def test_rename_resumes_and_handles_archived_only_rows(app):
         archived_only = make_tv_file(series, 1, 2, "Bluray-1080p")
         db.session.commit()
 
-        # Pre-place the first file at its TARGET, as a crashed earlier
-        # run would have; the second has no local file at all
+        # Put the first file at its TARGET before the run. An earlier run
+        # that crashed does the same. The second file has no local file
         target = os.path.join(
             app.config["LIBRARY_DIR"],
             "TV Shows/Batman (1966)/Season 01/"

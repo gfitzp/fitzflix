@@ -1,8 +1,11 @@
-"""The TMDB triage page (#226): the maintenance surface that answers
-"which records are unmatched, and what do I want to do about each one?"
-It lists every movie and series at a NULL tmdb_id without the ignored
-flag, and each row either gets flagged as unmatchable (the Remove
-button's clear path) or matched to an id entered by hand."""
+"""Test the TMDB triage page (#226).
+
+The page is the maintenance surface for the unmatched records. It lists
+the unmatched records, and lets the admin decide what to do with each
+one. It lists every movie and series with a NULL tmdb_id and
+without the ignored flag. The admin flags a row as unmatchable (the
+clear path of the Remove button), or matches it to an id that the admin
+types."""
 
 import re
 
@@ -19,8 +22,10 @@ def csrf_token_from(page_html):
 
 
 class _InstantTime:
-    """Stands in for the admin module's time so the match action's
-    wait-for-the-refresh loop doesn't stall the tests."""
+    """Replace the time module of the admin module.
+
+    Thus, the wait-for-the-refresh loop of the match action does not
+    stall the tests."""
 
     @staticmethod
     def sleep(seconds):
@@ -44,16 +49,16 @@ def test_page_lists_only_unmatched_unflagged_records(app, admin_client):
     assert "Home Movie Flagged" not in page
     assert "Known Show" not in page
 
-    # Each row carries the decision's ingredients — file count, date,
-    # the search hand-off — and both actions
+    # Each row shows the data for the decision: the file count, the date,
+    # and the search hand-off. Each row also shows both actions
 
     assert page.count("Search TMDB") == 2
     assert page.count('name="flag_submit"') == 2
     assert page.count('name="lookup_submit"') == 2
     assert "2 records with no TMDB id" in page
 
-    # The maintenance page's card goes warning-coloured on a non-zero
-    # count
+    # The card on the maintenance page shows the warning colour when the
+    # count is not zero
 
     mpage = admin_client.get("/maintenance").get_data(as_text=True)
     assert "Triage TMDB matches" in mpage
@@ -116,13 +121,15 @@ def test_flag_marks_movie_and_series_unmatchable(app, admin_client):
 
 
 def test_flag_refuses_a_record_that_left_the_list(app, admin_client):
-    """The guard against a stale page: a record matched (or flagged)
-    since the page rendered must never be cleared by a late flag."""
+    """Test the guard against a stale page.
+
+    A late flag must never clear a record that was matched (or flagged)
+    after the page rendered."""
 
     with app.app_context():
         matched = make_movie("Raced Ahead", 1990, tmdb_id=777, tmdb_title="Raced")
-        # A still-unmatched sibling keeps a triage form (and its csrf
-        # token) on the page, the way a stale tab would have one
+        # A sibling that is not matched yet keeps a triage form (and its
+        # csrf token) on the page. A stale tab has the same form
         make_movie("Still Waiting", 1991)
         db.session.commit()
         matched_id = matched.id

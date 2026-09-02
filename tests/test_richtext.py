@@ -1,6 +1,8 @@
-"""Review markup handling: the display filter renders Letterboxd's
-inline subset and nothing else, and the feed's tag pass stores that
-same subset — so CSV-imported and feed-synced reviews agree."""
+"""Test the review markup handling.
+
+The display filter renders only the inline subset of Letterboxd. The
+tag pass of the feed stores that same subset. Thus, the reviews from a
+CSV import and the reviews from a feed sync agree."""
 
 
 def test_review_html_renders_allowed_tags_and_newlines(app):
@@ -22,17 +24,18 @@ def test_review_html_escapes_everything_outside_the_subset(app):
     assert "&lt;script&gt;" in result
     assert "a &lt;3 movie &amp; more" in result
 
-    # Attributes disqualify a tag — nothing inside a tag is ever parsed
+    # An attribute disqualifies a tag. Fitzflix never parses the content
+    # of a tag
     assert "<i>" not in str(review_html('<i onmouseover="alert(1)">sneaky</i>'))
 
 
 def test_review_html_balances_stray_markup(app):
     from app.richtext import review_html
 
-    # An unclosed opener can't bleed styling past the review
+    # An opener with no closer cannot apply its style after the review
     assert str(review_html("so <b>good")) == "so <b>good</b>"
 
-    # A closer with no opener stays visible text
+    # A closer with no opener stays as visible text
     assert str(review_html("weird</b> text")) == "weird&lt;/b&gt; text"
 
 

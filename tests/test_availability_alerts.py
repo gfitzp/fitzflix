@@ -1,7 +1,9 @@
-"""Watchlist availability alerts (#156/#230): the nightly snapshot
-diff, the three event kinds and their precedence, the leaving-Criterion
-warning, digest batching and dedup, the Profile opt-ins, and the
-watchlist page's recently-available badge."""
+"""Test the watchlist availability alerts (#156/#230).
+
+These tests cover the nightly snapshot diff, the 3 event kinds and
+their precedence, the leaving-Criterion warning, the digest batching
+and duplicate removal, the Profile opt-ins, and the recently-available
+badge on the watchlist page."""
 
 import json
 
@@ -22,7 +24,8 @@ EMPTY = {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
 
 
 def watchlist_movie(app, title, tmdb_id, email=MEMBER_EMAIL, owned=False, **kwargs):
-    """A committed movie on the given user's watchlist; its movie id."""
+    """Commit a movie on the watchlist of the given user and return its
+    movie id."""
 
     from app import db
     from app.models import User, UserWatchlist
@@ -38,7 +41,7 @@ def watchlist_movie(app, title, tmdb_id, email=MEMBER_EMAIL, owned=False, **kwar
 
 
 def set_alert_flags(app, email, availability=False, rentals=False):
-    """Set a user's digest opt-in columns directly."""
+    """Set the digest opt-in columns of a user directly."""
 
     from app import db
     from app.models import User
@@ -51,7 +54,7 @@ def set_alert_flags(app, email, availability=False, rentals=False):
 
 
 def capture_mail(monkeypatch):
-    """Divert the digest sender into a list of {subject, ...} calls."""
+    """Redirect the digest sender into a list of {subject, ...} calls."""
 
     import app.availability_alerts as alerts
 
@@ -65,8 +68,10 @@ def capture_mail(monkeypatch):
 
 
 def run_task(app, monkeypatch):
-    """Run the nightly diff with external URLs buildable outside a
-    request (the digest templates link back to the site)."""
+    """Run the nightly diff with external URLs that build outside a
+    request.
+
+    The digest templates link back to the site."""
 
     monkeypatch.setitem(app.config, "SERVER_NAME", "fitzflix.test")
     from app.availability_alerts import notify_watchlist_availability
@@ -75,15 +80,19 @@ def run_task(app, monkeypatch):
 
 
 def reset_alert_users(app):
-    """Put both persistent test users' alert columns back to default."""
+    """Set the alert columns of both persistent test users back to the
+    default."""
 
     set_alert_flags(app, MEMBER_EMAIL)
     set_alert_flags(app, ADMIN_EMAIL)
 
 
 def test_first_run_only_plants_snapshots(app, monkeypatch):
-    """A film already streaming when first seen never notifies — the
-    first sighting plants the snapshot, like the Plex history poller."""
+    """Test that a film that already streams at the first sighting never
+    notifies.
+
+    The first sighting creates the snapshot. The Plex history poller does
+    the same."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -108,8 +117,10 @@ def test_first_run_only_plants_snapshots(app, monkeypatch):
 
 
 def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
-    """A watchlisted film turning up on a subscribed service mails one
-    digest, stamps the badge record, and never repeats."""
+    """Test a watchlisted film that appears on a subscribed service.
+
+    Fitzflix mails 1 digest, stamps the badge record, and never repeats
+    the digest."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -130,8 +141,9 @@ def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
         assert "Debut (2020)" in sent[0]["text_body"]
         assert "Now on Netflix" in sent[0]["html_body"]
 
-        # The HTML digest leads each film with its artwork — TMDB's
-        # w154 rendition here, since the record has no custom poster
+        # The HTML digest starts each film with its artwork. Here it is
+        # the w154 rendition of TMDB, because the record has no custom
+        # poster
 
         poster_url = app.config["TMDB_IMAGE_URL"] + "/w154/debut.jpg"
         assert poster_url in sent[0]["html_body"]
@@ -152,7 +164,7 @@ def test_streaming_debut_mails_once_and_badges(app, monkeypatch):
 
 
 def test_debut_on_unsubscribed_service_is_silent(app, monkeypatch):
-    """A service the user doesn't subscribe to isn't 'available'."""
+    """Test that a service without a subscription is not 'available'."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -169,8 +181,10 @@ def test_debut_on_unsubscribed_service_is_silent(app, monkeypatch):
 
 
 def test_local_arrival_notifies_but_upgrades_stay_silent(app, monkeypatch):
-    """The film's first library copy fires; a further (upgrade) file
-    for an already-owned film never does."""
+    """Test that the first library copy of a film notifies.
+
+    A second (upgrade) file for a film that the user already owns never
+    notifies."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -206,8 +220,9 @@ def test_local_arrival_notifies_but_upgrades_stay_silent(app, monkeypatch):
 
 
 def test_owned_films_skip_streaming_events(app, monkeypatch):
-    """An owned watchlisted film's streaming debut says nothing — the
-    copy on the shelf already beats the stream, per the bucket order."""
+    """Test that the streaming debut of an owned watchlisted film is silent.
+
+    The copy on the shelf already beats the stream in the bucket order."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True)
@@ -224,7 +239,8 @@ def test_owned_films_skip_streaming_events(app, monkeypatch):
 
 
 def test_rentals_are_a_separate_opt_in(app, monkeypatch):
-    """A rental debut reaches only users who asked for rentals."""
+    """Test that a rental debut reaches only the users that asked for
+    rentals."""
 
     sent = capture_mail(monkeypatch)
     set_alert_flags(app, MEMBER_EMAIL, availability=True, rentals=True)
@@ -258,8 +274,10 @@ def test_rentals_are_a_separate_opt_in(app, monkeypatch):
 
 
 def test_cache_gap_never_fakes_a_debut(app, monkeypatch):
-    """A film whose availability is uncached tonight keeps its old
-    snapshot entry, so the payload coming back reads as no change."""
+    """Test a film with no cached availability tonight.
+
+    The film keeps its old snapshot entry. Thus, the payload that comes
+    back reads as no change."""
 
     from app.streaming import AVAILABILITY_KEY
 
@@ -281,9 +299,12 @@ def test_cache_gap_never_fakes_a_debut(app, monkeypatch):
 
 
 def test_leaving_criterion_warning_fires_once_per_set(app, monkeypatch):
-    """A watchlisted, unowned film in the stored leaving set warns
-    Criterion subscribers in one digest, and only once — the final-week
-    marker covers the second send when the set lands late."""
+    """Test the warning for a watchlisted, unowned film in the stored
+    leaving set.
+
+    Fitzflix warns the Criterion subscribers in 1 digest, and only 1
+    time. The final-week marker covers the second send when the set
+    arrives late."""
 
     from app.leaving_criterion import LEAVING_KEY
 
@@ -319,7 +340,9 @@ def test_leaving_criterion_warning_fires_once_per_set(app, monkeypatch):
 
 
 def test_leaving_warning_needs_a_criterion_subscription(app, monkeypatch):
-    """Non-subscribers can't watch it there anyway — no warning."""
+    """Test that non-subscribers get no warning.
+
+    They cannot watch the film there in any case."""
 
     from app.leaving_criterion import LEAVING_KEY
 
@@ -339,8 +362,8 @@ def test_leaving_warning_needs_a_criterion_subscription(app, monkeypatch):
 
 
 def test_digest_stays_unsent_without_opt_in(app, monkeypatch):
-    """The badge record is stamped for everyone, but mail is strictly
-    opt-in."""
+    """Test that the badge record is stamped for everyone, but mail is
+    strictly opt-in."""
 
     sent = capture_mail(monkeypatch)
     movie_id = watchlist_movie(app, "Quiet", 9010)
@@ -360,9 +383,11 @@ def test_digest_stays_unsent_without_opt_in(app, monkeypatch):
 
 
 def test_movie_states_serves_recent_fold_and_prunes_stale(app, user_client):
-    """/movie_states carries the green fold's label for films the diff
-    found newly available in the last month; older records answer None
-    and age out of the store on read."""
+    """Test the green-fold label in /movie_states.
+
+    The label is present for the films that the diff found newly
+    available in the last month. Older records answer None, and the
+    store removes them on read."""
 
     from app.availability_alerts import RECENT_KEY
 
@@ -400,9 +425,11 @@ def test_movie_states_serves_recent_fold_and_prunes_stale(app, user_client):
 def test_movie_states_serves_leaving_fold_to_subscribers_only(
     app, user_client, admin_client
 ):
-    """/movie_states carries the red fold's departure date for films in
-    the stored leaving set — for Criterion subscribers, by movie id and
-    bare tmdb id alike; non-subscribers get None."""
+    """Test the red-fold departure date in /movie_states.
+
+    The date is present for the films in the stored leaving set. Criterion
+    subscribers get it by movie id and by bare tmdb id. Non-subscribers
+    get None."""
 
     from app.leaving_criterion import LEAVING_KEY
 
@@ -431,8 +458,10 @@ def test_movie_states_serves_leaving_fold_to_subscribers_only(
 
 
 def test_profile_saves_alert_opt_ins(app, user_client):
-    """The Profile page's alert checkboxes write both columns, and the
-    section renders with the rentals framing."""
+    """Test that the alert checkboxes on the Profile page write both
+    columns.
+
+    The section renders with the rentals framing."""
 
     from app.models import User
 

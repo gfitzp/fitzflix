@@ -1,6 +1,9 @@
-"""Deferred-retry scheduling: deterministic job ids that replace rather than
-stack, scheduled jobs that actually bind to their target functions (the
-enqueue_in kwarg-leak bug class), the native ScheduledJobRegistry defers, the cron table, and the import-directory watchdog.
+"""Test the deferred-retry scheduling.
+
+The tests cover the deterministic job ids that replace and do not stack,
+the scheduled jobs that bind to their target functions (the enqueue_in
+kwarg-leak bug class), the native ScheduledJobRegistry defers, the cron
+table, and the import-directory watchdog.
 """
 
 import inspect
@@ -23,7 +26,7 @@ from app.videos import (
 
 
 def scheduled_ids(queue):
-    """Job ids in the queue's native ScheduledJobRegistry."""
+    """Return the job ids in the native ScheduledJobRegistry of the queue."""
 
     from rq.registry import ScheduledJobRegistry
 
@@ -31,7 +34,7 @@ def scheduled_ids(queue):
 
 
 def scheduled_jobs(queue):
-    """The scheduled jobs themselves, skipping any already-expired ids."""
+    """Return the scheduled jobs. This skips the ids that already expired."""
 
     return [
         job
@@ -41,7 +44,7 @@ def scheduled_jobs(queue):
 
 
 def assert_binds(job):
-    """The scheduled call must match the target function's signature."""
+    """Assert that the scheduled call matches the signature of the target function."""
 
     inspect.signature(job.func).bind(*(job.args or ()), **(job.kwargs or {}))
 
@@ -92,8 +95,9 @@ def test_defer_uses_deterministic_id_and_replaces(app, held_lock):
         job = Job.fetch(retries[0], connection=app.redis)
         assert_binds(job)
 
-        # Scheduling kwargs must not leak into the function call (the
-        # enqueue_in bug class: unrecognized kwargs pass through to the task)
+        # The scheduling kwargs must not leak into the function call. This
+        # is the enqueue_in bug class. Unknown kwargs pass through to the
+        # task
 
         assert job.kwargs == {"file_path": "/incoming/Jaws (1975) - [DVD].mkv"}
         assert not job.args
@@ -142,14 +146,15 @@ def test_acquire_returns_lock_when_free(app):
 
 
 def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir):
-    """The real localization path: a held title lock schedules one retry."""
+    """Test the real localization path. A held title lock schedules 1 retry."""
 
     basename = "Jaws (1975) - [DVD].mkv"
     file_path = os.path.join(incoming_dir, basename)
     with open(file_path, "wb") as f:
         f.write(b"not a real video")
 
-    # Backdate past the completeness gate so this test reaches the lock
+    # Set the file time before the completeness gate. Thus, the test
+    # reaches the lock
 
     stamp = time.time() - 3600
     os.utime(file_path, (stamp, stamp))
@@ -181,7 +186,9 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
 
 
 def test_localization_defers_while_file_is_growing(app, incoming_dir):
-    """A file still being copied is rescheduled, not processed or rejected."""
+    """Test that the task reschedules a file that a copy still writes.
+
+    The task does not process or reject the file."""
 
     basename = "Growing (2020) - [DVD].mkv"
     file_path = os.path.join(incoming_dir, basename)
@@ -213,8 +220,8 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
         thread.join()
         os.remove(file_path)
 
-    # The file must not have been moved to rejects (empty reason
-    # subdirectories may exist; only actual files count)
+    # The task must not move the file to the rejects. Empty reason
+    # subdirectories can exist. Only actual files count
     rejected = [
         name for _, _, files in os.walk(app.config["REJECTS_DIR"]) for name in files
     ]
@@ -241,9 +248,11 @@ def test_sync_defers_while_queues_are_busy(app):
 
 
 def test_cron_table_entries_are_well_formed(app):
-    """Every cron-table row names a resolvable function, a five-field
-    cron string, the maintenance queue, and a description — the
-    scheduler process trusts the table blindly."""
+    """Test that each cron-table row is well formed.
+
+    Each row names a function that resolves, a 5-field cron string, the
+    maintenance queue, and a description. The scheduler process trusts
+    the table without a check."""
 
     import importlib
 
@@ -261,13 +270,15 @@ def test_cron_table_entries_are_well_formed(app):
 
 
 def test_every_cron_table_schedule_gets_a_written_description():
-    """The System page's schedule column never falls back to a raw cron
-    string. The description used to come from a hardcoded map that had
-    drifted nine schedules behind the table; this fails the moment a new
-    job's schedule outruns the generator's grammar.
+    """Test that each cron-table schedule gets a written description.
 
-    Every config-dependent row is switched on, so the jobs the test
-    config leaves out of the table are covered too."""
+    The schedule column of the System page never falls back to a raw
+    cron string. The description came from a hardcoded map before. That
+    map was 9 schedules behind the table. This test fails when the
+    schedule of a new job is outside the grammar of the generator.
+
+    The test switches on each config-dependent row. Thus, the test also
+    covers the jobs that the test config leaves out of the table."""
 
     from app.main.admin import _cron_description
 
@@ -284,8 +295,10 @@ def test_every_cron_table_schedule_gets_a_written_description():
 
 
 def test_cron_descriptions_read_as_english():
-    """The house phrasing, per frequency class — including the two
-    times of day that have names, and the Oxford-comma list."""
+    """Test the house phrasing for each frequency class.
+
+    This includes the 2 times of day that have names, and the
+    Oxford-comma list."""
 
     from app.main.admin import _cron_description
 
@@ -309,15 +322,16 @@ def test_cron_descriptions_read_as_english():
 
 
 def test_cron_descriptions_fall_back_to_the_raw_string():
-    """Grammar the generator doesn't cover shows the cron string itself
-    rather than a wrong sentence."""
+    """Test that an unsupported cron string shows as it is.
+
+    The generator shows the cron string itself, not a wrong sentence."""
 
     from app.main.admin import _cron_description
 
     for cron_string in (
         "0 */6 * * *",  # an hour step
         "0-30 * * * *",  # a range
-        "0 5 * * 1,4",  # twice weekly isn't "weekly on"
+        "0 5 * * 1,4",  # 2 times weekly is not "weekly on"
         "0 0 1 1 *",  # yearly
         "0 0 1 * 1",  # day-of-month and day-of-week together
         "61 * * * *",  # out of range
@@ -327,9 +341,10 @@ def test_cron_descriptions_fall_back_to_the_raw_string():
 
 
 def test_cron_frequency_sort_orders_by_class_then_parameter():
-    """The System page's ordering: every-X-minutes by X, hourly by
-    minute, daily by time, weekly by day and time, monthly by
-    day-of-month and time."""
+    """Test the ordering of the System page.
+
+    The order is: every-X-minutes by X, hourly by minute, daily by time,
+    weekly by day and time, monthly by day-of-month and time."""
 
     from app.main.admin import _cron_frequency_key
 
@@ -349,7 +364,7 @@ def test_cron_frequency_sort_orders_by_class_then_parameter():
 
 
 def test_watchdog_enqueues_new_import_files(app):
-    """A file appearing in IMPORT_DIR gets a localization job automatically."""
+    """Test that a new file in IMPORT_DIR gets a localization job automatically."""
 
     basename = "Watched (2021) - [DVD].mkv"
     file_path = os.path.join(app.config["IMPORT_DIR"], basename)
@@ -373,7 +388,7 @@ def test_watchdog_enqueues_new_import_files(app):
 
 
 def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
-    """Catch-all for the enqueue_in bug class across every defer produced above."""
+    """Test each defer from above for the enqueue_in bug class."""
 
     with app.app_context():
         held_lock("catchall-lock")
@@ -399,8 +414,11 @@ def test_every_scheduled_job_binds(app, held_lock, incoming_dir):
 
 
 def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkeypatch):
-    """A flaky mount during the transcode rename retries just that step,
-    keeping the title lock so nothing else touches the file meanwhile."""
+    """Test that a transient rename error in the transcode defers with the lock.
+
+    A flaky mount during the transcode rename retries only that step.
+    The task keeps the title lock. Thus, no other task touches the file
+    in the meantime."""
 
     import errno
 
@@ -441,8 +459,8 @@ def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkey
         assert job.kwargs == {"transient_retries": 1}
         assert_binds(job)
 
-        # The lock is still held for the retry, and the transcode date was
-        # rolled back
+        # The task still holds the lock for the retry. The task rolled back
+        # the transcode date
 
         assert not app.lock_manager.lock(identifier, 1000)
         db.session.expire_all()
@@ -452,7 +470,7 @@ def test_finalize_transcoding_transient_rename_defers_with_lock_held(app, monkey
 
 
 def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
-    """Once the budget is spent, the failure is logged and the lock freed."""
+    """Test that the task logs the failure and frees the lock after the budget."""
 
     import errno
 
@@ -486,7 +504,7 @@ def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
             for job in scheduled_jobs(app.sql_queue)
         )
 
-        # The lock was released by the finally
+        # The finally block released the lock
 
         relock = app.lock_manager.lock(identifier, 1000)
         assert relock
@@ -494,9 +512,12 @@ def test_finalize_transcoding_releases_lock_after_max_retries(app, monkeypatch):
 
 
 def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
-    """A transient mount error before the file is restructured reschedules
-    the edit with the same arguments — the language corrections among them,
-    since nothing has been applied yet; the retry re-acquires the lock."""
+    """Test that a transient mkvpropedit error defers and releases the lock.
+
+    A transient mount error can occur before the task restructures the
+    file. Then the task reschedules the edit with the same arguments.
+    This includes the language corrections, because the task applied
+    nothing yet. The retry takes the lock again."""
 
     import errno
 
@@ -534,7 +555,7 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
         assert job.kwargs == {"transient_retries": 1}
         assert_binds(job)
 
-        # The lock was released so the retry can take it fresh
+        # The task released the lock. Thus, the retry can take it again
 
         relock = app.lock_manager.lock(identifier, 1000)
         assert relock
@@ -542,8 +563,11 @@ def test_mkvpropedit_transient_error_defers_and_releases_lock(app, monkeypatch):
 
 
 def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch):
-    """After the reorder remux lands, the original track numbers no longer
-    match the file, so even a transient error must not schedule a retry."""
+    """Test that mkvpropedit does not retry after the file restructure.
+
+    After the reorder remux completes, the original track numbers no
+    longer match the file. Thus, even a transient error must not
+    schedule a retry."""
 
     import errno
 
@@ -577,8 +601,10 @@ def test_mkvpropedit_does_not_retry_once_file_was_restructured(app, monkeypatch)
 
 
 def test_download_transient_error_defers(app, monkeypatch):
-    """A transient import-volume error during an S3 download reschedules the
-    download; the S3 object and SQS message are unaffected."""
+    """Test that a transient error defers the download.
+
+    A transient import-volume error during an S3 download reschedules
+    the download. The S3 object and the SQS message do not change."""
 
     import errno
 
@@ -618,8 +644,10 @@ def test_download_transient_error_defers(app, monkeypatch):
 
 
 def test_download_gives_up_after_max_retries(app, monkeypatch):
-    """Once the budget is spent, the failure is logged and the SQS message
-    left for redelivery, like any other download failure."""
+    """Test that the download stops after the maximum retries.
+
+    After the budget is used, the task logs the failure. It leaves the
+    SQS message for redelivery, as for each other download failure."""
 
     import errno
 
@@ -648,8 +676,11 @@ def test_download_gives_up_after_max_retries(app, monkeypatch):
 
 
 def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
-    """The download's in-place retry loop must not eat mount errors: they
-    escape immediately (partial file cleaned up) so the caller can defer."""
+    """Test that aws_download raises the transient volume errors again.
+
+    The in-place retry loop of the download must not swallow a mount
+    error. The error escapes immediately, and the function removes the
+    partial file. Thus, the caller can defer."""
 
     import errno
 
@@ -678,7 +709,7 @@ def test_aws_download_reraises_transient_volume_errors(app, monkeypatch):
 
 
 def _client_error(code, status, operation):
-    """A botocore ClientError shaped like a real S3 error response."""
+    """Make a botocore ClientError with the shape of a real S3 error response."""
 
     import botocore.exceptions
 
@@ -692,7 +723,7 @@ def _client_error(code, status, operation):
 
 
 class _FakeSQS:
-    """Records SQS deletions instead of performing them."""
+    """Record the SQS deletions. Do not perform them."""
 
     def __init__(self):
         self.deleted = []
@@ -703,8 +734,11 @@ class _FakeSQS:
 
 
 def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
-    """A 404 means the object is gone for good: no download retries, the SQS
-    message is deleted so it can't redeliver, and no partial file is left."""
+    """Test that a missing object does not cause a retry.
+
+    A 404 means that the object is gone permanently. There are no
+    download retries. The function deletes the SQS message. Thus, SQS
+    cannot deliver it again. No partial file remains."""
 
     import app.videos as videos
 
@@ -728,7 +762,7 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
         )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
-        # Without a receipt handle there is no message to clean up
+        # Without a receipt handle, there is no message to remove
 
         assert (
             videos.aws_download("untouched/x.mkv", "x.mkv")
@@ -739,9 +773,11 @@ def test_aws_download_missing_object_is_not_retried(app, monkeypatch):
 
 
 def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
-    """When the restored copy expired before download, a new restore is
-    requested and the stale SQS message dropped; the restore's completion
-    notification will re-trigger the download."""
+    """Test that an expired restore causes a new restore request.
+
+    The restored copy can expire before the download. Then the function
+    requests a new restore and deletes the stale SQS message. The
+    completion notification of the restore starts the download again."""
 
     import app.videos as videos
 
@@ -749,7 +785,7 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
 
     class FakeS3:
         def head_object(self, Bucket, Key):
-            # No Restore header: the object is back in cold storage
+            # No Restore header. The object is back in cold storage
             return {"ContentLength": 100}
 
         def download_file(self, bucket, key, filename, Callback=None):
@@ -772,8 +808,10 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
 
 
 def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
-    """When a restore is already in progress, no duplicate restore request is
-    made; the stale SQS message is still dropped."""
+    """Test that the download waits for a restore that is in progress.
+
+    The function makes no duplicate restore request. It still deletes
+    the stale SQS message."""
 
     import app.videos as videos
 
@@ -803,9 +841,12 @@ def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
 
 
 def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
-    """If the restore-status check inside the InvalidObjectState handler
-    itself fails, that burns a retry like any other error instead of escaping
-    the loop; the SQS message is left for redelivery."""
+    """Test that a failed status check uses a retry.
+
+    The restore-status check in the InvalidObjectState handler can fail.
+    That failure uses a retry, as each other error does. It does not
+    escape the loop. The function leaves the SQS message for
+    redelivery."""
 
     import app.videos as videos
 
@@ -816,8 +857,9 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
             self.head_calls = 0
 
         def head_object(self, Bucket, Key):
-            # Odd calls come from the progress callback sizing the download;
-            # even calls are the handler's restore-status check, which fails
+            # The odd calls come from the progress callback that sizes the
+            # download. The even calls are the restore-status check of the
+            # handler. That check fails
             self.head_calls += 1
             if self.head_calls % 2 == 0:
                 raise _client_error("ServiceUnavailable", 503, "HeadObject")
@@ -835,13 +877,16 @@ def test_aws_download_failed_status_check_spends_a_retry(app, monkeypatch):
     with app.app_context():
         assert videos.aws_download("untouched/x.mkv", "x.mkv", "receipt-503") is False
 
-    assert s3.head_calls == 20  # 10 retries, two head_object calls each
+    assert s3.head_calls == 20  # 10 retries, 2 head_object calls each
     assert sqs.deleted == []
 
 
 def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
-    """Import scans skip dotfiles, so a download that burns its whole retry
-    budget must remove its partial file rather than leak it invisibly."""
+    """Test that the download removes the partial file after the retries.
+
+    The import scans skip the dotfiles. Thus, a download that uses its
+    complete retry budget must remove its partial file. If not, the
+    file leaks and is invisible."""
 
     import app.videos as videos
 
@@ -870,8 +915,10 @@ def test_aws_download_exhausted_retries_clean_up_partial_file(app, monkeypatch):
 
 
 def test_aws_download_backs_off_between_retries(app, monkeypatch):
-    """Retries back off exponentially, capped at 60 seconds, instead of
-    hammering S3 back-to-back; the final failure doesn't sleep."""
+    """Test that the retries back off between attempts.
+
+    The retries back off exponentially, with a limit of 60 seconds.
+    They do not hit S3 back-to-back. The final failure does not sleep."""
 
     import app.videos as videos
 
@@ -896,9 +943,12 @@ def test_aws_download_backs_off_between_retries(app, monkeypatch):
 
 
 def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
-    """A credentials or permissions error fails identically on every attempt,
-    so the retry budget isn't burned on it: one attempt, no backoff, and the
-    SQS message is left for redelivery once the operator fixes the account."""
+    """Test that the download stops immediately on an auth error.
+
+    A credentials or permissions error fails the same on each attempt.
+    Thus, the function does not use the retry budget on it. There is 1
+    attempt and no backoff. The function leaves the SQS message for
+    redelivery after the operator repairs the account."""
 
     import app.videos as videos
 
@@ -933,9 +983,11 @@ def test_aws_download_gives_up_immediately_on_auth_errors(app, monkeypatch):
 
 
 def test_download_task_reports_download_outcome(app, monkeypatch):
-    """download_task must not report success when aws_download exhausted its
-    retry budget; exhaustion is not a transient error, so no retry is
-    scheduled either."""
+    """Test that download_task reports the download outcome.
+
+    download_task must not report success when aws_download used its
+    complete retry budget. A used budget is not a transient error.
+    Thus, the task schedules no retry."""
 
     import app.videos as videos
 
@@ -956,7 +1008,7 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
         for job in scheduled_jobs(app.file_queue)
     )
 
-    # Every truthy status counts as the message having been handled
+    # Each truthy status means that the task handled the message
 
     for status in (
         aws_storage.DOWNLOAD_COMPLETE,
@@ -977,9 +1029,11 @@ def test_download_task_reports_download_outcome(app, monkeypatch):
 
 
 def test_tmdb_refresh_hands_off_to_sql_queue(app):
-    """The fetch phase runs on the multi-worker request queue; every
-    database write happens in apply_tmdb_refresh on the single-worker sql
-    queue, so concurrent fetches can't produce concurrent writes."""
+    """Test that the TMDB refresh hands off to the sql queue.
+
+    The fetch phase runs on the multi-worker request queue. Each
+    database write occurs in apply_tmdb_refresh on the single-worker
+    sql queue. Thus, concurrent fetches cannot cause concurrent writes."""
 
     from app import db
     from app.videos import refresh_tmdb_info
@@ -990,8 +1044,8 @@ def test_tmdb_refresh_hands_off_to_sql_queue(app):
         db.session.commit()
         movie_id = movie.id
 
-        # With no TMDB_API_KEY configured the fetch finds nothing, but the
-        # apply job must still be enqueued (it also rewrites file paths)
+        # With no TMDB_API_KEY, the fetch finds nothing. But the task must
+        # still enqueue the apply job. That job also rewrites file paths
 
         assert refresh_tmdb_info("Movies", movie_id) is True
 
@@ -1008,8 +1062,10 @@ def test_tmdb_refresh_hands_off_to_sql_queue(app):
 
 
 def test_apply_tmdb_refresh_round_trips_payload(app):
-    """The compressed payload built by the fetch phase decompresses and
-    applies in the database phase."""
+    """Test that the payload survives the round trip.
+
+    The fetch phase builds the compressed payload. The database phase
+    decompresses and applies it."""
 
     import zlib
 
@@ -1035,8 +1091,11 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
 
 
 def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
-    """A movie's TMDB apply rewrites file paths and can merge records, so
-    it must wait for any import chain holding one of the title's locks."""
+    """Test that the TMDB apply defers when the title is locked.
+
+    The TMDB apply of a movie rewrites file paths and can merge records.
+    Thus, it must wait for an import chain that holds a lock of the
+    title."""
 
     from app import db
     from app.videos import apply_tmdb_refresh
@@ -1067,8 +1126,11 @@ def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
 
 
 def test_tmdb_apply_locks_the_merge_target_too(app, held_lock):
-    """When a TMDB id points at an existing movie, the apply will merge
-    records — so a lock held on the *target* movie's files defers it."""
+    """Test that the TMDB apply also locks the merge target.
+
+    A TMDB id can point at an existing movie. Then the apply merges the
+    records. Thus, a lock on the files of the *target* movie defers the
+    apply."""
 
     from app import db
     from app.videos import apply_tmdb_refresh
@@ -1113,9 +1175,11 @@ def test_tmdb_apply_releases_locks_when_done(app):
 
 
 def test_cron_table_refreshes_streaming_availability_nightly(app):
-    """The availability refresh runs nightly (Aug 2026): the watchlist,
-    Criterion, and filmography pages read the cache it fills and never
-    fetch inline."""
+    """Test that the cron table refreshes the streaming availability nightly.
+
+    The availability refresh runs nightly (2026-08). The watchlist, the
+    Criterion, and the filmography pages read the cache that it fills.
+    They never fetch inline."""
 
     with app.app_context():
         entries = {entry["func"]: entry for entry in cron_table(app.config)}
@@ -1126,10 +1190,12 @@ def test_cron_table_refreshes_streaming_availability_nightly(app):
 
 
 def test_apply_tmdb_refresh_saves_the_payload_when_apply_raises(app, monkeypatch):
-    """A payload whose apply raises is written beside the log, gzipped
-    JSON named for the record, so a transient upstream glitch (the
-    2026-08-22 malformed aggregate credits) can be examined after TMDB
-    has gone back to serving clean data."""
+    """Test that apply_tmdb_refresh saves the payload when the apply raises.
+
+    The task writes the payload next to the log as gzipped JSON named
+    for the record. Thus, you can examine a transient upstream glitch
+    (the malformed aggregate credits of 2026-08-22) after TMDB serves
+    clean data again."""
 
     import glob
     import gzip

@@ -1,5 +1,8 @@
-"""The poster picker pages: the TMDB gallery with its language filter, and
-uploads and gallery picks flowing through the shared custom-poster pipeline.
+"""Test the poster picker pages.
+
+These tests cover the TMDB gallery with its language filter. They also
+cover the uploads and the gallery picks that go through the shared
+custom-poster pipeline.
 """
 
 import io
@@ -35,8 +38,10 @@ GALLERY = [
 
 @pytest.fixture
 def poster_pipeline(monkeypatch):
-    """Capture custom-poster pipeline calls instead of writing into
-    app/static — in this repo that's the real production artwork tree."""
+    """Capture the custom-poster pipeline calls.
+
+    Do not write into app/static. In this repo, that is the real
+    production artwork tree."""
 
     import app.main.posters as posters
 
@@ -65,7 +70,8 @@ def poster_pipeline(monkeypatch):
 
 @pytest.fixture
 def tmdb_image_cdn(monkeypatch):
-    """A fake TMDB image CDN serving PNG bytes for any poster path."""
+    """Provide a fake TMDB image CDN that serves PNG bytes for any poster
+    path."""
 
     import app.main.posters as posters
 
@@ -136,7 +142,8 @@ def test_picker_highlights_the_default_tmdb_poster(app, admin_client):
         as_text=True
     )
     assert page.count("TMDB default") == 1
-    # The badge and the thicker border sit on the default poster's card
+    # The badge and the thicker border are on the card of the default
+    # poster
     default_card = re.search(r'<img src="[^"]*/w185/english\.jpg"[^>]*>', page).group(0)
     assert "border-primary" in default_card
     for other in ("german", "textless"):
@@ -189,7 +196,7 @@ def test_picking_a_tmdb_poster_runs_the_pipeline(
             ),
         }
     ]
-    # The main-feature file's library directory got the new poster
+    # The library directory of the main-feature file has the new poster
     assert len(poster_pipeline["library"]) == 1
 
     with app.app_context():
@@ -297,7 +304,8 @@ def test_file_picker_pick_sets_the_file_poster(
         db.session.commit()
         file_id = file.id
 
-        # The custom poster lands beside the library file, so it must exist
+        # The custom poster goes next to the library file. Thus, the file
+        # must exist
         local_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, "wb") as f:
@@ -327,7 +335,7 @@ def test_file_picker_pick_sets_the_file_poster(
 
 
 def build_custom_tree(app, scope, record_id, poster_filename):
-    """A custom-poster tree the way save_custom_poster lays it out."""
+    """Build a custom-poster tree with the layout of save_custom_poster."""
 
     base = os.path.join(app.config["CUSTOM_ARTWORK_DIR"], scope, str(record_id))
     os.makedirs(os.path.join(base, "original"), exist_ok=True)
@@ -374,8 +382,10 @@ def test_removing_movie_poster_deletes_tree_and_library_copy(app, admin_client):
 
 
 def test_removing_file_poster_restores_movie_precedence(app, admin_client):
-    """Removing a file's custom poster falls back to the movie's custom
-    poster, whose art is restored into the library directory."""
+    """Test the removal of the custom poster of a file.
+
+    Fitzflix falls back to the custom poster of the movie. It restores
+    that art into the library directory."""
 
     from app.models import File, Movie
 
@@ -402,7 +412,7 @@ def test_removing_file_poster_restores_movie_precedence(app, admin_client):
     assert response.status_code == 302
 
     assert not os.path.exists(file_tree)
-    assert os.path.exists(movie_tree)  # the movie's own poster is untouched
+    assert os.path.exists(movie_tree)  # the poster of the movie is unchanged
     assert not os.path.exists(os.path.join(library_dir, "poster.png"))
     assert os.path.exists(os.path.join(library_dir, "poster.jpg"))  # restored
     with app.app_context():
@@ -432,7 +442,7 @@ def test_remove_without_custom_poster_warns(app, admin_client):
 
 
 def test_save_custom_poster_builds_thumbnails(app, tmp_path):
-    """The real pipeline function, pointed at a scratch directory."""
+    """Provide the real pipeline function, pointed at a scratch directory."""
 
     from werkzeug.datastructures import FileStorage
 

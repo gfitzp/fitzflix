@@ -1,6 +1,8 @@
-"""Direct Plex watch tracking: the webhook endpoint, the history poller,
-and the shared apply task that feeds household shopping-cart priority and
-mapped users' diaries.
+"""Test direct Plex watch tracking.
+
+The tests cover the webhook endpoint, the history poller, and the shared
+apply task. That task feeds the household shopping-cart priority and
+the diaries of the mapped users.
 """
 
 import json
@@ -43,7 +45,7 @@ def scrobble_payload(
 
 
 def post_webhook(client, payload, url=WEBHOOK):
-    # Plex posts multipart form data with the JSON in a "payload" field
+    # Plex posts multipart form data with the JSON in a "payload" field.
     return client.post(
         url,
         data={"payload": json.dumps(payload)},
@@ -61,9 +63,10 @@ def plex_jobs(app):
 
 @pytest.fixture
 def mapped_admin(app):
-    """The admin user temporarily mapped to the 'glenn-plex' Plex account.
+    """Map the admin user to the 'glenn-plex' Plex account for 1 test.
 
-    The user table survives between tests, so the mapping is undone after.
+    The user table survives between tests. Thus, the fixture removes the
+    mapping after the test.
     """
 
     with app.app_context():
@@ -111,8 +114,10 @@ def test_webhook_ignores_non_scrobbles_and_tv(app, client):
 
 
 def test_webhook_ignores_live_tv_scrobbles(app, client):
-    """A virtual-channel airing (#182) types as a movie and can carry a
-    matched TMDB guid, but a channel surf is never a diary watch."""
+    """Make sure the webhook ignores a live TV scrobble.
+
+    A virtual-channel airing (#182) has the movie type and can carry a
+    matched TMDB guid. But a channel surf is never a diary watch."""
 
     payload = scrobble_payload()
     payload["Metadata"]["live"] = "1"
@@ -129,8 +134,8 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
         first_watch = "2026-08-01T21:15:00+00:00"
         assert apply_plex_watch(578, "glenn-plex", first_watch, "webhook") is True
 
-        # The task ran in its own app context and session; drop this
-        # session's cached state so the asserts read fresh rows
+        # The task ran in its own app context and session. Delete the
+        # cached state of this session. Then the asserts read new rows.
 
         db.session.expire_all()
         movie = db.session.get(Movie, movie_id)
@@ -141,16 +146,16 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
             user_id=mapped_admin, movie_id=movie_id
         ).all()
         assert len(diary) == 1
-        # The full watch timestamp is stored — in local wall-clock time,
-        # not UTC and not a midnight-truncated date
+        # Fitzflix stores the full watch timestamp in local wall-clock
+        # time. It is not UTC, and it is not a date cut to midnight.
         expected = datetime.fromisoformat(first_watch).astimezone().replace(tzinfo=None)
         assert diary[0].date_watched == expected
         assert diary[0].rating is None
         assert diary[0].liked is False
         assert diary[0].rewatch is False
 
-        # The same watch reported again (the poller catching up after the
-        # webhook already recorded it) is a no-op
+        # The same watch reported again is a no-op. This occurs when the
+        # poller catches up after the webhook already recorded the watch.
 
         assert apply_plex_watch(578, "glenn-plex", first_watch, "history") is True
         db.session.expire_all()
@@ -162,7 +167,7 @@ def test_apply_watch_increments_and_records_diary(app, mapped_admin):
             == 1
         )
 
-        # A watch on a later date is a rewatch
+        # A watch on a later date is a rewatch.
 
         assert (
             apply_plex_watch(578, "glenn-plex", "2026-08-05T20:00:00+00:00", "webhook")
@@ -210,7 +215,7 @@ def test_apply_watch_of_unknown_movie_is_ignored(app):
 
 
 class FakePlexServer:
-    """Canned responses for the poller's three Plex endpoints."""
+    """Give canned responses for the 3 Plex endpoints of the poller."""
 
     def __init__(self, history=None, accounts=None, guids=None):
         self.history = history or []
@@ -267,10 +272,11 @@ def test_poller_enqueues_new_movie_watches_and_advances_cursor(app, plex_server)
     app.redis.set("fitzflix:plex:history-cursor", cursor)
 
     plex_server.history = [
-        # An old entry at the cursor is already processed
+        # An old entry at the cursor is already processed.
         {"type": "movie", "viewedAt": cursor, "accountID": 1, "ratingKey": "10"},
         {"type": "movie", "viewedAt": cursor + 100, "accountID": 1, "ratingKey": "42"},
-        # Episodes advance the cursor but aren't recorded
+        # An episode advances the cursor, but the poller does not record
+        # it.
         {
             "type": "episode",
             "viewedAt": cursor + 200,
@@ -297,8 +303,11 @@ def test_poller_enqueues_new_movie_watches_and_advances_cursor(app, plex_server)
 
 
 def test_poller_ignores_live_tv_entries(app, plex_server):
-    """Live TV history entries type as movies (#182): they advance the
-    cursor but never enqueue a watch, even with a resolvable guid."""
+    """Make sure the poller ignores live TV entries.
+
+    A live TV history entry has the movie type (#182). It advances the
+    cursor, but it never enqueues a watch, even with a guid that
+    resolves."""
 
     cursor = int(time.time()) - 3600
     app.redis.set("fitzflix:plex:history-cursor", cursor)
@@ -337,7 +346,8 @@ def test_poller_caches_guid_lookups(app, plex_server):
         ]
         assert len(metadata_fetches) == 1
 
-        # A later poll seeing the same rating key skips the metadata fetch
+        # A later poll that sees the same rating key skips the metadata
+        # fetch.
 
         app.redis.set("fitzflix:plex:history-cursor", cursor)
         assert plex_history_poll() is True
@@ -366,7 +376,7 @@ def test_profile_maps_and_unmaps_plex_username(app, admin_client):
             User.query.filter_by(email=ADMIN_EMAIL).one().plex_username == "glenn-plex"
         )
 
-    # A second user can't claim the same Plex account
+    # A second user cannot claim the same Plex account.
 
     from tests.conftest import MEMBER_EMAIL, _signed_in_client
 
@@ -386,7 +396,7 @@ def test_profile_maps_and_unmaps_plex_username(app, admin_client):
     )
     assert "already mapped to another user" in response.get_data(as_text=True)
 
-    # Blank unmaps
+    # A blank value removes the mapping.
 
     response = admin_client.post(
         "/profile",
@@ -425,8 +435,10 @@ def test_reviews_page_badges_rewatches(app, admin_client):
 
 
 def test_letterboxd_import_merges_with_plex_timed_row(app):
-    """A Letterboxd entry for a date where a Plex watch (with a clock
-    time) already exists updates that row instead of sitting beside it."""
+    """Make sure a Letterboxd import merges with a timed Plex row.
+
+    A Letterboxd entry for a date that already has a Plex watch (with a
+    clock time) updates that row. It does not add a second row."""
 
     from app.videos import apply_letterboxd_import, apply_plex_watch
 
@@ -471,7 +483,7 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
                 user_id=user.id, movie_id=movie_id
             ).all()
             assert len(rows) == 1
-            # The Plex clock time survives; the Letterboxd data merges in
+            # The Plex clock time survives. The Letterboxd data merges in.
             expected = (
                 datetime.fromisoformat("2026-08-05T20:30:00+00:00")
                 .astimezone()
@@ -487,8 +499,10 @@ def test_letterboxd_import_merges_with_plex_timed_row(app):
 
 
 def test_review_edit_preserves_plex_timestamp(app, admin_client):
-    """Editing a viewing without changing its date keeps the stored clock
-    time; changing the date stores a fresh timestamp."""
+    """Make sure a review edit keeps the Plex timestamp.
+
+    An edit of a viewing that keeps its date keeps the stored clock
+    time. An edit that changes the date stores a new timestamp."""
 
     import re
 

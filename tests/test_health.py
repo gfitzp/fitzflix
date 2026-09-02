@@ -1,6 +1,9 @@
-"""System health: the probe task's alert state machine (entry alert after two
-consecutive failures, debounce, daily reminder, recovery notice), the disk
-free-space floor, and the worker-liveness summarizer.
+"""Test the system health checks.
+
+This covers the alert state machine of the probe task: the entry alert
+after 2 consecutive failures, the debounce, the daily reminder, and the
+recovery notice. It also covers the disk free-space floor and the
+worker-liveness summarizer.
 """
 
 from datetime import datetime, timedelta
@@ -13,20 +16,20 @@ import app.maintenance as maintenance
 
 @pytest.fixture
 def health_env(app, monkeypatch):
-    """A controlled environment for health_probe runs.
+    """Build a controlled environment for health_probe runs.
 
-    Fakes the scheduler and observer heartbeats (nothing real runs against
-    Redis DB 9), blanks the worker roster, captures email instead of sending,
-    and makes the HTTP probes fail on demand.
+    This fixture fakes the scheduler and observer heartbeats. Nothing real
+    runs against Redis DB 9. It clears the worker roster. It captures each
+    email instead of sending it. It makes the HTTP probes fail on demand.
     """
 
     app.redis.set("rq:cron_scheduler:test", "1", ex=600)
-    # Two observer heartbeats: observer_health expects one per import worker
+    # 2 observer heartbeats. observer_health expects 1 for each import worker.
     app.redis.set("fitzflix:observer:test-1", "1", ex=600)
     app.redis.set("fitzflix:observer:test-2", "1", ex=600)
     monkeypatch.setattr(maintenance, "EXPECTED_WORKERS", {})
 
-    # A fresh backup file, so the backup-staleness check starts healthy
+    # A new backup file. Thus, the backup-staleness check starts healthy.
 
     import os
 
@@ -56,8 +59,8 @@ def health_env(app, monkeypatch):
 
     monkeypatch.setattr(maintenance, "_probe_http", fake_probe_http)
 
-    # The configured URLs are all 127.0.0.1:1; make them distinguishable so
-    # fake_probe_http can fail one service at a time
+    # All of the configured URLs are 127.0.0.1:1. Make them different.
+    # Then fake_probe_http can fail 1 service at a time.
 
     monkeypatch.setitem(app.config, "TMDB_API_URL", "http://tmdb.test")
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "tmdb-test-key")
@@ -77,29 +80,29 @@ def health_env(app, monkeypatch):
 
 
 def test_alert_lifecycle(health_env):
-    # Healthy: results recorded, no email
+    # Healthy: the probe records the results and sends no email.
     assert health_env.run() == []
     probes = {p["service"]: p for p in maintenance.probe_health(health_env.redis)}
     assert set(probes) == {"TMDB", "Sonarr", "Radarr"}
     assert all(p["ok"] for p in probes.values())
 
-    # One failure is gated, two consecutive failures alert
+    # The probe holds back 1 failure. 2 consecutive failures send an alert.
     health_env.failing.add("TMDB")
     assert health_env.run() == []
     emails = health_env.run()
     assert len(emails) == 1
     assert "TMDB has failed 2 consecutive probes" in emails[0]["body"]
 
-    # While alerted: silent
+    # While the alert is active, the probe is silent.
     assert health_env.run() == []
 
-    # After the daily reminder key expires: re-alert
+    # After the daily reminder key expires, the probe sends the alert again.
     health_env.redis.delete("fitzflix:health:alerted:probe:TMDB")
     reminders = health_env.run()
     assert len(reminders) == 1
     assert "consecutive probes" in reminders[0]["body"]
 
-    # Recovery: one notice, then all state cleared
+    # Recovery: the probe sends 1 notice, then clears all of the state.
     health_env.failing.clear()
     recoveries = health_env.run()
     assert len(recoveries) == 1
@@ -108,7 +111,7 @@ def test_alert_lifecycle(health_env):
     assert not health_env.redis.hgetall("fitzflix:health:issues")
     assert not health_env.redis.exists("fitzflix:health:alerted:probe:TMDB")
 
-    # And a healthy run after recovery is silent again
+    # A healthy run after the recovery is silent again.
     assert health_env.run() == []
 
 
@@ -138,15 +141,17 @@ def test_missing_scheduler_and_observer_are_reported(health_env):
 
 
 def test_observer_health_expects_one_watcher_per_import_worker(app):
-    """The observer is scoped to the import workers, so anything short of
-    that program's two processes is unhealthy — including the one-watcher
-    state the old any-heartbeat check would have called fine."""
+    """Report the observer as unhealthy if fewer than 2 processes run.
+
+    The observer covers only the import workers. That program has 2
+    processes. Fewer than 2 is unhealthy. This includes the state with 1
+    watcher. The old any-heartbeat check called that state healthy."""
 
     import os
 
-    # The test app itself runs an observer whose keeper rewrites this key
-    # every 60s; drop it just before the counting asserts so a mid-test
-    # tick can't inflate the tally
+    # The test app runs its own observer. Its keeper rewrites this key
+    # every 60 seconds. Delete the key directly before the counting
+    # asserts. Then a tick during the test cannot increase the count.
 
     own_heartbeat = f"fitzflix:observer:{os.getpid()}"
 
@@ -179,9 +184,9 @@ def test_worker_health_counts_and_staleness(app, monkeypatch):
     workers = [
         _worker("idle", ["fitzflix-import", "fitzflix-file-operation"]),
         _worker("busy", ["fitzflix-import", "fitzflix-file-operation"], job=busy_job),
-        # Stale idle worker: a leftover registration, not counted
+        # A stale idle worker is a leftover registration. It does not count.
         _worker("idle", ["fitzflix-sql"], heartbeat_age_seconds=900),
-        # Busy workers are never stale, however old the heartbeat
+        # A busy worker is never stale. The age of the heartbeat is not important.
         _worker("busy", ["fitzflix-transcode"], heartbeat_age_seconds=900),
     ]
     monkeypatch.setattr(maintenance, "_live_workers", lambda connection: workers)
@@ -195,7 +200,7 @@ def test_worker_health_counts_and_staleness(app, monkeypatch):
 
     assert entries["fitzflix-import"]["live"] == 2
     assert entries["fitzflix-import"]["ok"]
-    # The busy job shows only under its origin queue
+    # The busy job shows only under its origin queue.
     assert entries["fitzflix-import"]["busy"] == ["'Jaws (1975) - [DVD].mkv'"]
     assert entries["fitzflix-file-operation"]["busy"] == []
     assert entries["fitzflix-sql"]["live"] == 0
@@ -216,7 +221,7 @@ def test_expected_workers_derived_from_program_roster():
 
 
 def _fake_worker_key(redis, name, queues, pid=None):
-    """Write a worker hash the way rq's heartbeat/birth would."""
+    """Write a worker hash in the same shape that the rq heartbeat and birth write."""
 
     from rq.utils import utcformat
 
@@ -234,7 +239,7 @@ def _fake_worker_key(redis, name, queues, pid=None):
 
 
 def test_worker_health_sees_workers_missing_from_registry_set(app):
-    """The incident case: alive and heartbeating, but swept from rq:workers."""
+    """Test the incident case: a live worker that is gone from rq:workers."""
 
     _fake_worker_key(app.redis, "unlisted", "fitzflix-sql")
     assert not app.redis.sismember("rq:workers", "rq:worker:unlisted")
@@ -251,15 +256,17 @@ def test_repair_worker_registry_relists_intact_workers(app):
     assert actions == [f"re-listed {key} in the worker registry"]
     assert app.redis.sismember("rq:workers", key)
 
-    # Idempotent: once re-listed, nothing more to do
+    # Idempotent: after the worker is listed again, there is nothing more to do.
     assert maintenance.repair_worker_registry(app.redis) == []
 
-    # A bare hash (no queues field — identity lost) is not re-listable
+    # A bare hash has no queues field. Its identity is lost. Fitzflix
+    # cannot list it again.
     app.redis.hset("rq:worker:bare", "last_heartbeat", "2026-01-01T00:00:00.000000Z")
     assert maintenance.repair_worker_registry(app.redis) == []
     assert not app.redis.sismember("rq:workers", "rq:worker:bare")
 
-    # A cleanly shut-down worker's lingering hash is not re-listed either
+    # The hash of a worker that shut down cleanly can remain. Fitzflix
+    # does not list it again.
     dying = _fake_worker_key(app.redis, "dying", "fitzflix-sql")
     app.redis.hset(dying, "death", "2026-01-01T00:00:00.000000Z")
     assert maintenance.repair_worker_registry(app.redis) == []
@@ -267,8 +274,11 @@ def test_repair_worker_registry_relists_intact_workers(app):
 
 
 def test_worker_health_ignores_dying_workers(app):
-    """A stopped worker's key lingers briefly with a death stamp; it must not
-    be counted as live, or a dead process would look healthy for a minute."""
+    """Do not count a stopped worker as live.
+
+    The key of a stopped worker remains for a short time with a death
+    stamp. If Fitzflix counts it as live, a dead process looks healthy
+    for 1 minute."""
 
     key = _fake_worker_key(app.redis, "dying", "fitzflix-sql")
     app.redis.hset(key, "death", "2026-01-01T00:00:00.000000Z")
@@ -297,7 +307,7 @@ def test_supervisor_status_parsing(app, monkeypatch):
 
 @pytest.fixture
 def heal_env(app, monkeypatch):
-    """heal_worker_processes with a fake supervisor and captured commands."""
+    """Run heal_worker_processes with a fake supervisor and capture the commands."""
 
     env = SimpleNamespace(status={}, calls=[])
     monkeypatch.setattr(maintenance, "_supervisor_status", lambda config: env.status)
@@ -324,17 +334,17 @@ def test_heal_starts_dead_processes_once_per_cooldown(app, heal_env):
     assert heal_env.calls == [("start", "fitzflix:fitzflix-sql_00")]
     assert actions == ["started fitzflix:fitzflix-sql_00 (was STOPPED)"]
 
-    # Within the cooldown window: no second attempt
+    # In the cooldown window, there is no second attempt.
     assert heal_env.heal() == []
     assert heal_env.calls == []
 
 
 def test_heal_restarts_amnesiac_worker_when_idle(app, heal_env):
-    # A registered worker for another program, so its pid is known
+    # A registered worker of a different program. Thus, its pid is known.
     _fake_worker_key(app.redis, "request", "fitzflix-user-request", pid=1000)
     heal_env.status = {
         "fitzflix:fitzflix-user-request_00": ("RUNNING", 1000),
-        "fitzflix:fitzflix-sql_00": ("RUNNING", 2000),  # pid not registered
+        "fitzflix:fitzflix-sql_00": ("RUNNING", 2000),  # the pid is not registered
     }
 
     actions = heal_env.heal()
@@ -352,7 +362,7 @@ def test_heal_defers_amnesiac_restart_while_queue_busy(app, heal_env):
     assert heal_env.heal() == []
     assert heal_env.calls == []
 
-    # Once the queue drains, the deferred restart happens
+    # When the queue is empty, the deferred restart occurs.
     app.redis.delete("rq:queue:fitzflix-sql")
     actions = heal_env.heal()
     assert heal_env.calls == [("restart", "fitzflix:fitzflix-sql_00")]
@@ -360,7 +370,7 @@ def test_heal_defers_amnesiac_restart_while_queue_busy(app, heal_env):
 
 
 def test_heal_never_touches_non_worker_running_processes(app, heal_env):
-    # web and rqscheduler have no rq registration; RUNNING must be left alone
+    # web and rqscheduler have no rq registration. Do not touch RUNNING.
     heal_env.status = {
         "fitzflix:fitzflix-web_00": ("RUNNING", 3000),
         "fitzflix:fitzflix-rqscheduler_00": ("RUNNING", 3001),

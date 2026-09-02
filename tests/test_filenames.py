@@ -1,8 +1,10 @@
-"""evaluate_filename: the naming rules documented in the README's How-to-use
-tables, plus edge cases characterized from current behavior.
+"""Test evaluate_filename against the naming rules of the README.
 
-These run offline: TMDB is unreachable in TestConfig, so titles and years
-always come straight from the filename.
+The README documents the rules in its How-to-use tables. The edge cases
+record the current behavior.
+
+These tests run offline. TMDB is unreachable in TestConfig. Thus, the
+titles and the years always come directly from the filename.
 """
 
 import logging
@@ -11,7 +13,7 @@ import pytest
 
 from app.videos import evaluate_filename
 
-# (filename, expected library file path) — the README examples
+# The README examples: (filename, expected library file path)
 
 README_CASES = [
     (
@@ -81,11 +83,13 @@ def test_readme_examples(app, filename, expected_path):
     assert details["file_path"] == expected_path
 
 
-# Characterized behavior for combinations the README doesn't spell out
+# The recorded behavior for the combinations that the README does not
+# describe
 
 EDGE_CASES = [
     (
-        # "Full Screen" moves after the version string when no special feature
+        # "Full Screen" moves after the version string if there is no
+        # special feature
         "Big Hit (1999) - Fullscreen - Director's Cut [DVD].mkv",
         {
             "file_path": "Movies/Big Hit (1999)/Big Hit (1999) - Director's Cut - Full Screen [DVD].mkv",
@@ -95,8 +99,8 @@ EDGE_CASES = [
         },
     ),
     (
-        # ...but never moves past a special feature type (the "Clang Clang
-        # Boogie" case documented in evaluate_filename's comments)
+        # But it never moves past a special feature type. This is the
+        # "Clang Clang Boogie" case in the comments of evaluate_filename.
         "Clang Clang Boogie (2019) - Fullscreen - Interviews - I Like Salad [Bluray-1080p].mkv",
         {
             "file_path": "Movies/Clang Clang Boogie (2019)/Interviews/I Like Salad.mkv",
@@ -110,8 +114,9 @@ EDGE_CASES = [
         {
             "file_path": "Movies/Blade Runner (1982) {edition-Final Cut}/Blade Runner (1982) {edition-Final Cut} - Full Screen [DVD].mkv",
             "plex_title": "Blade Runner (1982) {edition-Final Cut}",
-            # A fullscreen copy of an edition reports the edition name, so it
-            # ranks and locks alongside the widescreen copy of that edition
+            # A fullscreen copy of an edition reports the edition name.
+            # Thus, it ranks and locks with the widescreen copy of that
+            # edition.
             "edition": "Final Cut",
             "fullscreen": True,
         },
@@ -147,7 +152,8 @@ EDGE_CASES = [
         },
     ),
     (
-        # Accented characters are transliterated in paths but kept in titles
+        # Fitzflix transliterates accented characters in paths. It keeps
+        # them in titles.
         "Amélie (2001) - [DVD].mkv",
         {
             "file_path": "Movies/Amelie (2001)/Amelie (2001) - [DVD].mkv",
@@ -172,14 +178,14 @@ def test_edge_cases(app, filename, expected):
 @pytest.mark.parametrize(
     "filename",
     [
-        "Jaws (1975) - [Bluray-4K].mkv",  # unknown quality title
-        "Friends - S01E01 - [Ultra-HD].mkv",  # unknown quality title (TV)
-        "Jaws - [DVD].mkv",  # movie without a year
-        "totally random file.mkv",  # matches neither format
+        "Jaws (1975) - [Bluray-4K].mkv",  # an unknown quality title
+        "Friends - S01E01 - [Ultra-HD].mkv",  # an unknown quality title (TV)
+        "Jaws - [DVD].mkv",  # a movie without a year
+        "totally random file.mkv",  # matches no format
         "Jaws (1975).mkv",  # no quality tag at all
-        "Jaws (1975) {bogus-123} - [DVD].mkv",  # unknown brace tag kind
-        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # imdb id missing tt prefix
-        "Hamilton {edition-Broadway} - [DVD].mkv",  # yearless needs an id tag
+        "Jaws (1975) {bogus-123} - [DVD].mkv",  # an unknown brace tag kind
+        "Jaws (1975) {imdb-0073195} - [DVD].mkv",  # the imdb id has no tt prefix
+        "Hamilton {edition-Broadway} - [DVD].mkv",  # a yearless name needs an id tag
     ],
 )
 def test_rejected_filenames(app, filename):
@@ -188,9 +194,10 @@ def test_rejected_filenames(app, filename):
 
 
 # Plex external-id tags (#155): {tmdb-NNN}, {imdb-ttNNN}, {tvdb-NNN} after
-# the year, in either order with {edition-...}. These run offline, so
-# unresolvable imdb/tvdb tags are kept verbatim; resolution paths are
-# exercised further down with fakes and library records.
+# the year, in either order with {edition-...}. These tests run offline.
+# Thus, an imdb or tvdb tag that cannot be resolved stays as it is. The
+# tests further down cover the resolution paths with fakes and library
+# records.
 
 ID_TAG_CASES = [
     (
@@ -204,7 +211,7 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # id tag before the edition tag
+        # The id tag comes before the edition tag.
         "Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
         {
             "file_path": "Movies/Blade Runner (1982) {tmdb-78} {edition-Final Cut}/Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
@@ -214,7 +221,8 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # ...and after it: the library name normalizes to id-then-edition
+        # The id tag comes after the edition tag. The library name
+        # normalizes to id-then-edition.
         "Blade Runner (1982) {edition-Final Cut} {tmdb-78} - [Bluray-2160p].mkv",
         {
             "file_path": "Movies/Blade Runner (1982) {tmdb-78} {edition-Final Cut}/Blade Runner (1982) {tmdb-78} {edition-Final Cut} - [Bluray-2160p].mkv",
@@ -223,7 +231,7 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # An imdb tag that can't be resolved offline stays verbatim
+        # An imdb tag that cannot be resolved offline stays as it is.
         "Ran (1985) {imdb-tt0089881} - [Bluray-2160p].mkv",
         {
             "file_path": "Movies/Ran (1985) {imdb-tt0089881}/Ran (1985) {imdb-tt0089881} - [Bluray-2160p].mkv",
@@ -239,7 +247,7 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # Version strings and Full Screen still work alongside a tag
+        # Version strings and Full Screen still work together with a tag.
         "Big Hit (1999) {tmdb-9737} - Fullscreen - Director's Cut [DVD].mkv",
         {
             "file_path": "Movies/Big Hit (1999) {tmdb-9737}/Big Hit (1999) {tmdb-9737} - Director's Cut - Full Screen [DVD].mkv",
@@ -248,7 +256,7 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # Special features file under the tagged movie folder
+        # A special features file goes under the tagged movie folder.
         "Jaws (1975) {tmdb-578} - Trailers - Theatrical Trailer [DVD].mkv",
         {
             "file_path": "Movies/Jaws (1975) {tmdb-578}/Trailers/Theatrical Trailer.mkv",
@@ -257,8 +265,8 @@ ID_TAG_CASES = [
         },
     ),
     (
-        # TV: the tag stays on the show folder, where Plex reads it, and
-        # is stripped from the series title and episode filename
+        # TV: the tag stays on the show folder, where Plex reads it.
+        # Fitzflix removes it from the series title and episode filename.
         "Doctor Who (2005) {tmdb-57243} - S01E01 - [DVD].mkv",
         {
             "file_path": "TV Shows/Doctor Who (2005) {tmdb-57243}/Season 01/Doctor Who (2005) - S01E01 - [DVD].mkv",
@@ -291,9 +299,11 @@ def test_external_id_tags(app, filename, expected):
 
 
 def test_tmdb_tag_adopts_existing_movie_record(app):
-    """The id names the exact film: naming comes from the record that
-    already owns the tmdb id, not from the filename's spelling — without
-    any network."""
+    """Test that a tmdb tag adopts the existing movie record.
+
+    The id names the exact film. The name comes from the record that
+    already owns the tmdb id, not from the spelling in the filename.
+    This needs no network."""
 
     from tests.factories import make_movie
 
@@ -311,8 +321,10 @@ def test_tmdb_tag_adopts_existing_movie_record(app):
 
 
 def test_imdb_tag_resolves_through_library_record(app):
-    """A matched movie stores its imdb id, so an imdb tag resolves to the
-    canonical tmdb form without TMDB being reachable."""
+    """Test that an imdb tag resolves through the library record.
+
+    A matched movie stores its imdb id. Thus, an imdb tag resolves to
+    the canonical tmdb form while TMDB is unreachable."""
 
     from tests.factories import make_movie
 
@@ -330,8 +342,10 @@ def test_imdb_tag_resolves_through_library_record(app):
 
 
 def test_yearless_form_resolves_year_from_library(app):
-    """Plex's yearless "Title {tmdb-NNN}" form files under the year the
-    id resolves to."""
+    """Test that the yearless form takes its year from the library.
+
+    The yearless "Title {tmdb-NNN}" form of Plex files under the year
+    that the id resolves to."""
 
     from tests.factories import make_movie
 
@@ -348,8 +362,11 @@ def test_yearless_form_resolves_year_from_library(app):
 
 
 def test_yearless_form_rejected_when_id_unresolvable(app):
-    """No library record and no reachable TMDB leaves no year to file
-    under: reject with a reason, never guess."""
+    """Test that Fitzflix rejects the yearless form when the id is unresolvable.
+
+    With no library record and no reachable TMDB, there is no year to
+    file under. Fitzflix rejects the file with a reason. It never
+    guesses."""
 
     with app.app_context():
         details = evaluate_filename(
@@ -361,8 +378,10 @@ def test_yearless_form_rejected_when_id_unresolvable(app):
 
 
 def test_unknown_external_id_rejected_loudly(app, fake_tmdb):
-    """/find answering with no results is a loud reject — falling back to
-    a title search could attach the wrong film (#155)."""
+    """Test that an unknown external id is a loud reject.
+
+    When /find answers with no results, Fitzflix rejects the file. A
+    fallback to a title search could attach the wrong film (#155)."""
 
     with app.app_context():
         details = evaluate_filename(
@@ -374,8 +393,10 @@ def test_unknown_external_id_rejected_loudly(app, fake_tmdb):
 
 
 def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
-    """A 404 on /movie/<id> for an id the filename itself named is a
-    reject, not the usual tolerated TMDB hiccup."""
+    """Test that an unknown tmdb id is a loud reject.
+
+    A 404 on /movie/<id> for an id that the filename named is a reject.
+    It is not the usual tolerated TMDB glitch."""
 
     import requests
 
@@ -406,8 +427,10 @@ def test_unknown_tmdb_id_rejected_loudly(app, monkeypatch):
 
 
 def test_tv_tag_adopts_existing_series_record(app):
-    """A series id tag lands the file on the record that owns the id,
-    whatever the filename calls the show."""
+    """Test that a series id tag adopts the existing series record.
+
+    A series id tag puts the file on the record that owns the id. The
+    name of the show in the filename is not important."""
 
     from tests.factories import make_tv_series
 
@@ -424,8 +447,11 @@ def test_tv_tag_adopts_existing_series_record(app):
 
 
 def test_reconstruct_filename_carries_id_tag(app):
-    """An untouched name that came in with an id tag keeps one when
-    reconstructed, upgraded to the record's current tmdb id (#155)."""
+    """Test that a reconstructed filename keeps its id tag.
+
+    An untouched name that came in with an id tag keeps a tag when
+    Fitzflix reconstructs it. The tag is upgraded to the current tmdb id
+    of the record (#155)."""
 
     from app.importing import reconstruct_filename
     from tests.factories import make_movie, make_movie_file
@@ -441,7 +467,7 @@ def test_reconstruct_filename_carries_id_tag(app):
             "Hamilton (2020) {tmdb-556574} - [Bluray-1080p].mkv"
         )
 
-        # A name that came in without a tag doesn't grow one
+        # A name that came in without a tag does not get one.
 
         plain = make_movie_file(
             movie, "DVD", untouched_basename="Hamilton (2020) - [DVD].mkv"
@@ -450,8 +476,10 @@ def test_reconstruct_filename_carries_id_tag(app):
 
 
 def test_tv_tvdb_tag_resolves_through_library_record(app):
-    """A tvdb tag on a show folder resolves through the series record's
-    stored external ids and normalizes to the tmdb form."""
+    """Test that a tvdb tag resolves through the series record.
+
+    A tvdb tag on a show folder resolves through the stored external ids
+    of the series record. It normalizes to the tmdb form."""
 
     from tests.factories import make_tv_series
 
@@ -468,7 +496,7 @@ def test_tv_tvdb_tag_resolves_through_library_record(app):
 
 
 def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):
-    """log=False (the admin filename tester) must not write import log lines."""
+    """Test that log=False (the admin filename tester) writes no import log lines."""
 
     with app.app_context():
         quiet = evaluate_filename("Jaws (1975) - [DVD].mkv", log=False)
@@ -482,9 +510,11 @@ def test_quiet_mode_emits_no_log_lines(app, fake_tmdb, log_capture):
 
 
 def test_yeared_name_attaches_to_bare_series_when_year_matches(app):
-    """Sonarr now names new files "Title (Year)": the
-    yeared form must land on the existing bare-titled record when the
-    year matches its first-air year, not split into a second series."""
+    """Test that a yeared name attaches to the bare series record.
+
+    Sonarr now names new files "Title (Year)". The yeared form must go
+    to the existing bare-titled record when the year matches its
+    first-air year. It must not split into a second series."""
 
     from datetime import datetime
 
@@ -500,7 +530,7 @@ def test_yeared_name_attaches_to_bare_series_when_year_matches(app):
             "TV Shows/Top Gear/Season 05/Top Gear - S05E01 - [WEBDL-1080p].mkv"
         )
 
-        # A different year is a different show and keeps its own name
+        # A different year is a different show. It keeps its own name.
         wrong_year = evaluate_filename(
             "Top Gear (1978) - S01E01 - [DVD].mkv", log=False
         )
@@ -508,9 +538,11 @@ def test_yeared_name_attaches_to_bare_series_when_year_matches(app):
 
 
 def test_bare_name_attaches_to_unique_year_suffixed_series(app):
-    """The inverse direction after a series rename: a stray bare-named
-    file lands on the year-suffixed record — but only when exactly one
-    candidate exists."""
+    """Test that a bare name attaches to the only year-suffixed series.
+
+    This is the inverse direction after a series rename. A stray
+    bare-named file goes to the year-suffixed record, but only when
+    exactly 1 candidate exists."""
 
     from tests.factories import make_tv_series
 
@@ -526,9 +558,11 @@ def test_bare_name_attaches_to_unique_year_suffixed_series(app):
 
 
 def test_importable_basename_skips_hidden_and_transient_names():
-    """The import sweeps only ever enqueue finished files (#244): hidden
-    names and transfer tools' intermediate artifacts stay invisible —
-    their promotion to the real name is what fires the import."""
+    """Test that the import sweeps skip hidden and transient names.
+
+    The import sweeps enqueue only finished files (#244). Hidden names
+    and the intermediate files of transfer tools stay invisible. The
+    rename to the real name starts the import."""
 
     from app import importable_basename
 

@@ -1,17 +1,20 @@
-"""The audio supplement passes: #55a's FLAC planner/builder and #55b's
-E-AC-3 Atmos candidate detection and remux command construction. All
-pure functions — presence rules keep both passes idempotent across S3
-re-downloads, and already-supplemented files plan nothing.
+"""Test the audio supplement passes.
 
-Every test takes the `app` fixture and imports inside the function,
-like the rest of the suite: task modules capture get_app()'s singleton
-at import time, so importing them before conftest builds the test app
-would silently point every task function at production. (It happened;
+The tests cover the FLAC planner and builder of #55a. They also cover
+the E-AC-3 Atmos candidate detection and the remux command construction
+of #55b. All of them are pure functions. The presence rules keep both
+passes idempotent across S3 re-downloads. A file that already has its
+supplements plans nothing.
+
+Each test takes the `app` fixture and imports inside the function, like
+the rest of the suite. The task modules capture the singleton of
+get_app() at import time. An import before conftest builds the test app
+would silently point each task function at production. (That occurred.
 conftest now asserts against it.)"""
 
 
 def track(fmt, compression=None, language="en", channels="5.1"):
-    """A minimal audio-track dict in get_audio_tracks_from_file's shape."""
+    """Return a minimal audio-track dict shaped like get_audio_tracks_from_file."""
 
     return {
         "format": fmt,
@@ -22,14 +25,15 @@ def track(fmt, compression=None, language="en", channels="5.1"):
 
 
 def atmos_track(codec, language="eng", fmt=None):
-    """A minimal track dict for the Atmos candidate detector."""
+    """Return a minimal track dict for the Atmos candidate detector."""
 
     return {"codec": codec, "language": language, "format": fmt}
 
 
 def test_lossless_track_gains_a_leading_flac_twin(app):
-    """A bare lossless track plans as [FLAC twin, original]; lossy
-    company keeps its position after the pair."""
+    """Plan a bare lossless track as [FLAC twin, original].
+
+    A lossy track keeps its position after the pair."""
 
     from app.videos import plan_audio_supplements
 
@@ -45,7 +49,7 @@ def test_lossless_track_gains_a_leading_flac_twin(app):
 
 
 def test_flac_and_pcm_originals_need_no_twin(app):
-    """FLAC and PCM already play natively — nothing to supplement."""
+    """Plan no twin for FLAC and PCM. They already play natively."""
 
     from app.videos import plan_audio_supplements
 
@@ -62,8 +66,10 @@ def test_flac_and_pcm_originals_need_no_twin(app):
 
 
 def test_existing_twin_makes_the_pass_a_no_op(app):
-    """A MakeMKV-profile rip — FLAC twin already before the lossless
-    original — plans as pure copies, so re-imports never stack twins."""
+    """Plan pure copies for a MakeMKV-profile rip.
+
+    That rip already has a FLAC twin before the lossless original. Thus,
+    a re-import never stacks twins."""
 
     from app.videos import plan_audio_supplements
 
@@ -80,8 +86,10 @@ def test_existing_twin_makes_the_pass_a_no_op(app):
 
 
 def test_twins_match_count_wise_within_a_group(app):
-    """A twin covers only its adjacent neighbor — the second lossless
-    track has no preceding FLAC and still earns its twin, in place."""
+    """Match a twin only to its adjacent neighbor.
+
+    The second lossless track has no FLAC before it. Thus, it still gets
+    its twin, in place."""
 
     from app.videos import plan_audio_supplements
 
@@ -99,11 +107,13 @@ def test_twins_match_count_wise_within_a_group(app):
 
 
 def test_twins_match_by_language_not_channels(app):
-    """A French FLAC doesn't cover an English lossless track — but a
-    same-language FLAC with a DIFFERENT channel count does: MediaInfo
-    labels DTS-ES Matrix sources 6.0 while their discrete content (and
-    any FLAC decode of it) is 5.1, so channel-strict matching would
-    stack redundant twins on correct rips (the LOTR discs)."""
+    """Match twins by language, not by channel count.
+
+    A French FLAC does not cover an English lossless track. But a
+    same-language FLAC with a DIFFERENT channel count does cover it.
+    MediaInfo labels a DTS-ES Matrix source as 6.0. Its discrete content
+    (and each FLAC decode of it) is 5.1. Thus, a channel-strict match
+    would stack redundant twins on correct rips (the LOTR discs)."""
 
     from app.videos import plan_audio_supplements
 
@@ -130,9 +140,11 @@ def test_twins_match_by_language_not_channels(app):
 
 
 def test_builder_numbers_by_output_position(app):
-    """Codec options follow the OUTPUT index — a twin shifts every
-    later track — while -map keeps the source index; the first output
-    is the default and every other disposition is cleared."""
+    """Number the codec options by the OUTPUT index.
+
+    A twin shifts each later track. The -map option keeps the source
+    index. The first output is the default. The builder clears each
+    different disposition."""
 
     from app.videos import build_supplement_args
 
@@ -160,8 +172,9 @@ def test_builder_numbers_by_output_position(app):
 
 
 def test_truehd_atmos_without_twin_is_a_candidate(app):
-    """A lone TrueHD Atmos track wants an E-AC-3 Atmos twin; plain
-    TrueHD and lossy company never do."""
+    """Report a lone TrueHD Atmos track as a candidate for an E-AC-3 Atmos twin.
+
+    Plain TrueHD and lossy tracks are never candidates."""
 
     from app.atmos import TRUEHD_ATMOS_CODEC, atmos_supplement_candidates
 
@@ -174,8 +187,9 @@ def test_truehd_atmos_without_twin_is_a_candidate(app):
 
 
 def test_existing_eac3_atmos_twin_satisfies_the_source(app):
-    """A file already carrying its DD+ Atmos twin plans nothing — the
-    pass is idempotent across S3 re-downloads."""
+    """Plan nothing for a file that already has its DD+ Atmos twin.
+
+    The pass is idempotent across S3 re-downloads."""
 
     from app.atmos import (
         EAC3_ATMOS_CODEC,
@@ -191,8 +205,10 @@ def test_existing_eac3_atmos_twin_satisfies_the_source(app):
 
 
 def test_atmos_twins_match_per_language_and_count(app):
-    """A Japanese twin doesn't cover an English source, and one twin
-    can't cover two same-language sources."""
+    """Match Atmos twins per language and per count.
+
+    A Japanese twin does not cover an English source. One twin cannot
+    cover 2 same-language sources."""
 
     from app.atmos import (
         EAC3_ATMOS_CODEC,
@@ -210,9 +226,11 @@ def test_atmos_twins_match_per_language_and_count(app):
 
 
 def test_insertion_lands_ahead_of_the_flac_twin(app):
-    """The E-AC-3 twin leads its trio: it lands ahead of the FLAC twin
-    that directly precedes the source, else directly ahead of the
-    source itself."""
+    """Put the E-AC-3 twin at the front of its trio.
+
+    The twin goes before the FLAC twin that directly precedes the
+    source. If there is no FLAC twin, it goes directly before the
+    source."""
 
     from app.atmos import insertion_point
 
@@ -231,9 +249,11 @@ def test_insertion_lands_ahead_of_the_flac_twin(app):
 
 
 def test_remux_command_orders_the_trio(app):
-    """mkvmerge gets ec3 inputs first, the source last, and an explicit
-    --track-order that lands each twin at its insertion position with
-    video leading and subtitles trailing."""
+    """Order the trio in the mkvmerge command.
+
+    mkvmerge gets the ec3 inputs first and the source last. It gets an
+    explicit --track-order. That order puts each twin at its insertion
+    position, with the video first and the subtitles last."""
 
     from app.atmos import build_remux_command
 
@@ -250,15 +270,17 @@ def test_remux_command_orders_the_trio(app):
     assert "twin.ec3" in command and "source.mkv" in command
     assert command.index("twin.ec3") < command.index("source.mkv")
     order = command[command.index("--track-order") + 1]
-    # video, then [ec3 twin, FLAC, TrueHD, other audio], then subtitles
+    # Order: video, then [ec3 twin, FLAC, TrueHD, other audio], then subtitles
     assert order == "1:0,0:0,1:1,1:2,1:3,1:4"
     language = command[command.index("--language") + 1]
     assert language == "0:eng"
 
 
 def test_mediaconvert_settings_match_the_validated_job(app):
-    """The job settings keep the validated shape: RAW container,
-    EAC3_ATMOS at 9.1.6, and the bitrate passed through."""
+    """Keep the validated shape of the job settings.
+
+    The shape is a RAW container, EAC3_ATMOS at 9.1.6, and the bitrate
+    passed through."""
 
     from app.atmos import mediaconvert_job_settings
 
@@ -276,10 +298,12 @@ def test_mediaconvert_settings_match_the_validated_job(app):
 
 
 def test_trailing_flac_is_never_counted_as_a_twin(app):
-    """A FLAC AFTER a lossless track could be anything — a commentary,
-    say — so it never satisfies the twin rule (the Father Goose
-    case): the lossless track gets a fresh twin ahead of it and the
-    unknown FLAC keeps its place, its identity unjudged."""
+    """Never count a FLAC AFTER a lossless track as a twin.
+
+    That FLAC could be anything, for example a commentary. Thus, it
+    never satisfies the twin rule (the Father Goose case). The lossless
+    track gets a new twin before it. The unknown FLAC keeps its place.
+    The planner does not judge its identity."""
 
     from app.videos import plan_audio_supplements
 
@@ -293,8 +317,8 @@ def test_trailing_flac_is_never_counted_as_a_twin(app):
         ("copy", 1),
     ]
 
-    # And once supplemented, the file is in the twinned shape: the
-    # re-run plans pure copies
+    # After the supplement, the file is in the twinned shape. The second
+    # run plans pure copies
 
     supplemented = [
         track("FLAC", "Lossless"),
@@ -309,9 +333,11 @@ def test_trailing_flac_is_never_counted_as_a_twin(app):
 
 
 def test_non_adjacent_flac_is_not_a_twin(app):
-    """Adjacency is the rule: a FLAC separated from the lossless track
-    by another track doesn't count, even with matching language and
-    channels."""
+    """Count only an adjacent FLAC as a twin.
+
+    A FLAC that a different track separates from the lossless track does
+    not count. This is true even when the language and the channels
+    match."""
 
     from app.videos import plan_audio_supplements
 

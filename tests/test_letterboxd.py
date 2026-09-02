@@ -1,5 +1,7 @@
-"""The Letterboxd RSS sync: feed parsing, and the merge rules
-that keep one viewing one row — guid idempotence, CSV-twin adoption,
+"""Test the Letterboxd RSS sync.
+
+The tests cover the feed parsing and the merge rules that keep one
+viewing in one row. The rules are guid idempotence, CSV-twin adoption,
 and Plex bare-watch completion."""
 
 from datetime import datetime
@@ -95,7 +97,7 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
     )
     entries = parse_letterboxd_feed(xml)
 
-    # Oldest first, list items dropped
+    # The oldest entry is first. The parser removes the list items
     assert [entry["guid"] for entry in entries] == [
         "letterboxd-watch-1",
         "letterboxd-review-2",
@@ -103,11 +105,11 @@ def test_parser_reads_fields_and_strips_boilerplate(app):
     watch, review = entries
     assert watch["tmdb_id"] == 659994
     assert watch["rating"] is None
-    assert watch["review"] == ""  # boilerplate stripped
+    assert watch["review"] == ""  # the parser removed the boilerplate
     assert watch["watched_date"] == datetime(2026, 7, 9)
     assert review["rating"] == 3.5
     assert review["liked"] is True
-    # Letterboxd's inline markup is part of the authored text and survives
+    # The inline markup of Letterboxd is part of the written text. It stays
     assert review["review"] == "<b>My cat</b> hated the soundtrack."
 
 
@@ -137,8 +139,8 @@ def test_parser_strips_spoiler_boilerplate_into_flag(app, monkeypatch):
     )
     assert plain["contains_spoilers"] is False
 
-    # A row that stored the sentence before the strip existed self-heals
-    # through the guid-edit path, and the flag lands with it
+    # A row can hold the sentence from before the strip existed. The row
+    # repairs itself through the guid-edit path. The flag arrives with it
     with app.app_context():
         user = User.query.first()
         user.letterboxd_username = "test"
@@ -211,16 +213,16 @@ def test_sync_adds_rows_and_is_idempotent(app, monkeypatch):
             letterboxd_guid="letterboxd-review-10"
         ).one()
         assert float(row.rating) == 2.5
-        assert row.liked is True  # verbatim: sub-3 keeps its heart
+        assert row.liked is True  # as given: a sub-3 rating keeps its heart
         assert row.review == "Guilty pleasure."
         assert row.rewatch is False
         assert row.movie_id == movie_id
 
-        # Re-sync: nothing stacks
+        # Sync again. No row stacks
         run_sync(app, xml, monkeypatch)
         assert UserMovieReview.query.filter_by(movie_id=movie_id).count() == 1
 
-        # An edited entry under the same guid updates in place
+        # An edited entry with the same guid updates the row in place
         xml = build_feed(
             feed_item(
                 "letterboxd-review-10",
@@ -246,7 +248,7 @@ def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
         user = User.query.first()
         user.letterboxd_username = "test"
 
-        # A CSV-imported row: same film, same day, already rated
+        # A row from the CSV import: the same film, the same day, rated
         csv_movie = make_movie("Rams", 2020, tmdb_id=659994)
         db.session.add(
             UserMovieReview(
@@ -258,7 +260,7 @@ def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
             )
         )
 
-        # A Plex scrobble: bare, timestamped late on the PREVIOUS day
+        # A Plex scrobble: bare, with a timestamp late on the PREVIOUS day
         plex_movie = make_movie("Heat", 1995, tmdb_id=949)
         db.session.add(
             UserMovieReview(
@@ -293,13 +295,13 @@ def test_sync_adopts_csv_twin_and_completes_plex_watch(app, monkeypatch):
         )
         run_sync(app, xml, monkeypatch)
 
-        # The CSV twin was adopted, not duplicated
+        # The sync adopted the CSV twin. It did not make a duplicate
         assert UserMovieReview.query.filter_by(movie_id=csv_id).count() == 1
         adopted = UserMovieReview.query.filter_by(movie_id=csv_id).one()
         assert adopted.letterboxd_guid == "letterboxd-watch-20"
 
-        # The Plex bare watch was completed across the midnight straddle,
-        # keeping its clock-accurate timestamp
+        # The sync completed the Plex bare watch across the midnight
+        # straddle. The watch keeps its clock-accurate timestamp
         assert UserMovieReview.query.filter_by(movie_id=plex_id).count() == 1
         completed = UserMovieReview.query.filter_by(movie_id=plex_id).one()
         assert completed.letterboxd_guid == "letterboxd-review-21"
@@ -326,7 +328,7 @@ def test_sync_creates_missing_movie_records(app, monkeypatch):
         ).one()
         assert row.movie_id == movie.id
 
-        # The created record heads into the standard refresh pipeline
+        # The new record goes into the standard refresh pipeline
         refreshes = [
             job
             for job in app.request_queue.jobs
@@ -343,8 +345,9 @@ def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
         user = User.query.first()
         user.letterboxd_username = "test"
 
-        # A CSV-era row stamped one day late (the UTC drift): midnight,
-        # so it carries no clock knowledge and the feed's date wins
+        # A CSV-era row with a date 1 day late (the UTC drift). Its time
+        # is midnight. Thus, it has no clock knowledge, and the date of
+        # the feed wins
         drifted_movie = make_movie("Speedy", 1928, tmdb_id=32595)
         db.session.add(
             UserMovieReview(
@@ -369,13 +372,13 @@ def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
         )
         run_sync(app, xml, monkeypatch)
 
-        # Adopted (not duplicated) and moved onto Letterboxd's date
+        # The sync adopted the row (no duplicate) and set the Letterboxd date
         assert UserMovieReview.query.filter_by(movie_id=drifted_id).count() == 1
         row = UserMovieReview.query.filter_by(movie_id=drifted_id).one()
         assert row.letterboxd_guid == "letterboxd-watch-40"
         assert row.date_watched == datetime(2025, 10, 28)
 
-        # A date edited on Letterboxd later flows down to the same row
+        # A later date edit on Letterboxd goes into the same row
         xml = build_feed(
             feed_item(
                 "letterboxd-watch-40",
@@ -394,7 +397,7 @@ def test_sync_corrects_drifted_dates_on_midnight_rows(app, monkeypatch):
 def test_feed_logged_at_is_local_wall_clock(app):
     import app.letterboxd as letterboxd
 
-    # 02:55 UTC is the previous local evening in any US timezone; the
+    # 02:55 UTC is the previous local evening in each US timezone. The
     # stored value must be the local clock, not naive UTC
     xml = build_feed(
         feed_item(

@@ -1,6 +1,7 @@
-"""The possibly-forced subtitles triage: the same-language sibling-ratio
-heuristic, the Library Maintenance card, and the mark-forced / dismiss
-actions.
+"""Test the possibly-forced subtitles triage.
+
+The tests cover the same-language sibling-ratio heuristic, the Library
+Maintenance card, and the mark-forced and dismiss actions.
 """
 
 import inspect
@@ -57,10 +58,10 @@ def test_heuristic_flags_small_unforced_same_language_tracks(app, admin_client):
     with app.app_context():
         file, small = build_candidate()
 
-        # None of these should be flagged. "Already Forced" also carries a
-        # third small unforced track that would match on ratio alone — a
-        # file with a forced track has its forced needs met, so nothing
-        # in it is suggested
+        # The heuristic must flag none of these. "Already Forced" also has
+        # a third small unforced track. The ratio alone matches that
+        # track. But a file with a forced track has its forced needs met.
+        # Thus, the heuristic suggests nothing in that file
 
         already_forced = make_movie_file(make_movie("Already Forced", 2001), "DVD")
         add_subtitle(already_forced, 1, 1500)
@@ -87,8 +88,8 @@ def test_heuristic_flags_small_unforced_same_language_tracks(app, admin_client):
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert "Forced Suspect" in page
-    # The worklist links each file to its own triage page; the
-    # track detail lives there
+    # The worklist links each file to its own triage page. The track
+    # detail is on that page
     assert "60 of 1500" not in page
     detail = admin_client.get(f"/maintenance/subtitles/{suspect_id}").get_data(
         as_text=True
@@ -131,8 +132,8 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
     )
     body = response.get_data(as_text=True)
     assert "subtitles as reviewed" in body
-    # The flash names the file, so check the empty state rather than
-    # the title's absence
+    # The flash message names the file. Thus, check the empty state
+    # and not the absence of the title
     assert "Nothing looks forced right now." in body
 
     with app.app_context():
@@ -140,36 +141,38 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
 
 
 def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
-    """The per-file triage view: only the requested file's
-    candidates render, the file page links to it while candidates are
-    pending, and actions bounce back to the origin page."""
+    """Test the per-file triage view.
+
+    Only the candidates of the requested file render. The file page
+    links to the view while candidates are pending. The actions return
+    to the origin page."""
 
     with app.app_context():
         file, _ = build_candidate()
         other, _ = build_candidate(title="Other Suspect", year=2001)
         file_id, other_id = file.id, other.id
 
-    # The all-files page lists both and links each file's own page
+    # The all-files page lists both files and links the page of each file
 
     body = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
     assert f"/maintenance/subtitles/{file_id}" in body
     assert f"/maintenance/subtitles/{other_id}" in body
 
-    # The per-file page holds only its own file
+    # The per-file page has only its own file
 
     body = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
     assert "Forced Suspect" in body
     assert "Other Suspect" not in body
 
-    # The file page links to per-file triage while candidates pend
+    # The file page links to the per-file triage while candidates pend
 
     file_page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
     assert f"/maintenance/subtitles/{file_id}?origin=/file/{file_id}" in (
         file_page.replace("&amp;", "&")
     )
 
-    # Dismissing from the per-file page returns to the origin (the
-    # file page), not the triage list
+    # A dismiss from the per-file page returns to the origin (the file
+    # page), not to the triage list
 
     response = admin_client.post(
         f"/maintenance/subtitles/{file_id}?origin=/file/{file_id}",
@@ -182,7 +185,7 @@ def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
     assert response.status_code == 302
     assert response.headers["Location"].endswith(f"/file/{file_id}")
 
-    # Reviewed: the file page link disappears; the other file pends on
+    # After the review, the file page link is gone. The other file pends
 
     file_page = admin_client.get(f"/file/{file_id}").get_data(as_text=True)
     assert f"/maintenance/subtitles/{file_id}?origin=" not in (
@@ -192,7 +195,7 @@ def test_per_file_page_shows_one_file_and_returns_to_origin(app, admin_client):
         assert db.session.get(File, file_id).subtitle_triage_reviewed is not None
         assert db.session.get(File, other_id).subtitle_triage_reviewed is None
 
-    # An off-site origin is never followed
+    # The route never follows an off-site origin
 
     body = admin_client.get(f"/maintenance/subtitles/{other_id}").get_data(as_text=True)
     response = admin_client.post(
@@ -254,8 +257,8 @@ def test_mark_forced_enqueues_mkvpropedit_preserving_settings(app, admin_client)
             if job.func_name == "app.videos.mkvpropedit_task"
         ]
         assert len(jobs) == 1
-        # Current defaults preserved: audio track 1, default subtitle 1,
-        # and the flagged track joins the forced set
+        # The task keeps the current defaults: audio track 1 and default
+        # subtitle 1. The flagged track joins the forced set
         assert jobs[0].args == (file_id, "1", "1", ["2"])
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
     finally:
@@ -270,7 +273,7 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         file_id, small_id = file.id, small.id
 
     page = admin_client.get("/maintenance/subtitles").get_data(as_text=True)
-    assert "MP4 Suspect" in page  # listed on the worklist
+    assert "MP4 Suspect" in page  # the worklist lists it
     assert "MPEG-4" in page
     page = admin_client.get(f"/maintenance/subtitles/{file_id}").get_data(as_text=True)
 
@@ -293,8 +296,10 @@ def test_subtitle_triage_requires_admin(user_client):
 
 
 def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
-    """Two suspected tracks, one checkbox each, one mkvpropedit
-    invocation carrying both."""
+    """Test that a multi-select flags all chosen tracks in one task.
+
+    There are 2 suspected tracks with 1 checkbox each. One mkvpropedit
+    call includes both."""
 
     with app.app_context():
         file, small = build_candidate(title="Two Suspects", year=2011)
@@ -335,7 +340,7 @@ def test_multi_select_flags_all_chosen_tracks_in_one_task(app, admin_client):
 
 
 def test_triage_actions_retire_the_inspection_aids(app, admin_client):
-    """Dismissing (or flagging) a file deletes its snapshot directory."""
+    """Test that a dismiss (or a flag) of a file deletes its snapshot directory."""
 
     from app.triage import triage_snapshot_dir
 
@@ -361,9 +366,11 @@ def test_triage_actions_retire_the_inspection_aids(app, admin_client):
 
 
 def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
-    """The generation task writes the timeline and frames from the
-    (stubbed) probes, and the triage page renders the density strip,
-    cue bounds, and snapshot thumbnails."""
+    """Test that the generation task writes the aids and the page renders them.
+
+    The task writes the timeline and the frames from the (stubbed)
+    probes. The triage page renders the density strip, the cue bounds,
+    and the snapshot thumbnails."""
 
     import app.triage as triage
 
@@ -383,7 +390,7 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
     )
 
     def fake_render(path, streamorder, at, out_path):
-        """Write a dummy frame."""
+        """Write a placeholder frame."""
 
         with open(out_path, "wb") as handle:
             handle.write(b"jpg")
@@ -409,8 +416,8 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
         assert f"triage/{file_id}/2/snap-1.jpg" in page
         assert 'name="track_ids"' in page
 
-        # Snapshots enlarge in place through the shared modal instead
-        # of opening as a new-tab link
+        # A snapshot enlarges in place through the shared modal. It does
+        # not open as a new-tab link
 
         assert "triage-snapshot" in page
         assert "triageSnapshotModal" in page
@@ -422,8 +429,9 @@ def test_generate_snapshots_and_render_the_aids(app, admin_client, monkeypatch):
 
 
 def test_import_candidates_enqueue_snapshot_generation(app):
-    """The import-time hook queues generation for heuristic matches and
-    stays quiet for healthy files."""
+    """Test that the import-time hook queues the generation for matches only.
+
+    The hook does nothing for healthy files."""
 
     from app.triage import maybe_enqueue_triage_snapshots
 
@@ -448,7 +456,7 @@ def test_import_candidates_enqueue_snapshot_generation(app):
 
 
 def test_deleting_the_local_file_removes_triage_aids(app):
-    """delete_local_file covers both deletions and replacements."""
+    """Test that delete_local_file removes the aids on deletion and replacement."""
 
     from app.triage import triage_snapshot_dir
 
@@ -464,10 +472,13 @@ def test_deleting_the_local_file_removes_triage_aids(app):
 
 
 def test_suspicious_first_track_is_a_candidate(app):
-    """A forced-looking track FIRST in the file (Baby Driver's
-    [49, 3110, 4334]) is still a candidate: the query baselines on the
-    largest same-language sibling, not the first track — so the
-    import hook, now gated on this query, generates its aids."""
+    """Test that a suspicious FIRST track is a candidate.
+
+    A forced-looking track can be FIRST in the file (Baby Driver has
+    [49, 3110, 4334]). It is still a candidate. The query compares
+    against the largest same-language sibling, not the first track.
+    The import hook now depends on this query. Thus, it generates the
+    aids."""
 
     from app.triage import forced_subtitle_candidates, maybe_enqueue_triage_snapshots
 
@@ -485,10 +496,12 @@ def test_suspicious_first_track_is_a_candidate(app):
 
 
 def test_reset_triage_state_clears_verdict_and_aids(app):
-    """A replaced file's earlier dismissal applied to tracks that no
-    longer exist (the Wanda case): reset clears the reviewed mark
-    and the stale inspection aids so the new content re-earns its way
-    off the triage page."""
+    """Test that the reset clears the verdict and the aids.
+
+    The earlier dismissal of a replaced file applied to tracks that no
+    longer exist (the Wanda case). The reset clears the reviewed mark
+    and the stale inspection aids. Thus, the new content must pass the
+    triage again."""
 
     from datetime import datetime
 

@@ -1,6 +1,8 @@
-"""The content-based recommendation engine: diary-derived taste
-profiles, the nightly recompute into Redis, the landing page, and the
-filmography interest markers."""
+"""Test the content-based recommendation engine.
+
+This covers the taste profiles from the diary, the nightly recompute
+into Redis, the landing page, and the interest markers on the
+filmography."""
 
 import json
 
@@ -10,7 +12,7 @@ from tests.factories import make_movie, make_movie_file
 
 
 def make_person(person_id, name):
-    """A TMDBCredit row."""
+    """Build a TMDBCredit row."""
 
     from app import db
     from app.models import TMDBCredit
@@ -22,7 +24,7 @@ def make_person(person_id, name):
 
 
 def make_cast(person, movie, character="Self", order=0):
-    """A cast join row."""
+    """Build a cast join row."""
 
     from app import db
     from app.models import MovieCast
@@ -39,7 +41,7 @@ def make_cast(person, movie, character="Self", order=0):
 
 
 def genre(genre_id, name):
-    """A TMDBGenre row, reused if the id already exists."""
+    """Build a TMDBGenre row. Reuse the row if the id already exists."""
 
     from app import db
     from app.models import TMDBGenre
@@ -54,7 +56,7 @@ def genre(genre_id, name):
 
 
 def log_watch(user_id, movie, rating=None, liked=False):
-    """A diary row for the given movie."""
+    """Build a diary row for the given movie."""
 
     from app import db
     from app.models import UserMovieReview
@@ -72,7 +74,7 @@ def log_watch(user_id, movie, rating=None, liked=False):
 
 
 def admin_id():
-    """The seeded admin user's id."""
+    """Return the id of the seeded admin user."""
 
     from app.models import User
 
@@ -96,10 +98,10 @@ def test_user_movie_weights_math(app):
 
         weights = user_movie_weights(user_id)
 
-    # Mean rating is 4 (imputed ratings never move the mean): the 5
-    # centers to +0.4 plus the 1.0 like bonus; the 3 centers to -0.4;
-    # two unrated watches are a bare watch plus one rewatch increment;
-    # a liked-only row imputes 3 stars (-0.4) plus the like bonus
+    # The mean rating is 4. An imputed rating never moves the mean. The
+    # 5 centers to +0.4 plus the 1.0 like bonus. The 3 centers to -0.4.
+    # 2 unrated watches are a bare watch plus 1 rewatch increment. A
+    # liked-only row imputes 3 stars (-0.4) plus the like bonus.
 
     assert weights[loved.id] == pytest.approx(1.4)
     assert weights[meh.id] == pytest.approx(-0.4)
@@ -108,9 +110,10 @@ def test_user_movie_weights_math(app):
 
 
 def test_latest_rating_supersedes_earlier_ones(app):
-    """The engine reads the newest review's stars — not the highest
-    ever given — so a re-rate downward counts, and a later bare watch
-    (a Plex viewing) never masks the stars."""
+    """Read the stars of the newest review, not the highest stars ever given.
+
+    Thus, a lower re-rate counts. A later bare watch (a Plex viewing)
+    never hides the stars."""
 
     from datetime import datetime, timedelta
 
@@ -153,10 +156,10 @@ def test_latest_rating_supersedes_earlier_ones(app):
     assert current[rerated_id] == 2.0
     assert current[anchor_id] == 4.0
 
-    # Mean over latest ratings is 3: the re-rated film centers on its
-    # newest 2 stars (-0.4) and keeps its old like (+1.0) plus two
-    # rewatch increments (+0.5); the anchor centers on 4 (+0.4) with
-    # its like (+1.0)
+    # The mean over the latest ratings is 3. The re-rated film centers
+    # on its newest 2 stars (-0.4). It keeps its old like (+1.0) plus 2
+    # rewatch increments (+0.5). The anchor centers on 4 (+0.4) with its
+    # like (+1.0).
 
     assert weights[rerated_id] == pytest.approx(1.1)
     assert weights[anchor_id] == pytest.approx(1.4)
@@ -187,13 +190,14 @@ def test_recommendations_prefer_matching_features_and_say_why(app):
     assert profile["affinities"]["genre:35"]["score"] > 0
     ranked_ids = [rec["movie_id"] for rec in ranked]
     assert ranked_ids == [candidate_comedy.id]
-    # The strongest contributing feature explains the pick
+    # The strongest contributing feature explains the pick.
     assert ranked[0]["because"][0] == "Comedy"
 
 
 def test_crew_roles_are_separate_feature_classes(app):
-    """A shared cinematographer builds a cinematographer affinity, scores
-    the candidate, and explains itself in role terms."""
+    """Build a cinematographer affinity from a shared cinematographer.
+
+    The affinity scores the candidate and explains itself in role terms."""
 
     from app import db
     from app.models import MovieCrew
@@ -292,9 +296,9 @@ def test_landing_page_shows_recommendations(app, admin_client):
                 "computed_at": "2026-08-10 01:45",
                 "items": [
                     {"movie_id": pick_id, "score": 1.0, "because": ["Comedy", "1990s"]},
-                    # Logged since the nightly run: must drop out today
+                    # Logged after the nightly run. It must drop out today.
                     {"movie_id": seen_since_id, "score": 0.9, "because": ["Comedy"]},
-                    # Deleted since the nightly run: must not error
+                    # Deleted after the nightly run. It must not cause an error.
                     {"movie_id": 999999, "score": 0.8, "because": ["Comedy"]},
                 ],
             }
@@ -327,7 +331,7 @@ def test_landing_page_requests_compute_once(app, admin_client):
     ]
     assert len(recompute_jobs) == 1
 
-    # A second load must not enqueue a second job
+    # A second load must not enqueue a second job.
 
     admin_client.get("/")
     recompute_jobs = [
@@ -348,20 +352,22 @@ def test_file_activity_lives_at_its_own_route(app, admin_client):
     body = admin_client.get("/file-activity").get_data(as_text=True)
     assert "File Activity" in body
 
-    # And the nav links to it from every page
+    # The nav links to it from each page.
 
     landing = admin_client.get("/").get_data(as_text=True)
     assert 'href="/file-activity"' in landing
 
-    # The old addresses are gone, not redirected (Glenn's call, Aug 2026)
+    # The old addresses are gone, not redirected (decision by Glenn, 2026-08).
 
     for old in ("/recently-added", "/maintenance/pipeline"):
         assert admin_client.get(old).status_code == 404, old
 
 
 def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypatch):
-    """Unowned films on a filmography get a modest marker when their
-    cached genre ids and decade match the stored taste profile."""
+    """Give an unowned film on a filmography a small marker when it matches the profile.
+
+    The cached genre ids and the decade of the film must match the
+    stored taste profile."""
 
     import app.main.library as library
 
@@ -377,21 +383,21 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
         db.session.commit()
 
     class FakeTMDB:
-        """Canned TMDB response."""
+        """Fake a TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
 
         def raise_for_status(self):
-            """Never an HTTP error."""
+            """Never raise an HTTP error."""
 
         def json(self):
-            """The canned payload."""
+            """Return the fake payload."""
 
             return self.payload
 
     def fake_tmdb_get(url, **kwargs):
-        """Person-details and movie-credits payloads without the network."""
+        """Return person-details and movie-credits payloads without the network."""
 
         if url.endswith("/movie_credits"):
             return FakeTMDB(
@@ -445,8 +451,9 @@ def test_filmography_marks_films_that_might_interest(app, admin_client, monkeypa
 
     page = admin_client.get("/library/movie?credit=777001").get_data(as_text=True)
     assert page.count("Might interest you") == 1
-    # The marker rides the matching unowned film's anchor as a card
-    # label (Aug 2026) — keyed by its tmdb id, since there's no record
+    # The marker goes with the anchor of the matching unowned film as a
+    # card label (2026-08). Its key is the tmdb id, because there is no
+    # record.
     assert (
         'data-card-url="/movie_card?tmdb_id=400" '
         "data-card-reasons='[\"Might interest you\"]'"
@@ -466,21 +473,21 @@ def test_no_markers_without_a_stored_profile(app, admin_client, monkeypatch):
         db.session.commit()
 
     class FakeTMDB:
-        """Canned TMDB response."""
+        """Fake a TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
 
         def raise_for_status(self):
-            """Never an HTTP error."""
+            """Never raise an HTTP error."""
 
         def json(self):
-            """The canned payload."""
+            """Return the fake payload."""
 
             return self.payload
 
     def fake_tmdb_get(url, **kwargs):
-        """Minimal person + credits payloads."""
+        """Return minimal person and credits payloads."""
 
         if url.endswith("/movie_credits"):
             return FakeTMDB(
@@ -530,8 +537,9 @@ def test_evaluate_user_reports_ranking_metrics(app):
 
 
 def test_evaluate_applies_trial_class_weights(app):
-    """Trial weights must actually steer the leave-one-out ranking (they
-    once didn't reach the scorer)."""
+    """Make sure that the trial weights steer the leave-one-out ranking.
+
+    Before, the trial weights did not reach the scorer."""
 
     from app.recommendations import evaluate_user
 
@@ -540,8 +548,9 @@ def test_evaluate_applies_trial_class_weights(app):
         comedy = genre(35, "Comedy")
         drama = genre(18, "Drama")
 
-        # Two 1990s comedies and one 1950s comedy as positives: held out,
-        # the 1950s film matches the profile on genre but not decade
+        # 2 comedies from the 1990s and 1 comedy from the 1950s are the
+        # positives. When held out, the 1950s film matches the profile on
+        # genre but not on decade.
 
         for title, year in (
             ("Trial Comedy A", 1994),
@@ -553,7 +562,7 @@ def test_evaluate_applies_trial_class_weights(app):
             make_movie_file(positive, "Bluray-1080p")
             log_watch(user_id, positive, rating=5, liked=True)
 
-        # A 1990s drama candidate: matches on decade but not genre
+        # A 1990s drama candidate matches on decade but not on genre.
 
         candidate = make_movie("Trial Drama", 1990)
         candidate.genres.append(drama)
@@ -571,8 +580,10 @@ def test_evaluate_applies_trial_class_weights(app):
 
 
 def test_runtime_filter_trims_the_library_rail(app, admin_client):
-    """?minutes=N is a view filter: long films and unknown runtimes drop
-    out while it's set, and the default view ignores length entirely."""
+    """Filter the view with ?minutes=N.
+
+    While the filter is set, long films and unknown runtimes drop out.
+    The default view ignores the length."""
 
     from app import db
     from app.recommendations import RECS_KEY
@@ -618,9 +629,10 @@ def test_runtime_filter_trims_the_library_rail(app, admin_client):
 
 
 def test_runtime_filter_says_when_nothing_fits(app, admin_client):
-    """A filter that empties the rail says so (GitHub #198): the stored
-    recommendations are computed, so the page must not claim they're
-    still being calculated."""
+    """Say so when a filter empties the rail (GitHub #198).
+
+    The stored recommendations are computed. Thus, the page must not
+    claim that the calculation is still in progress."""
 
     from app import db
     from app.recommendations import RECS_KEY
@@ -654,8 +666,9 @@ def test_runtime_filter_says_when_nothing_fits(app, admin_client):
 
 
 def test_runtime_filter_says_when_the_rewatch_shelf_empties(app, admin_client):
-    """The rewatch shelf keeps its heading and explains itself when the
-    filter trims every film, rather than vanishing (GitHub #198)."""
+    """Keep the heading of the rewatch shelf when the filter removes each film.
+
+    The shelf explains itself. It does not disappear (GitHub #198)."""
 
     from datetime import datetime, timedelta
 
@@ -689,9 +702,11 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(app, admin_client):
 
 
 def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
-    """Unowned TMDB search matches run the filmography markers' coarse
-    scorer, minus the person term: on-profile films badge, off-profile
-    films don't, and owned matches never do."""
+    """Score an unowned TMDB search match with the coarse filmography scorer.
+
+    The scorer is the one of the filmography markers. The person term is
+    not used. An on-profile film shows a badge. An
+    off-profile film does not. An owned match never does."""
 
     import app.main.search as search
 
@@ -733,21 +748,21 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
     )
 
     class FakeTMDB:
-        """Canned TMDB response."""
+        """Fake a TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
 
         def raise_for_status(self):
-            """Never an HTTP error."""
+            """Never raise an HTTP error."""
 
         def json(self):
-            """The canned payload."""
+            """Return the fake payload."""
 
             return self.payload
 
     def fake_tmdb_get(url, params=None, **kwargs):
-        """Search results: a strong match, a non-match, an owned match."""
+        """Return search results: a strong match, a non-match, and an owned match."""
 
         if url.endswith("/search/movie"):
             return FakeTMDB(
@@ -786,9 +801,11 @@ def test_search_results_mark_might_interest(app, admin_client, monkeypatch):
 
 
 def test_rotate_daily_varies_by_day_and_holds_within_one(app):
-    """The rotation is deterministic for a given day (reloads are
-    stable) but different days sample different subsets, favoring the
-    top of the ranking; short lists pass through untouched."""
+    """Make the rotation deterministic for a given day.
+
+    Reloads are stable. Different days sample different subsets. The
+    sample favors the top of the ranking. A short list passes through
+    unchanged."""
 
     from app.recommendations import rotate_daily
 
@@ -801,21 +818,22 @@ def test_rotate_daily_varies_by_day_and_holds_within_one(app):
     assert monday == monday_again
     assert monday != tuesday
     assert len(monday) == 18
-    # Rank order is preserved within a day's selection
+    # The selection of a day keeps the rank order.
     assert monday == sorted(monday)
-    # The top of the ranking dominates the sample
+    # The top of the ranking dominates the sample.
     assert sum(1 for rank in monday if rank < 30) >= 12
 
-    # A list no longer than the display count passes through whole
+    # A list that is not longer than the display count passes through whole.
 
     assert rotate_daily([1, 2, 3], 18, "recs:1:2026-08-10") == [1, 2, 3]
 
 
 def test_watch_again_shelf_picks_stale_favorites(app):
-    """The rewatch shelf keeps owned films the user liked whose last
-    watch is at least the staleness bar ago — date-less rows count as
-    the oldest — and drops fresh watches, below-mean films, and films
-    without a local file."""
+    """Keep only stale, liked, owned films on the rewatch shelf.
+
+    The last watch must be at least the staleness bar ago. A row without
+    a date counts as the oldest. The shelf drops recent watches, films
+    below the mean, and films without a local file."""
 
     from datetime import datetime, timedelta
 
@@ -828,7 +846,7 @@ def test_watch_again_shelf_picks_stale_favorites(app):
         user_id = admin_id()
 
         def diary_row(movie, rating=None, liked=False, watched=None):
-            """One viewing row with an explicit watch date."""
+            """Build 1 viewing row with an explicit watch date."""
 
             db.session.add(
                 UserMovieReview(
@@ -866,9 +884,9 @@ def test_watch_again_shelf_picks_stale_favorites(app):
         items = watch_again_shelf(user_id)
         ids = [item["movie_id"] for item in items]
 
-        # Under the liked-only-imputes-3-stars rule the dateless
-        # 5-star favorite now outranks the stale bare like (its centered
-        # rating beats the imputed 3's), and nothing else qualifies
+        # A liked-only row imputes 3 stars. Under that rule, the 5-star
+        # favorite without a date now outranks the stale bare like. Its
+        # centered rating beats the imputed 3. Nothing else qualifies.
 
         assert ids == [dateless.id, stale_liked.id]
         assert items[0]["last_watched"] is None
@@ -876,9 +894,10 @@ def test_watch_again_shelf_picks_stale_favorites(app):
 
 
 def test_index_watch_again_shelf_renders(app, admin_client):
-    """The landing page's rewatch shelf shows stale favorites with
-    last-watched badges; a re-watchlisted one (declared rewatch
-    intent) moves to the top watchlist shelf instead."""
+    """Show stale favorites with last-watched badges on the rewatch shelf.
+
+    A favorite that is on the watchlist again shows a declared rewatch
+    intent. It moves to the top watchlist shelf instead."""
 
     from datetime import datetime, timedelta
 
@@ -900,7 +919,7 @@ def test_index_watch_again_shelf_renders(app, admin_client):
             )
         )
 
-        # Seen, liked, and re-watchlisted: declared rewatch intent
+        # Seen, liked, and on the watchlist again: a declared rewatch intent.
 
         wanted_again = make_movie("Shelf Wanted Again", 1976)
         make_movie_file(wanted_again, "Bluray-1080p")
@@ -920,13 +939,14 @@ def test_index_watch_again_shelf_renders(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "Watch it again" in body
     assert "Shelf Old Favorite (1975)" in body
-    # The last-watched labels ride the anchors as card labels (Aug 2026)
+    # The last-watched labels go with the anchors as card labels (2026-08).
     assert f"data-card-reasons='[\"Last watched {old_year}\"]'" in body
     assert "did not watch for two years or more" in body
 
-    # The re-watchlisted film surfaces on the watchlist shelf up top —
-    # owned, so watchable tonight — not on the rewatch shelf, and its
-    # watchlist answer comes from the hydration endpoint, not a badge
+    # The film that is on the watchlist again appears on the watchlist
+    # shelf at the top. It is owned. Thus, the user can watch it tonight.
+    # It is not on the rewatch shelf. Its watchlist answer comes from the
+    # hydration endpoint, not from a badge.
 
     assert "From your watchlist" in body
     assert "Shelf Wanted Again (1976)" in body
@@ -943,9 +963,10 @@ def test_index_watch_again_shelf_renders(app, admin_client):
 
 
 def test_copref_value_math(app):
-    """The co-preference term is a weighted average of anchor sentiment
-    over the K most similar neighbors, honoring the exclusion used for
-    leave-one-out purity."""
+    """Compute the co-preference term as a weighted average of anchor sentiment.
+
+    The average is over the K most similar neighbors. It obeys the
+    exclusion that keeps leave-one-out pure."""
 
     from app.recommendations import COPREF_WEIGHT, _copref_value
 
@@ -953,7 +974,7 @@ def test_copref_value_math(app):
     expected = COPREF_WEIGHT * (0.5 * 2.0 + 0.3 * 1.0 + 0.1 * -1.0) / 0.9
     assert _copref_value(entries) == pytest.approx(expected)
 
-    # Excluding the strongest anchor removes it from the average
+    # The exclusion of the strongest anchor removes it from the average.
 
     excluded = COPREF_WEIGHT * (0.3 * 1.0 + 0.1 * -1.0) / 0.4
     assert _copref_value(entries, excluded=101) == pytest.approx(excluded)
@@ -961,8 +982,10 @@ def test_copref_value_math(app):
 
 
 def test_copref_reranks_and_explains(app):
-    """Between two candidates the profile scores identically, the one
-    co-preferred with a liked film ranks first and says why."""
+    """Rank the co-preferred candidate first when 2 profile scores are equal.
+
+    The candidate that is co-preferred with a liked film ranks first
+    and says why."""
 
     from app import db
     from app.models import MovieCopref
@@ -1002,9 +1025,12 @@ def test_copref_reranks_and_explains(app):
 
 
 def test_evaluate_user_measures_copref(app):
-    """With mutually co-preferred positives the held-out film outranks
-    taste-equal candidates, so the metrics improve over the bare
-    profile — the shipped term is what the harness measures."""
+    """Make sure that the co-preference term improves the metrics.
+
+    With positives that are co-preferred with each other, the held-out
+    film outranks the candidates with equal taste. Thus, the metrics
+    improve over the bare profile. The harness measures the shipped
+    term."""
 
     from app import db
     from app.models import MovieCopref
@@ -1021,9 +1047,9 @@ def test_evaluate_user_measures_copref(app):
             make_movie_file(movie, "Bluray-1080p")
             log_watch(user_id, movie, liked=True)
 
-        # A liked trainer whose star also carries the fillers: on taste
-        # alone the fillers strictly outrank a held-out positive, so
-        # the bare metrics have room to improve
+        # A liked trainer film. Its star also appears in the fillers. On
+        # taste alone, the fillers strictly outrank a held-out positive.
+        # Thus, the bare metrics have room to improve.
 
         star = make_person(888100, "Copref Star")
         trainer = make_movie("Copref Trainer", 1990, tmdb_id=719)
@@ -1054,9 +1080,10 @@ def test_evaluate_user_measures_copref(app):
 
 
 def test_not_interested_excludes_and_weighs(app):
-    """A waved-off film leaves the candidate pool and weighs mildly
-    negative in the profile — but never on top of a real diary verdict,
-    which already carries the sentiment (#45b)."""
+    """Remove a dismissed film from the candidate pool and weigh it a little negative.
+
+    The negative weight never stacks on a real diary verdict. That
+    verdict already carries the sentiment (#45b)."""
 
     from app import db
     from app.models import UserMovieStatus
@@ -1093,16 +1120,17 @@ def test_not_interested_excludes_and_weighs(app):
         weights = user_movie_weights(user_id)
         assert weights[refused.id] == NOT_INTERESTED_WEIGHT
 
-        # The rated film keeps its diary-derived weight, no stacking
+        # The rated film keeps the weight from its diary. There is no stacking.
 
         assert weights[rated_then_refused.id] != NOT_INTERESTED_WEIGHT
 
 
 def test_estimated_rating_quantile_math(app):
-    """The calibration curve reads a score's position among the user's
-    own films out at the same position in their sorted ratings — full
-    precision (the widget fills partial stars), clamped, and absent
-    without a curve."""
+    """Map the position of a score among the films of the user to their sorted ratings.
+
+    The calibration curve reads the same position in both lists. The
+    result has full precision, because the widget fills partial stars.
+    The result is clamped. Without a curve, there is no result."""
 
     from app.recommendations import estimated_rating
 
@@ -1113,28 +1141,30 @@ def test_estimated_rating_quantile_math(app):
         }
     }
 
-    # Above every known score: the top of the rating distribution;
-    # below every known score: the bottom
+    # Above each known score: the top of the rating distribution. Below
+    # each known score: the bottom.
 
     assert estimated_rating(profile, 9.0) == 5.0
     assert estimated_rating(profile, -1.0) == 1.0
 
-    # Midway up the scores reads midway up the stars: 2.0 sits at the
-    # 0.625 position, interpolating to 3.75 stars — kept as-is, no
-    # half-star rounding
+    # The middle of the scores reads as the middle of the stars. 2.0 is
+    # at the 0.625 position. That interpolates to 3.75 stars. Fitzflix
+    # keeps the value as it is, with no half-star rounding.
 
     assert estimated_rating(profile, 2.0) == 3.75
     assert estimated_rating(profile, 0.5) == 1.75
 
-    # No curve, no estimate
+    # No curve gives no estimate.
 
     assert estimated_rating({"calibration": None}, 1.0) is None
     assert estimated_rating(None, 1.0) is None
 
 
 def test_compute_stores_calibration_curve(app, monkeypatch):
-    """The nightly compute attaches the score→stars curve to the
-    profile once enough rated films exist, sorted and LOO-derived."""
+    """Attach the score-to-stars curve to the profile in the nightly compute.
+
+    The curve exists when enough rated films exist. It is sorted, and
+    it comes from the LOO run."""
 
     import app.recommendations as recommendations
 
@@ -1164,9 +1194,10 @@ def test_compute_stores_calibration_curve(app, monkeypatch):
 
 
 def test_movie_page_shows_estimated_rating(app, admin_client):
-    """An unlogged film with a stored score shows the engine's guess as
-    paler "estimated" stars in the widget; logging it replaces
-    the estimate with the real filled verdict."""
+    """Show the estimate of the engine as paler "estimated" stars in the widget.
+
+    This applies to an unlogged film with a stored score. When the user
+    logs the film, the real filled verdict replaces the estimate."""
 
     import json as jsonlib
 
@@ -1199,9 +1230,9 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
         ),
     )
 
-    # Score 9.0 estimates 4.5 stars: four paler "estimated" glyphs, a
-    # half-filled fifth, and the hint title carrying the value — no
-    # filled ones
+    # A score of 9.0 estimates 4.5 stars: 4 paler "estimated" glyphs, a
+    # half-filled fifth glyph, and the hint title with the value. There
+    # are no filled glyphs.
 
     page = admin_client.get(f"/movie/{pick_id}").get_data(as_text=True)
     assert page.count("star estimated") == 5
@@ -1227,9 +1258,11 @@ def test_movie_page_shows_estimated_rating(app, admin_client):
 
 
 def test_single_movie_score_matches_the_stored_recipe(app):
-    """A film scored live carries exactly the stored ranking's recipe —
-    taste + co-preference + award prior — so its estimate reads off the
-    same calibration curve as a stored film's."""
+    """Score a live film with the same recipe as the stored ranking.
+
+    The recipe is taste plus co-preference plus the award prior. Thus,
+    the estimate reads from the same calibration curve as a stored
+    film."""
 
     from datetime import datetime
 
@@ -1271,8 +1304,8 @@ def test_single_movie_score_matches_the_stored_recipe(app):
         live = single_movie_score(user_id, pick, profile)
         assert live == pytest.approx(item["score"], abs=1e-4)
 
-        # A record whose TMDB data hasn't landed can't be scored — its
-        # near-empty feature list would read as a taste mismatch
+        # Fitzflix cannot score a record without its TMDB data. Its
+        # almost empty feature list reads as a taste mismatch.
 
         bare = make_movie("Recipe Bare", 1993, tmdb_id=714)
         db.session.flush()
@@ -1281,10 +1314,11 @@ def test_single_movie_score_matches_the_stored_recipe(app):
 
 
 def test_resolved_score_reads_and_patches_one_shared_source(app):
-    """A film the stored map misses is scored live once and patched
-    back into the map, so every surface — the movie page, the tile
-    batches, the rate drive — reads the identical number; the nightly
-    base wins over a patch, since it was rescored from fresher inputs."""
+    """Score a film that the stored map misses 1 time, then patch it into the map.
+
+    Thus, each surface reads the identical number: the movie page, the
+    tile batches, and the rate drive. The nightly base wins over a
+    patch, because the rebuild scored it again from newer inputs."""
 
     import json as jsonlib
     from datetime import datetime
@@ -1309,16 +1343,16 @@ def test_resolved_score_reads_and_patches_one_shared_source(app):
 
         profile, _, _ = compute_user_recommendations(user_id)
 
-        # The first ask scores live and patches; from then on the map
-        # itself answers, for this and every other surface
+        # The first request scores live and patches. After that, the map
+        # itself answers, for this and each other surface.
 
         first = resolved_score(app.redis, user_id, pick, profile)
         assert first is not None
         assert stored_scores(app.redis, user_id)[pick.id] == first
         assert resolved_score(app.redis, user_id, pick, profile) == first
 
-        # An overnight rebuild that covers the film supersedes the
-        # patch even before the overlay is dropped
+        # An overnight rebuild that covers the film replaces the patch,
+        # even before Fitzflix deletes the overlay.
 
         app.redis.set(
             SCORES_KEY.format(user_id=user_id), jsonlib.dumps({str(pick.id): 9.9})
@@ -1328,10 +1362,12 @@ def test_resolved_score_reads_and_patches_one_shared_source(app):
 
 
 def test_resolved_tmdb_score_covers_record_less_films(app):
-    """The shared source's tmdb lane: a film with no local record at
-    all scores from its cached enriched payload into a tmdb-keyed
-    overlay — nothing lands in the database — and a film that has a
-    record delegates to the movie-id lane's full recipe."""
+    """Test the tmdb lane of the shared source.
+
+    A film with no local record scores from its cached enriched payload
+    into a tmdb-keyed overlay. Nothing goes into the database. A film
+    that has a record delegates to the full recipe of the movie-id
+    lane."""
 
     import json as jsonlib
     from datetime import datetime
@@ -1355,7 +1391,7 @@ def test_resolved_tmdb_score_covers_record_less_films(app):
 
         profile, _, _ = compute_user_recommendations(user_id)
 
-        # 991001 exists only as a cached enriched payload
+        # 991001 exists only as a cached enriched payload.
 
         app.redis.set(
             "fitzflix:tmdb:movie:991001:enriched",
@@ -1376,8 +1412,8 @@ def test_resolved_tmdb_score_covers_record_less_films(app):
         assert score is not None and score > 0
         assert Movie.query.filter_by(tmdb_id=991001).first() is None
 
-        # The overlay answers repeats even after the payload cache
-        # expires; a film TMDB can't supply at all stays unscored
+        # The overlay answers repeat requests, even after the payload
+        # cache expires. A film that TMDB cannot supply stays unscored.
 
         app.redis.delete("fitzflix:tmdb:movie:991001:enriched")
         assert resolved_tmdb_score(app.redis, user_id, 991001, profile) == score
@@ -1387,7 +1423,7 @@ def test_resolved_tmdb_score_covers_record_less_films(app):
         )
         assert resolved_tmdb_score(app.redis, user_id, 991999, profile) is None
 
-        # A film with a record answers through the movie-id lane
+        # A film with a record answers through the movie-id lane.
 
         pick = make_movie(
             "Lane Pick", 1992, tmdb_id=991002, tmdb_data_as_of=datetime.utcnow()
@@ -1400,9 +1436,11 @@ def test_resolved_tmdb_score_covers_record_less_films(app):
 
 
 def test_recompute_drops_the_patch_overlay(app):
-    """The nightly rebuild rescored every patched film from fresher
-    inputs, so storing the new map deletes the live-score overlay in
-    the same pipeline."""
+    """Delete the live-score overlay when the new map is stored.
+
+    The nightly rebuild scored each patched film again from newer
+    inputs. Thus, the store of the new map deletes the overlay in the
+    same pipeline."""
 
     from app.recommendations import (
         PATCH_SCORES_KEY,
@@ -1430,9 +1468,10 @@ def test_recompute_drops_the_patch_overlay(app):
 
 
 def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client):
-    """An unowned refreshed record missing from the stored ranking is
-    scored live at render, so a LOW guess can warn off a watchlist add;
-    a record still waiting on its TMDB refresh shows no guess."""
+    """Score an unowned refreshed record live at render if the ranking misses it.
+
+    Thus, a LOW estimate can warn the user before a watchlist add. A
+    record that still waits for its TMDB refresh shows no estimate."""
 
     import json as jsonlib
     from datetime import datetime
@@ -1467,9 +1506,9 @@ def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client
         ),
     )
 
-    # No affinities, no copref neighbors: the live score is 0.0, which
-    # sits below the whole curve and reads out at its lowest star —
-    # one paler "estimated" glyph in the widget
+    # There are no affinities and no copref neighbors. Thus, the live
+    # score is 0.0. That is below the whole curve, and it reads as the
+    # lowest star: 1 paler "estimated" glyph in the widget.
 
     page = admin_client.get(f"/movie/{outsider_id}").get_data(as_text=True)
     assert page.count("star estimated") == 1
@@ -1481,8 +1520,10 @@ def test_movie_page_estimates_films_outside_the_stored_ranking(app, admin_client
 
 
 def test_shuffle_daily_is_deterministic_per_seed(app):
-    """The day's cards shuffle to a stable arrangement per seed — a
-    permutation, identical on reload, different on another day."""
+    """Shuffle the cards of the day to a stable arrangement for each seed.
+
+    The result is a permutation. It is identical on reload. It is
+    different on a different day."""
 
     from app.recommendations import shuffle_daily
 
@@ -1495,10 +1536,11 @@ def test_shuffle_daily_is_deterministic_per_seed(app):
 
 
 def test_stored_cut_deepens_by_watchlisted_candidates(app):
-    """The stored ranking keeps `limit` films beyond the watchlisted
-    candidates: the pin lane's render-time exclusion must never thin
-    the discovery pool below its monthly no-repeat cycle, however big
-    the (deliberately uncapped) watchlist grows."""
+    """Keep `limit` films beyond the watchlisted candidates in the stored ranking.
+
+    The render-time exclusion of the pin lane must never reduce the
+    discovery pool below its monthly no-repeat cycle. The size of the
+    watchlist is not important. The watchlist has no limit on purpose."""
 
     from app import db
     from app.models import UserWatchlist
@@ -1522,14 +1564,16 @@ def test_stored_cut_deepens_by_watchlisted_candidates(app):
 
         _, ranked, _ = compute_user_recommendations(user_id, limit=2)
 
-    # Five positive candidates; the cut is limit 2 + 1 watchlisted
+    # 5 positive candidates. The cut is limit 2 + 1 watchlisted.
 
     assert len(ranked) == 3
 
 
 def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
-    """One film per quality tier per day, no repeats until the whole
-    set has shown, every day quality-mixed, deterministic per day."""
+    """Serve 1 film from each quality tier each day.
+
+    There are no repeats until the whole set has shown. Each day mixes
+    the qualities. The result is deterministic for each day."""
 
     from app.recommendations import rotate_partition
 
@@ -1537,40 +1581,41 @@ def test_rotate_partition_cycles_the_whole_set_without_repeats(app):
 
     days = [rotate_partition(items, 12, day) for day in range(31)]
 
-    # Every day serves 12, deterministically
+    # Each day serves 12 films, deterministically.
 
     assert all(len(day) == 12 for day in days)
     assert rotate_partition(items, 12, 5) == days[5]
 
-    # Each day draws one film from each quality tier (tier size 31)
+    # Each day draws 1 film from each quality tier (tier size 31).
 
     assert [rank // 31 for rank in days[0]] == list(range(12))
 
-    # A full cycle shows every film exactly once — no repeats
+    # A full cycle shows each film exactly 1 time. There are no repeats.
 
     shown = [rank for day in days for rank in day]
     assert len(shown) == len(set(shown)) == 372
 
-    # Day 32 wraps back to day 1's picks; short lists pass through
+    # Day 32 wraps back to the picks of day 1. A short list passes through.
 
     assert rotate_partition(items, 12, 31) == days[0]
     assert rotate_partition([1, 2, 3], 12, 7) == [1, 2, 3]
 
-    # Pools that don't divide evenly still serve a full row daily
+    # A pool that does not divide evenly still serves a full row each day.
 
     ragged = list(range(100))
     assert all(len(rotate_partition(ragged, 12, day)) == 12 for day in range(20))
 
-    # Even barely-bigger-than-count pools fill every slot (a ceil-based
-    # tier size used to leave trailing tiers empty: 12 items in 8 slots
-    # returned only 6)
+    # A pool that is only a little bigger than the count fills each
+    # slot. Before, a ceil-based tier size left the last tiers empty: 12
+    # items in 8 slots returned only 6.
 
     assert all(len(rotate_partition(list(range(12)), 8, day)) == 8 for day in range(6))
 
 
 def test_marker_bar_rides_with_the_profile(app):
-    """The nightly recompute stores the baseline-percentile marker bar
-    on the profile, computed from the user's own candidates."""
+    """Store the baseline-percentile marker bar on the profile in the nightly recompute.
+
+    The bar comes from the candidates of the user."""
 
     from app import db
     from app.recommendations import PROFILE_KEY, recompute_recommendations
@@ -1592,8 +1637,10 @@ def test_marker_bar_rides_with_the_profile(app):
 
 
 def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
-    """A stored marker bar gates the badge: a film must beat the user's
-    own baseline percentile, not just match a liked genre."""
+    """Gate the badge with the stored marker bar.
+
+    A film must beat the baseline percentile of the user. A match on a
+    liked genre alone is not enough."""
 
     import app.main.search as search
 
@@ -1628,21 +1675,21 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
     )
 
     class FakeTMDB:
-        """Canned TMDB response."""
+        """Fake a TMDB response."""
 
         def __init__(self, payload):
             self.payload = payload
 
         def raise_for_status(self):
-            """Never an HTTP error."""
+            """Never raise an HTTP error."""
 
         def json(self):
-            """The canned payload."""
+            """Return the fake payload."""
 
             return self.payload
 
     def fake_tmdb_get(url, params=None, **kwargs):
-        """One film over the bar, one merely genre-matched."""
+        """Return 1 film over the bar and 1 film that only matches a genre."""
 
         if url.endswith("/search/movie"):
             return FakeTMDB(
@@ -1656,8 +1703,8 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
                             "genre_ids": [80],
                         },
                         {
-                            # Crime alone: 0.5 < 0.7 — a liked genre is
-                            # no longer enough
+                            # Crime alone: 0.5 < 0.7. A liked genre alone is
+                            # not enough now.
                             "id": 9202,
                             "title": "Bar Missing Match",
                             "release_date": "2005-02-14",

@@ -1,6 +1,9 @@
-"""The all-people page: everyone credited across the library's films —
-cast plus key crew roles — defaulting to multi-film people, with
-uncredited-only roles never counting (Glenn's spec from GitHub #13).
+"""Test the all-people page.
+
+The page lists each person with a credit in the films of the library.
+This includes the cast and the key crew roles. By default, it shows
+only the people with more than 1 film. A role that is only uncredited
+never counts. This is the specification from Glenn in GitHub #13.
 """
 
 from app import db
@@ -25,7 +28,7 @@ def make_person(person_id, name, movies, character="Self"):
 
 
 def make_crew_person(person_id, name, jobs_by_movie):
-    """A TMDBCredit with crew rows: {movie: [(department, job), ...]}."""
+    """Build a TMDBCredit with crew rows: {movie: [(department, job), ...]}."""
 
     person = TMDBCredit(id=person_id, name=name)
     db.session.add(person)
@@ -64,13 +67,13 @@ def test_people_page_defaults_to_multi_film_credited_people(app, admin_client):
     assert "credit=801" in page
     assert "2 titles" in page
 
-    # Single-film people are the long tail; they only appear via search
+    # People with 1 film are the long tail. They appear only through the search.
     assert "One Scene Wonder" not in page
 
-    # Uncredited-only roles never count toward the filter
+    # A role that is only uncredited never counts for the filter.
     assert "Always Uncredited" not in page
 
-    # A missing character string isn't the same as uncredited
+    # A missing character string is not the same as uncredited.
     assert "No Character Listed" in page
 
 
@@ -97,9 +100,10 @@ def test_people_ordered_by_film_count(app, admin_client):
 
 
 def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
-    """Key crew roles join the film-count ordering with a dominant-role
-    label; non-key jobs never count (Glenn: grips and gaffers must not
-    outrank directors)."""
+    """Include the key crew roles in the film-count order with a dominant-role label.
+
+    A job that is not a key role never counts. Glenn: grips and gaffers
+    must not outrank directors."""
 
     with app.app_context():
         movies = [make_movie(f"Crew Film {n}", 1970 + n) for n in range(3)]
@@ -113,7 +117,7 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
             "Roving Gaffer",
             {movie: [("Lighting", "Gaffer")] for movie in movies},
         )
-        # Directed two, acted in one of them — the tie reads as Director
+        # Directed 2 films and acted in 1 of them. The tie reads as Director.
         both = make_crew_person(
             833,
             "Hyphenate Auteur",
@@ -135,15 +139,17 @@ def test_people_counts_key_crew_roles_with_role_badges(app, admin_client):
     assert "Hyphenate Auteur" in page
     assert "Director &middot; 2 titles" in page
 
-    # Non-key crew jobs don't count as credits at all
+    # A crew job that is not a key role does not count as a credit.
 
     assert "Roving Gaffer" not in page
 
 
 def test_people_role_filter_defaults_to_cast(app, admin_client):
-    """The page filters by credit type — Cast by default (crew-only
-    people wait behind the Crew and Cast & crew filters), with film
-    counts following the selected type."""
+    """Filter the page by credit type.
+
+    The default is Cast. People with only crew credits appear behind the
+    Crew and the Cast & crew filters. The film counts follow the selected
+    type."""
 
     with app.app_context():
         movies = [make_movie(f"Role Filter Film {n}", 1960 + n) for n in range(3)]
@@ -153,8 +159,8 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
             "Pure Director",
             {movie: [("Directing", "Director")] for movie in movies},
         )
-        # Directs everything, acts twice: the cast view counts only the
-        # acting appearances
+        # Directs each film and acts in 2 of them. The cast view counts
+        # only the acting appearances.
         hyphenate = make_crew_person(
             843,
             "Sometimes Actor",
@@ -178,8 +184,8 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
     assert "Each actor with credits" in default_page
     assert 'id="people-role-cast" value="cast" checked' in default_page
 
-    # The hyphenate's count under Cast is their two acting credits,
-    # not their three directing ones
+    # Under Cast, the count of the hyphenate is their 2 acting credits,
+    # not their 3 directing credits.
 
     assert default_page.count("2 titles") >= 2
     assert "3 titles" not in default_page
@@ -198,8 +204,10 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
 
 
 def test_search_finds_crew_people_with_roles(app, admin_client):
-    """The global search matches crew people, ordered by key-role film
-    count, with the dominant role in the badge and type-ahead detail."""
+    """Match crew people in the global search.
+
+    The order is the film count of the key roles. The badge and the
+    type-ahead detail show the dominant role."""
 
     with app.app_context():
         movies = [make_movie(f"Lens Film {n}", 1980 + n) for n in range(2)]
@@ -228,12 +236,14 @@ def test_people_nav_link_present(admin_client):
 
 
 def test_film_count_ties_break_on_last_name(app, admin_client):
-    """Equal film counts sort by surname (the name's last token), not by
-    first name — TMDB has no sort-name field, so the token stands in."""
+    """Sort equal film counts by surname, not by first name.
+
+    The surname is the last token of the name. TMDB has no sort-name
+    field. Thus, the token replaces it."""
 
     with app.app_context():
         movies = [make_movie(f"Tie Film {n}", 1960 + n) for n in range(2)]
-        # First-name order would put Alan first; surname order puts Abbott first
+        # First-name order puts Alan first. Surname order puts Abbott first.
         make_person(821, "Alan Zed", movies)
         make_person(822, "Zoe Abbott", movies)
         db.session.commit()
@@ -243,10 +253,11 @@ def test_film_count_ties_break_on_last_name(app, admin_client):
 
 
 def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
-    """The browse page reads a Redis-held ranking — the full cast and
-    crew aggregation ran twice a visit before Aug 2026 — and a TMDB
-    credit apply drops it, so a newly imported film's people surface
-    on the next view."""
+    """Read the browse page from a ranking that Redis holds.
+
+    Before 2026-08, the full cast and crew aggregation ran 2 times for
+    each visit. A TMDB credit apply deletes the ranking. Thus, the people
+    of a newly imported film appear on the next view."""
 
     from app.models import PEOPLE_RANKING_KEY, invalidate_people_ranking
 
@@ -262,7 +273,7 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
         make_person(821, "Late Arrival", movies)
         db.session.commit()
 
-    # Served from the ranking: the new person isn't in it yet
+    # Served from the ranking. The new person is not in it yet.
     page = admin_client.get("/people").get_data(as_text=True)
     assert "Late Arrival" not in page
 
@@ -272,14 +283,13 @@ def test_people_ranking_is_cached_until_a_credit_write(app, admin_client):
     assert "Late Arrival" in page
     assert page.index("Late Arrival") < page.index("Repertory Regular")
 
-    # The role filters rank separately
+    # Each role filter has its own ranking.
     assert "Late Arrival" in admin_client.get("/people?role=all").get_data(as_text=True)
     assert not app.redis.get(PEOPLE_RANKING_KEY.format(role="crew"))
 
 
 def test_tmdb_apply_invalidates_the_people_ranking(app):
-    """A credit write through the TMDB apply path clears the cached
-    rankings for every role."""
+    """Clear the cached ranking of each role after a TMDB apply credit write."""
 
     from app.models import PEOPLE_RANKING_KEY
 
@@ -310,9 +320,10 @@ def test_tmdb_apply_invalidates_the_people_ranking(app):
 
 
 def test_people_ranking_pages_past_the_default_cap(app, admin_client):
-    """The in-memory pagination keeps the page's 120-person size —
-    Flask-SQLAlchemy's base class caps per_page at 100 unless told
-    otherwise."""
+    """Keep the page size of 120 people in the in-memory pagination.
+
+    The base class of Flask-SQLAlchemy limits per_page to 100 unless the
+    caller changes the limit."""
 
     with app.app_context():
         movies = [make_movie("Cap Film One", 1980), make_movie("Cap Film Two", 1981)]

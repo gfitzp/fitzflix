@@ -1,8 +1,10 @@
-"""The SMB lost-handle probe: the cheap question that finds a file whose
-handle the NAS has lost before a 28GB upload discovers it at close().
+"""Test the SMB lost-handle probe.
 
-A file in that state reads perfectly and answers close(2) with EBADF
-forever, so the only way to see it is to ask.
+The probe is a cheap question. It finds a file with a handle that the
+NAS lost, before a 28GB upload finds the problem at close().
+
+A file in that state reads correctly. But it answers close(2) with EBADF
+forever. Thus, the only way to see the state is to ask.
 """
 
 import errno
@@ -13,10 +15,10 @@ import pytest
 
 
 class UnclosableOS:
-    """An os module whose close(2) answers EBADF the way the NAS does.
+    """Fake an os module with a close(2) that answers EBADF like the NAS.
 
-    Patched onto app.smb_probe only, so the fake close can't reach the
-    Redis connection the recorder is using.
+    The test patches it onto app.smb_probe only. Thus, the fake close
+    cannot reach the Redis connection that the recorder uses.
     """
 
     def __init__(self, err=errno.EBADF):
@@ -43,8 +45,10 @@ def test_healthy_file_probes_clean(app, tmp_path):
 
 
 def test_missing_file_reports_the_open_not_a_lost_handle(app, tmp_path):
-    """A file that isn't there is a different problem, and counting it as a
-    handle failure would bury the real ones."""
+    """Make sure a missing file is not a lost-handle failure.
+
+    A missing file is a different problem. If the probe counted it as a
+    handle failure, the real failures would be hidden."""
 
     from app.smb_probe import lost_handle, probe_path
 
@@ -56,7 +60,7 @@ def test_missing_file_reports_the_open_not_a_lost_handle(app, tmp_path):
 
 
 def test_failing_close_is_the_lost_handle_state(app, tmp_path, monkeypatch):
-    """The signature: the open succeeds, the close returns EBADF."""
+    """Make sure the probe finds the signature: open succeeds, close returns EBADF."""
 
     from app import smb_probe
 
@@ -85,7 +89,7 @@ def test_a_close_failure_that_is_not_ebadf_is_not_the_state(app, tmp_path, monke
 
 
 def failure(path, stage="close", err=errno.EBADF):
-    """A probe result standing in for a file in the lost-handle state."""
+    """Return a probe result for a file in the lost-handle state."""
 
     return {
         "path": path,
@@ -97,8 +101,10 @@ def failure(path, stage="close", err=errno.EBADF):
 
 
 def test_repeated_failures_keep_the_first_sighting(app):
-    """How long a file has been stuck is the number the investigation
-    wants, so a later probe must not reset the clock."""
+    """Make sure a later probe keeps the first sighting.
+
+    The investigation wants the time that a file has been stuck. Thus, a
+    later probe must not reset the clock."""
 
     from app.smb_probe import record_result, recorded_state
 
@@ -116,9 +122,11 @@ def test_repeated_failures_keep_the_first_sighting(app):
 
 
 def test_a_clean_probe_records_the_recovery_it_found(app, tmp_path):
-    """The duration is the whole point, so a recovery is recorded rather
-    than deleted: the entry stops being a failure and starts carrying how
-    long the file was stuck."""
+    """Make sure a clean probe records the recovery that it found.
+
+    The duration is the important number. Thus, the recorder records a
+    recovery and does not delete it. The entry stops as a failure. It
+    then carries the time that the file was stuck."""
 
     from app.smb_probe import (
         HEALED,
@@ -146,9 +154,11 @@ def test_a_clean_probe_records_the_recovery_it_found(app, tmp_path):
 
 
 def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
-    """The gap this closes. On Aug 25 2026 the one real recovery went
-    unmeasured because mkvpropedit_task's own clean probe deleted the
-    record before any recheck could read it."""
+    """Make sure a task probe does not destroy the measurement.
+
+    This test closes a gap. On 2026-08-25, the 1 real recovery was not
+    measured. The clean probe of mkvpropedit_task deleted the record
+    before a recheck could read it."""
 
     from app.smb_probe import probe_and_record, recheck, record_result
 
@@ -158,7 +168,7 @@ def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
     with app.app_context():
         record_result(failure(path), context="mkvpropedit_task")
 
-        # The task touches the file again after the mount comes back
+        # The task touches the file again after the mount comes back.
 
         probe_and_record(path, context="mkvpropedit_task")
 
@@ -172,8 +182,10 @@ def test_a_task_probe_does_not_destroy_the_measurement(app, tmp_path):
 
 
 def test_a_clean_probe_of_an_unrecorded_file_records_nothing(app, tmp_path):
-    """Healthy files are the overwhelming majority; recording them would
-    turn the record into a library listing."""
+    """Make sure a clean probe of an unrecorded file records nothing.
+
+    Almost all files are healthy. If the recorder recorded them, the
+    record would become a library listing."""
 
     from app.smb_probe import probe_path, record_result, recorded_state
 
@@ -186,7 +198,9 @@ def test_a_clean_probe_of_an_unrecorded_file_records_nothing(app, tmp_path):
 
 
 def test_a_recovery_is_reported_once_and_then_reaped(app, tmp_path):
-    """Otherwise every recheck re-reports the same recoveries forever."""
+    """Make sure a recheck reports a recovery 1 time and then removes it.
+
+    If not, each recheck reports the same recoveries forever."""
 
     from app.smb_probe import probe_path, recheck, record_result, recorded_state
 
@@ -205,8 +219,10 @@ def test_a_recovery_is_reported_once_and_then_reaped(app, tmp_path):
 
 
 def test_breaking_again_after_a_recovery_starts_a_new_clock(app, tmp_path):
-    """A second episode is its own episode: inheriting the first sighting
-    would report a duration that spans a stretch when the file was fine."""
+    """Make sure a new failure after a recovery starts a new clock.
+
+    A second episode is its own episode. If it kept the first sighting,
+    the duration would include a period when the file was healthy."""
 
     from app.smb_probe import FAILING, probe_path, record_result
 
@@ -230,8 +246,8 @@ def test_recheck_reports_how_long_a_file_was_stuck(app, tmp_path):
     open(path, "wb").write(b"x")
 
     with app.app_context():
-        # Backdate the sighting: the file has since recovered on its own,
-        # which is exactly what the NAS does
+        # Set the sighting to an earlier time. The file has recovered on
+        # its own since then. That is exactly what the NAS does.
 
         app.redis.hset(
             STATE_KEY,
@@ -276,9 +292,11 @@ def test_recheck_keeps_a_file_that_is_still_stuck(app, tmp_path, monkeypatch):
 
 
 def test_a_file_that_is_not_local_is_not_a_finding(app, tmp_path):
-    """Every superseded edition keeps its row and its S3 archive after the
-    local copy goes away, so absence is the normal state for thousands of
-    files and must not be recorded as a failure."""
+    """Make sure a file that is not local is not a finding.
+
+    Each superseded edition keeps its row and its S3 archive after the
+    local copy goes away. Thus, absence is the normal state for thousands
+    of files. The recorder must not record it as a failure."""
 
     from app.smb_probe import absent, lost_handle, probe_path, record_result
     from app.smb_probe import recorded_state
@@ -294,8 +312,10 @@ def test_a_file_that_is_not_local_is_not_a_finding(app, tmp_path):
 
 
 def test_a_recorded_file_that_leaves_the_volume_is_dropped(app, tmp_path):
-    """It didn't recover and it can't still be stuck, so keeping it in the
-    record would be the wrong answer twice."""
+    """Make sure the recheck removes a recorded file that left the volume.
+
+    The file did not recover, and it cannot be stuck. Thus, the record
+    would give the wrong answer 2 times if it kept the file."""
 
     from app.smb_probe import recheck, record_result, recorded_state
 
@@ -305,7 +325,7 @@ def test_a_recorded_file_that_leaves_the_volume_is_dropped(app, tmp_path):
         record_result(failure(path), context="mkvpropedit_task")
         assert path in recorded_state()
 
-        # The file goes away — a rename, or a better edition replacing it
+        # The file goes away. A rename, or a better edition, replaces it.
 
         report = recheck()
 
@@ -316,9 +336,12 @@ def test_a_recorded_file_that_leaves_the_volume_is_dropped(app, tmp_path):
 
 
 def test_an_unmounted_share_is_not_thousands_of_departures(app, tmp_path, monkeypatch):
-    """The trap this closes. Every file on an unmounted share reports
-    ENOENT at once, and calling that departure would drop the whole
-    record — including durations that exist nowhere else."""
+    """Make sure an unmounted share does not count as thousands of departures.
+
+    This test closes a trap. Each file on an unmounted share reports
+    ENOENT at the same time. If the recheck called that a departure, it
+    would delete the whole record. The record holds durations that exist
+    nowhere else."""
 
     from app import smb_probe
 
@@ -327,7 +350,7 @@ def test_an_unmounted_share_is_not_thousands_of_departures(app, tmp_path, monkey
     with app.app_context():
         smb_probe.record_result(failure(path), context="mkvpropedit_task")
 
-        # The share the file lives on is not there
+        # The share that holds the file is not there.
 
         monkeypatch.setattr(smb_probe, "share_available", lambda p: False)
 
@@ -337,13 +360,15 @@ def test_an_unmounted_share_is_not_thousands_of_departures(app, tmp_path, monkey
         assert report.healed == []
         assert [result["path"] for result in report.skipped] == [path]
 
-        # The record — and the first_seen it carries — must survive
+        # The record, and the first_seen that it carries, must survive.
 
         assert path in smb_probe.recorded_state()
 
 
 def test_a_recovery_outlives_the_recheck_that_reported_it(app, tmp_path):
-    """recheck reaps what it reports, so without a durable history the
+    """Make sure a recovery survives the recheck that reported it.
+
+    The recheck removes what it reports. Without a durable history, the
     only trace of a measurement is the terminal that ran the command."""
 
     from app.smb_probe import history, probe_path, recheck, record_result
@@ -355,21 +380,23 @@ def test_a_recovery_outlives_the_recheck_that_reported_it(app, tmp_path):
         record_result(failure(path), context="mkvpropedit_task")
         record_result(probe_path(path), context="recheck")
 
-        recheck()  # reports the recovery and reaps the state entry
+        recheck()  # reports the recovery and removes the state entry
 
         episodes = history()
         assert [episode["path"] for episode in episodes] == [path]
         assert episodes[0]["held_for_seconds"] is not None
         assert episodes[0]["context"] == "mkvpropedit_task"
 
-        # And a second recheck doesn't duplicate it
+        # A second recheck does not duplicate it.
 
         recheck()
         assert len(history()) == 1
 
 
 def test_history_accumulates_across_episodes(app, tmp_path):
-    """One episode never answers how long the state lasts."""
+    """Make sure the history collects all episodes.
+
+    One episode never answers how long the state lasts."""
 
     from app.smb_probe import history, probe_path, record_result
 
@@ -384,8 +411,10 @@ def test_history_accumulates_across_episodes(app, tmp_path):
 
 
 def test_share_root_is_the_share_not_the_library(app):
-    """A path's share is the first component below LIBRARY_DIR, which is
-    what gets unmounted — /Volumes/Movies, not /Volumes."""
+    """Make sure the share root is the share, not the library.
+
+    The share of a path is the first component below LIBRARY_DIR. That
+    is the part that unmounts: /Volumes/Movies, not /Volumes."""
 
     import os
 
@@ -402,8 +431,10 @@ def test_share_root_is_the_share_not_the_library(app):
 
 
 def test_the_stale_mark_survives_the_rollback_that_follows_it(app):
-    """Every caller is a failure path that rolls back. A marker taken
-    with it would leave the loss as undiscoverable as before."""
+    """Make sure the stale mark survives the rollback that follows it.
+
+    Each caller is a failure path that rolls back. If the rollback
+    removed the marker, the loss would stay hidden as before."""
 
     from app import db
     from app.aws_storage import mark_archive_stale
@@ -424,7 +455,9 @@ def test_the_stale_mark_survives_the_rollback_that_follows_it(app):
 
 
 def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
-    """Otherwise the repair queue never empties."""
+    """Make sure a successful upload clears the stale mark.
+
+    If not, the repair queue never empties."""
 
     from datetime import datetime, timezone
 
@@ -459,9 +492,11 @@ def test_a_successful_upload_clears_the_stale_mark(app, monkeypatch):
 
 
 def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeypatch):
-    """Rejecting would move a library file out of the library over a
-    problem that clears on its own — and this is precisely how the
-    lost-handle state arrives, from inside s3transfer's close."""
+    """Make sure a transient mount error does not reject the file.
+
+    A reject would move a library file out of the library because of a
+    problem that clears on its own. This is exactly how the lost-handle
+    state arrives: from inside the close of s3transfer."""
 
     import app.aws_storage as aws_storage
     import app.videos as videos
@@ -493,9 +528,11 @@ def test_a_transient_mount_error_does_not_reject_the_file(app, tmp_path, monkeyp
 
 
 def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatch):
-    """Retrying while the handle is lost fails exactly the same way, so
-    the probe is what decides whether a repair can run at all — the whole
-    reason the two halves belong together."""
+    """Make sure the repair does not queue a file with a lost handle.
+
+    A retry while the handle is lost fails in exactly the same way.
+    Thus, the probe decides if a repair can run. That is the reason the
+    2 halves belong together."""
 
     import app.cli as app_cli
 
@@ -525,15 +562,18 @@ def test_repair_will_not_queue_a_file_whose_handle_is_still_lost(app, monkeypatc
         assert "BLOCKED" in result.output
         assert queued == []
 
-        # And it stays marked, so the nightly sync still owes the repair
+        # The file stays marked. Thus, the nightly sync still owes the
+        # repair.
 
         db.session.expire_all()
         assert File.query.filter_by(aws_untouched_stale=True).count() == 1
 
 
 def test_the_nightly_sweep_records_what_it_finds(app, monkeypatch):
-    """Nothing discovers this state on its own, so something has to ask
-    on a schedule rather than wait to be surprised by an upload."""
+    """Make sure the nightly sweep records what it finds.
+
+    Nothing finds this state on its own. Thus, something has to ask on a
+    schedule, and not wait for an upload to find the problem."""
 
     from app import db, smb_probe
     from app.maintenance import smb_handle_sweep
@@ -555,8 +595,10 @@ def test_the_nightly_sweep_records_what_it_finds(app, monkeypatch):
 
 
 def test_the_sweep_is_scheduled_nightly(app):
-    """The cron table is authoritative on every scheduler start, so the
-    entry being there is the whole of the scheduling."""
+    """Make sure the sweep has a nightly schedule.
+
+    The cron table is the authority on each scheduler start. Thus, the
+    entry in the table is the whole of the schedule."""
 
     from app import cron_table
 
@@ -572,8 +614,10 @@ def test_the_sweep_is_scheduled_nightly(app):
 
 
 def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
-    """The probe runs after work that already succeeded. A diagnostic that
-    can fail the task it's reporting on is worse than no diagnostic."""
+    """Make sure a broken probe never fails the task that it reports on.
+
+    The probe runs after work that already succeeded. A diagnostic that
+    can fail the task that it reports on is worse than no diagnostic."""
 
     from app import smb_probe
 
@@ -587,8 +631,11 @@ def test_a_broken_probe_never_fails_the_task_it_reports_on(app, monkeypatch):
 
 
 def test_mkvpropedit_probes_the_file_it_just_wrote(app, monkeypatch):
-    """The bulk mkvpropedit run is the reproducer, so the task reports for
-    itself instead of waiting for the re-archive's close to fail."""
+    """Make sure mkvpropedit probes the file that it wrote.
+
+    The bulk mkvpropedit run reproduces the problem. Thus, the task
+    reports for itself. It does not wait for the close of the re-archive
+    to fail."""
 
     import app.videos as videos
 
@@ -613,9 +660,11 @@ def test_mkvpropedit_probes_the_file_it_just_wrote(app, monkeypatch):
 
 
 def test_mkvpropedit_probes_after_a_failed_edit_too(app, monkeypatch):
-    """The Aug 24 sighting surfaced as an S3 error at the end of the
-    re-archive, so the failure path is the one that most needs to say
-    which file went bad."""
+    """Make sure mkvpropedit probes after a failed edit too.
+
+    The 2026-08-24 sighting appeared as an S3 error at the end of the
+    re-archive. Thus, the failure path most needs to say which file went
+    bad."""
 
     import app.videos as videos
 
@@ -644,10 +693,13 @@ def test_mkvpropedit_probes_after_a_failed_edit_too(app, monkeypatch):
 
 
 def test_a_leftover_mountpoint_is_not_an_available_share(app, tmp_path, monkeypatch):
-    """#232, seen live Aug 25 2026. When the SMB session dies macOS can
-    leave the mount point behind as an ordinary directory on the boot
-    disk. isdir called that share present, so unmounted() answered False
-    and every file on it would have been recorded as a departure."""
+    """Make sure a leftover mount point is not an available share.
+
+    This is #232, seen live on 2026-08-25. When the SMB session dies,
+    macOS can leave the mount point behind as a normal directory on the
+    boot disk. isdir called that share present. Thus, unmounted()
+    answered False, and the recheck would have recorded each file on the
+    share as a departure."""
 
     import app.maintenance as maintenance
     from app.smb_probe import absent, probe_path, share_available, unmounted
@@ -659,8 +711,8 @@ def test_a_leftover_mountpoint_is_not_an_available_share(app, tmp_path, monkeypa
 
     path = str(leftover / "Top Gear (2002)" / "s01e01.mkv")
 
-    # Exactly what the outage looked like: the directory is there, and
-    # it is not a mountpoint
+    # This is exactly what the outage looked like. The directory is
+    # there, and it is not a mount point.
 
     assert os.path.isdir(str(leftover))
     assert os.path.ismount(str(leftover)) is False
@@ -692,9 +744,12 @@ def test_a_mounted_share_is_available(app, tmp_path, monkeypatch):
 
 
 def test_a_library_off_the_volumes_root_needs_no_mountpoint(app, tmp_path, monkeypatch):
-    """The case the original isdir check was protecting: a library that
-    isn't on a separate mount. It is not a mountpoint and was never
-    meant to be, so requiring one everywhere would call it dead."""
+    """Make sure a library outside the volumes root needs no mount point.
+
+    The original isdir check protected this case: a library that is not
+    on a separate mount. It is not a mount point, and it was never meant
+    to be one. If Fitzflix required a mount point everywhere, it would
+    call this library dead."""
 
     import app.maintenance as maintenance
     from app.smb_probe import share_available
@@ -712,8 +767,10 @@ def test_a_library_off_the_volumes_root_needs_no_mountpoint(app, tmp_path, monke
 
 
 def test_a_share_that_is_gone_entirely_is_still_unavailable(app, tmp_path, monkeypatch):
-    """A clean unmount does delete the mount point, and that has to keep
-    answering the same way it always did."""
+    """Make sure a share that is fully gone is still unavailable.
+
+    A clean unmount deletes the mount point. That case must keep the
+    same answer that it always had."""
 
     import app.maintenance as maintenance
     from app.smb_probe import share_available
@@ -729,12 +786,14 @@ def test_a_share_that_is_gone_entirely_is_still_unavailable(app, tmp_path, monke
 
 
 def test_the_sweep_asks_each_share_before_opening_its_files(app, monkeypatch):
-    """#237: a WEDGED share — still in the mount table, hanging
-    syscalls — would stall the sweep's first os.open until the job
-    timeout killed it, losing the rest of the sweep, the recheck, and
-    the history write. Each share is health-checked once, through
-    volume_alive's watchdog, and a share that doesn't answer means its
-    files are never opened at all."""
+    """Make sure the sweep asks each share before it opens the files.
+
+    This is #237. A WEDGED share is still in the mount table, but its
+    syscalls hang. It would stall the first os.open of the sweep until
+    the job timeout killed the job. That would lose the rest of the
+    sweep, the recheck, and the history write. The sweep checks the
+    health of each share 1 time, through the watchdog of volume_alive.
+    If a share does not answer, the sweep never opens its files."""
 
     from app import db, smb_probe
     from app.maintenance import smb_handle_sweep
@@ -756,9 +815,12 @@ def test_the_sweep_asks_each_share_before_opening_its_files(app, monkeypatch):
 
 
 def test_recheck_skips_a_wedged_share_without_probing(app, monkeypatch, tmp_path):
-    """#237, the recheck half: a recorded failure on a share that
-    doesn't answer the watchdog is skipped — record untouched, file
-    never opened — instead of hanging on the probe."""
+    """Make sure the recheck skips a wedged share and does not probe it.
+
+    This is the recheck half of #237. The recheck skips a recorded
+    failure on a share that does not answer the watchdog. It does not
+    touch the record, and it never opens the file. Thus, it does not
+    hang on the probe."""
 
     from app import smb_probe
 
@@ -781,6 +843,6 @@ def test_recheck_skips_a_wedged_share_without_probing(app, monkeypatch, tmp_path
         assert [result["path"] for result in report.skipped] == [path]
         assert "not responding" in report.skipped[0]["message"]
 
-        # The record — and the first_seen it carries — must survive
+        # The record, and the first_seen that it carries, must survive.
 
         assert path in smb_probe.recorded_state()

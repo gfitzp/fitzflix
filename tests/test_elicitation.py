@@ -1,6 +1,8 @@
-"""The "since you liked…" strip and the live rating ladder: candidate
-pool exclusions, adjacency-ranked suggestions after a positive movie-
-page rating, and the ladder's background posts."""
+"""Test the "since you liked…" strip and the live rating ladder.
+
+The tests cover the candidate pool exclusions, the adjacency-ranked
+suggestions after a positive movie-page rating, and the background
+posts of the ladder."""
 
 import re
 
@@ -16,7 +18,7 @@ from tests.test_recommendations import (
 
 
 def csrf_token_from(page_html):
-    """The CSRF token baked into a rendered form."""
+    """Return the CSRF token from a rendered form."""
 
     match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
     assert match, "no csrf token found in page"
@@ -24,7 +26,7 @@ def csrf_token_from(page_html):
 
 
 def make_candidate(title, year, genre_row=None, director=None):
-    """A library film eligible for the drive, with optional features."""
+    """Create a library film that is eligible for the drive, with optional features."""
 
     movie = make_movie(title, year)
     make_movie_file(movie, "Bluray-1080p")
@@ -55,8 +57,8 @@ def test_candidates_exclude_declared_states(app):
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
         unseen = make_candidate("Elicit Unseen", 1993)
         db.session.flush()
-        # A "No Opinion" row from the retired /rate drive still
-        # excludes its film while fresh
+        # A "No Opinion" row from the retired /rate drive still excludes
+        # its film while the row is fresh.
         db.session.add(
             UserMovieStatus(user_id=user_id, movie_id=unseen.id, kind="unseen")
         )
@@ -66,9 +68,11 @@ def test_candidates_exclude_declared_states(app):
 
 
 def test_unseen_mark_expires_after_two_years(app):
-    """ "Haven't seen it" wears off: a mark older than the resurface
-    bar stops excluding the film, in case the user has seen it (or
-    remembered a verdict) since."""
+    """Make sure the "Haven't seen it" mark expires.
+
+    A mark older than the resurface bar stops the exclusion of the film.
+    The user can have seen the film since then, or can remember a
+    verdict."""
 
     from datetime import datetime, timedelta
 
@@ -89,7 +93,7 @@ def test_unseen_mark_expires_after_two_years(app):
 
         assert film_id not in elicitation_candidates(user_id)
 
-        # Age the mark past the bar: the film resurfaces
+        # Make the mark older than the bar. The film shows again.
 
         row.date_added = datetime.now() - timedelta(
             days=UNSEEN_RESURFACE_YEARS * 365.25 + 30
@@ -99,9 +103,11 @@ def test_unseen_mark_expires_after_two_years(app):
 
 
 def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
-    """The ladder rides the movie page's log form too: one tap logs a
-    rating through the standard review path, honoring the form's other
-    fields as submitted."""
+    """Make sure the ladder on the movie page logs a quick rating.
+
+    The ladder goes with the log form of the movie page too. One tap
+    logs a rating through the standard review path. The post keeps the
+    other form fields as submitted."""
 
     with app.app_context():
         user_id = admin_id()
@@ -126,9 +132,11 @@ def test_movie_page_ladder_logs_a_quick_rating(app, admin_client):
 
 
 def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
-    """A 3+ ladder tap on the movie page earns the "since you liked"
-    strip on the redirect back to that page — and only that page; a
-    banked suggestion joins the watchlist without moving the anchor."""
+    """Make sure a positive rating on the movie page earns suggestions.
+
+    A ladder tap of 3 or more earns the "since you liked" strip on the
+    redirect back to that page, and only that page. A banked suggestion
+    joins the watchlist. The anchor does not move."""
 
     import json
 
@@ -181,13 +189,13 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
     assert "Since you liked Page Strip Anchor" in body
     assert "Page Strip Similar (1961)" in body
 
-    # The strip belongs to the anchor's page alone
+    # Only the page of the anchor shows the strip.
 
     other = admin_client.get(f"/movie/{unrelated_id}").get_data(as_text=True)
     assert "Since you liked" not in other
 
-    # Banking a suggestion adds it to the watchlist and leaves the
-    # anchor (and the steering) untouched
+    # A banked suggestion goes on the watchlist. The anchor and the
+    # steering do not change.
 
     response = admin_client.post(
         f"/movie/{anchor_id}",
@@ -205,17 +213,18 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
         )
         assert last_response(app.redis, user_id)["movie_id"] == anchor_id
 
-    # First GET renders the one-shot flash (which names the film); the
-    # second shows the steady state: the banked film left the strip,
-    # its sibling remains
+    # The first GET renders the one-shot flash that names the film. The
+    # second GET shows the steady state. The banked film left the strip.
+    # Its sibling remains.
 
     admin_client.get(f"/movie/{anchor_id}")
     page = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
     assert "Page Strip Similar (1961)" not in page
     assert "Page Strip Similar Two (1962)" in page
 
-    # Rating a suggestion from the strip rates THAT film, date-less,
-    # without moving the anchor — the strip refreshes minus the film
+    # A rating of a suggestion from the strip rates THAT film, with no
+    # date. The anchor does not move. The strip refreshes without the
+    # film.
 
     response = admin_client.post(
         f"/movie/{anchor_id}",
@@ -240,10 +249,11 @@ def test_movie_page_positive_rating_earns_suggestions(app, admin_client):
 
 
 def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
-    """A ladder tap on a suggestion's poster tile (from_card) rates
-    that film but leaves the strip anchored where it was — only a
-    rating on the film's own page moves the session along (Glenn's
-    rule, Aug 2026)."""
+    """Make sure a card rating on a suggestion never moves the anchor.
+
+    A ladder tap on the poster tile of a suggestion (from_card) rates
+    that film. The strip keeps its anchor. Only a rating on the own page
+    of the film moves the session along (rule set by Glenn, 2026-08)."""
 
     import json
 
@@ -289,8 +299,8 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
     strip = admin_client.get(f"/movie/{anchor_id}").get_data(as_text=True)
     assert "Chain Similar (1961)" in strip
 
-    # The card's ladder posts to the suggestion's own movie route with
-    # the from_card marker, and gets ladder-state JSON back
+    # The ladder of the card posts to the movie route of the suggestion
+    # with the from_card marker. It gets ladder-state JSON back.
 
     response = admin_client.post(
         f"/movie/{similar_id}",
@@ -307,8 +317,8 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
         ).one()
         assert float(row.rating) == 5.0
 
-        # The anchor never moved — the strip stays the rated featured
-        # film's reward, minus the now-rated suggestion
+        # The anchor did not move. The strip stays the reward of the
+        # rated featured film, without the suggestion that is now rated.
 
         last = last_response(app.redis, user_id)
         assert last["movie_id"] == anchor_id
@@ -316,9 +326,11 @@ def test_card_rating_on_suggestion_never_reanchors(app, admin_client):
 
 
 def test_movie_page_x_flags_and_never_reviews(app, admin_client):
-    """The movie page ladder's ✕ writes the not-interested flag — no
-    diary row — and clears a contradicting watchlist entry; logging the
-    film later clears the flag again."""
+    """Make sure the ✕ on the movie page flags the film and never reviews it.
+
+    The ✕ of the ladder writes the not-interested flag and no diary row.
+    It clears a watchlist entry that contradicts the flag. A later log
+    of the film clears the flag again."""
 
     from app.models import UserMovieStatus, UserWatchlist
 
@@ -352,7 +364,7 @@ def test_movie_page_x_flags_and_never_reviews(app, admin_client):
             is None
         )
 
-    # Watching it anyway contradicts the flag, which clears with the log
+    # A watch contradicts the flag. The log clears the flag.
 
     admin_client.post(
         f"/movie/{movie_id}",
@@ -372,8 +384,10 @@ def test_movie_page_x_flags_and_never_reviews(app, admin_client):
 
 
 def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
-    """A film with a diary row refuses the ✕ server-side — its floor is
-    1 star — and the ladder stops offering the button."""
+    """Make sure a seen film refuses the ✕ and hides the button.
+
+    The server refuses the ✕ for a film with a diary row. The floor of
+    that film is 1 star. The ladder does not offer the button."""
 
     from app.models import UserMovieStatus
     from app.videos import star_rating_fields
@@ -411,7 +425,7 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
             is None
         )
 
-    # review_edit never offers the ✕ either
+    # review_edit never offers the ✕ either.
 
     with app.app_context():
         review_id = (
@@ -422,10 +436,12 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
 
 
 def test_same_day_retap_edits_todays_review(app, admin_client):
-    """A different star on a day you already rated corrects that
-    review in place — no second diary row, no rewatch, liked follows
-    the stars — while the day rolling over makes the next tap a fresh
-    entry (Glenn's rule)."""
+    """Make sure a second tap on the same day edits the review of that day.
+
+    A different star on a day with a rating corrects that review in
+    place. There is no second diary row and no rewatch. The liked flag
+    follows the stars. After the day changes, the next tap is a new
+    entry (rule set by Glenn)."""
 
     from datetime import datetime, timedelta
 
@@ -451,7 +467,8 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
         assert row.liked is True
         assert row.rewatch is False
 
-    # Taste soured by evening: the correction can go down too
+    # The user likes the film less in the evening. The correction can go
+    # down too.
 
     admin_client.post(
         f"/movie/{movie_id}",
@@ -462,8 +479,8 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
         assert float(row.rating) == 2.0
         assert row.liked is False
 
-        # Age the review a day: the next tap is a fresh diary entry,
-        # marked as a rewatch
+        # Make the review 1 day older. The next tap is a new diary entry,
+        # marked as a rewatch.
 
         row.date_reviewed = datetime.now() - timedelta(days=1)
         db.session.commit()
@@ -483,8 +500,10 @@ def test_same_day_retap_edits_todays_review(app, admin_client):
 
 
 def test_same_star_tap_removes_the_rating(app, admin_client):
-    """Tapping your current rating removes it: a bare date-less
-    row disappears entirely, a dated viewing only loses its stars."""
+    """Make sure a tap on the current rating removes it.
+
+    A bare row with no date disappears fully. A dated viewing loses
+    only its stars."""
 
     from app.videos import star_rating_fields
 
@@ -520,7 +539,7 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
             == 4.0
         )
 
-    # The row now shows four filled stars and a remove hint
+    # The row now shows 4 filled stars and a remove hint.
 
     page = admin_client.get(f"/movie/{bare_id}").get_data(as_text=True)
     assert page.count("star-btn star filled") == 4
@@ -536,7 +555,7 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
             is None
         )
 
-    # A dated viewing keeps its history and loses only the stars
+    # A dated viewing keeps its history and loses only the stars.
 
     admin_client.post(
         f"/movie/{dated_id}",
@@ -550,8 +569,10 @@ def test_same_star_tap_removes_the_rating(app, admin_client):
 
 
 def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
-    """The star row's background posts get JSON state back: set,
-    remove, flag, and unflag all round-trip without a redirect."""
+    """Make sure a ladder fetch returns the state without a redirect.
+
+    The background posts of the star row get JSON state back. Set,
+    remove, flag, and unflag all complete without a redirect."""
 
     with app.app_context():
         movie = make_candidate("Fetch Film", 1986)
@@ -600,7 +621,8 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
         "on_watchlist": False,
     }
 
-    # The page renders the lit ✕ while flagged; a second ✕ undoes it
+    # The page renders the lit ✕ while the film is flagged. A second ✕
+    # removes the flag.
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "x-btn active" in page
@@ -618,9 +640,11 @@ def test_ladder_fetch_returns_state_without_redirect(app, admin_client):
 
 
 def test_half_star_ratings_render_a_partial_fill(app, admin_client):
-    """Letterboxd logs in half-star increments; the widget part-fills
-    the last star in the full gold instead of flooring to whole. Taps
-    still submit whole values only."""
+    """Make sure a half-star rating renders a partial fill.
+
+    Letterboxd logs in half-star steps. The widget fills part of the
+    last star in the full gold. It does not round down to a whole star.
+    A tap still submits only a whole value."""
 
     from app.videos import star_rating_fields
 

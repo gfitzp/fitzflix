@@ -1,8 +1,10 @@
-"""Remote playback on each user's own device (Plex Companion):
-ratingKey resolution by TMDB guid with a verified title-search
-fallback, the empty-play-queue guard, the exact hand-off the player
-was validated with, per-user targeting, the play route, the popover
-card's button, and the Profile page's probe-and-save device flow."""
+"""Test remote playback on the device of each user (Plex Companion).
+
+These tests cover the ratingKey resolution by TMDB guid with a verified
+title-search fallback, the empty-play-queue guard, the exact hand-off
+that was validated with the player, the per-user targeting, the play
+route, the button on the popover card, and the probe-and-save device
+flow on the Profile page."""
 
 import json
 import re
@@ -21,7 +23,7 @@ SERVER_CONFIG = {
 
 
 def device_user(address="192.168.1.247:32500", machine_id="ATV-MACHINE-ID"):
-    """A stand-in user carrying a playback device."""
+    """Provide a stand-in user with a playback device."""
 
     return SimpleNamespace(
         plex_player_address=address,
@@ -31,7 +33,8 @@ def device_user(address="192.168.1.247:32500", machine_id="ATV-MACHINE-ID"):
 
 
 class FakePlex:
-    """The server's GET endpoints plus recorded queue/player requests."""
+    """Provide the GET endpoints of the server and record the queue and
+    player requests."""
 
     def __init__(self, guid_hits=None, search_hits=None, queue_count=1):
         self.guid_hits = guid_hits or []
@@ -96,8 +99,10 @@ def server_config(app, monkeypatch):
 
 @pytest.fixture
 def member_device(app):
-    """Give the member user a playback device for the duration of one
-    test — the user table survives clean_state, so this must restore."""
+    """Give the member user a playback device for 1 test.
+
+    The user table survives clean_state. Thus, this fixture must restore
+    the old value."""
 
     from app import db
     from app.models import User
@@ -135,15 +140,15 @@ def test_plays_via_guid_lookup(app, monkeypatch, server_config):
 
     assert ok is True
 
-    # The queue names the SERVER machine id — an empty one still returns
-    # a playQueueID, so this is the field that actually matters
+    # The queue names the SERVER machine id. An empty queue still returns
+    # a playQueueID. Thus, this is the field that is important
     [queue] = fake.queue_posts
     assert queue["uri"] == (
         "server://SERVER-ID/com.plexapp.plugins.library/library/metadata/189344"
     )
 
-    # The player hand-off: the USER'S device address and machine id,
-    # plus the server coordinates the player can actually reach
+    # The player hand-off contains the device address and machine id of
+    # the USER, plus the server coordinates that the player can reach
     [command] = fake.player_gets
     assert command["url"] == ("http://192.168.1.247:32500/player/playback/playMedia")
     assert command["headers"]["X-Plex-Target-Client-Identifier"] == "ATV-MACHINE-ID"
@@ -172,8 +177,10 @@ def test_each_user_plays_on_their_own_device(app, monkeypatch, server_config):
 
 
 def test_falls_back_to_search_verified_by_tmdb_guid(app, monkeypatch, server_config):
-    """When the guid filter misses, the title search only accepts a
-    candidate whose metadata carries the movie's own TMDB guid."""
+    """Test the title-search fallback when the guid filter finds nothing.
+
+    The title search accepts only a candidate with metadata that carries
+    the TMDB guid of the movie."""
 
     fake = FakePlex(
         search_hits=[
@@ -209,8 +216,10 @@ def test_missing_movie_reports_without_touching_the_player(
 
 
 def test_empty_play_queue_is_refused(app, monkeypatch, server_config):
-    """The validation trap: a queue can be created with zero items and
-    still return a playQueueID — the player must never be handed one."""
+    """Test the validation trap of an empty queue.
+
+    Plex can create a queue with 0 items and still return a playQueueID.
+    Fitzflix must never give such a queue to the player."""
 
     fake = FakePlex(guid_hits=[{"ratingKey": "189344"}], queue_count=0)
     plex_player = _wire(monkeypatch, fake)
@@ -351,7 +360,7 @@ def test_play_route_without_a_device_reports_kindly(
 
 
 def _owned_movie(app):
-    """A committed library movie, returning its id."""
+    """Commit a library movie and return its id."""
 
     from app import db
     from tests.factories import make_movie_file
@@ -407,7 +416,7 @@ def test_popover_card_hides_the_button_on_unowned_films(
 
 
 def _profile_post(client, address):
-    """POST the playback-device form with a scraped csrf token."""
+    """POST the playback-device form with a csrf token from the page."""
 
     page = client.get("/profile").get_data(as_text=True)
     match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page)
@@ -442,7 +451,7 @@ def test_profile_probe_saves_a_verified_device(
 
     with app.app_context():
         user = User.query.filter_by(email=MEMBER_EMAIL).one()
-        # The bare IP was completed with Companion's port
+        # Fitzflix added the Companion port to the bare IP
         assert user.plex_player_address == "192.168.1.63:32500"
         assert user.plex_player_id == "PROBED-ID"
         user.plex_player_address = None

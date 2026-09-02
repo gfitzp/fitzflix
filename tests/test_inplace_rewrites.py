@@ -1,19 +1,21 @@
-"""What every task that rewrites a library file in place owes the rest
-of the system: a re-analyze request to Plex (#194), and a file row that
-still describes the file on disk.
+"""Test what each task that rewrites a library file in place owes the system.
 
-The size half was a real gap — the Atmos supplement grew 43 films by
-roughly a gigabyte each and left every row holding the pre-supplement
-size.
+Each such task must send a re-analyze request to Plex (#194). It must
+also keep the file row correct for the file on disk.
+
+The size half was a real gap. The Atmos supplement made 43 films
+approximately 1 gigabyte larger each. It left each row with the size
+from before the supplement.
 """
 
 import ast
 import os
 
-# Each task that rewrites a library file in place, by (module, function).
-# Import-time edits are deliberately absent: they happen in staging,
-# before the file reaches the library, so the import's own track scan
-# records the size and Plex's first scan analyzes it
+# This lists each task that rewrites a library file in place, as
+# (module, function). Import-time edits are not in the list by design.
+# They occur in staging, before the file reaches the library. Thus, the
+# track scan of the import records the size. The first scan of Plex
+# analyzes the file
 
 IN_PLACE_REWRITES = [
     ("app/atmos.py", "_atmos_supplement_unlocked"),
@@ -23,7 +25,7 @@ IN_PLACE_REWRITES = [
 
 
 def _calls_in(path, function):
-    """The names of every plain function called inside one function."""
+    """Return the names of each plain function that one function calls."""
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     tree = ast.parse(open(os.path.join(root, path)).read())
@@ -73,9 +75,11 @@ def test_record_filesize_stores_the_size(app):
 
 
 def test_the_file_row_stores_one_size_and_no_derived_copies(app):
-    """The MB and GB columns are gone: nothing read them but one line of
-    one template, while four write sites had to keep them in step — the
-    drift that left 43 supplemented films a gigabyte short."""
+    """Make sure the MB and GB columns are gone.
+
+    Only 1 line of 1 template read them. But 4 write sites had to keep
+    them in step. That drift left 43 supplemented films 1 gigabyte
+    short."""
 
     from app.models import File
 
@@ -85,10 +89,12 @@ def test_the_file_row_stores_one_size_and_no_derived_copies(app):
 
 
 def test_the_file_page_formats_its_size_from_bytes(app, admin_client):
-    """The display the dropped columns used to feed. Sizes cross to GB
-    at a GiB and carry one decimal — the same threshold and rounding the
-    derived-copy row beside them has always used, so what a reader sees
-    is unchanged."""
+    """Format the size on the file page from bytes.
+
+    The dropped columns used to feed this display. A size changes to GB
+    at 1 GiB and shows 1 decimal. The derived-copy row beside it always
+    used the same threshold and the same rounding. Thus, the reader sees
+    no change."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -110,19 +116,21 @@ def test_the_file_page_formats_its_size_from_bytes(app, admin_client):
 
 
 def test_size_display_crosses_to_gb_at_the_rounded_mb_threshold(app, admin_client):
-    """The boundary case (#241): the dropped filesize_megabytes column
-    rounded to one decimal BEFORE the >= 1024 test, so a file just shy
-    of a GiB whose MB figure rounds to 1024.0 displayed as GB. The
-    from-bytes formatting has to keep that, not show "1024.0 MB"."""
+    """Test the boundary case (#241).
+
+    The dropped filesize_megabytes column rounded to 1 decimal BEFORE
+    the >= 1024 test. Thus, a file just below 1 GiB with an MB figure
+    that rounds to 1024.0 showed as GB. The from-bytes formatting must
+    keep that. It must not show "1024.0 MB"."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
         movie = make_movie("Size Boundary", 1994)
-        # 1023.95001 MiB: rounds to 1024.0 MB, so it crosses to GB
+        # 1023.95001 MiB rounds to 1024.0 MB. Thus, it changes to GB
         crosses = make_movie_file(movie, "Bluray-1080p", filesize_bytes=1073689500)
-        # 1023.86 MiB: rounds to 1023.9 MB and stays MB
+        # 1023.86 MiB rounds to 1023.9 MB. It stays MB
         stays = make_movie_file(
             movie, "DVD", feature_type_name="Trailers", filesize_bytes=1073600000
         )

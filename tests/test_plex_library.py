@@ -1,14 +1,16 @@
-"""The Plex library refresh: scan + emptyTrash per
-section, refused entirely while any of the section's declared
-locations is missing — the guard that keeps a dropped SMB mount from
-wiping the library."""
+"""Test the Plex library refresh.
+
+The refresh does a scan and an emptyTrash for each section. Fitzflix
+refuses the full refresh of a section if one of the declared locations
+of the section is missing. This guard prevents a dropped SMB mount from
+deleting the library."""
 
 
 class FakePlexServer:
-    """Sections with locations, recording refresh/emptyTrash calls."""
+    """Fake Plex sections with locations. Records the refresh and emptyTrash calls."""
 
     def __init__(self, sections):
-        # sections: [(key, type, title, [paths])]
+        # The shape of sections: [(key, type, title, [paths])]
         self.sections = sections
         self.refreshed = []
         self.trashed = []
@@ -47,7 +49,7 @@ def test_refresh_guards_every_declared_location(app, monkeypatch, tmp_path):
     present.mkdir()
     also_present = tmp_path / "transcoded"
     also_present.mkdir()
-    missing = tmp_path / "TV Shows"  # never created
+    missing = tmp_path / "TV Shows"  # this path is never created
 
     fake = FakePlexServer(
         [
@@ -63,17 +65,19 @@ def test_refresh_guards_every_declared_location(app, monkeypatch, tmp_path):
 
     assert plex_library.refresh_plex_libraries() is True
 
-    # Movies (all locations present): scanned and trash emptied. TV
-    # (location missing): untouched — the catastrophic case. Music:
-    # not a movie/show section, ignored
+    # Movies has all of its locations. Thus, Plex scans it and empties its
+    # trash. TV has a missing location. Thus, Fitzflix does not touch it.
+    # That is the catastrophic case. Music is not a movie or show section.
+    # Thus, Fitzflix ignores it.
 
     assert fake.refreshed == ["5"]
     assert fake.trashed == ["5"]
 
 
 def test_refresh_skips_sections_on_dead_mounts(app, monkeypatch, tmp_path):
-    """A mount that HANGS (not just missing) must also be treated as
-    dead — volume_alive's verdict is honored."""
+    """Treat a mount that HANGS as dead, the same as a missing mount.
+
+    The refresh obeys the verdict of volume_alive."""
 
     import app.plex_library as plex_library
 

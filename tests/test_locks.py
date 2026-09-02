@@ -1,7 +1,10 @@
-"""The cross-task lock contract: localization builds its lock identifier from
-parsed filename details, while later tasks build theirs from database rows via
-File.file_identifier(). Both must serialize identically, or two tasks working
-on the same title would fail to contend for the same lock.
+"""Test the cross-task lock contract.
+
+The localization task builds its lock identifier from the parsed filename
+details. The later tasks build their lock identifiers from database rows
+through File.file_identifier(). Both must serialize to the same string.
+If they do not, two tasks that work on the same title do not contend for
+the same lock.
 """
 
 import json
@@ -12,7 +15,9 @@ from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_s
 
 
 def localization_identifier(details):
-    """The identifier dict localization_task builds from evaluate_filename."""
+    """Return the identifier dict that localization_task builds.
+
+    The task builds it from the evaluate_filename details."""
 
     if details.get("media_library") == "Movies":
         return json.dumps(
@@ -84,7 +89,7 @@ def test_tv_identifiers_match(app):
 
 
 def test_different_editions_do_not_share_a_lock(app):
-    """Editions rank and process independently, so they must not contend."""
+    """Editions rank and process independently. Thus, they must not contend."""
 
     with app.app_context():
         plain = evaluate_filename("Blade Runner (1982) - [DVD].mkv", log=False)

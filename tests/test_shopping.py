@@ -1,5 +1,7 @@
-"""The movie shopping list: liked-but-unowned movies (possible since the
-Letterboxd import) appear as items to buy alongside owned upgrade
+"""Test the movie shopping list.
+
+Liked movies that the user does not own (possible after the Letterboxd
+import) appear as items to buy. They appear next to the owned upgrade
 candidates."""
 
 from app import db
@@ -27,9 +29,10 @@ def test_liked_unowned_movie_appears_on_shopping_list(app, admin_client):
         wanted = make_movie("Wanted but Unowned", 1988)
         make_liked_review(user_id, wanted)
 
-        # TV episode files carry a NULL movie_id; one NULL in the "owned
-        # movies" NOT IN subquery would silently empty the liked-unowned
-        # results (caught live before this regression test existed)
+        # TV episode files carry a NULL movie_id. One NULL in the "owned
+        # movies" NOT IN subquery would make the liked-unowned results
+        # empty without a warning (found live before this regression test
+        # existed)
 
         series = make_tv_series("Null Trap Show")
         make_tv_file(series, 1, 1, "DVD")
@@ -41,7 +44,7 @@ def test_liked_unowned_movie_appears_on_shopping_list(app, admin_client):
 
 
 def test_liked_owned_movie_is_not_duplicated(app, admin_client):
-    """A liked movie that has files stays a single (upgrade) entry."""
+    """Test that a liked movie with files stays a single (upgrade) entry."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -51,8 +54,9 @@ def test_liked_owned_movie_is_not_duplicated(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
-    # The template renders each movie's linked title once per responsive
-    # layout (two layouts), so a single listing shows the title twice
+    # The template renders the linked title of each movie one time for
+    # each responsive layout (2 layouts). Thus, a single listing shows the
+    # title 2 times
     assert page.count("Liked and Owned (1990)") == 2
 
 
@@ -70,8 +74,9 @@ def test_liked_unowned_movie_matches_shopping_search(app, admin_client):
 
 
 def test_liked_unowned_movie_stays_off_digital_list(app, admin_client):
-    """The digital view lists owned digital-only titles; a movie with no
-    files at all doesn't belong there."""
+    """Test that the digital view lists only owned digital-only titles.
+
+    A movie with no files does not belong there."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -84,7 +89,7 @@ def test_liked_unowned_movie_stays_off_digital_list(app, admin_client):
 
 
 def test_unliked_unowned_review_stays_off_shopping_list(app, admin_client):
-    """Seen-but-unowned movies without a like are history, not wishlist."""
+    """Test that a seen, unowned, unliked movie is history, not wishlist."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -104,8 +109,10 @@ def test_unliked_unowned_review_stays_off_shopping_list(app, admin_client):
 
 
 def test_shopping_titles_derive_from_filters_not_url(app, admin_client):
-    """The heading comes from the active filters; a crafted ?title= query
-    parameter can no longer put arbitrary text on the page."""
+    """Test that the heading comes from the active filters.
+
+    A crafted ?title= query parameter can no longer put arbitrary text on
+    the page."""
 
     page = admin_client.get("/shopping-list/movie?title=Totally+Fake+Heading").get_data(
         as_text=True
@@ -139,9 +146,11 @@ def test_shopping_titles_derive_from_filters_not_url(app, admin_client):
 
 
 def test_unowned_quality_gates_liked_unowned_films(app, admin_client):
-    """Unowned films sit at the virtual bottom of the quality scale: on
-    the list by default, excluded when the minimum rises, and alone when
-    the range pins to "Not in library"."""
+    """Test that unowned films sit at the virtual bottom of the quality scale.
+
+    They are on the list by default. The list excludes them when the
+    minimum increases. They are alone when the range pins to "Not in
+    library"."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -173,8 +182,10 @@ def test_unowned_quality_gates_liked_unowned_films(app, admin_client):
 
 
 def test_inverted_quality_range_clamps_by_preference(app, admin_client):
-    """A minimum above the maximum collapses the range to the minimum
-    quality only — and no longer drags unowned films along."""
+    """Test a minimum above the maximum.
+
+    The range collapses to the minimum quality only. It no longer
+    includes the unowned films."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -215,9 +226,11 @@ def test_not_in_library_pin_gets_descriptive_heading(app, admin_client):
 
 
 def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
-    """Each row wears the gallery grammar: the poster link is armed for
-    the popover, the details column is a /movie_states scope holding a
-    blank live ladder, and the old averaged star glyphs are gone."""
+    """Test that each row uses the gallery grammar.
+
+    The poster link is armed for the popover. The details column is a
+    /movie_states scope that holds a blank live ladder. The old averaged
+    star glyphs are gone."""
 
     with app.app_context():
         user_id = User.query.first().id
@@ -228,7 +241,7 @@ def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
     assert f'data-card-url="/movie_card?movie_id={movie_id}"' in page
-    # Both responsive layouts render the scope, painted from one entry
+    # Both responsive layouts render the scope. One entry paints them
     assert page.count(f'data-state-movie="{movie_id}"') == 2
     assert 'data-ladder-live="1"' in page
     assert f'action="/movie/{movie_id}"' in page
@@ -237,11 +250,13 @@ def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
 
 
 def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
-    """#247: ?library=watchlist lists every user's watchlisted,
-    unowned films grouped hardest-to-watch first — the worst case
-    among a film's watchers decides its group — with owned and
-    list-excluded films left out and no-availability films counting
-    as unavailable."""
+    """Test the ?library=watchlist view (#247).
+
+    The view lists the watchlisted, unowned films of every user. The
+    hardest-to-watch group comes first. The worst case among the
+    watchers of a film decides its group. The view leaves out the owned
+    films and the list-excluded films. A film with no availability data
+    counts as unavailable."""
 
     from app.models import UserWatchlist
     from tests.conftest import MEMBER_EMAIL
@@ -260,9 +275,9 @@ def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
         }
 
     with app.app_context():
-        # The user table survives across tests, and other files set
-        # plex_username (which _watcher_name prefers) — pin both so
-        # the name assertions hold in any test order
+        # The user table survives across tests, and other test files set
+        # plex_username (the value that _watcher_name prefers). Pin both.
+        # Thus, the name assertions hold in any test order
 
         admin = User.query.filter_by(admin=True).first()
         member = User.query.filter_by(email=MEMBER_EMAIL).one()
@@ -270,9 +285,9 @@ def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
         member.plex_username = None
         admin_id, member_id = admin.id, member.id
 
-        # Watched by both: streams for the admin (Netflix), but the
-        # member (Max only) can neither stream nor rent it — the worst
-        # case wins, so it files under unavailable
+        # Both users watchlisted this film. The admin can stream it
+        # (Netflix). The member (Max only) can neither stream nor rent
+        # it. The worst case wins. Thus, it goes under unavailable
 
         split = make_movie("Split Verdict", 1960, tmdb_id=9901)
         rentable = make_movie("Rent Me", 1961, tmdb_id=9902)
@@ -306,9 +321,9 @@ def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
     )
     assert "Watchlisted movies to buy" in page
 
-    # Group membership reads off the section ordering; the split film
-    # and the no-data film land in unavailable, and the film watched
-    # by two sorts ahead of the film watched by one
+    # The section order shows the group membership. The split film and
+    # the no-data film go into unavailable. The film that 2 users watch
+    # sorts before the film that 1 user watches
 
     unavailable_at = page.index("Not available to stream or rent")
     rent_at = page.index("Available to rent")
@@ -321,7 +336,8 @@ def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
     assert "Owned Already" not in page
     assert "Waved Off" not in page
 
-    # A film whose watchers disagree names each with their own state
+    # A film with watchers that disagree names each watcher with their
+    # own state
 
     assert "admin (streaming)" in page
     assert "member (unavailable)" in page
@@ -329,8 +345,9 @@ def test_watchlist_shopping_view_groups_by_scarcity(app, admin_client):
 
 
 def test_watchlist_view_leaves_default_list_alone(app, admin_client):
-    """The default shopping list is untouched; the watchlist view is
-    reachable through the nav item and the filter radio."""
+    """Test that the default shopping list is unchanged.
+
+    The nav item and the filter radio both reach the watchlist view."""
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
     assert "Not available to stream or rent" not in page

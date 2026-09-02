@@ -1,6 +1,8 @@
-"""The weekly orphaned-file cleanup: age-gated deletion of the hidden
-partials that failed tasks strand, with macOS metadata and anything fresh
-or visible left alone.
+"""Test the weekly orphaned-file cleanup.
+
+The cleanup deletes the hidden partial files that failed tasks leave
+behind, after an age gate. It does not touch macOS metadata, a fresh
+file, or a visible file.
 """
 
 import os
@@ -46,13 +48,13 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
         plant(os.path.join(transcodes, "Stranded (2020)", ".Stranded (2020).m4v"), 8),
     ]
     kept = [
-        # Under the age gate: might still be an in-flight copy
+        # This file is below the age gate. It can be a copy in progress.
         plant(os.path.join(staging, ".Copying (2021) - [DVD].mkv"), 1),
-        # Visible files are never touched, however old
+        # The cleanup never touches a visible file, at any age.
         plant(
             os.path.join(movies, "Stranded (2020)", "Stranded (2020) - [DVD].mkv"), 30
         ),
-        # macOS metadata isn't a pipeline strand
+        # macOS metadata is not a pipeline leftover.
         plant(os.path.join(staging, ".DS_Store"), 30),
         plant(
             os.path.join(movies, "Stranded (2020)", "._Stranded (2020) - [DVD].mkv"), 30
@@ -77,10 +79,12 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
 
 
 def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
-    """The leftover-directory pass: week-undisturbed
-    directories fall when empty OR holding only junk — @eaDir trees,
-    macOS metadata, a few aged stray images (an orphaned custom
-    poster) — while anything fresh, real, or picture-collection-sized
+    """Make sure the cleanup removes week-old leftover directories.
+
+    This is the leftover-directory pass. A directory with no changes for
+    a week falls when it is empty OR holds only junk. Junk is an @eaDir
+    tree, macOS metadata, or some aged stray images (an orphaned custom
+    poster). A fresh directory, a real file, or a picture collection
     survives."""
 
     sent = []
@@ -103,17 +107,17 @@ def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
     def age(path):
         os.utime(path, (old, old))
 
-    # An aged empty tree: child and parent both go in ONE pass (mtimes
-    # are captured before removals begin)
+    # This is an aged empty tree. The child and the parent both go in
+    # ONE pass. The pass captures the mtimes before the removals start.
 
     nested_child = make_dir(os.path.join(movies, "Gone (1999)", "Extras"), aged=True)
     nested_parent = os.path.join(movies, "Gone (1999)")
     age(nested_parent)
 
-    # Junk-anchored leftovers all fall: metadata-only, an orphaned
-    # poster, and a Synology @eaDir whose contents stay fresh (the NAS
-    # rewrites them on its own schedule — that must not immortalize a
-    # dead folder)
+    # All leftovers that hold only junk fall: a metadata-only folder, an
+    # orphaned poster, and a Synology @eaDir with fresh contents. The
+    # NAS rewrites the @eaDir contents on its own schedule. That must
+    # not keep a dead folder alive forever.
 
     finder_touched = make_dir(os.path.join(movies, "Browsed (2002)"))
     plant(os.path.join(finder_touched, ".DS_Store"), age_days=30)
@@ -130,8 +134,9 @@ def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
     age(os.path.join(synology, "@eaDir"))
     age(synology)
 
-    # Survivors: freshly emptied, a real file, a FRESH poster (recent
-    # human action), and an image trove past the cap
+    # The survivors: a folder emptied recently, a real file, a FRESH
+    # poster (a recent human action), and an image collection above the
+    # cap.
 
     fresh = make_dir(os.path.join(movies, "Fresh (2000)"))
     occupied = make_dir(os.path.join(movies, "Occupied (2001)"))
@@ -155,7 +160,7 @@ def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
         assert os.path.exists(occupied) and os.path.exists(resident)
         assert os.path.exists(fresh_poster_dir) and os.path.exists(fresh_poster)
         assert os.path.exists(trove) and all(os.path.exists(i) for i in trove_images)
-        assert os.path.isdir(movies)  # the root itself is never a candidate
+        assert os.path.isdir(movies)  # the root is never a candidate
 
         assert len(sent) == 1
         assert "5 leftover directories" in sent[0]["body"]
@@ -171,11 +176,14 @@ def test_cleanup_removes_week_old_leftover_directories(app, monkeypatch):
 
 
 def test_clear_leftover_directory_is_junk_aware_and_climbs(app):
-    """clear_leftover_directory — the delete/rename-time cousin of the
-    weekly sweep's directory pass: no age gate (a fresh poster-only
-    folder is already known to be a husk), the climb clears the
-    poster-anchored parent too, real media keeps everything alive, the
-    roots never fall, and a path outside them is refused."""
+    """Make sure clear_leftover_directory knows junk and climbs.
+
+    This function is the delete-time and rename-time relative of the
+    directory pass of the weekly sweep. It has no age gate. A fresh
+    poster-only folder is already known as a husk. The climb clears the
+    parent that holds only a poster too. Real media keeps everything
+    alive. The roots never fall. The function refuses a path outside
+    the roots."""
 
     with app.app_context():
         tv = app.config["TV_LIBRARY"]
@@ -208,9 +216,11 @@ def _admin_csrf_token(admin_client, path):
 
 
 def test_series_delete_clears_poster_husks(app, admin_client):
-    """Deleting a series removes the poster-only season and series
-    folders right away, instead of leaving husks for the weekly sweep
-    (the Legacy on Ice leftovers, Aug 2026)."""
+    """Make sure a series delete clears the poster husks.
+
+    A series delete removes the poster-only season and series folders
+    immediately. It does not leave husks for the weekly sweep (the
+    Legacy on Ice leftovers, 2026-08)."""
 
     from app import db
     from tests.factories import make_tv_file, make_tv_series
@@ -238,8 +248,9 @@ def test_series_delete_clears_poster_husks(app, admin_client):
 
 
 def test_file_delete_clears_a_movie_poster_husk(app, admin_client):
-    """Deleting a movie's last file clears the folder its planted
-    poster.jpg would otherwise hold open."""
+    """Make sure a delete of the last movie file clears a poster husk.
+
+    Without this, the planted poster.jpg would keep the folder alive."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -277,18 +288,23 @@ def test_cleanup_stays_quiet_when_nothing_is_stranded(app, monkeypatch):
 
 
 def test_scratch_db_drop_is_skipped_off_mysql(app):
-    """The test suite runs on SQLite, where there is no scratch database
-    to drop — the helper must notice and do nothing."""
+    """Make sure the scratch database drop does nothing off MySQL.
+
+    The test suite runs on SQLite. SQLite has no scratch database to
+    drop. The helper must detect this and do nothing."""
 
     with app.app_context():
         assert maintenance._drop_leftover_restore_database() is False
 
 
 def test_shared_untouched_key_is_never_deleted(app):
-    """Two file records can claim the same untouched S3 key — a
-    repointed key after a rename, or a re-import landing on the same
-    basename (the Bambi II incident). The purge guard reports a
-    key as claimed until no surviving record holds it."""
+    """Make sure the purge never deletes a shared untouched key.
+
+    Two file records can claim the same untouched S3 key. Causes: a key
+    that points to a new object after a rename, or a re-import that
+    arrives at the same basename (the Bambi II incident). The purge
+    guard reports the key as claimed until no surviving record holds
+    it."""
 
     from datetime import datetime
 
@@ -307,14 +323,15 @@ def test_shared_untouched_key_is_never_deleted(app):
 
         assert untouched_key_still_claimed(shared) is True
 
-        # The worse file's row goes away first (as the purge does);
-        # the survivor still claims the key
+        # The row of the worse file goes away first, as in the purge.
+        # The survivor still claims the key.
 
         db.session.delete(goner)
         db.session.commit()
         assert untouched_key_still_claimed(shared) is True
 
-        # Only when no active record holds it may the key be deleted
+        # The purge can delete the key only when no active record holds
+        # it.
 
         keeper.aws_untouched_date_deleted = datetime.now()
         db.session.commit()
@@ -322,11 +339,14 @@ def test_shared_untouched_key_is_never_deleted(app):
 
 
 def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
-    """The archive key only ever changes when a real object sits at the
-    new key: STANDARD objects copy-verify-delete; Deep Archive
-    and missing objects can't be copied, so the LOCAL library file
-    force-uploads under the new key instead (Glenn's call — close the
-    invariant now rather than hope a future re-upload heals it)."""
+    """Make sure the rename moves the object or uploads it again.
+
+    The archive key changes only when a real object is at the new key.
+    A STANDARD object goes through copy, verify, and delete. Fitzflix
+    cannot copy a Deep Archive object or a missing object. Thus, the
+    LOCAL library file force-uploads under the new key (decision by
+    Glenn: close the invariant now, and do not hope that a later
+    re-upload heals it)."""
 
     from app import aws_storage
 
@@ -364,8 +384,8 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
         assert fake.copied == ("untouched/old.mkv", "untouched/new.mkv")
         assert fake.deleted == "untouched/old.mkv"
 
-        # Deep Archive: no server-side copy possible — the library
-        # copy force-uploads under the new key and the old object goes
+        # Deep Archive: a server-side copy is not possible. The library
+        # copy force-uploads under the new key. The old object goes.
 
         from datetime import datetime
 
@@ -386,7 +406,8 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
         assert fake.copied is None
         assert fake.deleted == "untouched/frozen.mkv"
 
-        # Missing object: nothing to copy or delete — heal by upload
+        # Missing object: there is nothing to copy or delete. The upload
+        # heals it.
 
         file.aws_untouched_key = "untouched/gone.mkv"
         fake = FakeS3(exists=False)
@@ -397,10 +418,13 @@ def test_rename_untouched_object_moves_or_reuploads(app, monkeypatch):
 
 
 def test_rename_untouched_object_defers_the_upload(app, monkeypatch):
-    """A caller on a short-budget queue passes defer_upload: an object
-    that can't be copied hands its multi-gigabyte re-upload to the file
-    queue and leaves the key alone until that job lands (#231 — the
-    sql queue's ten minutes killed a 43.9 GB upload at 84%)."""
+    """Make sure rename_untouched_object can defer the upload.
+
+    A caller on a queue with a short budget passes defer_upload. An
+    object that Fitzflix cannot copy hands its multi-gigabyte re-upload
+    to the file queue. The key does not change until that job
+    completes. This is #231: the 10-minute limit of the sql queue killed
+    a 43.9 GB upload at 84%."""
 
     from app import aws_storage
 
@@ -438,8 +462,8 @@ def test_rename_untouched_object_defers_the_upload(app, monkeypatch):
             is False
         )
 
-        # Nothing changed yet: the key still names the real object, and
-        # the old object is still there to be deleted by the deferred job
+        # Nothing changed yet. The key still names the real object. The
+        # old object is still there. The deferred job deletes it.
 
         assert file.aws_untouched_key == "untouched/frozen.mkv"
         assert fake.deleted is None
@@ -455,9 +479,11 @@ def test_rename_untouched_object_defers_the_upload(app, monkeypatch):
 
 
 def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
-    """The deferred half runs the force-upload in the file queue's
-    six-hour budget, and skips a key the record has moved on from
-    rather than spending tens of gigabytes on a stale name."""
+    """Make sure the re-archive uploads the object or skips it.
+
+    The deferred half runs the force-upload in the 6-hour budget of the
+    file queue. It skips a key that the record no longer wants. It does
+    not spend tens of gigabytes on a stale name."""
 
     from datetime import datetime
 
@@ -504,7 +530,7 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
 
         assert videos.rearchive_untouched_object(file_id, new_key) is True
 
-        # The task commits in its own app context's session
+        # The task commits in the session of its own app context.
 
         db.session.expire_all()
         file = db.session.get(File, file_id)
@@ -513,8 +539,9 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
         assert uploads[-1][0] == local_path
         assert fake.deleted == "untouched/frozen.mkv"
 
-        # A key the record no longer wants (a later refresh renamed it
-        # again, or the refresh that queued this one rolled back)
+        # This is a key that the record no longer wants. A later refresh
+        # renamed it again, or the refresh that queued this job rolled
+        # back.
 
         file.aws_untouched_key = "untouched/current.mkv"
         file.untouched_basename = "current.mkv"
@@ -527,8 +554,9 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
         assert file.aws_untouched_key == "untouched/current.mkv"
         assert uploads == []
 
-        # A record whose local file was deliberately deleted has nothing
-        # to re-upload, and keeps the old key that still names an object
+        # A record with a local file that the user deleted on purpose has
+        # nothing to upload again. It keeps the old key that still names
+        # an object.
 
         os.remove(local_path)
         file.untouched_basename = "thawed.mkv"
@@ -540,11 +568,13 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
 
 
 def test_rearchive_keeps_webdl_scaffold_keys(app, monkeypatch):
-    """WEBDL-rebuild scaffolding (#158): a WEBRip row deliberately
-    keeps its WEBDL-named archive key until a real WEB-DL replaces it.
-    The deferred re-archive refuses that trade instead of re-uploading
-    gigabytes and retiring the scaffold key (the Aug 29 2026 genre
-    backfill started doing exactly that)."""
+    """Make sure the re-archive keeps a WEBDL scaffold key.
+
+    This is the WEBDL-rebuild scaffold (#158). A WEBRip row keeps its
+    WEBDL-named archive key on purpose until a real WEB-DL replaces it.
+    The deferred re-archive refuses that trade. It does not upload
+    gigabytes again and retire the scaffold key. The genre backfill of
+    2026-08-29 started to do exactly that."""
 
     from app import aws_storage
 

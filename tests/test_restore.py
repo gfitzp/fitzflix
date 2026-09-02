@@ -1,5 +1,7 @@
-"""Season- and series-level AWS restore fan-out: one aws_restore job per
-best-ranked archived file, skipping unarchived and outranked copies.
+"""Test the AWS restore fan-out at the season level and the series level.
+
+Fitzflix enqueues 1 aws_restore job for each best-ranked archived file.
+It skips the unarchived copies and the outranked copies.
 """
 
 import re
@@ -17,20 +19,20 @@ def csrf_token_from(page_html):
 
 
 def build_series(app):
-    """A series with a mix of archived, outranked, and unarchived files."""
+    """Return a series with archived, outranked, and unarchived files."""
 
     series = make_tv_series("Restore Test (2020)")
 
-    # S01E01: two copies; only the best-ranked Bluray should be restored
+    # S01E01: 2 copies. Fitzflix must restore only the best-ranked Bluray.
     make_tv_file(series, 1, 1, "DVD", aws_untouched_key="untouched/e1-dvd.mkv")
     best_e1 = make_tv_file(
         series, 1, 1, "Bluray-1080p", aws_untouched_key="untouched/e1-bluray.mkv"
     )
 
-    # S01E02: best copy was never archived — skipped
+    # S01E02: the best copy was never archived. Fitzflix skips it.
     make_tv_file(series, 1, 2, "DVD")
 
-    # S02E01: archived, in another season
+    # S02E01: archived, in a different season.
     best_s2 = make_tv_file(series, 2, 1, "DVD", aws_untouched_key="untouched/s2e1.mkv")
 
     db.session.commit()
@@ -44,7 +46,8 @@ def restore_jobs(app):
         if job.func_name == "app.videos.aws_restore"
     ]
 
-    # Fan-out restores must use the cheaper Bulk tier the estimate assumes
+    # Fan-out restores must use the cheaper Bulk tier that the estimate
+    # assumes.
 
     assert all(job.kwargs == {"tier": "Bulk"} for job in jobs)
     return [job.args[0] for job in jobs]
@@ -58,7 +61,7 @@ def test_season_restore_fans_out_to_best_archived_files(app, admin_client):
     page = admin_client.get(f"/tv/{series_id}/1").get_data(as_text=True)
     assert "Bulk restore season from AWS" in page
 
-    # The cost estimate is shown before anything is submitted
+    # The page shows the cost estimate before the user submits anything.
 
     assert "≈ $" in page
 
@@ -74,8 +77,8 @@ def test_season_restore_fans_out_to_best_archived_files(app, admin_client):
     assert response.status_code == 200
     assert "Requesting 1 file(s) for season 1" in response.get_data(as_text=True)
 
-    # Only season 1's best archived copy — not the outranked DVD, not the
-    # unarchived episode, not season 2
+    # Fitzflix requests only the best archived copy of season 1. It does
+    # not request the outranked DVD, the unarchived episode, or season 2.
 
     assert restore_jobs(app) == ["untouched/e1-bluray.mkv"]
 
@@ -107,7 +110,7 @@ def test_series_restore_fans_out_across_seasons(app, admin_client):
 
 
 def test_series_restore_does_not_trigger_other_forms(app, admin_client):
-    """The restore submit must not fire the transcode or delete handlers."""
+    """Test that the restore submit does not run the transcode or delete handlers."""
 
     with app.app_context():
         series, _, _ = build_series(app)
@@ -137,7 +140,7 @@ def test_restore_requires_correct_password(app, admin_client):
 
     page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
 
-    # Wrong password: flash the error, enqueue nothing
+    # Wrong password: Fitzflix flashes the error and enqueues nothing.
 
     response = admin_client.post(
         f"/tv/{series_id}",
@@ -151,7 +154,8 @@ def test_restore_requires_correct_password(app, admin_client):
     assert "Incorrect password provided!" in response.get_data(as_text=True)
     assert restore_jobs(app) == []
 
-    # Missing password: the form fails validation, nothing is enqueued
+    # Missing password: the form fails validation. Fitzflix enqueues
+    # nothing.
 
     admin_client.post(
         f"/tv/{series_id}",
@@ -164,20 +168,23 @@ def test_restore_requires_correct_password(app, admin_client):
 
 
 def test_estimate_prefers_recorded_aws_size_over_padded_local_size(app):
-    """The archived object's exact size wins; local sizes get the 1.25 pad."""
+    """Test that the exact size of the archived object wins.
+
+    A local size gets the 1.25 pad."""
 
     from types import SimpleNamespace
 
     from app.main.library import restore_cost_estimate
 
     files = [
-        # Exact AWS size recorded: used as-is, local size and pad ignored
+        # The exact AWS size is recorded. Fitzflix uses it as it is and
+        # ignores the local size and the pad.
         SimpleNamespace(
             aws_untouched_filesize_bytes=4 * 1024**3, filesize_bytes=1 * 1024**3
         ),
-        # No AWS size yet: local size padded by 1.25
+        # No AWS size yet: Fitzflix pads the local size by 1.25.
         SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=2 * 1024**3),
-        # No size at all: contributes nothing
+        # No size at all: this file contributes nothing.
         SimpleNamespace(aws_untouched_filesize_bytes=None, filesize_bytes=None),
     ]
 

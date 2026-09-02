@@ -1,6 +1,9 @@
-"""DVR channel editor (#182): admin gating, channel CRUD, explicit
-member picks resolved by title, and the build honoring the edited
-definitions (explicit picks air; disabled channels don't)."""
+"""Test the DVR channel editor (#182).
+
+The tests cover the admin gate, the channel CRUD, and the explicit
+member picks that Fitzflix resolves by title. They also cover the build
+that uses the edited definitions. Explicit picks air. Disabled channels
+do not air."""
 
 import re
 
@@ -53,7 +56,7 @@ def test_create_edit_delete_channel(app, admin_client):
         channel_id = channel.id
     assert rebuild_jobs(app)
 
-    # A colliding number is refused with an explanation
+    # Fitzflix refuses a channel number that is in use and explains why
 
     response = admin_client.post(
         "/dvr/channels",
@@ -69,7 +72,8 @@ def test_create_edit_delete_channel(app, admin_client):
     with app.app_context():
         assert DVRChannel.query.count() == 1
 
-    # Editing renames and re-rules the channel but never moves its slug
+    # An edit renames the channel and changes its rules. It never changes
+    # the slug
 
     response = admin_client.post(
         f"/dvr/channels/{channel_id}",
@@ -128,7 +132,7 @@ def test_member_add_by_title(app, admin_client):
     )
     assert "Added Jaws (1975)" in response.get_data(as_text=True)
 
-    # An ambiguous fragment is refused with suggestions
+    # Fitzflix refuses an ambiguous fragment and shows suggestions
 
     response = admin_client.post(
         f"/dvr/channels/{channel_id}",
@@ -158,7 +162,7 @@ def test_member_add_by_title(app, admin_client):
         assert [show.title for show in channel.series] == ["Doctor Who (1963)"]
         movie_id = channel.movies.first().id
 
-    # Removing the movie leaves the series pick in place
+    # When the admin removes the movie, the series pick stays
 
     response = admin_client.post(
         f"/dvr/channels/{channel_id}",
@@ -181,7 +185,7 @@ def test_list_page_shows_plex_setup_urls(app, admin_client, monkeypatch):
     assert "http://127.0.0.1:8000/dvr/dvr-test-token" in page
     assert "http://127.0.0.1:8000/dvr/dvr-test-token/guide.xml" in page
 
-    # Feature off: the hint replaces the URLs
+    # When the feature is off, the hint replaces the URLs
 
     monkeypatch.setitem(app.config, "DVR_TOKEN", None)
     page = admin_client.get("/dvr/channels").get_data(as_text=True)
@@ -202,7 +206,8 @@ def test_title_search_returns_canonical_pick_strings(app, admin_client, user_cli
     response = admin_client.get("/dvr/title-search.json?kind=series&q=doctor")
     assert response.get_json()["results"] == ["Doctor Who (1963)"]
 
-    # Under two characters returns nothing; non-admins are bounced
+    # A query of less than 2 characters returns nothing. Fitzflix
+    # redirects non-admins
 
     assert admin_client.get("/dvr/title-search.json?q=j").get_json() == {"results": []}
     assert user_client.get("/dvr/title-search.json?q=jaws").status_code == 302
@@ -235,7 +240,7 @@ def test_build_honors_picks_and_disabled(app, monkeypatch):
     programs = dvr.channel_lineup(app.redis, "picks")["programs"]
     titles = {p["title"] for p in programs}
     assert titles == {"Jaws", "Doctor Who (1963)"}
-    # The film spaces itself into the episode cycle rather than
-    # bolting onto the end
+    # Fitzflix spaces the film into the episode cycle. It does not put
+    # the film at the end
     assert programs[-1]["title"] == "Jaws" or programs[-2]["title"] == "Jaws"
     assert len(programs) == 4

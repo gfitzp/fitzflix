@@ -1,6 +1,8 @@
-"""Letterboxd review import and export: parsing an account-export zip,
-matching films, loading the user_movie_review table, and exporting a CSV
-in the Letterboxd import format."""
+"""Test the Letterboxd review import and export.
+
+These tests cover the parse of an account-export zip, the film match,
+the load of the user_movie_review table, and the export of a CSV in the
+Letterboxd import format."""
 
 import inspect
 import io
@@ -13,7 +15,8 @@ from tests.factories import make_movie
 
 
 def assert_binds(job):
-    """The enqueued call must match the target function's signature."""
+    """Test that the enqueued call matches the signature of the target
+    function."""
 
     inspect.signature(job.func).bind(*(job.args or ()), **(job.kwargs or {}))
 
@@ -25,7 +28,7 @@ def csrf_token_from(page_html):
 
 
 def letterboxd_zip(files):
-    """Build an in-memory Letterboxd export zip from {name: csv_text}."""
+    """Build a Letterboxd export zip in memory from {name: csv_text}."""
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -70,24 +73,25 @@ def test_parse_letterboxd_export_merges_per_film(app):
     assert jaws["rating"] == 4.5
     assert jaws["liked"] is True
     assert [e["watched"] for e in jaws["entries"]] == ["2015-01-09", "2024-06-01"]
-    # The review row shares a watched date with the second diary entry, so
-    # they merge into one entry
+    # The review row has the same watched date as the second diary entry.
+    # Thus, Fitzflix merges them into 1 entry
     assert jaws["entries"][1]["review"] == "Still holds up."
     assert jaws["entries"][1]["rating"] == 5
     assert jaws["entries"][0]["review"] is None
 
-    # Rewatch is stored as stated: a blank diary cell is a first watch
+    # Fitzflix stores the rewatch flag as given. A blank diary cell is a
+    # first watch
     assert jaws["entries"][0]["rewatch"] is False
     assert jaws["entries"][1]["rewatch"] is True
 
-    # A review with no rating anywhere stays unrated
+    # A review with no rating in any file stays unrated
     tall_t = films[("The Tall T", 1957)]
     assert tall_t["rating"] is None
     assert tall_t["entries"][0]["review"] == "A nice day."
     assert tall_t["entries"][0]["rating"] is None
 
-    # Rated-only and liked-only films get a single dateless entry, with an
-    # unknown rewatch state
+    # A rated-only film and a liked-only film get 1 entry without a date.
+    # The rewatch state is unknown
     assert films[("Sharknado", 2013)]["entries"][0]["watched"] is None
     assert films[("Sharknado", 2013)]["entries"][0]["rewatch"] is None
     london = films[("The London Story", 1986)]
@@ -126,8 +130,10 @@ def test_letterboxd_zip_upload_enqueues_match_task(app, admin_client):
 
 
 def test_match_task_resolves_library_films_and_hands_off(app):
-    """Films already in the library match without TMDB; with no API key
-    configured, unowned films are skipped rather than failing the import."""
+    """Test that the films in the library match without TMDB.
+
+    With no API key configured, Fitzflix skips the unowned films. The
+    import does not fail."""
 
     from app import db
     from app.videos import letterboxd_import_task, parse_letterboxd_export
@@ -197,14 +203,16 @@ def test_apply_letterboxd_import_loads_review_table(app, admin_client):
         assert second.liked is True
         assert second.rewatch is True
 
-        # Re-importing the same export updates rather than duplicates
+        # A second import of the same export updates the rows. It does
+        # not make duplicates
         assert apply_letterboxd_import(user_id, films) is True
         assert (
             UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
             == 2
         )
 
-        # The reviews page renders unrated and liked entries
+        # The reviews page renders the unrated entries and the liked
+        # entries
         page = admin_client.get("/history").get_data(as_text=True)
         assert page and "bi-heart-fill" in page
 
@@ -302,8 +310,9 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     assert sent["attachments"]
 
     filename, mimetype, contents = sent["attachments"][0]
-    # UTF-8 bytes, never str: a str payload would get raw-unicode-escaped
-    # by the email package, mangling curly quotes and emoji
+    # UTF-8 bytes, never str. The email package would apply
+    # raw-unicode-escape to a str payload. That damages curly quotes and
+    # emoji
     assert isinstance(contents, bytes)
     assert mimetype == "text/csv; charset=utf-8"
     rows = list(csv_module.reader(io.StringIO(contents.decode("utf-8"))))
@@ -321,24 +330,26 @@ def test_review_export_uses_letterboxd_import_format(app, admin_client, monkeypa
     by_title = {row[2]: row for row in rows[1:]}
     jaws = by_title["Jaws"]
     assert jaws[0] == "578" and jaws[1] == "tt0073195"
-    # Whole-number ratings export without a decimal; watched timestamps
-    # truncate to the calendar date Letterboxd requires
+    # A whole-number rating exports without a decimal. A watched timestamp
+    # truncates to the calendar date that Letterboxd requires
     assert jaws[4] == "4"
     assert jaws[5] == "2024-06-01"
-    # Rewatch was recorded on this row, so it exports per the spec
+    # This row has a recorded rewatch flag. Thus, it exports as the spec
+    # says
     assert jaws[6] == "Yes"
     assert "He said “we’re gonna need a bigger boat” \U0001f988, or similar." in jaws[7]
 
     tall_t = by_title["The Tall T"]
     assert tall_t[4] == "" and tall_t[5] == ""
-    # A legacy row with no rewatch information exports a blank cell
+    # A legacy row with no rewatch data exports a blank cell
     assert tall_t[6] == ""
     assert tall_t[7] == "A nice day."
 
 
 def capture_sent_attachments(monkeypatch):
-    """Stub the History page's send_email; returns the list that collects
-    each call's attachments."""
+    """Stub the send_email of the History page.
+
+    Return the list that collects the attachments of each call."""
 
     import app.main.account as account
 
@@ -352,7 +363,7 @@ def capture_sent_attachments(monkeypatch):
 
 
 def export_reviews(client, token, full=False):
-    """POST the Profile page's export form (on Profile since #215)."""
+    """POST the export form of the Profile page (on Profile after #215)."""
 
     data = {"csrf_token": token, "export_submit": "Export Reviews"}
     if full:
@@ -361,7 +372,8 @@ def export_reviews(client, token, full=False):
 
 
 def exported_titles(attachments):
-    """The set of film titles in an export call's CSV attachment."""
+    """Return the set of film titles in the CSV attachment of an export
+    call."""
 
     import csv as csv_module
 
@@ -381,8 +393,8 @@ def test_incremental_export_covers_only_entries_since_last_export(
 
     with app.app_context():
         user = User.query.first()
-        # The app fixture is session-scoped, so wipe any baseline stamped
-        # by an earlier test's export
+        # The app fixture is session-scoped. Thus, delete a baseline that
+        # the export of an earlier test stamped
         user.date_reviews_exported = None
         user.last_export_review_id = None
         user_id = user.id
@@ -412,7 +424,7 @@ def test_incremental_export_covers_only_entries_since_last_export(
     sent = capture_sent_attachments(monkeypatch)
     token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
 
-    # The first-ever export has no baseline, so the default covers everything
+    # The first export has no baseline. Thus, the default covers all rows
 
     assert export_reviews(admin_client, token).status_code == 302
     assert sent[-1][0][0] == "reviews.csv"
@@ -427,8 +439,8 @@ def test_incremental_export_covers_only_entries_since_last_export(
             .scalar()
         )
 
-        # A watch logged after the export but backdated to before it: only
-        # the row id reveals it's new
+        # A watch logged after the export, but with a date before it. Only
+        # the row id shows that it is new
 
         backdated = make_movie("The Backdated Watch", 2003)
         db.session.add(
@@ -440,7 +452,8 @@ def test_incremental_export_covers_only_entries_since_last_export(
             )
         )
 
-        # An edit to an already-exported row, stamped the way review_edit does
+        # An edit to a row that was exported before, stamped as review_edit
+        # does
 
         row = UserMovieReview.query.filter_by(
             user_id=user_id, movie_id=edited_movie_id
@@ -483,7 +496,7 @@ def test_full_export_checkbox_exports_everything(app, admin_client, monkeypatch)
     token = csrf_token_from(admin_client.get("/profile").get_data(as_text=True))
     export_reviews(admin_client, token)
 
-    # Nothing new since, but the checkbox re-exports the lot
+    # There is nothing new. But the checkbox exports all rows again
 
     assert export_reviews(admin_client, token, full=True).status_code == 302
     assert sent[-1][0][0] == "reviews.csv"
@@ -530,7 +543,7 @@ def test_incremental_export_with_nothing_new_sends_no_email(
     )
     assert len(sent) == 1
 
-    # The empty export produced no file, so the baseline must not advance
+    # The empty export made no file. Thus, the baseline must not advance
 
     with app.app_context():
         assert db.session.get(User, user_id).date_reviews_exported == baseline
@@ -558,8 +571,10 @@ def test_legacy_json_lines_upload_still_works(app, admin_client):
 
 
 def test_movie_page_renders_unrated_liked_review(app, admin_client):
-    """A review without a star rating (possible since the Letterboxd
-    import) must not break the movie detail page."""
+    """Test that a review without a star rating does not break the movie
+    detail page.
+
+    Such a review is possible after the Letterboxd import."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -567,7 +582,7 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
 
     with app.app_context():
         user_id = User.query.first().id
-        # The review block only renders for TMDB-matched movies
+        # The review block renders only for the movies with a TMDB match
         movie = make_movie(
             "Liked but Unrated", 1986, tmdb_data_as_of=datetime(2026, 1, 1)
         )
@@ -583,8 +598,8 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
         db.session.commit()
         movie_id = movie.id
 
-    # A liked-only viewing shows as UNRATED in the interface (Glenn's
-    # rule): an empty interactive row, no heart, no filled stars — the
+    # A liked-only viewing shows as UNRATED in the interface (rule set by
+    # Glenn): an empty interactive row, no heart, no filled stars. The
     # like still feeds the profile as an imputed 3
 
     response = admin_client.get(f"/movie/{movie_id}")
@@ -596,7 +611,7 @@ def test_movie_page_renders_unrated_liked_review(app, admin_client):
 
 
 class FakeTMDBDetails:
-    """A canned TMDB movie-details response."""
+    """Provide a canned TMDB movie-details response."""
 
     def __init__(self, payload):
         self._payload = payload
@@ -634,8 +649,8 @@ JAWS_2_DETAILS = {
                 "profile_path": "/scheider.jpg",
             },
             {"id": 999888777, "name": "Unknown Costar", "order": 1},
-            # Deep in the billing: the cast scroller shows everyone, not
-            # just the top-billed three
+            # Deep in the billing. The cast scroller shows every actor, not
+            # only the top-billed 3
             {
                 "id": 555444333,
                 "name": "Deep Billed Player",
@@ -643,8 +658,8 @@ JAWS_2_DETAILS = {
                 "character": "Beach Extra",
             },
         ],
-        # Two credit rows for the same director (a common TMDB artifact)
-        # collapse to one directed-by entry; other crew never appear
+        # 2 credit rows for the same director (a common TMDB artifact)
+        # collapse to 1 directed-by entry. Other crew never appear
         "crew": [
             {"id": 56512, "name": "Jeannot Szwarc", "job": "Director"},
             {"id": 56512, "name": "Jeannot Szwarc", "job": "Director"},
@@ -655,8 +670,11 @@ JAWS_2_DETAILS = {
 
 
 def test_movie_page_ladder_auto_flags_liked_at_three_stars(app, admin_client):
-    """3+ stars auto-flag liked (Glenn's rule: liked means a positive
-    verdict); below 3 doesn't. The tap defaults to a date-less row."""
+    """Test that 3 or more stars set the liked flag.
+
+    This is the rule set by Glenn: liked means a positive verdict. Fewer
+    than 3 stars do not set the flag. The tap defaults to a row without a
+    date."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -696,9 +714,11 @@ def test_movie_page_ladder_auto_flags_liked_at_three_stars(app, admin_client):
 
 
 def test_movie_page_logs_bare_watches(app, admin_client):
-    """A submission with no rating, like, or text is a plain diary entry:
-    a watch, not a review — no review date, rewatch computed like a Plex
-    watch would."""
+    """Test that a submission with no rating, like, or text is a plain
+    diary entry.
+
+    It is a watch, not a review. It has no review date. Fitzflix computes
+    the rewatch flag in the same way as for a Plex watch."""
 
     from app import db
     from app.models import UserMovieReview
@@ -730,7 +750,7 @@ def test_movie_page_logs_bare_watches(app, admin_client):
         assert row.date_reviewed is None
         assert row.rewatch is False
 
-    # Logging the film again is a rewatch
+    # A second log of the film is a rewatch
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     admin_client.post(
@@ -771,30 +791,31 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "Jaws 2 (1978)" in page
     assert "is not in the library" in page
     assert 'name="quick_rating"' in page
-    # Runtime, genres, and the US certification badge, like the movie page
+    # The runtime, the genres, and the US certification badge, as on the
+    # movie page
     assert "116&nbsp;minutes" in page
     assert "Horror" in page and "Thriller" in page
     assert ">PG</span>" in page
-    # The directed-by line, deduped and linked to the filmography page
-    # (#186); crew in other jobs stay off the page
+    # The directed-by line, without duplicates and with a link to the
+    # filmography page (#186). Crew in other jobs stay off the page
     assert page.count("Jeannot Szwarc") == 1
     assert "credit=56512" in page
     assert "John Williams" not in page
-    # The log-a-viewing form (date + review text), like the movie page —
-    # the route has always handled both fields
+    # The log-a-viewing form (date + review text), as on the movie page.
+    # The route has always handled both fields
     assert 'name="date_watched"' in page
     assert 'name="review"' in page
     assert "Log a viewing" in page
-    # The watchlist toggle matches the movie page's live markup: both
-    # faces render inside a data-watchlist-scope with the badge
+    # The watchlist toggle matches the live markup of the movie page.
+    # Both faces render inside a data-watchlist-scope with the badge
     assert "data-card-watchlist" in page
     assert 'name="add_watchlist_submit"' in page
     assert 'name="remove_watchlist_submit"' in page
     assert "data-watchlist-badge" in page
-    # The cast scroller shows every credited actor and everyone links to
-    # a filmography page — the page serves any TMDB person id, so people
-    # without local credit rows browse the same as known ones — and
-    # deep-billed names (order > 2) appear too
+    # The cast scroller shows every credited actor. Each actor links to a
+    # filmography page. The page serves any TMDB person id. Thus, a
+    # person without local credit rows browses the same as a known one.
+    # The deep-billed names (order > 2) also appear
     assert "Roy Scheider" in page
     assert "credit=4430" in page
     assert "Unknown Costar" in page
@@ -802,8 +823,8 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "Deep Billed Player" in page
     assert "Beach Extra" in page
     assert "cast-scroller" in page
-    # The store-search dropdown and external links render for the film,
-    # but there's no Files button or shopping-list toggle
+    # The store-search dropdown and the external links render for the
+    # film. But there is no Files button and no shopping-list toggle
     assert "blu-ray.com/movies/search.php" in page
     assert ">Amazon</a>" in page and ">eBay</a>" in page
     assert "imdb.com/title/tt0077766" in page
@@ -811,16 +832,18 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "letterboxd.com/tmdb/579" in page
     assert re.search(r"/movie/\d+/files", page) is None
     assert "exclude_submit" not in page
-    # No profile stored, so the engine stays quiet
+    # No profile is stored. Thus, the engine stays quiet
     assert 'title="Estimated' not in page
     assert "Might interest you" not in page
 
 
 def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monkeypatch):
-    """The record-less page previews the engine the way the movie page
-    does (#186): the shared score source's TMDB-keyed overlay feeds the
-    ladder's estimate, and the coarse scorer awards "Might interest
-    you" against the marker bar."""
+    """Test that the page without a record shows the engine as the movie
+    page does (#186).
+
+    The TMDB-keyed overlay of the shared score source feeds the estimate
+    of the ladder. The coarse scorer awards "Might interest you" against
+    the marker bar."""
 
     import json
 
@@ -895,8 +918,8 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
         ]
         assert len(refresh_jobs) == 1
 
-        # The positive log primes the "since you liked…" strip on the
-        # movie page the redirect lands on
+        # The positive log prepares the "since you liked…" strip on the
+        # movie page that the redirect goes to
 
         from app.elicitation import last_response
 
@@ -908,10 +931,11 @@ def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monke
 def test_review_tmdb_not_interested_creates_flagged_record(
     app, admin_client, monkeypatch
 ):
-    """The TMDB log page's ladder \u2715 (#45b; the standalone button
-    left with #184) creates the record and flags it in one step — no
-    diary row, any watchlist entry cleared — so the film leaves every
-    recommendation surface."""
+    """Test the ladder \u2715 on the TMDB log page (#45b).
+
+    The standalone button left with #184. The \u2715 creates the record
+    and flags it in 1 step. It makes no diary row. It clears a watchlist
+    entry. Thus, the film leaves every recommendation surface."""
 
     import app.main.discover as discover
 
@@ -966,8 +990,10 @@ def test_review_tmdb_redirects_when_film_in_library(app, admin_client):
 
 
 def test_reviews_page_renders_local_rating_distribution(app, admin_client):
-    """The ratings chart is ten locally rendered half-star buckets — no
-    Google Charts, no review titles serialized into page JavaScript."""
+    """Test that the ratings chart is 10 half-star buckets rendered locally.
+
+    There is no Google Charts. No review title is serialized into the
+    page JavaScript."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -995,16 +1021,16 @@ def test_reviews_page_renders_local_rating_distribution(app, admin_client):
     page = admin_client.get("/history").get_data(as_text=True)
     assert "charts/loader.js" not in page
     assert 'id="rating-distribution"' in page
-    # Five whole-star bins, each absorbing the half-step below it: the
-    # 1.5-star review bins as "about 2 stars"
+    # 5 whole-star bins. Each bin includes the half-step below it. Thus,
+    # the 1.5-star review bins as "about 2 stars"
     assert 'title="2 reviews rated about 4 stars"' in page
     assert 'title="1 review rated about 2 stars"' in page
-    # The tallest bin fills the chart; empty bins keep a 1% baseline
+    # The tallest bin fills the chart. An empty bin keeps a 1% baseline
     assert 'style="height: 100%;"' in page
     assert 'style="height: 50%;"' in page
     assert 'style="height: 1%;"' in page
     assert "3 ratings" in page
-    # Review titles are no longer inlined into the page's JavaScript
+    # The review titles are no longer inline in the page JavaScript
     assert "arrayToDataTable" not in page
 
 
@@ -1065,7 +1091,7 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
     assert "First impressions." in page
     assert 'value="2024-01-05"' in page
 
-    # A text-only save must not touch the stars
+    # A text-only save must not change the stars
 
     response = admin_client.post(
         f"/review/{row_id}/edit",
@@ -1084,17 +1110,18 @@ def test_review_edit_updates_the_viewing_in_place(app, admin_client):
         row = db.session.get(UserMovieReview, row_id)
         assert float(row.rating) == 3.0
         assert row.review == "On reflection, better than I thought."
-        # The row had no review date, so the text change set one (a first
-        # review, not an update)
+        # The row had no review date. Thus, the text change set one (a
+        # first review, not an update)
         assert row.date_reviewed is not None
         assert row.date_updated is None
-        # Still one row: edited in place, not logged as a new viewing
+        # Still 1 row: edited in place, not logged as a new viewing
         assert (
             UserMovieReview.query.filter_by(user_id=user_id, movie_id=movie_id).count()
             == 1
         )
 
-    # A ladder tap re-rates the viewing in place, auto-flagging liked
+    # A ladder tap rates the viewing again in place. It sets the liked
+    # flag
 
     page = admin_client.get(f"/review/{row_id}/edit").get_data(as_text=True)
     admin_client.post(
@@ -1152,7 +1179,7 @@ def test_review_edit_adds_review_to_bare_plex_viewing(app, admin_client):
         row = db.session.get(UserMovieReview, row_id)
         assert row.review == "Watched on Plex, loved it."
         assert row.rating is None
-        assert row.rewatch is False  # untouched by the edit
+        assert row.rewatch is False  # the edit did not change it
 
 
 def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
@@ -1185,7 +1212,7 @@ def test_review_edit_accepts_clearing_to_a_bare_watch(app, admin_client):
             "review_submit": "Save Review",
         },
     )
-    # An empty edit is legal now: a bare watch is a valid diary entry
+    # An empty edit is permitted now. A bare watch is a valid diary entry
     assert response.status_code == 302
     with app.app_context():
         row = db.session.get(UserMovieReview, row_id)
@@ -1254,12 +1281,12 @@ def test_review_edit_keeps_review_date_and_stamps_updated(app, admin_client):
         db.session.expire_all()
         row = db.session.get(UserMovieReview, row_id)
         assert row.review == "Revised thoughts."
-        # The original review date survives; the edit lands in date_updated
+        # The original review date stays. The edit goes into date_updated
         assert row.date_reviewed == datetime(2024, 5, 2)
         assert row.date_updated is not None
 
-    # The edit happened years after the review date, so the history page
-    # shows both dates
+    # The edit occurred years after the review date. Thus, the history
+    # page shows both dates
 
     page = admin_client.get("/history").get_data(as_text=True)
     assert "; updated" in page
@@ -1292,9 +1319,11 @@ def test_history_hides_update_date_from_the_same_day(app, admin_client):
 
 
 def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
-    """The history page is chronological by watch date: a fresh unreviewed
-    Plex watch outranks older reviewed entries, and dateless rating-only
-    rows don't appear at all — they're preference signals, not viewings."""
+    """Test that the history page is in order of watch date.
+
+    A new unreviewed Plex watch comes before the older reviewed entries.
+    A rating-only row without a date does not appear. Such rows are
+    preference signals, not viewings."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1342,9 +1371,11 @@ def test_history_orders_by_watch_date_with_unreviewed_on_top(app, admin_client):
 
 
 def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
-    """History rows carry live star forms posting to review_edit (#58c):
-    a star-only post never touches the viewing's date or text, and the
-    per-row text form never touches the stars or date."""
+    """Test the live star forms on the history rows (#58c).
+
+    The forms post to review_edit. A star-only post never changes the
+    date or the text of the viewing. The per-row text form never changes
+    the stars or the date."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1372,8 +1403,8 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
     assert "Add review text" not in page and "Edit review text" in page
     token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
 
-    # A star-only tap (the row form's exact payload) changes the stars
-    # and nothing else
+    # A star-only tap (the exact payload of the row form) changes the
+    # stars and nothing else
 
     response = admin_client.post(
         f"/review/{review_id}/edit",
@@ -1387,7 +1418,8 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
         assert row.date_watched == datetime(2021, 3, 14, 20, 0)
         assert row.review == "Original text"
 
-    # The text form's exact payload changes the text and nothing else
+    # The exact payload of the text form changes the text and nothing
+    # else
 
     response = admin_client.post(
         f"/review/{review_id}/edit",
@@ -1406,9 +1438,11 @@ def test_history_row_star_tap_preserves_date_and_text(app, admin_client):
 
 
 def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_client):
-    """The history page's per-row forms carry their page number, so a
-    save lands back on that page instead of page 1; without one the
-    redirect stays the plain history URL."""
+    """Test that the per-row forms on the history page carry their page
+    number.
+
+    Thus, a save goes back to that page, not to page 1. Without a page
+    number, the redirect stays the plain history URL."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1455,9 +1489,10 @@ def test_review_edit_redirects_back_to_the_history_page_it_came_from(app, admin_
 def test_feed_created_rows_never_export_back_to_letterboxd(
     app, admin_client, monkeypatch
 ):
-    """A row carrying a letterboxd_guid came FROM the feed — it is
-    already on Letterboxd, and exporting it back would round-trip a
-    duplicate."""
+    """Test that a row with a letterboxd_guid does not export.
+
+    Such a row came FROM the feed. It is already on Letterboxd. An export
+    would send a duplicate back."""
 
     import csv as csv_module
 
@@ -1515,9 +1550,12 @@ def test_feed_created_rows_never_export_back_to_letterboxd(
 
 
 def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
-    """An unrated viewing — a Plex watch, an unrated import — previews
-    the engine's estimate in its history ladder until real stars land;
-    rated rows show their verdict and no estimate."""
+    """Test that an unrated viewing shows the estimate of the engine in
+    its history ladder.
+
+    An unrated viewing is a Plex watch or an unrated import. The estimate
+    shows until real stars arrive. A rated row shows its verdict and no
+    estimate."""
 
     import json
 
@@ -1571,10 +1609,12 @@ def test_history_previews_estimates_for_unrated_viewings(app, admin_client):
 
 
 def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
-    """Tapping the current rating on a history row clears the stars,
-    and the live repaint answers with the engine's estimate — the row
-    falls back to the guess instead of going blank (the universal-star-row rule,
-    extended to logged-but-unrated viewings)."""
+    """Test that a tap on the current rating of a history row clears the
+    stars.
+
+    The live repaint answers with the estimate of the engine. The row
+    falls back to the guess and does not go blank. This is the
+    universal-star-row rule, extended to logged but unrated viewings."""
 
     import json
 
@@ -1622,18 +1662,21 @@ def test_clearing_stars_repaints_back_to_the_estimate(app, admin_client):
 
 
 def test_movie_page_letterboxd_first_logging(app, admin_client):
-    """With a linked Letterboxd account, the movie page steers dated
-    logging to Letterboxd — the deep-link button appears and the local
-    log form demotes to a fallback; without one, the local form is the
-    plain "Log a viewing" path and no button renders."""
+    """Test that a linked Letterboxd account sends dated logging to
+    Letterboxd.
+
+    With a linked account, the movie page shows the deep-link button, and
+    the local log form becomes a fallback. Without a linked account, the
+    local form is the plain "Log a viewing" path, and no button
+    renders."""
 
     from app import db
     from app.models import User
 
     with app.app_context():
         movie = make_movie("Letterboxd First Film", 1999, tmdb_id=4242)
-        # The session-scoped database may arrive with a username left by
-        # the feed-sync tests; this test owns both states explicitly
+        # The session-scoped database can arrive with a username from the
+        # feed-sync tests. This test sets both states itself
         User.query.first().letterboxd_username = None
         db.session.commit()
         movie_id = movie.id
@@ -1657,9 +1700,11 @@ def test_movie_page_letterboxd_first_logging(app, admin_client):
 
 
 def test_history_letterboxd_rows_edit_on_letterboxd(app, admin_client):
-    """Feed-originated rows show read-only stars and point edits at
-    Letterboxd — the sync would revert local changes — while locally
-    logged rows keep their per-row editors."""
+    """Test that a row from the feed shows read-only stars.
+
+    Such a row points its edits at Letterboxd, because the sync would
+    revert a local change. A row logged locally keeps its per-row
+    editors."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1702,8 +1747,9 @@ def test_history_letterboxd_rows_edit_on_letterboxd(app, admin_client):
 
 
 def test_review_edit_refuses_letterboxd_rows(app, admin_client):
-    """The per-viewing editor turns feed-originated rows away — the next
-    poll would re-assert Letterboxd's verdict over any local edit."""
+    """Test that the per-viewing editor rejects a row from the feed.
+
+    The next poll would put the Letterboxd verdict over a local edit."""
 
     from app import db
     from app.models import User, UserMovieReview
@@ -1729,9 +1775,9 @@ def test_review_edit_refuses_letterboxd_rows(app, admin_client):
     assert response.status_code == 302
     assert "/history" in response.headers["Location"]
 
-    # A feed-only diary renders no forms at all (the ladder is
-    # read-only and the import/export forms live on Profile now), so
-    # the session's csrf token comes from a page that has one
+    # A feed-only diary renders no forms (the ladder is read-only, and
+    # the import/export forms are on Profile now). Thus, the csrf token
+    # of the session comes from a page that has one
     page = admin_client.get("/profile").get_data(as_text=True)
     response = admin_client.post(
         f"/review/{row_id}/edit",
@@ -1753,8 +1799,9 @@ def _result(title, year):
 
 
 def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
-    """ "A Close Shave" (1995) must beat the making-of featurette that
-    TMDB ranks first in the year-filtered results."""
+    """ "A Close Shave" (1995) must beat the making-of featurette.
+
+    TMDB ranks the featurette first in the year-filtered results."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1767,9 +1814,11 @@ def test_pick_tmdb_match_prefers_exact_title_in_year_results(app):
 
 
 def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
-    """ "300" (2006): every year-filtered result is a different film, so
-    the exact title from the title-only search wins despite its 2007
-    year — never "My Poetic Works 300 Yen"."""
+    """ "300" (2006): the exact title from the title-only search wins.
+
+    Every year-filtered result is a different film. Thus, the exact title
+    wins, although its year is 2007. The match is never "My Poetic Works
+    300 Yen"."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1781,7 +1830,9 @@ def test_pick_tmdb_match_falls_through_year_junk_to_exact_title(app):
 
 def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
     """The Men Who Tread on the Tiger's Tail: Letterboxd says 1945, TMDB
-    says 1952 — a lone exact-title match is accepted at any distance."""
+    says 1952.
+
+    Fitzflix accepts a single exact-title match at any year distance."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1792,7 +1843,7 @@ def test_pick_tmdb_match_accepts_lone_exact_title_across_years(app):
 
 
 def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
-    """Casino Royale (1967) picks the 1967 spoof over the 2006 film."""
+    """Casino Royale (1967) selects the 1967 spoof, not the 2006 film."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1806,8 +1857,10 @@ def test_pick_tmdb_match_nearest_year_among_exact_titles(app):
 
 
 def test_pick_tmdb_match_keeps_alternative_title_head(app):
-    """Waking Ned Devine matched TMDB's "Waking Ned" through an
-    alternative title; the year-filtered head remains the fallback."""
+    """Waking Ned Devine matches the TMDB "Waking Ned" through an
+    alternative title.
+
+    The first year-filtered result stays the fallback."""
 
     from app.videos import _pick_tmdb_match
 
@@ -1817,7 +1870,8 @@ def test_pick_tmdb_match_keeps_alternative_title_head(app):
 
 
 def test_pick_tmdb_match_normalizes_dashes(app):
-    """Letterboxd's en-dash Star Wars titles equal TMDB's hyphens."""
+    """The en-dash Star Wars titles of Letterboxd equal the hyphens of
+    TMDB."""
 
     from app.videos import _normalize_title, _pick_tmdb_match
 
@@ -1840,13 +1894,14 @@ def test_pick_tmdb_match_skips_when_nothing_plausible(app):
 
 
 def test_history_orders_by_day_then_time_then_title(app, admin_client):
-    """#196: within a day, later viewings come first, then title.
+    """Test the order inside a day (#196): later viewings first, then title.
 
-    A midnight date_watched means "no time recorded" — only a watch logged
-    on the day it happened keeps a clock time (_watched_timestamp). Sorting
-    on the raw timestamp therefore sank every date-only row below any timed
-    row on the same day, no matter how late it was actually logged. The
-    time a row was written is the best evidence left, so it stands in.
+    A midnight date_watched means "no time recorded". Only a watch logged
+    on the day of the watch keeps a clock time (_watched_timestamp). A
+    sort on the raw timestamp put every date-only row below any timed row
+    on the same day. The log time of the row was not important. The time
+    when Fitzflix wrote the row is the best evidence left. Thus, it
+    replaces the missing clock time.
     """
 
     from app import db
@@ -1869,9 +1924,9 @@ def test_history_orders_by_day_then_time_then_title(app, admin_client):
                 )
             )
 
-        # same day: one watch with a real clock time, one date-only row
-        # logged later that evening, and two date-only rows that carry no
-        # time at all and must fall back to the title
+        # The same day: 1 watch with a real clock time, 1 date-only row
+        # logged later that evening, and 2 date-only rows with no time.
+        # The last 2 must fall back to the title
         log("Evening Entry", watched, datetime(2026, 3, 14, 23, 19))
         log(
             "Clocked Watch",
@@ -1881,7 +1936,7 @@ def test_history_orders_by_day_then_time_then_title(app, admin_client):
         log("Zebra Untimed", watched, watched)
         log("Alpha Untimed", watched, watched)
 
-        # a different day, to prove the day is still the first key
+        # A different day, to show that the day is still the first key
         log(
             "Yesterday Film", datetime(2026, 3, 13, 22, 0), datetime(2026, 3, 13, 22, 5)
         )
@@ -1903,14 +1958,15 @@ def test_history_orders_by_day_then_time_then_title(app, admin_client):
         "Clocked Watch",  # 18:55 on the clock
         "Alpha Untimed",  # no time at all -> title
         "Zebra Untimed",
-        "Yesterday Film",  # the previous day, whatever its time
+        "Yesterday Film",  # the previous day, with any time
     ]
 
 
 def test_history_forms_moved_per_215(app, admin_client):
-    """#215: the History header carries only the title — the Log a film
-    box sits above the diary rows scoped to movies, and the import /
-    export forms live on the Profile page instead."""
+    """Test that the History header carries only the title (#215).
+
+    The Log a film box is above the diary rows, scoped to movies. The
+    import and export forms are on the Profile page."""
 
     page = admin_client.get("/history").get_data(as_text=True)
     assert 'name="upload_submit"' not in page

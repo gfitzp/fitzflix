@@ -1,5 +1,7 @@
-"""The rejects triage page: listing with reasons, re-import back to the
-import directory, deletion, and the path-traversal guard.
+"""Test the rejects triage page.
+
+These tests cover the list with reasons, the re-import back to the
+import directory, the deletion, and the path-traversal guard.
 """
 
 import os
@@ -73,7 +75,7 @@ def test_reimport_moves_file_to_import_directory(app, admin_client):
     assert os.path.exists(destination)
     os.remove(destination)
 
-    # The now-empty reason folder was tidied away
+    # Fitzflix removed the reason folder, because it is now empty.
 
     assert not os.path.isdir(os.path.join(app.config["REJECTS_DIR"], "exception"))
 
@@ -123,7 +125,7 @@ def test_delete_removes_file(app, admin_client):
 
 
 def test_path_traversal_is_rejected(app, admin_client):
-    """A crafted path can't reach outside the rejects directory."""
+    """Test that a crafted path cannot reach outside the rejects directory."""
 
     reject_a_file(app, "exception", "Decoy (2021) - [DVD].mkv")
     outside = os.path.join(os.path.dirname(app.config["REJECTS_DIR"]), "precious.txt")

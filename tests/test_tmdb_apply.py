@@ -1,9 +1,10 @@
-"""TMDB apply methods: payload fields must land on mapped columns.
+"""Test that the TMDB apply methods put the payload fields into mapped columns.
 
-Regression home for the tvdb_id persist bug where tmdb_tv_apply wrote the
-TheTVDB cross-reference to an unmapped attribute and it never persisted,
-and for the #251 empty-payload guard: a glitched TMDB payload with no
-genres or keywords must not wipe the rows a record already has.
+This file holds the regression tests for 2 bugs. In the tvdb_id persist
+bug, tmdb_tv_apply wrote the TheTVDB cross-reference to an unmapped
+attribute, and the value never persisted. The #251 empty-payload guard
+covers a glitched TMDB payload with no genres or keywords. Such a
+payload must not delete the rows that a record already has.
 """
 
 from app import db
@@ -21,10 +22,12 @@ def _movie_with_associations(title, year):
 
 
 def test_movie_apply_empty_genre_list_keeps_stored_rows(app):
-    """The Aug 7-13 2026 TMDB glitch served details payloads with the
-    genre list empty; the wipe-then-rewrite apply then erased 943
-    films' genres permanently (#251). An empty incoming list keeps
-    what's stored; a populated one still replaces it."""
+    """Test that an empty genre list keeps the stored rows.
+
+    From 2026-08-07 to 2026-08-13, a TMDB glitch served details payloads
+    with an empty genre list. The delete-then-rewrite apply then erased
+    the genres of 943 films permanently (#251). An empty incoming list
+    keeps the stored rows. A populated list still replaces them."""
 
     with app.app_context():
         movie = _movie_with_associations("Glitch Victim", 1983)
@@ -56,8 +59,9 @@ def test_movie_apply_populated_lists_still_replace(app):
 
 
 def test_tv_apply_empty_genre_list_keeps_stored_rows(app):
-    """Same guard on the TV side (#251) — TV keywords ride in
-    "results", not "keywords"."""
+    """Test the same guard on the TV side (#251).
+
+    TV keywords come in "results", not in "keywords"."""
 
     with app.app_context():
         series = make_tv_series("Glitched Series")
@@ -74,8 +78,10 @@ def test_tv_apply_empty_genre_list_keeps_stored_rows(app):
 
 
 def test_tv_apply_stores_the_us_content_rating(app):
-    """The appended content_ratings block lands its US rating on the
-    series; a payload with no US entry keeps the stored one, like the
+    """Test that the TV apply stores the US content rating.
+
+    The appended content_ratings block puts its US rating on the series.
+    A payload with no US entry keeps the stored rating, like the
     empty-list guards (#251)."""
 
     with app.app_context():
@@ -119,10 +125,12 @@ def test_tv_apply_persists_external_ids(app):
 
 
 def test_movie_apply_empty_credits_keeps_stored_cast(app):
-    """#252: the cast/crew bulk delete used to run before any payload
-    check, so a glitched payload with an empty credits section wiped a
-    film's cast permanently. Empty incoming lists keep stored rows;
-    populated ones still replace."""
+    """Test that empty credits keep the stored cast (#252).
+
+    The bulk delete of the cast and crew ran before any payload check
+    in the past. Thus, a glitched payload with an empty credits section
+    deleted the cast of a film permanently. Empty incoming lists keep
+    the stored rows. Populated lists still replace them."""
 
     from app.models import MovieCast, TMDBCredit
 
@@ -152,9 +160,11 @@ def test_movie_apply_empty_credits_keeps_stored_cast(app):
 
 
 def test_movie_apply_absent_scalar_keys_keep_stored_values(app):
-    """#252: a partial payload (key missing entirely) must not null a
-    populated column; a key present with null still clears, since that
-    is TMDB removing real data."""
+    """Test that absent scalar keys keep the stored values (#252).
+
+    A partial payload (the key is missing) must not null a populated
+    column. A key that is present with null still clears the column,
+    because that is TMDB that removes real data."""
 
     with app.app_context():
         movie = make_movie("Scalar Victim", 1960, tmdb_id=990004)
@@ -172,8 +182,10 @@ def test_movie_apply_absent_scalar_keys_keep_stored_values(app):
 
 
 def test_tv_apply_empty_aggregate_cast_keeps_stored_rows(app):
-    """#252 on the TV side: an aggregate_credits section present with
-    empty cast/crew lists keeps the stored rows."""
+    """Test the #252 guard on the TV side.
+
+    An aggregate_credits section that is present with empty cast and
+    crew lists keeps the stored rows."""
 
     from app.models import TMDBCredit, TVCast
 

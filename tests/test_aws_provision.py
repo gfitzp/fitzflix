@@ -1,6 +1,8 @@
-"""The `flask aws provision` machinery: idempotent creation of the bucket,
-lifecycle rules, queue policy, and restore notification — always appending
-to existing configuration, never replacing it.
+"""Test the `flask aws provision` machinery.
+
+The command creates the bucket, the lifecycle rules, the queue policy,
+and the restore notification. The creation is idempotent. The command
+always appends to the existing configuration. It never replaces it.
 """
 
 import json
@@ -132,8 +134,8 @@ def test_provision_creates_everything_from_nothing(tmp_path):
     assert s3.notification["QueueConfigurations"][0]["Events"] == [
         "s3:ObjectRestore:Completed"
     ]
-    # The delete-marker cleanup is created as part of the untouched/ rule
-    # itself, so its own step finds it already present
+    # The untouched/ rule itself creates the delete-marker cleanup. Thus,
+    # the cleanup step finds that the cleanup is already present
     statuses = dict(results)
     assert (
         statuses.pop("lifecycle: untouched/ expired delete-marker cleanup") == "present"
@@ -142,9 +144,11 @@ def test_provision_creates_everything_from_nothing(tmp_path):
 
 
 def test_provision_preserves_existing_hand_made_configuration(tmp_path):
-    """Against a bucket shaped like the real one — versioning on, per-prefix
-    rules with their own names, notification wired — only the bucket-wide
-    abort rule is added, and nothing existing is touched."""
+    """Add only the bucket-wide abort rule to a bucket shaped like the real one.
+
+    The real bucket has versioning on, per-prefix rules with their own
+    names, and a wired notification. The command does not touch the
+    existing configuration."""
 
     hand_made_rules = [
         {
@@ -197,8 +201,8 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
         "lifecycle: untouched/ noncurrent-version retention (180 days)": "updated",
     }
 
-    # The hand-made untouched/ rule keeps every field except the raised
-    # retention; the other rule survives verbatim; ours is appended
+    # The hand-made untouched/ rule keeps every field except the increased
+    # retention. The second rule survives unchanged. Our rule is appended
     untouched = s3.rules[0]
     assert untouched["NoncurrentVersionExpiration"] == {"NoncurrentDays": 180}
     assert untouched["Expiration"] == {"ExpiredObjectDeleteMarker": True}
@@ -208,7 +212,7 @@ def test_provision_preserves_existing_hand_made_configuration(tmp_path):
     assert s3.rules[2]["ID"] == ABORT_RULE_ID
     assert s3.rules[2]["Filter"] == {}
 
-    # No notification or queue writes happened at all
+    # No notification write and no queue write occurred
     assert "put_notification" not in s3.writes
     assert sqs.writes == []
 
@@ -246,9 +250,10 @@ def test_provision_snapshots_the_as_found_configuration(tmp_path):
 
 
 def test_provision_refuses_a_suspected_stale_read(tmp_path):
-    """A run that sees fewer rules than the newest snapshot recorded must
-    not write — an eventually-consistent partial read written back is how
-    hand-made rules get silently destroyed."""
+    """Refuse to write when a run sees fewer rules than the newest snapshot.
+
+    S3 is eventually consistent. A partial read that the command writes
+    back destroys the hand-made rules silently."""
 
     import pytest
 
@@ -276,7 +281,7 @@ def test_provision_refuses_a_suspected_stale_read(tmp_path):
         provision(config, stale, sqs, echo=lambda *_: None)
     assert "put_lifecycle" not in stale.writes
 
-    # --force acknowledges an intentional reduction and proceeds
+    # The --force flag accepts an intentional reduction and continues
     results = dict(provision(config, stale, sqs, echo=lambda *_: None, force=True))
     assert "put_lifecycle" in stale.writes
     assert any(status != "present" for status in results.values())

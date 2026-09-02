@@ -1,7 +1,8 @@
-"""Row factories for tests.
+"""Row factories for the tests.
 
-The date columns are passed explicitly because the models' server-side
-default (utc_timestamp()) only exists on MySQL/MariaDB, not SQLite.
+The factories pass the date columns explicitly. The server-side default
+of the models (utc_timestamp()) exists only on MySQL and MariaDB. It
+does not exist on SQLite.
 """
 
 from datetime import datetime

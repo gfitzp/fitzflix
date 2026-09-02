@@ -1,6 +1,8 @@
-"""Per-file pipeline trails: the stage registry and extractors,
-the queue-side hooks, in-place lifecycle updates, and the queue page's
-payload and markup."""
+"""Test the per-file pipeline trails.
+
+This covers the stage registry and the extractors, the queue-side
+hooks, the in-place lifecycle updates, and the payload and markup of
+the queue page."""
 
 from datetime import timedelta
 
@@ -8,9 +10,10 @@ from tests.factories import make_movie, make_movie_file
 
 
 def test_enqueue_leaves_a_queued_trail_entry(app):
-    """Enqueuing a pipeline task through the app's TrackedQueue writes
-    the file's trail: stage from the registry, basename from the path
-    argument, status queued."""
+    """Write the trail of the file when the app enqueues a pipeline task.
+
+    The TrackedQueue of the app writes the stage from the registry, the
+    basename from the path argument, and the status queued."""
 
     from app.pipeline import pipeline_trails
 
@@ -30,8 +33,9 @@ def test_enqueue_leaves_a_queued_trail_entry(app):
 
 
 def test_deferred_retry_records_a_scheduled_entry(app):
-    """enqueue_in — the pipeline's deferred-retry pattern — surfaces
-    as a scheduled ("waiting to retry") entry."""
+    """Show enqueue_in as a scheduled ("waiting to retry") entry.
+
+    enqueue_in is the deferred-retry pattern of the pipeline."""
 
     from app.pipeline import pipeline_trails
 
@@ -48,9 +52,10 @@ def test_deferred_retry_records_a_scheduled_entry(app):
 
 
 def test_file_id_stages_look_the_basename_up(app):
-    """file_id-keyed tasks (upload, transcode, remuxes) resolve their
-    basename through the File record — inside the caller's own app
-    context, never the get_app() singleton."""
+    """Resolve the basename of a file_id-keyed task through the File record.
+
+    These tasks are upload, transcode, and the remuxes. The lookup runs
+    in the app context of the caller, never in the get_app() singleton."""
 
     from app import db
     from app.pipeline import pipeline_trails
@@ -73,10 +78,11 @@ def test_file_id_stages_look_the_basename_up(app):
 
 
 def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
-    """The enqueue hook writes after the job is already claimable, so a
-    job that lands in milliseconds — the deferred re-archive skipping a
-    superseded key — can beat its own "queued" stamp. The late stamp is
-    dropped rather than freezing the chip at queued forever."""
+    """Drop a late "queued" stamp instead of freezing the chip at queued.
+
+    The enqueue hook writes after the job is already claimable. Thus, a
+    job that completes in milliseconds can beat its own "queued" stamp.
+    Example: the deferred re-archive that skips a superseded key."""
 
     from app.pipeline import pipeline_trails, record_job_event
 
@@ -89,7 +95,7 @@ def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
     record_job_event(app.redis, job, "started")
     record_job_event(app.redis, job, "done")
 
-    # The enqueue side's stamp arrives after the worker has finished
+    # The stamp from the enqueue side arrives after the worker has finished.
 
     record_job_event(app.redis, job, "queued")
 
@@ -100,8 +106,10 @@ def test_a_late_queued_stamp_never_unwinds_a_finished_chip(app):
 
 
 def test_lifecycle_updates_one_entry_in_place(app):
-    """A job moving queued → started → done is ONE trail line whose
-    status advances — the worker hooks call the same recorder."""
+    """Keep 1 trail line for a job that moves from queued to started to done.
+
+    Only the status of the line advances. The worker hooks call the same
+    recorder."""
 
     from app.pipeline import pipeline_trails, record_job_event
 
@@ -120,8 +128,10 @@ def test_lifecycle_updates_one_entry_in_place(app):
 
 
 def test_a_retry_after_failure_appends_a_fresh_entry(app):
-    """A failure stays visible: the retry is a new job id, so it adds
-    a second entry for the same stage instead of erasing the first."""
+    """Keep a failure visible.
+
+    The retry is a new job id. Thus, it adds a second entry for the same
+    stage. It does not erase the first entry."""
 
     from app.pipeline import pipeline_trails, record_job_event
 
@@ -144,12 +154,13 @@ def test_a_retry_after_failure_appends_a_fresh_entry(app):
 
 
 def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
-    """the move job starts the instant localization enqueues it,
-    so the file-operation worker's "started" stamp races the import
-    worker's "done" stamp on the same trail. The loser of the old
-    read-modify-write erased the winner (two files froze at
-    "Localizing · running" overnight); the WATCHed write must retry
-    and keep both."""
+    """Retry the WATCHed write and keep both stamps of the race.
+
+    The move job starts the instant that localization enqueues it. Thus,
+    the "started" stamp of the file-operation worker races the "done"
+    stamp of the import worker on the same trail. In the old
+    read-modify-write, the loser erased the winner. 2 files froze at
+    "Localizing · running" overnight."""
 
     import app.pipeline as pipeline
     from app.pipeline import pipeline_trails, record_job_event
@@ -166,9 +177,10 @@ def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
         )
     record_job_event(app.redis, localize, "started")
 
-    # Interleave deterministically: while the localization "done" write
-    # sits between its read and its write, the move job's "started"
-    # lands on the same trail — the WATCH must fire and re-read
+    # Interleave the writes deterministically. The localization "done"
+    # write is between its read and its write. At that moment, the
+    # "started" of the move job goes into the same trail. The WATCH must
+    # run and read again.
 
     real_decode = pipeline._decode_trail
     interleaved = []
@@ -191,12 +203,13 @@ def test_concurrent_stage_writes_do_not_erase_each_other(app, monkeypatch):
 
 
 def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
-    """A phase inside one job — the staging copy — lands on the same
-    trail as its own chip, keyed by the job's id but under its own
-    stage label, and AHEAD of the job-level entry: the chips read in
-    pipeline order (staging copy, then localizing), not in order of
-    first stamp, which the job entry always wins by existing from
-    enqueue time."""
+    """Put a phase inside 1 job on the same trail as its own chip.
+
+    The staging copy is such a phase. Its key is the id of the job, but
+    it has its own stage label. It goes AHEAD of the job-level entry.
+    The chips read in pipeline order: staging copy, then localizing.
+    They do not read in order of the first stamp. The job entry always
+    wins that order, because it exists from the enqueue time."""
 
     import rq
 
@@ -211,8 +224,8 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
 
     monkeypatch.setattr(rq, "get_current_job", lambda: job)
 
-    # Only one chip runs at a time: while the staging copy runs, the
-    # job's own chip yields to it and reads "queued"
+    # Only 1 chip runs at a time. While the staging copy runs, the chip
+    # of the job yields to it and reads "queued".
 
     record_task_stage("Copying to staging", "started")
     entries = pipeline_trails(app.redis)[0]["entries"]
@@ -228,8 +241,8 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
         ("Localizing", "started"),
     ]
 
-    # The in-place update must not have moved it: finishing the job
-    # keeps the sub-stage ahead of its chip
+    # The in-place update must not move it. When the job finishes, the
+    # sub-stage stays ahead of its chip.
 
     record_job_event(app.redis, job, "done")
     entries = pipeline_trails(app.redis)[0]["entries"]
@@ -240,14 +253,17 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
 
 
 def test_a_mid_flight_rename_merges_the_trail(app):
-    """The parse can rename a file mid-flight — the title canonicalized
-    against an existing series, or a container conversion — and the
-    trail is keyed by basename, so localization merges it under the new
-    name before enqueueing the move. One file stays ONE trail (the
-    Futurama S11 imports split into two that overwrote each other's
-    chips on the File Activity card, Aug 2026), and the stamps that
-    arrive under the old name after the rename — the localization
-    worker's own "done" — follow the alias onto the merged trail."""
+    """Merge the trail under the new name when the parse renames a file.
+
+    The parse can rename a file in flight. Examples: the title becomes
+    canonical against an existing series, or a container conversion.
+    The key of the trail is the basename. Thus, localization merges the
+    trail under the new name before it enqueues the move. 1 file stays
+    ONE trail. In 2026-08, the Futurama S11 imports split into 2 trails
+    that overwrote each other's chips on the File Activity card. A stamp
+    that arrives under the old name after the rename follows the alias
+    onto the merged trail. Example: the "done" of the localization
+    worker."""
 
     from app.pipeline import (
         first_run,
@@ -282,16 +298,18 @@ def test_a_mid_flight_rename_merges_the_trail(app):
         ("Moving into the library", "queued"),
     ]
 
-    # The running banners' sort anchor — stamped under the old name at
-    # "started" — must survive the rename too
+    # The sort anchor of the running banners must also survive the
+    # rename. The "started" stamp wrote it under the old name.
 
     assert first_run(app.redis, localize) is not None
 
 
 def test_a_rename_with_no_prior_trail_just_redirects(app):
-    """Renaming a file whose trail never materialized (expired, or the
-    hooks failed) leaves only the alias — no empty card — and later
-    writes under the old name land on the new trail."""
+    """Leave only the alias when a file with no trail is renamed.
+
+    The trail can be missing because it expired or because the hooks
+    failed. There is no empty card. Later writes under the old name go
+    into the new trail."""
 
     from app.pipeline import migrate_trail, pipeline_trails
 
@@ -311,8 +329,10 @@ def test_a_rename_with_no_prior_trail_just_redirects(app):
 
 
 def test_task_sub_stage_without_a_job_is_a_noop(app):
-    """Direct task calls (tests, shells) have no current job; the
-    sub-stage emitter must record nothing rather than guess."""
+    """Record nothing from the sub-stage emitter when there is no current job.
+
+    A direct task call (from a test or a shell) has no current job. The
+    emitter must not guess."""
 
     from app.pipeline import pipeline_trails, record_task_stage
 
@@ -321,8 +341,9 @@ def test_task_sub_stage_without_a_job_is_a_noop(app):
 
 
 def test_non_pipeline_tasks_leave_no_trail(app):
-    """Tasks outside the stage registry — refreshes, sweeps — record
-    nothing."""
+    """Record nothing for a task outside the stage registry.
+
+    Examples: the refreshes and the sweeps."""
 
     from app.pipeline import pipeline_trails
 
@@ -336,7 +357,7 @@ def test_non_pipeline_tasks_leave_no_trail(app):
 
 
 def test_queue_details_payload_carries_the_trails(app, admin_client):
-    """The 5-second poll's payload gains files, newest first."""
+    """Add files to the payload of the 5-second poll, newest first."""
 
     with app.app_context():
         app.import_queue.enqueue(
@@ -350,9 +371,10 @@ def test_queue_details_payload_carries_the_trails(app, admin_client):
 
 
 def test_trail_entries_carry_their_job_ids(app, admin_client):
-    """Each entry names the rq job that stamped it — the queue page's
-    rows find their file's chips by that id, never by matching the
-    description against a basename."""
+    """Name the rq job that stamped each entry.
+
+    The rows of the queue page find the chips of their file by that id.
+    They never match the description against a basename."""
 
     with app.app_context():
         job = app.import_queue.enqueue(
@@ -368,10 +390,11 @@ def test_trail_entries_carry_their_job_ids(app, admin_client):
 
 
 def test_deferred_retries_list_on_the_queue_page(app, admin_client):
-    """A retry booked for later sits in the ScheduledJobRegistry, not
-    the queue; it lists after the live jobs with no position (it isn't
-    in line yet), carrying when it comes back, so a file waiting on a
-    lock is visible where its amber chip now paints."""
+    """List a deferred retry after the live jobs, with its return time.
+
+    A retry booked for later is in the ScheduledJobRegistry, not in the
+    queue. It has no position, because it is not in line yet. Thus, a
+    file that waits on a lock is visible where its amber chip paints."""
 
     with app.app_context():
         live = app.import_queue.enqueue(
@@ -398,9 +421,11 @@ def test_deferred_retries_list_on_the_queue_page(app, admin_client):
 
 
 def test_queue_details_files_limit_is_adjustable(app, admin_client):
-    """The pipeline page asks the shared poll for more than the queue
-    page's newest 25 via ?files=…; the value is clamped so a
-    hand-typed query can't ask Redis for the moon."""
+    """Clamp the ?files=… value of the shared poll.
+
+    The pipeline page asks the shared poll for more than the newest 25
+    of the queue page through ?files=…. Fitzflix clamps the value. Thus,
+    a hand-typed query cannot ask Redis for too much."""
 
     with app.app_context():
         for index in range(3):
@@ -420,11 +445,12 @@ def test_queue_details_files_limit_is_adjustable(app, admin_client):
 
 
 def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client):
-    """In-flight trails paint on the queue page's job rows (Glenn folded
-    the File Activity page's separate in-flight list into them, Aug
-    2026), so the queue page asks the poll for the full retained set;
-    the File Activity dashboard keeps only its landed cards' chips, and
-    the old dedicated pipeline page is gone."""
+    """Ask the poll for the full retained set from the queue page.
+
+    The in-flight trails paint on the job rows of the queue page. Glenn
+    folded the separate in-flight list of the File Activity page into
+    them in 2026-08. The File Activity dashboard keeps only the chips of
+    its completed cards. The old dedicated pipeline page is gone."""
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
     assert "window.pipelineTrailLimit = 100" in queue_page
@@ -443,11 +469,13 @@ def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client)
 
 
 def test_running_banners_hold_first_run_order(app, admin_client):
-    """The running list sorts by when each FILE first began running,
-    not by the current job's own start — a file whose work hops from
-    the import queue to the file-operation queue (iterated last) keeps
-    its place ahead of a file that started after it (Glenn's original
-    banner-ordering ask)."""
+    """Sort the running list by the time that each FILE first began to run.
+
+    The start of the current job does not set the order. A file can step
+    from the import queue to the file-operation queue. The payload
+    iterates that queue last. That file keeps its place ahead of a file
+    that started after it. This is the original banner-order request
+    by Glenn."""
 
     import time
 
@@ -456,10 +484,10 @@ def test_running_banners_hold_first_run_order(app, admin_client):
     from app.pipeline import FILE_KEY, _digest
 
     with app.app_context():
-        # File A began running at 10:00 and its work has moved on to
-        # the file-operation queue; file B began at 10:05 and is still
-        # localizing on the import queue, which the payload iterates
-        # FIRST
+        # File A began to run at 10:00. Its work has moved on to the
+        # file-operation queue. File B began at 10:05. It is still in
+        # localization on the import queue. The payload iterates that
+        # queue FIRST.
 
         app.redis.hset(
             FILE_KEY.format(digest=_digest("Order A (2020) - [DVD].mkv")),
@@ -485,8 +513,8 @@ def test_running_banners_hold_first_run_order(app, admin_client):
             connection=app.redis,
         )
         job_a.save()
-        # rq 2's StartedJobRegistry.add is NotImplemented (workers add
-        # executions), so seed the raw wip zset: {job_id}:{execution_id}
+        # StartedJobRegistry.add in rq 2 is NotImplemented. Workers add
+        # executions. Thus, seed the raw wip zset: {job_id}:{execution_id}
         app.redis.zadd(
             "rq:wip:fitzflix-file-operation", {"order-a-move:test": time.time() + 600}
         )
@@ -510,12 +538,14 @@ def test_running_banners_hold_first_run_order(app, admin_client):
 
 
 def test_a_cancelled_jobs_stranded_chip_heals_away(app):
-    """A queued job cancelled and deleted outside the pipeline leaves
-    a "queued" stamp nothing will ever advance (the cancelled scaffold
-    re-archives, Aug 2026). Once rq no longer knows the job, the queue
-    page's read prunes the chip — and deletes the trail outright when
-    nothing else remains, instead of showing a phantom job until the
-    TTL runs out."""
+    """Prune the chip of a queued job that rq no longer knows.
+
+    A queued job that is cancelled and deleted outside the pipeline
+    leaves a "queued" stamp. Nothing advances that stamp. Example: the
+    cancelled scaffold re-archives, 2026-08. When rq no longer knows the
+    job, the read of the queue page prunes the chip. When nothing else
+    remains, it deletes the trail. It does not show a phantom job until
+    the TTL runs out."""
 
     from app.pipeline import ACTIVE_KEY, pipeline_trails
 
@@ -534,8 +564,10 @@ def test_a_cancelled_jobs_stranded_chip_heals_away(app):
 
 
 def test_a_cancelled_deferred_retrys_chip_heals_away(app):
-    """The scheduled variant: a deferred retry deleted before it comes
-    back strands a "scheduled" stamp, which heals like a queued one."""
+    """Heal a stranded "scheduled" stamp the same as a queued stamp.
+
+    This is the scheduled variant. A deferred retry that is deleted
+    before it comes back strands a "scheduled" stamp."""
 
     from app.pipeline import pipeline_trails
 
@@ -552,10 +584,11 @@ def test_a_cancelled_deferred_retrys_chip_heals_away(app):
 
 
 def test_healing_keeps_terminal_history(app):
-    """Pruning takes only the waiting chips of vanished jobs: finished
-    chips are history and survive even after rq's own job hash expires,
-    so a cancelled follow-up disappears without erasing the completed
-    stages that share its trail."""
+    """Prune only the waiting chips of the jobs that are gone.
+
+    A finished chip is history. It survives after the job hash of rq
+    expires. Thus, a cancelled follow-up disappears, and the completed
+    stages that share its trail remain."""
 
     from app.pipeline import pipeline_trails, record_job_event
 
@@ -571,8 +604,8 @@ def test_healing_keeps_terminal_history(app):
             args=("/import/Trail Mixed (2025) - [DVD].mkv",),
         )
 
-    # The finished job's hash expiring (result TTL) must not take its
-    # done chip with it — only the cancelled follow-up's chip goes
+    # The hash of the finished job expires (result TTL). That must not
+    # remove its done chip. Only the chip of the cancelled follow-up goes.
 
     finished.delete()
     followup.delete()
@@ -583,8 +616,10 @@ def test_healing_keeps_terminal_history(app):
 
 
 def test_a_live_waiting_chip_never_heals(app):
-    """The guard: a chip whose job rq still holds is real work in line,
-    not an orphan, no matter how long it waits."""
+    """Keep a chip if rq still holds its job.
+
+    That chip is real work in line, not an orphan. The wait time is not
+    important."""
 
     from app.pipeline import pipeline_trails
 
@@ -600,10 +635,10 @@ def test_a_live_waiting_chip_never_heals(app):
 
 
 def test_the_enqueued_time_holds_still_across_queue_hops(app, admin_client):
-    """The Enqueued column anchors to when the FILE first entered the
-    pipeline: each hop to a new queue is a new job with a fresh
-    enqueued_at of its own, which used to make the time jump forward
-    at every stage."""
+    """Anchor the Enqueued column to the time that the FILE first entered the pipeline.
+
+    Each step to a new queue is a new job with its own new enqueued_at.
+    Before, that made the time jump forward at each stage."""
 
     from app.pipeline import FILE_KEY, _digest, record_job_event
 
@@ -620,8 +655,8 @@ def test_the_enqueued_time_holds_still_across_queue_hops(app, admin_client):
         )
         record_job_event(app.redis, localize, "done")
 
-    # Pin the anchor the first enqueue stamped to a known value so the
-    # assertion doesn't race the clock's seconds
+    # Pin the anchor that the first enqueue stamped to a known value.
+    # Then the assertion does not race the seconds of the clock.
 
     key = FILE_KEY.format(digest=_digest(basename))
     app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
@@ -632,9 +667,10 @@ def test_the_enqueued_time_holds_still_across_queue_hops(app, admin_client):
 
 
 def test_a_waiting_stamp_never_moves_a_journeys_anchor(app):
-    """Mid-journey enqueues — the move job booked while localization
-    still runs, a retry after a failure — leave the anchor where the
-    first detection put it."""
+    """Keep the anchor of the first detection through mid-journey enqueues.
+
+    Examples: the move job booked while localization still runs, or a
+    retry after a failure."""
 
     from app.pipeline import FILE_KEY, _digest, record_job_event
 
@@ -663,10 +699,11 @@ def test_a_waiting_stamp_never_moves_a_journeys_anchor(app):
 
 
 def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
-    """A waiting stamp landing on a fully settled trail — a re-import,
-    or a later re-archive of a landed file — is a NEW journey through
-    the pipeline, so its Enqueued time starts over instead of showing
-    the old journey's."""
+    """Start the Enqueued time again when a waiting stamp arrives on a settled trail.
+
+    Examples: a re-import, or a later re-archive of a completed file.
+    That is a NEW journey through the pipeline. Thus, the Enqueued time
+    does not show the old journey."""
 
     from app.pipeline import FILE_KEY, _digest, record_job_event
 
@@ -689,8 +726,10 @@ def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
 
 
 def test_a_mid_flight_rename_carries_the_enqueue_anchor(app):
-    """migrate_trail moves the anchor with the journey, like first_run
-    — a canonicalized title keeps the Enqueued time of its detection."""
+    """Move the anchor with the journey in migrate_trail, the same as first_run.
+
+    A title that becomes canonical keeps the Enqueued time of its
+    detection."""
 
     from app.pipeline import FILE_KEY, _digest, migrate_trail
 

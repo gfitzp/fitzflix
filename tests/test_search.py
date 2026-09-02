@@ -1,6 +1,8 @@
-"""Global search: the /search results tiers (owned, seen-but-unowned, not
-found), the /search.json type-ahead endpoint, and the /search/tmdb lookup
-with in-library annotations.
+"""Test the global search.
+
+The tests cover the /search result tiers (owned, seen but unowned, not
+found), the /search.json type-ahead endpoint, and the /search/tmdb
+lookup with the in-library annotations.
 """
 
 from app import db
@@ -15,7 +17,7 @@ from tests.factories import (
 
 
 def make_person(person_id, name, movies, character="Self"):
-    """A TMDBCredit with a cast row in each of the given movies."""
+    """Make a TMDBCredit with a cast row in each of the given movies."""
 
     person = TMDBCredit(id=person_id, name=name)
     db.session.add(person)
@@ -33,9 +35,11 @@ def make_person(person_id, name, movies, character="Self"):
 
 
 def build_library(app):
-    """A small library: an upgradable movie, a topped-out movie, a reviewed
-    movie with no files (which the library search must omit), and a TV
-    series with one episode."""
+    """Make a small library.
+
+    The library has an upgradable movie, a topped-out movie, a reviewed
+    movie with no files, and a TV series with 1 episode. The library
+    search must omit the reviewed movie with no files."""
 
     dvd_movie = make_movie(
         "Jaws", 1975, tmdb_overview="A giant shark terrorizes a beach town."
@@ -75,17 +79,17 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
         dvd_movie, remux_movie, seen_movie, series = build_library(app)
         dvd_id, remux_id = dvd_movie.id, remux_movie.id
 
-    # The quality tier moved into the poster popover (Aug 2026): the
-    # tile keeps the actions, the film's card answers the shopping
-    # question — amber for an upgrade candidate, green for topped-out
+    # The quality tier moved into the poster popover (2026-08). The
+    # tile keeps the actions. The card of the film answers the shopping
+    # question. Amber is an upgrade candidate. Green is topped-out
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert "Jaws (1975)" in page
     assert 'text-bg-warning">DVD' not in page
     assert f'data-state-movie="{dvd_id}"' in page
 
-    # The synopsis lives in the poster popover now (#45d); the tile
-    # is armed with data-card-url
+    # The synopsis is now in the poster popover (#45d). The tile has
+    # a data-card-url
 
     assert "A giant shark terrorizes a beach town." not in page
     assert "data-card-url" in page
@@ -97,8 +101,10 @@ def test_search_tiers_owned_upgradable_and_topped_out(app, admin_client):
 
 
 def test_search_omits_reviewed_movies_without_files(app, admin_client):
-    """A review-only record (a logged unowned film) stays out of the
-    library search — it belongs to the TMDB search instead."""
+    """Test that the library search omits the review-only records.
+
+    A review-only record is a logged unowned film. It belongs to the
+    TMDB search instead."""
 
     with app.app_context():
         build_library(app)
@@ -109,10 +115,13 @@ def test_search_omits_reviewed_movies_without_files(app, admin_client):
 
 
 def test_search_badges_recommended_owned_films(app, admin_client):
-    """An owned film the nightly recompute ranked in the stored
-    recommendations badges "Might interest you" on the library search —
-    the rail and the search pages agree on what's recommended. Unranked
-    films and films logged since the run don't badge."""
+    """Test that the library search shows a badge on the recommended owned films.
+
+    The nightly recompute ranks an owned film in the stored
+    recommendations. Then the library search shows "Might interest you"
+    on it. The rail and the search pages agree on the recommended films.
+    An unranked film gets no badge. A film logged after the run gets no
+    badge."""
 
     import json
 
@@ -154,8 +163,8 @@ def test_search_badges_recommended_owned_films(app, admin_client):
         ),
     )
 
-    # The badge rides the recommended film's anchor as a card label
-    # (Aug 2026) — exactly one film carries it, and it's Jaws
+    # The badge goes with the anchor of the recommended film as a card
+    # label (2026-08). Exactly 1 film has it, and that film is Jaws
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert page.count("Might interest you") == 1
@@ -166,11 +175,13 @@ def test_search_badges_recommended_owned_films(app, admin_client):
 
 
 def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
-    """The funnel on the library search since the Aug 2026 revision:
-    watchlist and verdicts answer through the tile widgets (hydrated
-    client-side, so no badges in the HTML), and might-interest rides
-    the card label — never for a seen film, even one still in the
-    stored recommendations."""
+    """Test the funnel badges on the library search.
+
+    After the revision of 2026-08, the watchlist and the verdicts answer
+    through the tile widgets. The client hydrates them. Thus, the HTML
+    has no badges. The might-interest badge goes with the card label. A
+    seen film never gets it, even if the film is still in the stored
+    recommendations."""
 
     import json
 
@@ -217,14 +228,17 @@ def test_search_funnel_badges_coexist_and_exclude(app, admin_client):
     assert "Seen &mdash; rated" not in page
     assert page.count("Might interest you") == 1
     assert page.index("Might interest you") < page.index("Funnel Seen Rewatch (1991)")
-    # Both tiles are wired for state hydration instead
+    # Both tiles are wired for the state hydration instead
     assert page.count("data-state-movie=") == 2
 
 
 def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
-    """The funnel on TMDB results: a seen film badges Seen and never
-    might-interest (even review-only records, whose watch already feeds
-    the profile); a watchlisted unowned record badges the watchlist."""
+    """Test the funnel badges on the TMDB results.
+
+    A seen film shows the Seen badge and never the might-interest badge.
+    This includes a review-only record, because its watch already feeds
+    the profile. An unowned record on the watchlist shows the watchlist
+    badge."""
 
     import json
 
@@ -251,8 +265,8 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
         user_id = admin.id
         owned_seen_id = owned_seen.id
 
-    # The seen film sits in the stored recommendations, proving the
-    # suppression is the diary, not absence from the set
+    # The seen film is in the stored recommendations. This proves that
+    # the diary hides the badge, not the absence from the set
 
     app.redis.set(
         RECS_KEY.format(user_id=user_id),
@@ -296,16 +310,18 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
     assert page.count('text-bg-info me-1">Seen') == 1
-    # Every movie row keeps the badge in the DOM for the live toggle
-    # (#183) — only the watchlisted row's is visible (no d-none)
+    # Each movie row keeps the badge in the DOM for the live toggle
+    # (#183). Only the badge of the watchlist row is visible (no d-none)
     assert page.count('me-1" data-watchlist-badge') == 1
     assert page.count('me-1 d-none" data-watchlist-badge') == 1
     assert page.index("Funnel Wanted (1978)") < page.index('me-1" data-watchlist-badge')
 
 
 def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
-    """An owned TMDB match that sits in the stored recommendations
-    carries the might-interest badge next to its library badge."""
+    """Test that the TMDB search shows a badge on the recommended owned films.
+
+    An owned TMDB match in the stored recommendations has the
+    might-interest badge next to its library badge."""
 
     import json
 
@@ -375,22 +391,25 @@ def test_search_finds_tv_series(app, admin_client):
 
 
 def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
-    """Each season badge shows the worst quality among that season's best
-    episode copies: a single Unknown episode drags its season to Unknown
-    even when another episode is Bluray, while an outranked DVD copy of an
-    episode that also has a Bluray copy doesn't count at all."""
+    """Test that each season badge shows the worst rank-1 quality.
+
+    The badge shows the worst quality among the best copies of the
+    episodes in that season. One Unknown episode pulls its season to
+    Unknown, even if a different episode is Bluray. An episode can have
+    a DVD copy and a Bluray copy. Then the DVD copy is outranked, and
+    it does not count."""
 
     with app.app_context():
         series = make_tv_series("Mixed Bag (2020)")
 
-        # Season 1: two episodes, one Unknown and one Bluray — the season
-        # is only as good as its weakest episode
+        # Season 1 has 2 episodes, 1 Unknown and 1 Bluray. The season is
+        # only as good as its weakest episode
 
         make_tv_file(series, 1, 1, "Unknown")
         make_tv_file(series, 1, 2, "Bluray-1080p")
 
-        # Season 2: one episode with two copies; the DVD copy is outranked
-        # by the Bluray copy, so it doesn't drag the season down
+        # Season 2 has 1 episode with 2 copies. The Bluray copy outranks
+        # the DVD copy. Thus, the DVD copy does not pull the season down
 
         make_tv_file(series, 2, 1, "DVD")
         make_tv_file(series, 2, 1, "Bluray-1080p")
@@ -402,9 +421,11 @@ def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
 
 
 def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
-    """Seasons whose worst copy came from physical media (DVD, SD/720p
-    Blu-ray) show green: they're often the only release that will ever
-    exist. Non-physical qualities below the threshold stay amber."""
+    """Test that the physical-media seasons are not upgrade candidates.
+
+    A season whose worst copy came from physical media (DVD, SD/720p
+    Blu-ray) shows green. That copy is frequently the only release that
+    will exist. A non-physical quality below the bar stays amber."""
 
     with app.app_context():
         series = make_tv_series("Disc Only (1995)")
@@ -462,21 +483,23 @@ def test_search_json_type_ahead(app, admin_client):
     assert data["results"][0]["detail"] == "1 season, worst SDTV"
     assert data["results"][0]["url"].startswith("/tv/")
 
-    # Single characters don't trigger suggestions
+    # A single character does not start the suggestions
 
     assert admin_client.get("/search.json?q=j").get_json() == {"results": []}
 
 
 def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch):
-    """TMDB results the library already has link to their pages; the rest
-    are explicitly marked not in the library."""
+    """Test that the TMDB search marks the library membership.
+
+    A TMDB result that the library has links to its page. The page
+    explicitly marks the other results as not in the library."""
 
     with app.app_context():
         owned = make_movie("Jaws", 1975, tmdb_id=578)
         make_movie_file(owned, "DVD")
 
-        # A review-only record: the film was logged but no file exists,
-        # so it must not badge as in-library
+        # A review-only record. The user logged the film, but no file
+        # exists. Thus, the page must not show the in-library badge
 
         make_movie("Jaws 2", 1978, tmdb_id=579)
         db.session.commit()
@@ -523,19 +546,19 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
     assert f"/movie/{owned_id}" in page
     assert "Jaws 2 (1978)" in page
 
-    # Only the match with a local file carries the Fitzflix badge — the
-    # review-only Jaws 2 record doesn't count as in-library, and its row
-    # still leads to the log page (which redirects to its movie page).
-    # The badge wears the shopping colors here too (#191): Jaws' DVD
-    # copy sits below the threshold, so amber
+    # Only the match with a local file has the Fitzflix badge. The
+    # review-only Jaws 2 record does not count as in-library. Its row
+    # still leads to the log page. The log page redirects to its movie
+    # page. The badge shows the shopping colors here too (#191). The
+    # DVD copy of Jaws is below the bar. Thus, the badge is amber
 
     assert page.count('title="In your Fitzflix library &mdash;') == 1
     assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
     assert "Not in library" not in page
     assert "/review/tmdb/579" in page
 
-    # Rows render like the local search: a poster thumbnail, and the
-    # whole unowned row links to the log page
+    # The rows render like the local search. Each row has a poster
+    # thumbnail. The complete unowned row links to the log page
 
     assert "/w185/jaws2.jpg" in page
     assert "/review/tmdb/579" in page
@@ -544,11 +567,13 @@ def test_search_tmdb_annotates_library_membership(app, admin_client, monkeypatch
 def test_search_tmdb_library_badges_wear_shopping_colors(
     app, admin_client, monkeypatch
 ):
-    """Every In-library badge on the TMDB results page is colored, the
-    way the movie page's and the popover's are (#191) — never the
-    colorless badge it used to render. Films take the shopping list's
-    answer; series take their seasons', where a physical-media copy is
-    already as good as it will ever get.
+    """Test that the library badges on the TMDB results show the shopping colors.
+
+    Each In-library badge on the TMDB results page has a color, as on
+    the movie page and in the popover (#191). The page never shows the
+    colorless badge that it showed before. A film takes the answer of
+    the shopping list. A series takes the answer of its seasons. There,
+    a physical-media copy is already as good as it will get.
     """
 
     with app.app_context():
@@ -595,17 +620,17 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
 
     page = admin_client.get("/search/tmdb?q=show").get_data(as_text=True)
 
-    # Four owned matches, four colored badges — two amber, two green,
-    # and nothing wearing the old neutral badge
+    # There are 4 owned matches and 4 colored badges. 2 are amber, and
+    # 2 are green. No badge shows the old neutral color
 
     assert page.count('title="In your Fitzflix library &mdash;') == 4
     assert page.count("text-bg-warning align-middle") == 2
     assert page.count("text-bg-success align-middle") == 2
     assert 'title="In your Fitzflix library"' not in page
 
-    # Each badge sits with its own row: the sub-threshold film and the
-    # WEBDL series are worth upgrading, the 2160p film and the
-    # DVD-only season are as settled as they get
+    # Each badge is in its own row. The film below the bar and the
+    # WEBDL series are upgrade candidates. The 2160p film and the
+    # DVD-only season are final
 
     for title, expected in (
         ("Lagging Film", "warning"),
@@ -618,9 +643,12 @@ def test_search_tmdb_library_badges_wear_shopping_colors(
 
 
 def test_results_pages_carry_prefilled_search_boxes(app, admin_client):
-    """The library results page re-offers the search box pre-filled, so
-    a fruitless query can be reworked in place; the TMDB page carries no
-    box of its own (#188) — a new search starts from the navbar."""
+    """Test that the results pages have prefilled search boxes.
+
+    The library results page shows the search box again, prefilled.
+    Thus, the user can change a query with no results in place. The
+    TMDB page has no box of its own (#188). A new search starts from
+    the navbar."""
 
     page = admin_client.get("/search?q=jaws").get_data(as_text=True)
     assert 'value="jaws"' in page
@@ -636,10 +664,11 @@ def test_search_tmdb_without_api_key_explains(app, admin_client):
 
 
 def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
-    """A movie removed from the shopping list is final: its card's
-    In-library badge (which wears the shopping answer since Aug 2026)
-    goes green even when the best copy is below the quality
-    threshold."""
+    """Test that an excluded movie shows as final, not as an upgrade candidate.
+
+    A movie removed from the shopping list is final. The In-library
+    badge on its card shows the shopping answer from 2026-08. The badge
+    is green even if the best copy is below the quality bar."""
 
     with app.app_context():
         movie = make_movie("Skip It", 2000, shopping_list_exclude=True)
@@ -655,9 +684,12 @@ def test_excluded_movie_shows_as_final_not_upgrade_candidate(app, admin_client):
 
 
 def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
-    """For TV files the edition field just holds the optional episode title,
-    so a titled copy and an untitled copy of the same episode compete in one
-    ranking group — the outranked copy can't drag the season down."""
+    """Test that the episode title in the edition field does not split the TV ranking.
+
+    For a TV file, the edition field only holds the optional episode
+    title. Thus, a titled copy and an untitled copy of the same episode
+    compete in one ranking group. The outranked copy cannot pull the
+    season down."""
 
     with app.app_context():
         series = make_tv_series("Titled Episodes (2020)")
@@ -682,9 +714,9 @@ def test_search_finds_people(app, admin_client):
     assert "Prolific Player" in page
     assert "2 titles" in page
     assert "credit=901" in page
-    # Uncredited-only people never surface, matching the People page
+    # A person with only uncredited roles never shows, as on the People page
     assert "Prolific Extra" not in page
-    # The widening link to the People page carries the query
+    # The widening link to the People page includes the query
     assert "/people?q=prolific" in page
 
 
@@ -703,10 +735,13 @@ def test_search_json_includes_people(app, admin_client):
 
 
 def test_exact_title_match_outranks_substring_matches(app, admin_client):
-    """Match quality beats the alphabet: searching "Up" surfaces the
-    film NAMED Up first, then the "Up…" prefix, then mere substring
-    matches — so the result cap can no longer bury an exact title
-    behind alphabetically-earlier films that just contain it."""
+    """Test that an exact title match outranks the substring matches.
+
+    The match quality beats the alphabet. A search for "Up" shows the
+    film NAMED Up first, then the "Up…" prefix matches, then the
+    substring matches. Thus, the result cap can no longer hide an exact
+    title behind films that come earlier in the alphabet and only
+    contain the word."""
 
     with app.app_context():
         for title, year in [
@@ -729,11 +764,14 @@ def test_exact_title_match_outranks_substring_matches(app, admin_client):
 
 
 def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
-    """Each TMDB movie result row carries a live star ladder like the
-    history rows: a record's ladder posts to its movie route and
-    hydrates by movie id, a bare result's posts to the log route and
-    hydrates by tmdb id — riding the shared source's tmdb lane; a
-    result with no release year can't be logged, so no ladder."""
+    """Test that the TMDB result rows have the star ladder.
+
+    Each TMDB movie result row has a live star ladder, like the history
+    rows. The ladder of a record posts to its movie route and hydrates
+    by movie id. The ladder of a bare result posts to the log route and
+    hydrates by tmdb id. It uses the tmdb lane of the shared source. A
+    result with no release year cannot be logged. Thus, it has no
+    ladder."""
 
     with app.app_context():
         recorded = make_movie("Ladder Recorded", 1975, tmdb_id=871)
@@ -777,18 +815,21 @@ def test_search_tmdb_rows_carry_the_star_ladder(app, admin_client, monkeypatch):
     assert 'action="/review/tmdb/872"' in page
     assert 'data-state-tmdb="873"' not in page
 
-    # Two ladders (the dateless result gets none): five stars and the
-    # tile-standard ✕ each — the ✕ shares the star-btn base class
+    # There are 2 ladders. The dateless result gets none. Each ladder
+    # has 5 stars and the tile-standard ✕. The ✕ shares the star-btn
+    # base class
 
     assert page.count('class="star-btn') == 12
     assert page.count("star-btn x-btn") == 2
 
 
 def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
-    """The results' watchlist toggle (#183): every loggable movie row
-    carries the two-face data-card-watchlist form — a record's aimed at
-    its movie route, a record-less row's at the log route whose add
-    creates the record — and the card-header posts get JSON back."""
+    """Test the watchlist toggle on the TMDB results (#183).
+
+    Each loggable movie row has the two-face data-card-watchlist form.
+    The form of a record posts to its movie route. The form of a row
+    without a record posts to the log route. An add on the log route
+    creates the record. The card-header posts get JSON back."""
 
     import re
 
@@ -853,9 +894,10 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
 
     page = admin_client.get("/search/tmdb?q=toggle").get_data(as_text=True)
 
-    # The record's form posts to its movie route wearing the Remove
-    # face; the record-less row's posts to the log route, Add-first; a
-    # dateless result can't be logged, so it gets no toggle at all
+    # The form of the record posts to its movie route and shows the
+    # Remove face. The form of the row without a record posts to the
+    # log route and shows Add first. A dateless result cannot be logged.
+    # Thus, it gets no toggle
 
     blocks = re.findall(
         r'<form action="([^"]*)"[^>]*data-card-watchlist>(?:(?!</form>).)*</form>',
@@ -878,8 +920,8 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
         r'name="add_watchlist_submit"[^>]*class="([^"]*)"', forms[1]
     ).group(1)
 
-    # A card-header add on the record-less row creates the record and
-    # answers JSON, exactly like a poster tile's toggle
+    # A card-header add on the row without a record creates the record
+    # and answers JSON, exactly like the toggle of a poster tile
 
     token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
     response = admin_client.post(
@@ -897,9 +939,9 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
             is not None
         )
 
-    # The follow-up remove still posts to the log route (the form
-    # doesn't know a record appeared) — it 307-forwards to the movie
-    # route, which answers the same JSON grammar
+    # The next remove still posts to the log route. The form does not
+    # know that a record appeared. The log route forwards with a 307 to
+    # the movie route. The movie route answers the same JSON grammar
 
     response = admin_client.post(
         "/review/tmdb/742",
@@ -923,8 +965,10 @@ def test_search_tmdb_watchlist_toggle(app, admin_client, monkeypatch):
 
 
 def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
-    """#215: scope=movies (the History page's Log a film hand-off)
-    never queries or renders TV results — the diary only logs movies."""
+    """Test that scope=movies skips the TV search (#215).
+
+    The Log a film hand-off of the History page uses scope=movies. It
+    never queries or renders TV results. The diary only logs movies."""
 
     import app.main.search as search
 
@@ -980,16 +1024,19 @@ def test_search_tmdb_movies_scope_skips_tv(app, admin_client, monkeypatch):
 
 
 def test_search_year_modifier_filters_results(app, admin_client):
-    """A y:NNNN token (#185) restricts results to that year — matching
-    either the library identity year or TMDB's release year — y:A-B
-    spans a range, and a modifier-only query browses the whole year."""
+    """Test that the year modifier filters the results.
+
+    A y:NNNN token (#185) limits the results to that year. It matches
+    the library identity year or the TMDB release year. A y:A-B token
+    covers a range. A query with only the modifier browses the complete
+    year."""
 
     from datetime import datetime
 
     with app.app_context():
         build_library(app)  # Jaws 1975 (DVD), Jurassic Park 1993, Jeopardy TV
 
-        # A film whose TMDB year differs from its identity year by one
+        # A film whose TMDB year differs from its identity year by 1
         offset = make_movie(
             "Jawbreaker",
             1998,
@@ -1016,22 +1063,23 @@ def test_search_year_modifier_filters_results(app, admin_client):
     assert "Jurassic Park" in page
     assert "Jaws (1975)" not in page
 
-    # Either year a film answers to satisfies the filter
+    # Each of the 2 years of a film satisfies the filter
     for year in ("1998", "1999"):
         page = admin_client.get(
             "/search", query_string={"q": f"jawbreaker y:{year}"}
         ).get_data(as_text=True)
         assert "Jawbreaker" in page, year
 
-    # TV filters on the first-air year; series without one drop out
+    # TV filters on the first-air year. A series without one drops out
     page = admin_client.get("/search", query_string={"q": "j y:1984"}).get_data(
         as_text=True
     )
     assert "Jazz Age Stories" in page
     assert "Jeopardy (1984)" not in page  # the SERIES record has no air date
 
-    # A modifier-only query browses the year — and people results stay
-    # text-driven, so the People section never renders for one
+    # A query with only the modifier browses the year. The people
+    # results stay text-driven. Thus, the People section never renders
+    # for such a query
     page = admin_client.get("/search", query_string={"q": "y:1975"}).get_data(
         as_text=True
     )
@@ -1039,7 +1087,7 @@ def test_search_year_modifier_filters_results(app, admin_client):
     assert "Jurassic Park" not in page
     assert "<h4>People</h4>" not in page
 
-    # A malformed modifier searches literally instead of guessing
+    # The search reads a malformed modifier as literal text. It does not guess
     page = admin_client.get("/search", query_string={"q": "jaws y:75"}).get_data(
         as_text=True
     )
@@ -1057,9 +1105,12 @@ def test_search_json_honors_year_modifier(app, admin_client):
 
 
 def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
-    """A single-year modifier rides TMDB's own year parameter and the
-    query text drops the token; ranges post-filter by release date; a
-    modifier with no title text explains itself instead of searching."""
+    """Test the year modifier on the TMDB search.
+
+    A single-year modifier goes with the year parameter of TMDB, and
+    the query text drops the token. A range filters the results by
+    release date after the search. A modifier with no title text shows
+    an explanation and does not search."""
 
     import app.main.search as search
 
@@ -1096,9 +1147,9 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
     assert captured["movie"]["primary_release_year"] == 1975
     assert captured["tv"]["first_air_date_year"] == 1975
     assert "Jaws" in page
-    assert "Jaws 2" not in page  # the 1978 sequel post-filters out
+    assert "Jaws 2" not in page  # the post-filter removes the 1978 sequel
 
-    # A range can't ride the API parameter; the post-filter carries it
+    # A range cannot go with the API parameter. The post-filter applies it
     captured.clear()
     page = admin_client.get(
         "/search/tmdb", query_string={"q": "jaws y:1975-1979"}
@@ -1106,7 +1157,7 @@ def test_search_tmdb_year_modifier(app, admin_client, monkeypatch):
     assert "primary_release_year" not in captured["movie"]
     assert "Jaws" in page and "Jaws 2" in page
 
-    # Year alone can't browse TMDB the way it browses the library
+    # A year alone cannot browse TMDB as it browses the library
     captured.clear()
     page = admin_client.get("/search/tmdb", query_string={"q": "y:1975"}).get_data(
         as_text=True

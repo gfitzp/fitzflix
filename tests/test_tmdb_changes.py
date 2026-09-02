@@ -1,6 +1,8 @@
-"""The TMDB change-driven refresh sweep: change-feed enumeration,
-library intersection, the ended/canceled TV filter, and the
-watermark's advance/hold semantics."""
+"""Test the TMDB change-driven refresh sweep.
+
+These tests cover the change-feed enumeration, the library
+intersection, the ended/canceled TV filter, and the advance/hold
+semantics of the watermark."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -20,9 +22,11 @@ def changes_page(ids, total_pages=1):
 
 
 def sweep_with_feeds(app, monkeypatch, movie_pages=None, tv_pages=None):
-    """Run the sweep against canned change feeds; page lists are per
-    media type and served identically for every day slice (the id sets
-    dedup). Returns (result, requests seen)."""
+    """Run the sweep against canned change feeds.
+
+    The page lists are per media type. The fake serves the same pages
+    for every day slice. The id sets remove the duplicates. Return
+    (result, requests seen)."""
 
     import app.tmdb_changes as tc
 
@@ -53,8 +57,8 @@ def test_only_changed_unignored_movies_are_queued(app, monkeypatch):
         db.session.commit()
         jaws_id = jaws.id
 
-    # The changed feed spans two pages; the ignored movie's id and an
-    # id outside the library both appear and must queue nothing
+    # The changed feed spans 2 pages. The id of the ignored movie and an
+    # id outside the library both appear. They must queue nothing.
 
     queued, seen = sweep_with_feeds(
         app, monkeypatch, movie_pages=[[578, 999999], [111]]
@@ -70,10 +74,12 @@ def test_only_changed_unignored_movies_are_queued(app, monkeypatch):
 
 
 def test_tv_takes_only_what_the_in_production_sweep_leaves(app, monkeypatch):
-    """The 3:45 sweep already re-fetches everything except ended and
-    canceled series; this sweep must cover exactly the complement, so a
-    changed id queues only when the series is ended/canceled and not
-    ignored."""
+    """Test that the TV sweep covers only what the 3:45 sweep leaves.
+
+    The 3:45 sweep already fetches all series again, except the ended
+    and canceled series. This sweep must cover exactly the complement.
+    Thus, a changed id queues only when the series is ended or canceled
+    and not ignored."""
 
     from app import db
 
@@ -99,9 +105,11 @@ def test_tv_takes_only_what_the_in_production_sweep_leaves(app, monkeypatch):
 
 
 def test_window_is_day_sliced_and_clamped_to_the_lookback(app, monkeypatch):
-    """A watermark beyond TMDB's 14-day change history clamps to the
-    cap (older edits are unknowable), and the window is enumerated in
-    one-day slices so no slice can approach the 500-page ceiling."""
+    """Test that the sweep slices the window by day and clamps the lookback.
+
+    A watermark older than the 14-day change history of TMDB clamps to
+    the cap. Older edits are unknowable. The sweep enumerates the window
+    in 1-day slices. Thus, no slice can approach the 500-page limit."""
 
     import app.tmdb_changes as tc
 
@@ -122,9 +130,11 @@ def test_window_is_day_sliced_and_clamped_to_the_lookback(app, monkeypatch):
 
 
 def test_failed_enumeration_keeps_the_watermark(app, monkeypatch):
-    """A cut-short read must not advance the watermark: the next sweep
-    re-covers the window, and a doubly-refreshed title is harmless
-    where a silently missed edit is not."""
+    """Test that a failed enumeration keeps the watermark.
+
+    A cut-short read must not advance the watermark. The next sweep
+    covers the window again. A title that is refreshed 2 times is
+    harmless. A missed edit is not."""
 
     import app.tmdb_changes as tc
 
@@ -150,8 +160,11 @@ def test_sweep_without_an_api_key_is_a_noop(app):
 
 
 def test_cron_table_sweeps_tmdb_changes_nightly(app):
-    """The sweep sits in the nightly TMDB-heavy window, adjacent to the
-    in-production TV refresh whose coverage it excludes."""
+    """Test that the cron table sweeps the TMDB changes nightly.
+
+    The sweep is in the nightly TMDB-heavy window, next to the
+    in-production TV refresh. The sweep excludes the coverage of that
+    refresh."""
 
     from app import cron_table
 

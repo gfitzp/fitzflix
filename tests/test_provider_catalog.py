@@ -1,6 +1,8 @@
-"""Provider-catalog discovery (#250): the page-capped enumeration and
-ever-seen diff, per-title streaming verification, profile scoring, and
-bounded record creation."""
+"""Test the provider-catalog discovery (#250).
+
+The tests cover the page-capped enumeration, the ever-seen diff, the
+per-title streaming verification, the profile scoring, and the bounded
+record creation."""
 
 from tests.factories import make_movie
 from tests.test_leaving_criterion import (
@@ -24,9 +26,11 @@ def catalog_page(ids, total_pages):
 
 
 def scorer_that_likes_westerns(monkeypatch):
-    """Patch the scoring pair so a Western payload estimates five
-    stars and anything else two — the bar logic under test, without
-    the engine's real curve."""
+    """Patch the scoring pair for the tests.
+
+    A Western payload estimates 5 stars. Each different payload
+    estimates 2 stars. Thus, the test covers the bar logic without the
+    real curve of the engine."""
 
     import app.provider_catalog as pc
 
@@ -52,8 +56,9 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
     user_id = subscribe_criterion(app)
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
 
-    # A rental storefront on the subscription list (it lights the rent
-    # badges) must never be enumerated — flat-rate services only
+    # A rental storefront is on the subscription list because it lights
+    # the rent badges. Fitzflix must never enumerate it. It enumerates
+    # flat-rate services only
 
     with app.app_context():
         db.session.add(
@@ -75,8 +80,8 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
     monkeypatch.setattr(pc, "tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(pc, "_process_pending", lambda subscribed: 0)
 
-    # First run plants the ever-seen set without queueing anything —
-    # what was already in the catalog isn't a discovery
+    # The first run plants the ever-seen set. It queues nothing. A film
+    # that was already in the catalog is not a discovery
 
     assert pc.refresh_provider_catalogs() is True
     assert providers_queried == {"258"}
@@ -84,15 +89,16 @@ def test_enumeration_plants_then_queues_only_new(app, monkeypatch):
     assert {int(x) for x in app.redis.smembers(seen_key)} == {101, 102, 103}
     assert app.redis.scard(pc.PENDING_KEY) == 0
 
-    # A later run queues only the id never seen before, and the
-    # ever-seen set keeps growing
+    # A later run queues only the id that Fitzflix has not seen before.
+    # The ever-seen set continues to grow
 
     pages[1] = [103, 104]
     pc.refresh_provider_catalogs()
     assert {int(x) for x in app.redis.smembers(pc.PENDING_KEY)} == {104}
     assert {int(x) for x in app.redis.smembers(seen_key)} == {101, 102, 103, 104}
 
-    # A film leaving the popularity window and returning can't re-queue
+    # A film that leaves the popularity window and returns cannot queue
+    # again
 
     pages[1] = [103]
     pc.refresh_provider_catalogs()
@@ -118,9 +124,10 @@ def test_processing_verifies_scores_and_creates(app, monkeypatch):
     }
     monkeypatch.setattr(pc, "enriched_movie", lambda tmdb_id: payloads.get(tmdb_id))
 
-    # 201 streams on the subscribed service; 202 does too but scores
-    # low; 203 is rent-only (discover cross-contamination — dropped by
-    # the per-title verification); 204 already has a record
+    # Film 201 streams on the subscribed service. Film 202 streams too,
+    # but it scores low. Film 203 is rent-only. That is discover
+    # cross-contamination. The per-title verification drops it. Film 204
+    # already has a record
 
     plant_availability(
         app,
@@ -163,8 +170,8 @@ def test_processing_verifies_scores_and_creates(app, monkeypatch):
         assert Movie.query.filter_by(tmdb_id=202).first() is None
         assert Movie.query.filter_by(tmdb_id=203).first() is None
 
-    # One standard TMDB refresh enqueued for the created record; the
-    # batch is consumed — rejects are dropped for good
+    # Fitzflix enqueues 1 standard TMDB refresh for the created record.
+    # It consumes the batch. It drops the rejects permanently
 
     assert len(refreshes) == 1
     assert refreshes[0][0][0] == "app.videos.refresh_tmdb_info"
@@ -201,8 +208,8 @@ def test_creation_cap_pushes_verified_films_back(app, monkeypatch):
         monkeypatch.setattr(app, "maintenance_queue", FakeQueue())
         created = pc._process_pending({258})
 
-    # One record made the cap; the other verified film waits in the
-    # pending queue for the next run instead of being dropped
+    # One record made the cap. The second verified film waits in the
+    # pending queue for the next run. Fitzflix does not drop it
 
     assert created == 1
     assert app.redis.scard(pc.PENDING_KEY) == 1

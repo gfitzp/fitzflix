@@ -1,10 +1,10 @@
-"""Detaching a record from TMDB (#207).
+"""Test how Fitzflix detaches a record from TMDB (#207).
 
-A NULL tmdb_id means "not matched yet" and every refresh path answers it
-with a title search; tmdb_ignored means "TMDB has nothing to match" and
-every refresh path has to leave the record alone. These tests pin both
-halves: the clear methods empty the record, and the refresh pair, the
-nightly sweep and the bulk refresh all decline it afterwards.
+A NULL tmdb_id means "not matched yet". Each refresh path answers it
+with a title search. tmdb_ignored means "TMDB has nothing to match".
+Each refresh path must leave that record alone. These tests pin both
+halves. The clear methods empty the record. Afterwards, the refresh
+pair, the nightly sweep, and the bulk refresh all decline the record.
 """
 
 import re
@@ -32,7 +32,7 @@ def csrf_token_from(page_html):
 
 
 def enriched_movie():
-    """A film carrying the full spread of TMDB enrichment."""
+    """Return a film with the full set of TMDB enrichment."""
 
     movie = make_movie(
         "Pompeii The Last Day",
@@ -68,7 +68,7 @@ def enriched_movie():
 
 
 def enriched_series():
-    """A series carrying TMDB enrichment, cast and stored episodes."""
+    """Return a series with TMDB enrichment, cast, and stored episodes."""
 
     series = make_tv_series(
         "Rifftrax",
@@ -114,7 +114,7 @@ def test_movie_clear_empties_every_tmdb_field_and_association(app):
         assert MovieCast.query.filter_by(movie_id=movie_id).count() == 0
         assert MovieCrew.query.filter_by(movie_id=movie_id).count() == 0
 
-        # The film's own library identity is not TMDB's to take away
+        # TMDB cannot take away the library identity of the film
 
         assert stored.title == "Pompeii The Last Day"
         assert stored.year == 2003
@@ -169,8 +169,9 @@ def test_refresh_declines_an_ignored_series(app):
 
 
 def test_apply_discards_a_payload_for_a_record_ignored_since_the_fetch(app):
-    """A refresh already in flight when the user detaches the record must
-    not write the payload it fetched."""
+    """Discard the payload of a refresh that was in flight during the detach.
+
+    The refresh must not write the payload that it fetched."""
 
     import json
     import zlib
@@ -209,8 +210,8 @@ def test_nightly_sweep_skips_ignored_series(app):
     with app.app_context():
         make_tv_series("Star Trek", tmdb_id=253, tmdb_in_production=True)
 
-        # An ignored series that still somehow carries an id is excluded
-        # on the flag alone, not just on the NULL
+        # The sweep excludes an ignored series that still has an id. It
+        # uses the flag alone, not only the NULL
 
         make_tv_series(
             "Private Snafu", tmdb_id=999999, tmdb_in_production=True, tmdb_ignored=True
@@ -249,8 +250,10 @@ def test_bulk_refresh_leaves_ignored_records_alone(app, admin_client):
 
 
 def test_blank_lookup_on_a_matched_series_is_refused(app, admin_client):
-    """The #207 report: clearing the id field ran a title search and
-    re-pointed the series at whatever came back first."""
+    """Refuse a blank lookup on a matched series.
+
+    This is the #207 report. A cleared id field ran a title search. It
+    pointed the series at the first result."""
 
     with app.app_context():
         series = make_tv_series("Rifftrax", tmdb_id=110230)
@@ -328,9 +331,12 @@ def test_entering_an_id_by_hand_reattaches_an_ignored_series(app, admin_client):
 
 
 def test_tv_clear_invalidates_the_people_ranking(app):
-    """Detaching a series deletes its TVCast/TVCrew rows, and the /people
-    rankings aggregate TV credits too — so the cached rankings have to go
-    the way the movie clear already sends them."""
+    """Invalidate the /people ranking when a series is detached.
+
+    The detach deletes the TVCast and TVCrew rows of the series. The
+    /people rankings aggregate the TV credits too. Thus, the cached
+    rankings must go. The movie clear already deletes them the same
+    way."""
 
     from app.models import PEOPLE_RANKING_KEY
 
@@ -347,10 +353,12 @@ def test_tv_clear_invalidates_the_people_ranking(app):
 
 
 def test_blank_lookup_on_a_detached_series_stays_detached(app, admin_client):
-    """A detached record has tmdb_id NULL, so the matched-record guard
-    alone let a blank refresh clear tmdb_ignored and run the very title
-    search detaching was meant to prevent. The flag only clears for an
-    id entered by hand."""
+    """Keep a detached series detached after a blank lookup.
+
+    A detached record has a NULL tmdb_id. Thus, the matched-record guard
+    alone let a blank refresh clear tmdb_ignored. Then it ran the title
+    search that the detach was meant to prevent. Only an id entered by
+    hand clears the flag."""
 
     with app.app_context():
         series = make_tv_series("Home Movies Reel", tmdb_ignored=True)
@@ -376,7 +384,7 @@ def test_blank_lookup_on_a_detached_series_stays_detached(app, admin_client):
 
 
 def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
-    """The movie route's copy of the same guard."""
+    """Test the copy of the same guard in the movie route."""
 
     with app.app_context():
         movie = make_movie("Family Reunion Tape", 1994, tmdb_ignored=True)
@@ -403,9 +411,11 @@ def test_blank_lookup_on_a_detached_movie_stays_detached(app, admin_client):
 
 
 def test_movie_data_section_is_admin_only(app, admin_client, user_client):
-    """The Movie Data forms are admin tools (#186 follow-up): the section
-    doesn't render for regular users, and hand-crafted posts bounce
-    server-side without touching the record."""
+    """Show the Movie Data section to admins only (#186 follow-up).
+
+    The Movie Data forms are admin tools. The section does not render
+    for regular users. The server rejects hand-made posts. It does not
+    touch the record."""
 
     with app.app_context():
         movie = make_movie("Members Film", 1988, tmdb_id=41414)
@@ -448,10 +458,12 @@ def test_movie_data_section_is_admin_only(app, admin_client, user_client):
 
 
 def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
-    """A record with no local files mirrors its TMDB entry: admins see
-    the id read-only with a refresh-only button — no re-point, no
-    detach — and a smuggled id in the post is ignored, so the diary rows
-    stay on the film they were logged against."""
+    """Lock the TMDB id of a record that has no local files.
+
+    Such a record mirrors its TMDB entry. Admins see the id read-only,
+    with a refresh-only button. There is no re-point and no detach. The
+    route ignores a smuggled id in the post. Thus, the diary rows stay on
+    the film that they were logged against."""
 
     import app.main.library as library
 
@@ -492,8 +504,10 @@ def test_fileless_record_locks_its_tmdb_id(app, admin_client, monkeypatch):
 
 
 def test_fileless_record_refuses_detach(app, admin_client):
-    """Even an admin can't detach a file-less record: it has nothing but
-    its TMDB mirror behind it, so tmdb_movie_clear would leave a husk."""
+    """Refuse to detach a file-less record, even for an admin.
+
+    The record has nothing behind it but its TMDB mirror. Thus,
+    tmdb_movie_clear would leave an empty husk."""
 
     with app.app_context():
         movie = make_movie("Logged Only Film", 2001, tmdb_id=52520)
@@ -518,10 +532,12 @@ def test_fileless_record_refuses_detach(app, admin_client):
 
 
 def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
-    """The TV page's management forms — transcode, restore, delete, and
-    the TMDB pair — are admin tools like the movie page's Movie Data
-    section: hidden from regular users, with every branch bouncing
-    hand-crafted posts server-side before touching anything."""
+    """Show the management forms of the TV page to admins only.
+
+    The forms are transcode, restore, delete, and the TMDB pair. They
+    are admin tools, like the Movie Data section of the movie page. They
+    are hidden from regular users. Each branch rejects a hand-made post
+    on the server before it touches anything."""
 
     from tests.factories import make_tv_file
 
@@ -552,8 +568,8 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
     ):
         assert control in admin_page, control
 
-    # The gated page carries no forms for a regular user, so borrow the
-    # session-wide csrf token from a page that still has one
+    # The gated page has no forms for a regular user. Thus, the test gets
+    # the session-wide csrf token from a page that still has one
 
     token = csrf_token_from(user_client.get("/profile").get_data(as_text=True))
     for tampered in (
@@ -581,11 +597,13 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
 
 
 def test_file_pages_are_admin_only(app, admin_client, user_client):
-    """The file management surfaces — /file pages, the per-movie and
-    library-wide file listings, the file poster picker — are whole-page
-    admin tools (#186 follow-up). The season page stays open for its
-    episode listing, but its restore form and file links are the
-    admin's, and a stray restore post bounces server-side."""
+    """Show the file pages to admins only (#186 follow-up).
+
+    The file management surfaces are whole-page admin tools. They are
+    the /file pages, the per-movie and library-wide file listings, and
+    the file poster picker. The season page stays open for its episode
+    listing. But its restore form and its file links are for the admin.
+    The server rejects a stray restore post."""
 
     from tests.factories import make_movie_file, make_tv_file
 
@@ -633,8 +651,9 @@ def test_file_pages_are_admin_only(app, admin_client, user_client):
     assert "admin" in response.get_data(as_text=True)
     assert app.request_queue.count == 0
 
-    # The consumer doors to the file surfaces close too: no Files button
-    # on the movie page, no Files entry in the nav's Library dropdown
+    # The consumer doors to the file surfaces close too. There is no Files
+    # button on the movie page. There is no Files entry in the Library
+    # dropdown of the nav
 
     movie_page = user_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert f"/movie/{movie_id}/files" not in movie_page

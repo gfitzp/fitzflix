@@ -1,6 +1,8 @@
-"""Dolby Vision profile parsing: the flavor label from
-MediaInfo's HDR-format string, and its storage/clearing through the
-track-metadata writer."""
+"""Test the Dolby Vision profile parser.
+
+The tests cover the variant label from the HDR-format string of
+MediaInfo. They also cover how the track-metadata writer stores and
+clears the label."""
 
 from tests.factories import make_movie, make_movie_file
 
@@ -8,7 +10,7 @@ from tests.factories import make_movie, make_movie_file
 def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
     from app.videos import parse_dolby_vision_profile
 
-    # Blu-ray dual-layer (profile 7)
+    # Blu-ray dual-layer (profile 7).
     assert (
         parse_dolby_vision_profile(
             "Dolby Vision, Version 1.0, dvhe.07.06, BL+EL+RPU / "
@@ -17,7 +19,7 @@ def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
         == "7"
     )
 
-    # WEB single-layer HDR10-compatible (8.1)
+    # WEB single-layer, HDR10-compatible (8.1).
     assert (
         parse_dolby_vision_profile(
             "Dolby Vision, Version 1.0, dvhe.08.06, BL+RPU, HDR10 compatible"
@@ -26,7 +28,7 @@ def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
         == "8.1"
     )
 
-    # HLG-compatible profile 8 (8.4)
+    # HLG-compatible profile 8 (8.4).
     assert (
         parse_dolby_vision_profile(
             "Dolby Vision, Version 1.0, dvhe.08.06, BL+RPU, HLG compatible"
@@ -34,19 +36,19 @@ def test_parse_dolby_vision_profile_reads_mediainfo_strings(app):
         == "8.4"
     )
 
-    # Streaming-only profile 5 (no cross-compatibility)
+    # Streaming-only profile 5 (no cross-compatibility).
     assert (
         parse_dolby_vision_profile("Dolby Vision, Version 1.0, dvhe.05.06, BL+RPU")
         == "5"
     )
 
-    # AV1-carried DV
+    # DV carried in AV1.
     assert (
         parse_dolby_vision_profile("Dolby Vision, Version 1.0, dav1.10.01, BL+RPU")
         == "10"
     )
 
-    # Plain HDR10 and absent values are not Dolby Vision
+    # Plain HDR10 and a missing value are not Dolby Vision.
     assert parse_dolby_vision_profile("SMPTE ST 2086, HDR10 compatible") is None
     assert parse_dolby_vision_profile(None) is None
 
@@ -81,8 +83,9 @@ def test_track_metadata_writer_stores_and_clears_the_profile(app):
         assert stored.dolby_vision_profile == "7"
         assert "Dolby Vision" in stored.hdr_format
 
-        # A replacement file without DV clears the stale flavor — the
-        # extractor always includes the keys, None when absent
+        # A replacement file without DV clears the stale variant. The
+        # extractor always includes the keys, with None when the value is
+        # absent.
 
         sdr_details = {
             "video": {

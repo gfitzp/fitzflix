@@ -1,6 +1,8 @@
-"""The leaving-Criterion shelf: the sanctioned scrape of the official
-leaving page, TMDB matching, the monthly refresh task, and the
-taste-ranked landing-page shelf with its shopping-list urgency badge."""
+"""Test the leaving-Criterion shelf.
+
+These tests cover the sanctioned scrape of the official leaving page,
+the TMDB matching, the monthly refresh task, and the taste-ranked
+landing-page shelf with its shopping-list urgency badge."""
 
 import json
 
@@ -22,7 +24,7 @@ LEAVING_HTML = """
 
 
 class FakeResponse:
-    """Canned HTTP response."""
+    """A canned HTTP response."""
 
     def __init__(self, text="", status_code=200, payload=None):
         self.text = text
@@ -30,10 +32,10 @@ class FakeResponse:
         self._payload = payload or {}
 
     def raise_for_status(self):
-        """Never an HTTP error."""
+        """Do nothing. The canned response is never an HTTP error."""
 
     def json(self):
-        """The canned payload."""
+        """Return the canned payload."""
 
         return self._payload
 
@@ -82,19 +84,21 @@ def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
         assert leaving_criterion.match_tmdb_id("The Searchers", 1956) == 3110
         assert leaving_criterion.match_tmdb_id("The Searchers", 1956) == 3110
 
-    # One search, cached thereafter
+    # One search occurs. The result is cached after that.
 
     assert len(calls) == 1
     assert calls[0]["primary_release_year"] == 1956
 
 
 def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
-    """A generic title's popular first result loses to the candidate
-    whose credits name the scraped director — Bas Devos's "Here"
-    (2023), not "Right Here, Right Now" (the Aug 2026 shelf mistake).
-    A candidate with no director credited passes on an exact title
-    and year; a director TMDB can't corroborate leaves the film
-    unmatched; and the director-aware cache key is its own."""
+    """Test that the match checks the scraped director against the credits.
+
+    For a generic title, the popular first result loses to the candidate
+    whose credits name the scraped director. The example is "Here" (2023)
+    by Bas Devos, not "Right Here, Right Now" (the shelf mistake of
+    2026-08). A candidate with no credited director passes on an exact
+    title and year. A director that TMDB cannot confirm leaves the film
+    unmatched. The director-aware cache key is separate."""
 
     import app.leaving_criterion as leaving_criterion
 
@@ -200,36 +204,37 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
 
     with app.app_context():
-        # Exact-title candidate first, so only one credits call
+        # The exact-title candidate comes first. Thus, only 1 credits call
+        # occurs.
         assert leaving_criterion.match_tmdb_id("Here", 2023, "Bas Devos") == 1463730
         assert [c for c in calls if "/credits" in c] == [
             app.config["TMDB_API_URL"] + "/movie/1463730/credits"
         ]
 
-        # Hal Hartley's "Kid" is not The Karate Kid: unmatched, and the
-        # verdict is cached so the next lookup costs nothing
+        # "Kid" by Hal Hartley is not The Karate Kid: unmatched. The
+        # verdict is cached. Thus, the next lookup costs nothing.
         calls.clear()
         assert leaving_criterion.match_tmdb_id("Kid", 1984, "Hal Hartley") is None
         assert leaving_criterion.match_tmdb_id("Kid", 1984, "Hal Hartley") is None
         assert (
             len([c for c in calls if "/search/movie" in c]) == 2
-        )  # with year, then without
+        )  # first with the year, then without it
 
-        # TMDB credits "Regarding Soon" to Richard Sylvarnes where
-        # Criterion says Hal Hartley: the one exact title-and-year
-        # result still passes, director disagreement notwithstanding
+        # TMDB credits "Regarding Soon" to Richard Sylvarnes. Criterion
+        # says Hal Hartley. The 1 exact title-and-year result still
+        # passes, although the directors disagree.
         assert (
             leaving_criterion.match_tmdb_id("Regarding Soon", 2004, "Hal Hartley")
             == 366144
         )
 
-        # No director credited on TMDB: the exact title and year carry it
+        # TMDB credits no director: the exact title and year are sufficient.
         assert leaving_criterion.match_tmdb_id("Opera No. 1", 1994, "Jane Doe") == 555
 
-        # Criterion dates Hal Hartley's "Ambition" 1991, TMDB 1992: the
-        # year search finds nothing, the year-less fallback reads a
-        # second page, and only the exact-title candidate there costs
-        # a credits call — none of the twenty strangers on page one
+        # Criterion dates "Ambition" by Hal Hartley 1991. TMDB dates it
+        # 1992. The year search finds nothing. The fallback without a
+        # year reads a second page. Only the exact-title candidate there
+        # costs a credits call. None of the 20 strangers on page 1 do.
         calls.clear()
         assert (
             leaving_criterion.match_tmdb_id("Ambition", 1991, "Hal Hartley") == 162480
@@ -238,10 +243,9 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
             app.config["TMDB_API_URL"] + "/movie/162480/credits"
         ]
 
-        # Without a director the exact-title candidate still beats the
-        # popular first result, and the lookup keeps its own cache
-        # entry — a title-only verdict never answers a director-aware
-        # query
+        # Without a director, the exact-title candidate still wins over
+        # the popular first result. The lookup keeps its own cache entry.
+        # A title-only verdict never answers a director-aware query.
         assert leaving_criterion.match_tmdb_id("Here", 2023) == 1463730
         assert (
             len(list(app.redis.scan_iter("fitzflix:criterion:match:here-2023*"))) == 2
@@ -258,8 +262,8 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
     def fake_tmdb_get(url, params=None, **kwargs):
         if "/search/movie" in url:
-            # Only The Searchers matches: Love & Mercy exercises the
-            # unmatched-films path
+            # Only The Searchers matches. Love & Mercy tests the path
+            # for unmatched films.
             if params.get("query") == "The Searchers":
                 return FakeResponse(
                     payload={
@@ -274,7 +278,7 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
                 )
             return FakeResponse(payload={"results": []})
         if url.endswith("/movie/3110/credits"):
-            # The scraped director, verified against the credits
+            # This is the scraped director, checked against the credits.
             return FakeResponse(
                 payload={"crew": [{"name": "John Ford", "job": "Director"}]}
             )
@@ -312,8 +316,8 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["items"][0]["genres"] == [{"id": 37, "name": "Western"}]
     assert stored["items"][0]["overview"] == "An obsessive frontier search."
 
-    # The unmatched film keeps its scraped facts so the /leaving page
-    # can still list it
+    # The unmatched film keeps its scraped facts. Thus, the /leaving page
+    # can still list it.
 
     assert stored["items"][1]["title"] == "Love & Mercy"
     assert stored["items"][1]["director"] == "Bill Pohlad"
@@ -321,9 +325,9 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
 
 def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
-    # The daily cadence only exists to retry across the month boundary;
-    # while the stored set's departure is still ahead, the task must
-    # not touch the network or the stored payload
+    # The daily schedule exists only to retry across the month boundary.
+    # While the departure of the stored set is still ahead, the task
+    # must not touch the network or the stored payload.
 
     import app.leaving_criterion as leaving_criterion
 
@@ -358,11 +362,11 @@ def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
     assert leaving_criterion.refresh_leaving_criterion() is True
-    assert calls  # departed set: the scrape ran
+    assert calls  # the set departed, so the scrape ran
 
 
 def shelf_item(tmdb_id, title, runtime=100, genre=(37, "Western")):
-    """A stored leaving-set item: the trimmed enriched payload."""
+    """Return a stored leaving-set item, the trimmed enriched payload."""
 
     genre_id, genre_name = genre
     return {
@@ -398,8 +402,9 @@ def plant_shelf(app, items, departs=None):
 
 
 def subscribe_criterion(app):
-    """Subscribe the admin user to the Criterion Channel and plant a
-    Western-leaning taste profile."""
+    """Subscribe the admin user to the Criterion Channel.
+
+    Also plant a taste profile that leans to Western."""
 
     from app import db
     from app.leaving_criterion import CRITERION_PROVIDER_ID
@@ -448,10 +453,10 @@ def test_shelf_ranks_and_excludes(app, admin_client):
         owned = make_movie("Shelf Owned", 1956, tmdb_id=8102)
         make_movie_file(owned, "Bluray-1080p")
 
-        # Watchlisted (and even previously logged): belongs to the
-        # landing page's watchlist shelf now, never this one — and
-        # with no availability cached it isn't watchable tonight, so
-        # it doesn't surface there either
+        # Watchlisted (and also logged before): this film belongs to the
+        # watchlist shelf of the landing page now, never to this shelf.
+        # The leaving match makes it watchable tonight, even with no
+        # availability cached. Thus, it appears on the watchlist shelf.
 
         wanted = make_movie("Shelf Wanted", 1956, tmdb_id=8103)
         db.session.add(
@@ -461,7 +466,7 @@ def test_shelf_ranks_and_excludes(app, admin_client):
         )
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
 
-        # Logged but not watchlisted: seen, not wanted — drops entirely
+        # Logged but not watchlisted: seen, not wanted. It drops fully.
 
         dismissed = make_movie("Shelf Dismissed", 1956, tmdb_id=8104)
         db.session.add(
@@ -478,7 +483,7 @@ def test_shelf_ranks_and_excludes(app, admin_client):
             shelf_item(8102, "Shelf Owned"),
             shelf_item(8103, "Shelf Wanted", runtime=200),
             shelf_item(8104, "Shelf Dismissed"),
-            # An unmatched film: the shelf must skip it quietly
+            # An unmatched film: the shelf must skip it without an error.
             {
                 "title": "Shelf Unmatched",
                 "director": "Jane Doe",
@@ -498,29 +503,32 @@ def test_shelf_ranks_and_excludes(app, admin_client):
     assert "Western" in body
     assert "criterionchannel.com" in body
 
-    # The watchlisted departure surfaces on the watchlist shelf instead
-    # — the leaving store is first-party proof it's watchable tonight,
-    # so the synthesized Criterion match makes it lead the landing page
-    # even with no TMDB availability cached
+    # The watchlisted departure appears on the watchlist shelf instead.
+    # The leaving store is first-party proof that the film is watchable
+    # tonight. Thus, the synthesized Criterion match makes the film lead
+    # the landing page, even with no TMDB availability cached.
 
     watchlist_section = body.split('id="watchlist-shelf"')[1].split("<h4 ")[0]
     assert "Shelf Wanted (1956)" in watchlist_section
 
-    # The heading's "See more…" opens the in-app departure inventory
+    # The "See more…" link of the heading opens the in-app departure
+    # inventory.
 
     assert 'href="/leaving"' in body
 
-    # The runtime filter applies like everywhere else
+    # The runtime filter applies here as on every other page.
 
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)
     assert "Shelf Fresh (1956)" in filtered
 
 
 def test_watchlist_shelf_leads_with_departures(app, admin_client):
-    """A watchlisted film leaving the Criterion Channel is the most
-    urgent card on the page: it heads the top watchlist shelf, ahead
-    of the calm watchlisted films, carrying the departure as its card
-    reason — while the leaving shelf itself stays pure discovery."""
+    """Test that a watchlisted departure leads the top watchlist shelf.
+
+    A watchlisted film that leaves the Criterion Channel is the most
+    urgent card on the page. It heads the top watchlist shelf, ahead of
+    the calm watchlisted films. Its card reason is the departure. The
+    leaving shelf stays only discovery."""
 
     from app import db
     from app.leaving_criterion import CRITERION_PROVIDER_ID
@@ -560,16 +568,18 @@ def test_watchlist_shelf_leads_with_departures(app, admin_client):
     assert body.index("Urgent Departure (1956)") < body.index("Calm Wanted (1956)")
     assert "Leaving the Criterion Channel" in body
 
-    # Both watchlisted films left the leaving shelf itself nothing to
-    # show, so its heading doesn't render
+    # Both films are watchlisted. Thus, the leaving shelf has nothing to
+    # show, and its heading does not render.
 
     assert 'id="leaving-shelf"' not in body
 
 
 def test_page_never_repeats_a_film_across_shelves(app, admin_client):
-    """A film both on the streaming rail and in the leaving set shows
-    exactly once on the page: the shelves claim their films from one
-    shared no-repeat pool, in a day-stable order."""
+    """Test that a film shows only 1 time across the shelves.
+
+    A film that is on the streaming rail and in the leaving set shows
+    exactly 1 time on the page. The shelves claim their films from 1
+    shared no-repeat pool, in an order that is stable for the day."""
 
     from app.streaming_rail import RAIL_KEY
 
@@ -613,9 +623,11 @@ def test_page_never_repeats_a_film_across_shelves(app, admin_client):
 
 
 def test_runtime_filter_says_when_the_shelf_empties(app, admin_client):
-    """A filter that trims every departing film keeps the shelf heading
-    — with its date and inventory link — and says why the grid is empty
-    (GitHub #198)."""
+    """Test that the shelf explains itself when the filter empties it.
+
+    A filter that removes every departing film keeps the shelf heading,
+    with its date and inventory link. The shelf says why the grid is
+    empty (GitHub #198)."""
 
     subscribe_criterion(app)
     plant_shelf(app, [shelf_item(8201, "Shelf Nothing Fits", runtime=200)])
@@ -632,8 +644,11 @@ def test_runtime_filter_says_when_the_shelf_empties(app, admin_client):
 
 
 def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
-    """A stored set from before the source key existed still gets a
-    source link on /leaving, reconstructed from the departure date."""
+    """Test that /leaving links a stored set that has no source key.
+
+    A stored set from before the source key existed still gets a source
+    link on /leaving. Fitzflix rebuilds the link from the departure
+    date."""
 
     import calendar
 
@@ -661,9 +676,13 @@ def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
 
 
 def test_leaving_page_lists_the_complete_inventory(app, admin_client):
-    """/leaving shows every departing film — owned with the library
-    badge, seen badged, watchlisted first, owned last — plus unmatched
-    scraped rows and overview excerpts; empty state without a set."""
+    """Test that /leaving lists the complete departure inventory.
+
+    /leaving shows every departing film. Owned films show the library
+    badge. Seen films show a badge. Watchlisted films come first, and
+    owned films come last. The page also shows the unmatched scraped
+    rows and the overview excerpts. Without a set, it shows the empty
+    state."""
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
@@ -708,31 +727,31 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
 
     body = admin_client.get("/leaving").get_data(as_text=True)
 
-    # Everything departing is listed — including owned and seen films
-    # the home shelf hides — with the funnel vocabulary
+    # Every departing film is listed with the funnel vocabulary. This
+    # includes the owned and seen films that the home shelf hides.
 
     for title in ("Shelf Fresh", "Shelf Owned", "Shelf Wanted", "Shelf Dismissed"):
         assert f"{title} (1956)" in body
     # The funnel vocabulary moved into the popovers and the hydrated
-    # widgets (Aug 2026): no badges on the tiles, actions instead
+    # widgets (2026-08). The tiles show no badges. They show actions.
     assert 'title="In your Fitzflix library"' not in body
     assert 'text-bg-info me-1">Seen' not in body
     assert "On your watchlist" not in body
     assert f'data-state-movie="{owned_id}"' in body
     assert 'data-state-tmdb="8101"' in body
-    # The synopsis lives in the poster popover now (#45d)
+    # The synopsis is in the poster popover now (#45d).
     assert "A stranger rides into town." not in body
     assert "data-card-url" in body
 
-    # Watchlisted films lead, owned films trail; owned rows open their
-    # movie page while the rest open the log page
+    # Watchlisted films lead. Owned films come last. An owned row opens
+    # its movie page. The other rows open the log page.
 
     assert body.index("Shelf Wanted (1956)") < body.index("Shelf Fresh (1956)")
     assert body.index("Shelf Fresh (1956)") < body.index("Shelf Owned (1956)")
     assert f'href="/movie/{owned_id}"' in body
     assert 'href="/review/tmdb/8101"' in body
 
-    # The unmatched film appears from the scrape alone
+    # The unmatched film appears from the scrape alone.
 
     assert "Also leaving" in body
     assert "Unmatched Gem (1962)" in body
@@ -742,16 +761,17 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
 def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):
     plant_shelf(app, [shelf_item(8201, "Shelf Hidden")])
 
-    # No Criterion subscription: no shelf, even with a stored set
+    # No Criterion subscription: no shelf, even with a stored set.
 
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="leaving-shelf"' not in body
 
-    # The standing nav link to the departure inventory stays either way
+    # The permanent nav link to the departure inventory stays in both
+    # cases.
 
     assert 'href="/leaving"' in body
 
-    # Subscribed, but the departure date has passed: also no shelf
+    # Subscribed, but the departure date has passed: also no shelf.
 
     subscribe_criterion(app)
     plant_shelf(
@@ -764,12 +784,14 @@ def test_shelf_hides_for_nonsubscribers_and_after_departure(app, admin_client):
 
 
 def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch):
-    """Wherever a film's Criterion Channel availability badge renders,
-    it lights up red with the departure date while the film is on the
-    month's leaving set — the movie page's strip and the poster
-    popover here; search results and filmography rows share the
-    macro. Other Criterion films keep the plain badge, and the
-    highlight clears once the departure date has passed."""
+    """Test that a departing film lights its Criterion Channel badge.
+
+    Wherever the Criterion Channel availability badge of a film renders,
+    it shows red with the departure date while the film is on the
+    leaving set of the month. This test covers the strip of the movie
+    page and the poster popover. The search results and the filmography
+    rows share the macro. Other Criterion films keep the plain badge.
+    The highlight clears after the departure date has passed."""
 
     from app import db
     from app.leaving_criterion import CRITERION_PROVIDER_ID
@@ -783,8 +805,9 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
         "logo_path": "/criterion.jpg",
     }
     with app.app_context():
-        # The departing film is record-only: an OWNED film never wears
-        # the warning (Glenn, Aug 27 2026) — that's owned_leaving below
+        # The departing film is record-only. An OWNED film never shows
+        # the warning (requested by Glenn, 2026-08-27). See owned_leaving
+        # below.
         leaving = make_movie("Leaving Soon", 1956, tmdb_id=8401)
         staying = make_movie("Staying Put", 1957, tmdb_id=8402)
         make_movie_file(staying, "Bluray-1080p")
@@ -815,7 +838,7 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
     card = admin_client.get(f"/movie_card?movie_id={leaving_id}").get_data(as_text=True)
     assert f"Criterion Channel &middot; leaving {label}" in card
 
-    # A Criterion film that isn't departing keeps the plain badge
+    # A Criterion film that is not departing keeps the plain badge.
 
     page = admin_client.get(f"/movie/{staying_id}").get_data(as_text=True)
     assert 'title="Streaming on Criterion Channel"' in page
@@ -824,8 +847,8 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
         not in page.split("Streaming data by JustWatch")[0].split("In library")[1]
     )
 
-    # An OWNED film on the leaving set keeps the plain badge too — the
-    # copy on the shelf isn't going anywhere (Glenn, Aug 27 2026)
+    # An OWNED film on the leaving set also keeps the plain badge. The
+    # copy on the shelf stays (requested by Glenn, 2026-08-27).
 
     page = admin_client.get(f"/movie/{owned_leaving_id}").get_data(as_text=True)
     assert 'title="Streaming on Criterion Channel"' in page
@@ -834,7 +857,7 @@ def test_leaving_film_lights_its_criterion_badge(app, admin_client, monkeypatch)
         not in page.split("Streaming data by JustWatch")[0].split("In library")[1]
     )
 
-    # Once the departure date passes, the highlight clears
+    # After the departure date passes, the highlight clears.
 
     plant_shelf(
         app,

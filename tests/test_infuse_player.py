@@ -1,8 +1,11 @@
-"""Infuse playback on each user's Apple TV (#192): the Companion deep
-link, the Infuse-only-format recommendation, the play route's app
-dispatch (explicit choice, per-user default, fallbacks, the ride-along
-recommendation note), the movie page's dual buttons, and the Profile
-page's queue-backed PIN pairing with its Redis hand-off."""
+"""Test Infuse playback on the Apple TV of each user (#192).
+
+The tests cover the Companion deep link, the Infuse-only-format
+recommendation, and the app dispatch of the play route (explicit
+choice, per-user default, fallbacks, the recommendation note that goes
+with the result). They also cover the 2 buttons of the movie page and
+the PIN pairing of the Profile page. That pairing runs as a queue task
+with a Redis hand-off."""
 
 import asyncio
 import json
@@ -72,9 +75,9 @@ def test_play_launches_the_tmdb_deep_link(app, monkeypatch):
 
     assert ok is True
     connect, launch, closed = log
-    # The stored credentials ride the manual Companion service, and the
-    # link is the TMDB-keyed form — never the raw-URL play that would
-    # bypass Plex and lose the diary entry
+    # The stored credentials go with the manual Companion service. The
+    # link is the TMDB-keyed form. It is never the raw-URL play. That
+    # play would bypass Plex and lose the diary entry.
     assert connect == ("connect", "192.168.1.247", 49153, CREDENTIALS)
     assert launch == "infuse://movie/578?play"
     assert closed == "closed"
@@ -172,7 +175,7 @@ def test_other_formats_recommend_nothing(app):
 
     with app.app_context():
         movie = make_movie("Jaws", 1975, tmdb_id=578)
-        # Profile 5 isn't profile 8, and TrueHD Atmos isn't the DD+ twin
+        # Profile 5 is not profile 8. TrueHD Atmos is not the DD+ twin.
         file = make_movie_file(movie, "Bluray-2160p Remux", dolby_vision_profile="5")
         from app import db
         from app.models import FileAudioTrack
@@ -206,8 +209,10 @@ def server_config(app, monkeypatch):
 
 @pytest.fixture
 def member_players(app):
-    """Give the member user both apps for one test; the user table
-    survives clean_state, so this must restore."""
+    """Give the member user both apps for 1 test.
+
+    The user table survives clean_state. Thus, this fixture must restore
+    the user."""
 
     from app import db
     from app.models import User
@@ -244,8 +249,9 @@ def _set_default(app, choice):
 
 
 def _wire_route(monkeypatch, plex_result=(True, "Playing on your device.")):
-    """Fake both play paths at the route's own namespace, recording
-    which app the dispatch picked."""
+    """Fake both play paths in the namespace of the route.
+
+    The fakes record which app the dispatch picked."""
 
     import app.main.library as library
 
@@ -392,11 +398,11 @@ def test_movie_page_offers_both_apps_and_the_recommendation(
     assert "Play (Infuse)" in page
     assert 'name="player" value="infuse"' in page
     assert "We recommend Infuse" in page
-    # Default-first ordering: Plex leads while no default says otherwise
+    # The default comes first. Plex leads while no default says otherwise.
     assert page.index("Play (Plex)") < page.index("Play (Infuse)")
-    # One Play control (Aug 31 2026): the default player is the button,
-    # the other waits under the split dropdown, and both forms report
-    # into the shared status line
+    # There is 1 Play control (2026-08-31). The default player is the
+    # button. The other player waits under the split dropdown. Both
+    # forms report into the shared status line.
     assert (
         "dropdown-toggle-split"
         in page.split("Play (Plex)")[1].split("Play (Infuse)")[0]
@@ -408,8 +414,10 @@ def test_movie_page_offers_both_apps_and_the_recommendation(
 def test_movie_page_with_only_infuse_shows_a_single_button(
     app, user_client, member_players
 ):
-    """No Plex server config: only the Infuse button renders, under its
-    single-app label."""
+    """Make sure the page shows only the Infuse button without a Plex server.
+
+    With no Plex server config, only the Infuse button renders, under
+    its single-app label."""
 
     from app import db
 
@@ -494,7 +502,8 @@ def _member_id(app):
 
 def test_pair_task_trades_the_pin_for_stored_credentials(app, monkeypatch):
     user_id = _member_id(app)
-    # The web form's PIN is already waiting in Redis when the task polls
+    # The PIN from the web form already waits in Redis when the task
+    # polls.
     app.redis.set(f"fitzflix:infuse-pair:{user_id}:pin", "1234", ex=300)
 
     log = _run_pair(app, monkeypatch, user_id)
@@ -551,11 +560,11 @@ def test_pairing_outcome_reads_the_task_verdict(app):
 
 # --- Pairing: the attempt fence ---
 #
-# Two overlapping pairing attempts killed the first one live (a second
-# begin() makes the Apple TV drop the earlier session — 2026-08-26),
-# and a stale task could then overwrite the winner's outcome. The
-# guard is two-part: start_pairing refuses while an attempt awaits its
-# PIN, and each task only acts while its token is still current.
+# Two pairing attempts that overlapped killed the first attempt live
+# (2026-08-26). A second begin() makes the Apple TV drop the earlier
+# session. A stale task could then overwrite the outcome of the winner.
+# The guard has 2 parts. start_pairing refuses while an attempt waits
+# for its PIN. Each task acts only while its token is still current.
 
 
 def test_start_pairing_refuses_while_an_attempt_awaits_its_pin(app):
@@ -565,7 +574,7 @@ def test_start_pairing_refuses_while_an_attempt_awaits_its_pin(app):
         for state in ("queued", "show-pin"):
             app.redis.set("fitzflix:infuse-pair:5:state", state, ex=300)
             assert start_pairing(5, "192.168.1.63:49153") is False
-        # Nothing was enqueued for either refusal
+        # Neither refusal enqueued a job.
         assert app.request_queue.count == 0
 
 
@@ -582,8 +591,11 @@ def test_start_pairing_after_an_error_starts_fresh(app):
 
 
 def test_superseded_task_bows_out_without_touching_anything(app, monkeypatch):
-    """A stale task (another attempt is now current) must not open a
-    pairing session, eat the newer attempt's PIN, or write state."""
+    """Make sure a superseded task stops and touches nothing.
+
+    A stale task (a different attempt is now current) must not open a
+    pairing session, consume the PIN of the newer attempt, or write
+    state."""
 
     user_id = _member_id(app)
     app.redis.set(f"fitzflix:infuse-pair:{user_id}:attempt", "newer", ex=300)
@@ -592,7 +604,7 @@ def test_superseded_task_bows_out_without_touching_anything(app, monkeypatch):
 
     log = _run_pair(app, monkeypatch, user_id, attempt="stale")
 
-    assert log == []  # never even reached pyatv.pair
+    assert log == []  # the task did not reach pyatv.pair
     assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:state") == b"queued"
     assert app.redis.get(f"fitzflix:infuse-pair:{user_id}:pin") == b"1234"
 
@@ -658,12 +670,14 @@ SQL_KEYWORDS = {
 
 
 def test_no_submit_button_reads_like_sql(app, user_client, member_players):
-    """The CloudFront WAF's SQLi_BODY rule blocked a live POST whose
-    body contained "…submit=Set+Default+Player" (2026-08-26). Tested
-    against that WAF: a single SQL keyword in the value passes
-    ("Update Playback Device", "Save Default Player") but two adjacent
-    keywords read as SQL and 403 ("Set Default Player", "Update
-    Default Player"). No submit value on the profile page may carry an
+    """Make sure no submit button reads like SQL.
+
+    The SQLi_BODY rule of the CloudFront WAF blocked a live POST with
+    "…submit=Set+Default+Player" in its body (2026-08-26). Tests against
+    that WAF show the rule. A single SQL keyword in the value passes
+    ("Update Playback Device", "Save Default Player"). Two adjacent
+    keywords read as SQL and get a 403 ("Set Default Player", "Update
+    Default Player"). No submit value on the profile page can carry an
     adjacent keyword pair."""
 
     page = user_client.get("/profile").get_data(as_text=True)

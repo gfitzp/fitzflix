@@ -1,7 +1,9 @@
-"""The Criterion24/7 now-playing card: parsing the whatsonnow
-page (countdown typo included), the film info page, the self-scheduling
-poller, and the landing-page card's gating, staleness, star row, and
-filmography-linked credits."""
+"""Test the Criterion24/7 now-playing card.
+
+These tests cover the parse of the whatsonnow page (with its countdown
+typo), the film info page, the self-scheduling poller, and the card on
+the landing page. For the card they cover the gating, the staleness,
+the star row, and the credits with filmography links."""
 
 import json
 import re
@@ -66,13 +68,14 @@ def test_parse_whatson_page_reads_title_more_and_countdown(app):
     assert more_url == "https://www.criterionchannel.com/shock-corridor"
     assert minutes == 83
 
-    # Minutes-only countdown, still behind the literal </snap> typo
+    # A minutes-only countdown. It is still behind the literal </snap>
+    # typo
     title, _, minutes = parse_whatson_page(
         WHATSON_HTML.replace("1 hour 23 minutes", "2 minutes")
     )
     assert minutes == 2
 
-    # Unreadable countdown parses as None, never a guess
+    # An unreadable countdown parses as None. Fitzflix never guesses
     _, _, minutes = parse_whatson_page(
         WHATSON_HTML.replace("1 hour 23 minutes", "moments")
     )
@@ -100,9 +103,11 @@ def test_parse_film_info_reads_the_meta_lines(app):
 
 
 def test_parse_film_info_flattens_nonbreaking_spaces(app):
-    """The Channel writes non-breaking spaces raw, as &nbsp;, and
-    sometimes double-escaped (&amp;nbsp;) — the shelf once showed a
-    literal "&nbsp;Hong Kong". All three must read as plain spaces."""
+    """Test that all 3 forms of a non-breaking space read as plain spaces.
+
+    The Channel writes non-breaking spaces raw, as &nbsp;, and sometimes
+    double-escaped (&amp;nbsp;). The shelf showed a literal "&nbsp;Hong
+    Kong" one time."""
 
     from app.criterion_now import parse_film_info
 
@@ -162,23 +167,25 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
     ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%d %H:%M:%S")
     assert timedelta(minutes=80) < ends_at - datetime.now() < timedelta(minutes=85)
 
-    # The next poll is scheduled just past the countdown, single-file
-    # under the deterministic job id
+    # Fitzflix schedules the next poll a short time after the countdown.
+    # There is only 1 poll, under the deterministic job id
 
     with app.app_context():
         registry = app.maintenance_queue.scheduled_job_registry
         assert criterion_now.POLL_JOB_ID in registry.get_job_ids()
 
-        # A second run replaces the scheduled poll instead of stacking
+        # A second run replaces the scheduled poll. It does not add a
+        # second poll
         criterion_now.poll_criterion_now()
         assert registry.get_job_ids().count(criterion_now.POLL_JOB_ID) == 1
 
 
 def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
-    """The half-hourly cron never rescans the showing film: while a
-    poll is booked under the deterministic job id, the heartbeat does
-    nothing (Glenn's report, Aug 2026 — the cron used to point at the
-    poller itself and scraped unconditionally)."""
+    """Test that the half-hourly cron never rescans the film that shows.
+
+    While a poll is booked under the deterministic job id, the heartbeat
+    does nothing (reported by Glenn, 2026-08). Before, the cron pointed
+    at the poller itself, and it scraped in every case."""
 
     from datetime import timedelta
 
@@ -199,16 +206,16 @@ def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
         assert criterion_now.heartbeat_criterion_now() is True
         assert scrapes == []
 
-        # The booked poll is untouched
+        # The booked poll is unchanged
 
         registry = app.maintenance_queue.scheduled_job_registry
         assert criterion_now.POLL_JOB_ID in registry.get_job_ids()
 
-        # The normal healthy state LIES in the job hash: the poll
-        # re-enqueues itself under its own executing id, and RQ writes
-        # "finished" over the hash when that run completes — the
-        # registry entry is the truth, and the heartbeat must trust
-        # it, not the status (the live drill caught this, Aug 2026)
+        # The job hash LIES in the normal healthy state. The poll
+        # re-enqueues itself under its own executing id. Then RQ writes
+        # "finished" over the hash when that run completes. The registry
+        # entry is the truth. The heartbeat must trust the registry
+        # entry, not the status (the live drill found this, 2026-08)
 
         job.set_status("finished")
         assert criterion_now.heartbeat_criterion_now() is True
@@ -216,9 +223,11 @@ def test_heartbeat_skips_the_scrape_while_the_chain_is_alive(app, monkeypatch):
 
 
 def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
-    """No booked poll — the chain died, or the app just started — and
-    the heartbeat runs the poller; likewise when the chain's last run
-    finished without rescheduling."""
+    """Test that the heartbeat runs the poller when no poll is booked.
+
+    This occurs when the chain died, or when the app just started. It
+    also occurs when the last run of the chain finished without a
+    reschedule."""
 
     import app.criterion_now as criterion_now
 
@@ -232,7 +241,7 @@ def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
         assert scrapes == [1]
 
         # A finished job hash WITHOUT a registry entry (a run that
-        # crashed before its re-enqueue) counts as dead too
+        # crashed before its re-enqueue) also counts as dead
 
         from rq.job import Job
 
@@ -248,9 +257,10 @@ def test_heartbeat_revives_a_dead_chain(app, monkeypatch):
 
 
 def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
-    """A wrong search hit must never dress the wrong film's poster over
-    the right title: when TMDB's credited director disagrees with the
-    Channel's, the film stores unmatched."""
+    """Test that a wrong search hit never puts a wrong poster on the title.
+
+    When the credited director from TMDB disagrees with the director from
+    the Channel, Fitzflix stores the film as unmatched."""
 
     import app.criterion_now as criterion_now
 
@@ -278,9 +288,11 @@ def test_director_mismatch_degrades_to_a_plain_card(app, monkeypatch):
 
 
 def test_director_match_survives_romanization_differences(app, monkeypatch):
-    """TMDB credited 'Mabel Cheung Yuen-Ting' for An Autumn's Tale but
-    the Channel says 'Mabel Cheung' — a fuller romanization on either
-    side, reversed name order, or hyphen differences must still match."""
+    """Test that director name variants still match.
+
+    TMDB credited 'Mabel Cheung Yuen-Ting' for An Autumn's Tale, but the
+    Channel says 'Mabel Cheung'. A longer romanization on either side, a
+    reversed name order, or a hyphen difference must still match."""
 
     import app.criterion_now as criterion_now
 
@@ -311,10 +323,13 @@ def test_director_match_survives_romanization_differences(app, monkeypatch):
 
 
 def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
-    """Without a director on both sides the Starring line stands in:
-    one scraped name among TMDB's top billing keeps the match, a total
-    miss degrades to a plain card. A cast miss alone must never veto a
-    film whose director agrees — the enriched cast is only top billing."""
+    """Test the Starring line as the fallback when a director is missing.
+
+    Without a director on both sides, the Starring line replaces it. One
+    scraped name in the top billing of TMDB keeps the match. A total miss
+    degrades the film to a plain card. A cast miss alone must never veto
+    a film with a director that agrees. The enriched cast is only the top
+    billing."""
 
     import app.criterion_now as criterion_now
 
@@ -343,11 +358,12 @@ def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
             "/autumn.jpg",
         )
 
-        # The wrong film's billing shares nobody with the Channel's line
+        # The billing of the wrong film has no name from the line of the
+        # Channel
         payload["cast"] = [{"id": 3, "name": "Alan Smithee"}]
         assert criterion_now.matched_film("An Autumn's Tale", info) == (None, None)
 
-        # But a matching director outranks a cast miss
+        # But a director that matches outranks a cast miss
         payload["crew"] = [{"id": 4, "name": "Mabel Cheung", "job": "Director"}]
         info["director"] = "Mabel Cheung"
         assert criterion_now.matched_film("An Autumn's Tale", info) == (
@@ -357,8 +373,9 @@ def test_starring_line_verifies_when_no_director_is_known(app, monkeypatch):
 
 
 def plant_enriched(app, tmdb_id=33667):
-    """Cache an enriched payload for the airing film, as the poller's
-    match would have."""
+    """Cache an enriched payload for the film on air.
+
+    The match of the poller does the same."""
 
     app.redis.set(
         f"fitzflix:tmdb:movie:{tmdb_id}:enriched",
@@ -386,8 +403,9 @@ def plant_enriched(app, tmdb_id=33667):
 
 
 def plant_profile(app, user_id):
-    """A Drama-leaning profile with a calibration curve, so the card
-    can carry an estimated rating."""
+    """Store a profile that prefers Drama, with a calibration curve.
+
+    Thus, the card can show an estimated rating."""
 
     app.redis.set(
         f"fitzflix:recs:profile:{user_id}",
@@ -415,8 +433,8 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
     import app.criterion_now as criterion_now
     import app.main.discover as discover
 
-    # The TMDB log route fetches film details up front; feed it the
-    # airing film so the first tap can create the record
+    # The TMDB log route fetches the film details first. Give it the film
+    # on air. Thus, the first tap can create the record
 
     class FakeDetails:
         status_code = 200
@@ -425,7 +443,7 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
             """Never an HTTP error."""
 
         def json(self):
-            """The airing film's details."""
+            """Return the details of the film on air."""
 
             return {
                 "id": 33667,
@@ -463,24 +481,26 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
 
     body = admin_client.get("/").get_data(as_text=True)
 
-    # Director and top-3 billed cast link to their filmography pages
+    # The director and the top 3 billed cast link to their filmography
+    # pages
     assert "credit=8556" in body
     assert ">Samuel Fuller</a>" in body
     assert "credit=101" in body
     assert "credit=103" in body
     assert "credit=104" not in body
 
-    # The TMDB synopsis rides on the card
+    # The TMDB synopsis goes with the card
 
     assert "A reporter has himself committed to crack a murder." in body
 
-    # The unlogged film previews the engine's estimate, posting to the
+    # The unlogged film shows the estimate of the engine. It posts to the
     # TMDB log route (no record exists yet)
 
     assert 'title="Estimated' in body
     assert 'action="/review/tmdb/33667"' in body
 
-    # The first tap creates the record and answers ladder JSON in place
+    # The first tap creates the record and answers the ladder JSON in
+    # place
 
     response = admin_client.post(
         "/review/tmdb/33667",
@@ -498,15 +518,16 @@ def test_card_carries_the_estimate_and_linked_credits(app, admin_client, monkeyp
         assert float(row.rating) == 4.0
         movie_id = movie.id
 
-    # With a record, the card's form aims at the movie route, showing
-    # the real verdict instead of the estimate
+    # With a record, the form of the card points at the movie route. It
+    # shows the real verdict, not the estimate
 
     body = admin_client.get("/").get_data(as_text=True)
     assert f'action="/movie/{movie_id}"' in body
     assert 'title="Estimated' not in body
 
-    # A ladder post still aimed at the TMDB route forwards with method
-    # and body intact (307), landing in the movie route's toggle-off
+    # A ladder post that still points at the TMDB route forwards with the
+    # method and the body unchanged (307). It goes into the toggle-off of
+    # the movie route
 
     response = admin_client.post(
         "/review/tmdb/33667",
@@ -544,7 +565,7 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
             ),
         )
 
-    # Not a Criterion subscriber: no card even with a stored film
+    # Not a Criterion subscriber: no card, also with a stored film
 
     plant(timedelta(minutes=45))
     body = admin_client.get("/").get_data(as_text=True)
@@ -560,15 +581,16 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
     assert "Next film around" in body
     assert "criterionchannel.com/events/criterion-24-7" in body
 
-    # A film just past its end keeps showing (the poller is about to
-    # replace it) but drops the countdown line
+    # A film a short time after its end still shows (the poller will
+    # replace it soon). But the card removes the countdown line
 
     plant(timedelta(minutes=-5))
     body = admin_client.get("/").get_data(as_text=True)
     assert "Shock Corridor (1963)" in body
     assert "Next film around" not in body
 
-    # Long past the end the poller must be broken — hide, don't lie
+    # A long time after the end, the poller must be broken. Hide the
+    # card. Do not show wrong data
 
     plant(timedelta(minutes=-30))
     body = admin_client.get("/").get_data(as_text=True)
@@ -576,9 +598,11 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
 
 
 def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
-    """the card carries a watchlist toggle whose face
-    follows the record, and 'About N minutes in' derived from the
-    predicted end minus the runtime — never shown without both."""
+    """Test the watchlist toggle and the 'About N minutes in' line.
+
+    The face of the toggle follows the record. The line comes from the
+    predicted end minus the runtime. The card never shows the line
+    without both values."""
 
     import re
 
@@ -607,8 +631,9 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
             ),
         )
 
-    # 45 of the 101 minutes remain: about 56 minutes in; no record
-    # yet, so the toggle shows Add and posts to the TMDB log route
+    # 45 of the 101 minutes remain: about 56 minutes in. There is no
+    # record yet. Thus, the toggle shows Add and posts to the TMDB log
+    # route
 
     seed_now(45)
     body = admin_client.get("/").get_data(as_text=True)
@@ -618,8 +643,8 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
     assert add_face and "d-none" not in add_face.group(0)
     assert body.count('action="/review/tmdb/33667"') >= 2  # ladder + toggle
 
-    # A watchlisted local record flips the face and retargets the
-    # movie route; a film that just started says so instead of "0
+    # A watchlisted local record changes the face and points at the
+    # movie route. A film that just started says so. It does not say "0
     # minutes in"
 
     with app.app_context():
@@ -637,9 +662,9 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
     assert add_face and "d-none" in add_face.group(0)
     assert f'action="/movie/{movie_id}"' in body
 
-    # Past the predicted end the card lingers through STALE_GRACE,
-    # but the film is over — claiming "About 106 minutes in" on a
-    # 101-minute film would be a guess, so the line disappears
+    # After the predicted end, the card stays through STALE_GRACE. But
+    # the film is over. "About 106 minutes in" on a 101-minute film would
+    # be a guess. Thus, the line disappears
 
     seed_now(-5)
     body = admin_client.get("/").get_data(as_text=True)
@@ -647,7 +672,8 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
     assert "minutes in" not in body
     assert "Just started" not in body
 
-    # No runtime, no claim: an enrichment without one drops the line
+    # No runtime, no claim: an enrichment without a runtime removes the
+    # line
 
     seed_now(45)
     app.redis.delete("fitzflix:tmdb:movie:33667:enriched")
@@ -657,11 +683,14 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
 
 
 def test_card_fragment_follows_the_feed(app, admin_client):
-    """the home page re-fetches the card from /criterion-now so an
-    open tab follows the feed. The fragment carries the film's
-    fingerprint and a status line for the page's swap-or-repaint
-    choice, and comes back empty (not 404, not a page) whenever the
-    card would hide — so the container empties rather than freezing."""
+    """Test the card refresh from /criterion-now.
+
+    The home page fetches the card again from /criterion-now. Thus, an
+    open tab follows the feed. The fragment carries the fingerprint of
+    the film and a status line. The page uses them for its
+    swap-or-repaint choice. The fragment comes back empty (not 404, not a
+    page) when the card would hide. Thus, the container empties and does
+    not freeze."""
 
     import app.criterion_now as criterion_now
 
@@ -681,7 +710,7 @@ def test_card_fragment_follows_the_feed(app, admin_client):
             ),
         )
 
-    # Not a subscriber: no container on the page, an empty fragment
+    # Not a subscriber: no container on the page, and an empty fragment
 
     plant("Shock Corridor", 33667, 45)
     body = admin_client.get("/").get_data(as_text=True)
@@ -690,8 +719,8 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     assert response.status_code == 200
     assert response.get_data(as_text=True).strip() == ""
 
-    # A subscriber's page wraps the card in the polling container, and
-    # the fragment is the same card: fingerprint, status line, ladder
+    # The page of a subscriber wraps the card in the polling container.
+    # The fragment is the same card: fingerprint, status line, ladder
 
     subscribe_criterion(app)
     body = admin_client.get("/").get_data(as_text=True)
@@ -706,7 +735,7 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     assert re.search(r"data-now-status>.*Next film around", fragment)
     assert "<html" not in fragment
 
-    # The next film changes the fingerprint — the page swaps the card
+    # The next film changes the fingerprint. The page swaps the card
 
     plant("The Naked Kiss", 33669, 90)
     fragment = admin_client.get("/criterion-now").get_data(as_text=True)
@@ -714,7 +743,7 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     assert 'data-now-film="The Naked Kiss|33669|' in fragment
 
     # Subscriber, stale film: the container still renders (a card can
-    # appear once the poller stores one) but the fragment is empty
+    # appear after the poller stores one). But the fragment is empty
 
     plant("The Naked Kiss", 33669, -30)
     body = admin_client.get("/").get_data(as_text=True)

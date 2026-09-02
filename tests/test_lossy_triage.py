@@ -1,6 +1,8 @@
-"""The lossy-audio triage (#212): the candidates worklist, the
-promote / keep-as-is actions, and the listening-clip comparison's
-presentation and envelope correlation (#223)."""
+"""Test the lossy-audio triage (#212).
+
+The tests cover the candidates worklist, the promote and keep-as-it-is
+actions, and the listening-clip comparison. That comparison has a
+presentation and an envelope correlation (#223)."""
 
 import inspect
 import json
@@ -45,24 +47,24 @@ def test_worklist_matches_the_report_predicates_plus_reviewed(app, admin_client)
     with app.app_context():
         file, _ = build_candidate()
 
-        # The Atmos pipeline's trio: E-AC-3 Atmos leads deliberately —
-        # never a candidate (#212)
+        # This is the trio from the Atmos pipeline. E-AC-3 Atmos leads on
+        # purpose. It is never a candidate (#212).
         trio = make_movie_file(
             make_movie("Atmos Trio Film", 2021), "Bluray-2160p Remux"
         )
         audio(trio, 1, "Dolby Digital Plus with Dolby Atmos", "Lossy", "E-AC-3")
         audio(trio, 2, "Dolby TrueHD with Dolby Atmos", "Lossless", "MLP FBA")
 
-        # All-lossy: nothing to promote
+        # All tracks are lossy. There is nothing to promote.
         bare = make_movie_file(make_movie("All Lossy Film", 1999), "DVD")
         audio(bare, 1, "Dolby Digital", "Lossy", "AC-3")
 
-        # Lossless already leads: nothing to do
+        # The lossless track already leads. There is nothing to do.
         fine = make_movie_file(make_movie("Fine Film", 2001), "Bluray-1080p")
         audio(fine, 1, "FLAC", "Lossless")
         audio(fine, 2, "Dolby Digital", "Lossy", "AC-3")
 
-        # A dismissed candidate stays off the worklist
+        # A dismissed candidate stays off the worklist.
         kept = make_movie_file(make_movie("Kept Commentary", 2002), "Bluray-1080p")
         audio(kept, 1, "Dolby Digital", "Lossy", "AC-3")
         audio(kept, 2, "FLAC", "Lossless")
@@ -75,7 +77,8 @@ def test_worklist_matches_the_report_predicates_plus_reviewed(app, admin_client)
     for absent in ("Atmos Trio Film", "All Lossy Film", "Fine Film", "Kept Commentary"):
         assert absent not in page, absent
 
-    # The worklist links each file's own page; the track table lives there
+    # The worklist links the own page of each file. That page shows the
+    # track table.
 
     assert f"/maintenance/lossy-audio/{file_id}" in page
     detail = admin_client.get(f"/maintenance/lossy-audio/{file_id}").get_data(
@@ -183,9 +186,9 @@ def test_promote_enqueues_mkvpropedit_preserving_subtitle_flags(app, admin_clien
             if job.func_name == "app.videos.mkvpropedit_task"
         ]
         assert len(jobs) == 1
-        # The lossless track becomes the default audio (the task's remux
-        # pass moves it into the lead); subtitle default and forced
-        # flags ride through unchanged
+        # The lossless track becomes the default audio. The remux pass of
+        # the task moves it into the lead. The subtitle default and
+        # forced flags go through unchanged.
         assert jobs[0].args == (file_id, "2", "1", ["2"])
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
     finally:
@@ -231,7 +234,7 @@ def test_promote_refuses_non_matroska_and_missing_local(app, admin_client):
         gone_id, gone_track = gone.id, gone_lossless.track
 
     page = admin_client.get("/maintenance/lossy-audio").get_data(as_text=True)
-    assert "MP4 Candidate" in page  # listed on the worklist, badged
+    assert "MP4 Candidate" in page  # on the worklist, with a badge
     assert "MPEG-4" in page
 
     detail = admin_client.get(f"/maintenance/lossy-audio/{mp4_id}").get_data(
@@ -393,8 +396,9 @@ def test_presentation_renders_clocks_percentages_and_verdicts(app):
                             ],
                         },
                         {
-                            # Full-track verdict outranks flattering
-                            # clips: high local numbers, low overall
+                            # The full-track verdict outranks good clips.
+                            # The local numbers are high. The overall
+                            # number is low.
                             "lossy_track": 1,
                             "lossless_track": 4,
                             "correlation": 0.44,
@@ -422,19 +426,19 @@ def test_presentation_renders_clocks_percentages_and_verdicts(app):
     programme, commentary, divergent = presented["pairs"]
 
     # New shape: the full-track correlation is the verdict and the
-    # headline percentage
+    # headline percentage.
     assert programme["verdict"] == "match"
     assert programme["percent"] == 98
     assert programme["samples"][0]["clock"] == "0:20:00"
     assert programme["samples"][0]["percent"] == 96
     assert programme["samples"][2]["percent"] is None
 
-    # Old shape (no pair-level correlation): median of the clips
-    # decides, with no headline percentage
+    # Old shape (no pair-level correlation): the median of the clips
+    # decides. There is no headline percentage.
     assert commentary["verdict"] == "differs"
     assert commentary["percent"] is None
 
-    # Full-track verdict outranks a flattering clip
+    # The full-track verdict outranks a good clip.
     assert divergent["verdict"] == "differs"
     assert divergent["percent"] == 44
 
@@ -451,11 +455,11 @@ def test_envelope_correlation_separates_programme_from_commentary(app):
     rng = random.Random(212)
     programme = [abs(math.sin(i / 7.0)) * 800 + rng.random() * 40 for i in range(240)]
 
-    # The same loudness contour a few windows late, softer, and with its
-    # own codec noise — a lossy encode of the same audio
+    # This is the same loudness contour, some windows late, softer, and
+    # with its own codec noise. It is a lossy encode of the same audio.
     lossy_twin = [0.0] * 5 + [value * 0.8 + rng.random() * 40 for value in programme]
 
-    # An unrelated contour — someone talking over the film
+    # This is an unrelated contour. A person talks over the film.
     commentary = [
         abs(math.sin(i / 31.0 + 2.0)) * 500 + rng.random() * 200 for i in range(240)
     ]

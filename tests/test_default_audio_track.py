@@ -1,18 +1,19 @@
-"""The default-flag rule, on real Matroska files.
+"""Test the default-flag rule on real Matroska files.
 
-Glenn's rule (Aug 24 2026, closing #194): the FIRST audio track is
-always the default track, and an E-AC-3 Atmos track is the default only
-when it is the first track. It matters because Infuse plays whichever
-track carries the flag — so the flag, not the channel count and not what
-Plex displays, decides what a viewer hears.
+The rule from Glenn (2026-08-24, closed #194): the FIRST audio track is
+always the default track. An E-AC-3 Atmos track is the default only when
+it is the first track. This is important because Infuse plays the track
+that has the flag. Thus, the flag decides what a viewer hears. The
+channel count does not decide. The Plex display does not decide.
 
-Three code paths write that flag (the import's inspect_localized_file,
-the mkvpropedit editor, and the Atmos supplement), and none of them had
-a test. These build a three-audio-track file with ffmpeg and mkvmerge —
-the harness test_localization.py already uses — and check the rule end
-to end, including the half that isn't obvious from reading the code:
-choosing a different default REORDERS the file so that track becomes
-first, which is what keeps "default" and "first" the same thing.
+3 code paths write that flag: inspect_localized_file in the import, the
+mkvpropedit editor, and the Atmos supplement. None of them had a test.
+These tests build a file with 3 audio tracks with ffmpeg and mkvmerge.
+That is the same harness that test_localization.py uses. They check the
+rule end to end. This includes the half that the code does not make
+obvious: when the caller selects a different default, Fitzflix REORDERS
+the file. That track becomes the first track. Thus, "default" and
+"first" stay the same thing.
 """
 
 import os
@@ -26,8 +27,10 @@ from tests.conftest import _TMP
 
 @pytest.fixture(scope="module")
 def three_audio_mkv(app):
-    """A 1-second Matroska with eng/fra/deu audio, its default flag
-    deliberately on the SECOND track so the rule has something to fix."""
+    """Build a 1-second Matroska with eng/fra/deu audio.
+
+    The default flag is on the SECOND track on purpose. Thus, the rule
+    has something to correct."""
 
     base = os.path.join(_TMP, "three-audio-base.mp4")
     mkv = os.path.join(_TMP, "three-audio.mkv")
@@ -57,7 +60,7 @@ def three_audio_mkv(app):
 
 
 def _audio(app, path):
-    """(language, default) per audio track, read the way the app reads it."""
+    """Return (language, default) for each audio track, read the same way as the app."""
 
     from app.tracks import get_audio_tracks_from_file
 
@@ -69,9 +72,10 @@ def _audio(app, path):
 
 
 def test_the_fixture_really_starts_out_wrong(app, three_audio_mkv):
-    """Guard on the guard: if mkvmerge ever stopped honoring the flags
-    this fixture asks for, the tests below would pass without proving
-    anything."""
+    """Check the fixture itself.
+
+    If mkvmerge stops obeying the flags that this fixture asks for, the
+    tests below pass without proof of anything."""
 
     assert _audio(app, three_audio_mkv) == [
         ("eng", False),
@@ -83,8 +87,10 @@ def test_the_fixture_really_starts_out_wrong(app, three_audio_mkv):
 def test_import_makes_the_first_audio_track_the_only_default(
     app, three_audio_mkv, tmp_path
 ):
-    """The import path's half of the rule: whatever the disc flagged,
-    the file that reaches the library defaults to its first track."""
+    """Test the half of the rule in the import path.
+
+    The flag on the disc is not important. The file that reaches the
+    library has its first track as the default."""
 
     from app.importing import inspect_localized_file
 
@@ -98,10 +104,12 @@ def test_import_makes_the_first_audio_track_the_only_default(
 
 
 def test_choosing_a_later_default_moves_it_to_the_front(app, three_audio_mkv):
-    """The half that isn't obvious from the flag edit alone: picking a
-    non-first default remuxes the file so that track becomes first. That
-    is what keeps "the default track" and "the first track" the same
-    thing — the invariant the Atmos twins rely on."""
+    """Test the half of the rule that the flag edit alone does not show.
+
+    When the caller selects a default that is not first, Fitzflix remuxes
+    the file. That track becomes first. This keeps "the default track"
+    and "the first track" the same thing. The Atmos twins depend on this
+    invariant."""
 
     from app import db
     from app.tracks import mkvpropedit_unlocked
@@ -117,13 +125,13 @@ def test_choosing_a_later_default_moves_it_to_the_front(app, three_audio_mkv):
     os.makedirs(os.path.dirname(library_path), exist_ok=True)
     shutil.copy(three_audio_mkv, library_path)
 
-    # Ask for the SECOND track (fra) as the default
+    # Ask for the SECOND track (fra) as the default.
 
     with app.app_context():
         assert mkvpropedit_unlocked(file_id, 2, None, None) is True
 
-    # French is now first, and the only default — the other two keep
-    # their order behind it
+    # French is now first, and it is the only default. The other 2 tracks
+    # keep their order behind it.
 
     assert _audio(app, library_path) == [
         ("fra", True),
@@ -133,9 +141,11 @@ def test_choosing_a_later_default_moves_it_to_the_front(app, three_audio_mkv):
 
 
 def test_the_stored_track_rows_follow_the_reordered_file(app, three_audio_mkv):
-    """The rule has to survive into the database too: the rows the File
-    page and the Atmos candidate search read are rebuilt from the
-    reordered file, not from the order the caller asked about."""
+    """Make sure that the rule also reaches the database.
+
+    The File page and the Atmos candidate search read the track rows.
+    Fitzflix rebuilds those rows from the reordered file, not from the
+    order that the caller asked about."""
 
     from app import db
     from app.models import FileAudioTrack

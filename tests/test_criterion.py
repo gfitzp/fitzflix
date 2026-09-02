@@ -1,6 +1,8 @@
-"""Criterion Collection refresh from Wikidata: SPARQL response parsing, the
-access etiquette headers, TMDB-id-first matching with title/year fallback,
-preservation of hand-set fields, and the Redis cache.
+"""Test the Criterion Collection refresh from Wikidata.
+
+The tests cover the SPARQL response parser, the access etiquette headers,
+the match order (TMDB id first, then title and year), the protection of
+hand-set fields, and the Redis cache.
 """
 
 import json
@@ -17,7 +19,8 @@ SPARQL_RESPONSE = {
     "results": {
         "bindings": [
             {
-                # Matched by TMDB id, even though the library title differs
+                # Fitzflix matches this row by TMDB id. The library title is
+                # different.
                 "spine": {"value": "1"},
                 "tmdbId": {"value": "1863"},
                 "filmLabel": {"value": "La Grande Illusion"},
@@ -25,13 +28,14 @@ SPARQL_RESPONSE = {
                 "criterionId": {"value": "336-grand-illusion"},
             },
             {
-                # No TMDB id on Wikidata: matched by title and year
+                # Wikidata has no TMDB id. Fitzflix matches by title and year.
                 "spine": {"value": "2"},
                 "filmLabel": {"value": "Seven Samurai"},
                 "year": {"value": "1954"},
             },
             {
-                # Unparseable spine rows are skipped, not fatal
+                # Fitzflix skips a row with a spine that it cannot parse.
+                # The row is not a fatal error.
                 "spine": {"value": "n/a"},
                 "filmLabel": {"value": "Broken Row"},
             },
@@ -44,8 +48,8 @@ SETS_RESPONSE = {
     "results": {
         "bindings": [
             {
-                # A box set: the spine and title belong to the set item,
-                # the film details to the member
+                # This is a box set. The spine and the title belong to the
+                # set item. The film details belong to the member.
                 "spine": {"value": "1000"},
                 "setLabel": {"value": "Godzilla: The Showa-Era Films, 1954-1975"},
                 "tmdbId": {"value": "39462"},
@@ -87,16 +91,16 @@ def test_refresh_matches_by_tmdb_id_and_title_year(app, monkeypatch):
     fake_sparql(monkeypatch, calls)
 
     with app.app_context():
-        # The library's title differs from Wikidata's label; only the TMDB
-        # id can connect them
+        # The library title is different from the Wikidata label. Only
+        # the TMDB id can connect them.
 
         by_id = make_movie("Grand Illusion", 1937, tmdb_id=1863)
 
-        # No TMDB match yet: falls back to title and year
+        # There is no TMDB match. Fitzflix then matches by title and year.
 
         by_title = make_movie("Seven Samurai", 1954)
 
-        # Not a Criterion release: untouched
+        # This is not a Criterion release. Fitzflix does not change it.
 
         other = make_movie("Sharknado", 2013, tmdb_id=119283)
         db.session.commit()
@@ -109,19 +113,20 @@ def test_refresh_matches_by_tmdb_id_and_title_year(app, monkeypatch):
         assert db.session.get(Movie, ids[1]).criterion_spine_number == 2
         assert db.session.get(Movie, ids[2]).criterion_spine_number is None
 
-        # The Criterion film-page id rides along when Wikidata has it, and
-        # its absence doesn't clear anything
+        # The Criterion film-page id goes with the match when Wikidata has
+        # it. A missing id does not clear a field.
 
         assert db.session.get(Movie, ids[0]).criterion_film_id == "336-grand-illusion"
         assert db.session.get(Movie, ids[1]).criterion_film_id is None
 
-        # New matches get optimistic defaults for fields Wikidata lacks
+        # A new match gets optimistic defaults for the fields that Wikidata
+        # does not have.
 
         assert db.session.get(Movie, ids[0]).criterion_in_print is True
         assert db.session.get(Movie, ids[0]).criterion_disc_owned is False
 
-    # Wikidata access etiquette: identifying User-Agent with a contact,
-    # SPARQL JSON accept header, and compression
+    # Wikidata access etiquette: a User-Agent that identifies Fitzflix
+    # with a contact, the SPARQL JSON accept header, and compression.
 
     assert len(calls) == 2
     headers = calls[0]["headers"]
@@ -158,8 +163,10 @@ def test_refresh_preserves_hand_set_fields(app, monkeypatch):
 
 
 def test_single_movie_refresh_uses_cache(app, monkeypatch):
-    """A one-movie refresh (the per-import path) reads the cached list
-    instead of re-querying Wikidata."""
+    """Make sure a one-movie refresh reads the cached list.
+
+    The one-movie refresh is the per-import path. It does not query
+    Wikidata again."""
 
     calls = []
     fake_sparql(monkeypatch, calls)
@@ -169,12 +176,12 @@ def test_single_movie_refresh_uses_cache(app, monkeypatch):
         db.session.commit()
         movie_id = movie.id
 
-        # Prime the cache with a full (forced) fetch
+        # Fill the cache with a full (forced) fetch.
 
         assert refresh_criterion_collection_info() is True
         assert len(calls) == 2
 
-        # A single-movie refresh is served from Redis
+        # Redis serves a single-movie refresh.
 
         assert refresh_criterion_collection_info(movie_id=movie_id) is True
         assert len(calls) == 2
@@ -182,14 +189,14 @@ def test_single_movie_refresh_uses_cache(app, monkeypatch):
         db.session.expire_all()
         assert db.session.get(Movie, movie_id).criterion_spine_number == 2
 
-        # The cached payload is well-formed JSON with the parsed rows
+        # The cached payload is well-formed JSON that holds the parsed rows.
 
         cached = json.loads(app.redis.get(videos.CRITERION_CACHE_KEY))
         assert {release["spine_number"] for release in cached} == {1, 2, 1000}
 
 
 def test_refresh_survives_wikidata_outage(app, monkeypatch):
-    """A failed fetch rolls back and logs rather than raising."""
+    """Make sure a failed fetch rolls back and logs, and does not raise."""
 
     import app.criterion_catalog as criterion_catalog
 
@@ -210,10 +217,12 @@ def test_refresh_survives_wikidata_outage(app, monkeypatch):
 
 
 def test_criterion_page_row_grammar_and_badges(app, admin_client):
-    """The Criterion page speaks the search-row grammar: the library
-    badge only when the disc is owned AND the file matches the
-    release's own format, an amber quality tier otherwise (go find the
-    Criterion version), plus the personal funnel badges."""
+    """Make sure the Criterion page uses the search-row grammar.
+
+    The page shows the library badge only when the user owns the disc AND
+    the file matches the format of the release. In all other cases, the
+    page shows an amber quality tier (find the Criterion version). The
+    page also shows the personal funnel badges."""
 
     from app.models import User, UserMovieReview, UserWatchlist
     from app.recommendations import RECS_KEY
@@ -233,7 +242,8 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         )
         make_movie_file(settled, "Bluray-1080p")
 
-        # Disc owned but the rip lags the release's format
+        # The user owns the disc, but the rip is below the format of the
+        # release.
 
         ripless = make_movie(
             "Criterion Disc Unripped",
@@ -244,7 +254,8 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         )
         make_movie_file(ripless, "DVD")
 
-        # Topped-out file, but no Criterion disc — still amber
+        # The file is at the top format, but there is no Criterion disc.
+        # The row stays amber.
 
         unowned = make_movie(
             "Criterion Unowned Disc",
@@ -255,9 +266,10 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         )
         make_movie_file(unowned, "Bluray-2160p Remux")
 
-        # Owned disc with a 1080p file counts as settled on this page
-        # even though Criterion re-released it in 2160p — chasing that
-        # upgrade is the shopping list's job (Glenn's rule)
+        # An owned disc with a 1080p file counts as settled on this page.
+        # This is true although Criterion released the film again in
+        # 2160p. The shopping list is responsible for that upgrade (rule
+        # set by Glenn).
 
         good_enough = make_movie(
             "Criterion Good Enough",
@@ -282,8 +294,8 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         db.session.commit()
         settled_id, unowned_id = settled.id, unowned.id
 
-    # Both films sit in the stored recommendations — the seen one must
-    # not badge might-interest anyway
+    # Both films are in the stored recommendations. The seen film must
+    # not show the might-interest badge.
 
     app.redis.set(
         RECS_KEY.format(user_id=user_id),
@@ -302,11 +314,12 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
 
     assert "#100 &ndash; Criterion Settled (1954)" in page
 
-    # Two settled rows: the format match, and the 1080p-file-vs-2160p-
-    # release case the page deliberately calls done
+    # There are 2 settled rows: the format match, and the case of a 1080p
+    # file against a 2160p release. The page counts the second case as
+    # done on purpose.
 
-    # The settled/amber answer left the tiles too (#77a): the popover
-    # carries it, recolored by the criterion context on the card URL
+    # The settled/amber answer is not on the tiles (#77a). The popover
+    # shows it. The criterion context on the card URL sets its color.
 
     assert 'title="In your Fitzflix library"' not in page
     assert 'text-bg-warning me-1">DVD' not in page
@@ -316,10 +329,10 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     )
     assert f'data-state-movie="{settled_id}"' in page
 
-    # The funnel moved off the tiles (Aug 2026): Seen and the
-    # watchlist answer through the hydrated widgets, might-interest
-    # rides the recommended film's anchor as a card label — never a
-    # seen film's, even one still in the stored recommendations
+    # The funnel is not on the tiles (2026-08). The hydrated widgets show
+    # Seen and the watchlist answer. The might-interest label goes with
+    # the anchor of the recommended film as a card label. A seen film
+    # never gets the label, even if it is in the stored recommendations.
 
     assert 'text-bg-info me-1">Seen' not in page
     assert "On your watchlist" not in page
@@ -329,15 +342,16 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         "data-card-reasons='[\"Might interest you\"]'"
     ) in page
     assert "Part of the Essential Arthouse collector's set" in page
-    # The synopsis lives in the poster popover (#45d)
+    # The poster popover shows the synopsis (#45d).
     assert "A settled classic." not in page
     assert f'href="/movie/{settled_id}"' in page
 
-    # The criterion-context card colors by the SETTLED rule: green
-    # only when the disc is owned AND the copy meets the release's
-    # format (capped at the app threshold — the owned disc with a
-    # 1080p file against a 2160p re-release stays green); the DVD rip
-    # of an owned disc and the unowned remux both go amber
+    # The criterion-context card uses the SETTLED rule for its color.
+    # The card is green only when the user owns the disc AND the copy
+    # meets the format of the release. The app threshold caps the
+    # format. Thus, the owned disc with a 1080p file against a 2160p
+    # re-release stays green. The DVD rip of an owned disc and the
+    # unowned remux both go amber.
 
     with app.app_context():
         ripless_id = Movie.query.filter_by(title="Criterion Disc Unripped").one().id
@@ -348,8 +362,8 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
             f"/movie_card?movie_id={movie_id}&context=criterion"
         ).get_data(as_text=True)
 
-    # The rule colors the In-library badge itself since Aug 2026 — the
-    # tier badge left the card
+    # Since 2026-08, the rule sets the color of the In-library badge. The
+    # tier badge is not on the card.
 
     assert (
         'text-bg-success align-middle me-1" title="In your Fitzflix library'
@@ -368,8 +382,9 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         in criterion_card(good_enough_id)
     )
 
-    # Without the context, the same unowned remux is green — the
-    # generic shopping answer — so the recolor is context-scoped
+    # Without the context, the same unowned remux is green. That is the
+    # generic shopping answer. Thus, the new color applies only in the
+    # context.
 
     generic = admin_client.get(f"/movie_card?movie_id={unowned_id}").get_data(
         as_text=True
@@ -380,13 +395,13 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
 
 
 def _seed_release_cache(app, releases):
-    """Store a canned spine catalog where the page reads it from."""
+    """Store a canned spine catalog at the location that the page reads."""
 
     app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps(releases))
 
 
 def release(spine, title, year, tmdb_id=None, set_title=None):
-    """One cached release dict, the shape the Wikidata parser stores."""
+    """Return one cached release dict in the shape that the Wikidata parser stores."""
 
     return {
         "spine_number": spine,
@@ -400,12 +415,15 @@ def release(spine, title, year, tmdb_id=None, set_title=None):
 
 
 def test_criterion_page_shows_full_catalog(app, admin_client):
-    """The page lists the whole spine catalog: library films consume
-    their releases (TMDB id or title+year, never duplicated), an owned
-    film the refresh never marked still rows up with its catalog spine,
-    releases beyond the library render as log-page links with funnel
-    badges off any local record, TMDB-less releases render as plain
-    rows, and the Criterion Channel badge marks what's streaming."""
+    """Make sure the page lists the whole spine catalog.
+
+    A library film consumes its release (by TMDB id, or by title and
+    year). The page never shows a duplicate. An owned film that the
+    refresh did not mark still gets a row with its catalog spine. A
+    release that is not in the library renders as a log-page link, with
+    funnel badges from a local record if there is one. A release with no
+    TMDB id renders as a plain row. The Criterion Channel badge marks the
+    films that stream."""
 
     from app.models import User, UserWatchlist
     from app.streaming import AVAILABILITY_KEY
@@ -425,22 +443,23 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         )
         make_movie_file(owned, "Bluray-1080p")
 
-        # In the library and in the catalog, but the refresh never
-        # stamped its criterion fields — the TMDB id connects them
+        # This film is in the library and in the catalog, but the refresh
+        # did not stamp its criterion fields. The TMDB id connects them.
 
         unmarked = make_movie("Unmarked Owned", 1980, tmdb_id=555003)
         make_movie_file(unmarked, "Bluray-1080p")
 
-        # Criterion-marked but TMDB-less: consumes its release by
-        # title and year, so the catalog must not repeat it
+        # This film has Criterion fields but no TMDB id. It consumes its
+        # release by title and year. Thus, the catalog must not repeat it.
 
         by_title = make_movie(
             "Title Match", 1990, criterion_spine_number=500, criterion_disc_owned=False
         )
         make_movie_file(by_title, "DVD")
 
-        # A file-less record for a catalog release (a watchlisted film
-        # logged through TMDB): dresses the row and carries the funnel
+        # This is a record with no files for a catalog release (a film on
+        # the watchlist, logged through TMDB). It dresses the row and
+        # carries the funnel.
 
         record = make_movie(
             "Catalog Only",
@@ -460,8 +479,8 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
             release(300, "No Tmdb Release", 1971),
             release(400, "Unmarked Owned", 1980, tmdb_id=555003),
             release(500, "Title Match", 1990),
-            # A box-set CONTAINER (the set item holds the spine, no TMDB
-            # id) plus its member: only the member may render
+            # This is a box-set CONTAINER (the set item holds the spine and
+            # has no TMDB id) and its member. Only the member can render.
             release(600, "Shadow Trilogy", 1944),
             release(
                 600, "Shadow Part I", 1944, tmdb_id=555004, set_title="Shadow Trilogy"
@@ -469,8 +488,8 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         ],
     )
 
-    # The catalog release is streaming on the Criterion Channel (day
-    # cache seeded, so no TMDB call happens)
+    # The catalog release streams on the Criterion Channel. The test
+    # seeds the day cache. Thus, no TMDB call occurs.
 
     app.redis.set(
         AVAILABILITY_KEY.format(tmdb_id=555002),
@@ -493,7 +512,7 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
 
     page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
 
-    # Every spine rows up exactly once, in spine order
+    # Each spine gets exactly 1 row, in spine order.
 
     assert page.count("Criterion Settled (1954)") == 1
     assert page.count("Catalog Only (1962)") == 1
@@ -508,18 +527,18 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
         < page.index("#500 &ndash;")
     )
 
-    # The record-backed catalog row opens its movie page directly (the
-    # log page would just redirect there); its funnel, overview, and
-    # streaming availability all live in the popover now, so the tile
-    # carries the state container instead of badges
+    # The catalog row with a record opens its movie page directly. The
+    # log page would only redirect there. The popover now shows its
+    # funnel, overview, and streaming availability. Thus, the tile
+    # carries the state container and not the badges.
 
     with app.app_context():
         record_id = Movie.query.filter_by(tmdb_id=555002).first().id
     assert f'href="/movie/{record_id}"' in page
     assert 'href="/review/tmdb/555002"' not in page
     assert "On your watchlist" not in page
-    # The synopsis moved into the poster popover (#45d); the card URL
-    # carries the criterion context for the settled recolor (#77a)
+    # The poster popover shows the synopsis (#45d). The card URL carries
+    # the criterion context for the settled color (#77a).
     assert "A spine the library lacks." not in page
     assert (
         f'data-card-url="/movie_card?movie_id={record_id}&amp;context=criterion"'
@@ -528,23 +547,24 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert f'data-state-movie="{record_id}"' in page
     assert 'title="Streaming on The Criterion Channel"' not in page
 
-    # The box-set container never shadows its members: the member
-    # renders with its set line, the container row doesn't exist
+    # The box-set container never hides its members. The member renders
+    # with its set line. The container row does not exist.
 
     assert "Shadow Part I (1944)" in page
     assert "Part of the Shadow Trilogy collector's set" in page
     assert "#600 &ndash; Shadow Trilogy" not in page
 
-    # The plain row has nothing to link
+    # The plain row has no link.
 
-    assert 'href="/review/tmdb/555003"' not in page  # library row links home
+    assert 'href="/review/tmdb/555003"' not in page  # the library row links home
     with app.app_context():
         unmarked_id = Movie.query.filter_by(tmdb_id=555003).first().id
     assert f'href="/movie/{unmarked_id}"' in page
 
-    # The filters: "library" drops catalog rows, "settled" keeps only
-    # settled library rows — the unmarked film has no owned disc, the
-    # DVD rip lags its release, so only the settled film remains
+    # The filters: "library" removes the catalog rows. "settled" keeps
+    # only the settled library rows. The unmarked film has no owned disc.
+    # The DVD rip is below its release. Thus, only the settled film
+    # remains.
 
     library_page = admin_client.get(
         "/library/criterion-collection?filter=library"
@@ -562,18 +582,20 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
 
 
 def test_full_refresh_creates_catalog_records(app, monkeypatch):
-    """A full refresh creates file-less records for spine releases the
-    library has never seen — under the Wikidata label, with criterion
-    fields stamped and the standard TMDB refresh queued (which renames
-    them to TMDB's canonical title, so later imports match) — adopts
-    title+year records that lack a TMDB id, skips TMDB-less releases,
-    and never creates on the single-movie path."""
+    """Make sure a full refresh creates records for unknown spine releases.
+
+    The records have no files. They use the Wikidata label and have the
+    criterion fields stamped. The refresh queues the standard TMDB
+    refresh for them. That refresh renames them to the canonical TMDB
+    title. Thus, later imports match. The full refresh adopts a record
+    that matches by title and year but has no TMDB id. It skips a release
+    with no TMDB id. The single-movie path never creates a record."""
 
     fake_sparql(monkeypatch)
 
     with app.app_context():
-        # An existing record with the release's title and year but no
-        # TMDB id gets adopted rather than duplicated
+        # The refresh adopts an existing record with the title and year of
+        # the release but no TMDB id. It does not create a duplicate.
 
         adoptee = make_movie("All Monsters Attack", 1969)
         db.session.commit()
@@ -587,7 +609,8 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         assert adoptee.criterion_spine_number == 1000
         assert adoptee.criterion_set_title == "Godzilla: The Showa-Era Films, 1954-1975"
 
-        # The unknown release became a record, label-cased, stamped
+        # The unknown release is now a record, with the label case and
+        # the criterion fields stamped.
 
         created = Movie.query.filter_by(tmdb_id=1863).first()
         assert created is not None
@@ -596,11 +619,11 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         assert created.criterion_spine_number == 1
         assert created.files.count() == 0
 
-        # The TMDB-less Seven Samurai release created nothing
+        # The Seven Samurai release has no TMDB id. It created nothing.
 
         assert Movie.query.filter_by(title="Seven Samurai").first() is None
 
-        # Both the new record and the adopted one queued a TMDB refresh
+        # The new record and the adopted record both queued a TMDB refresh.
 
         jobs = app.maintenance_queue.jobs
         refreshed_ids = {
@@ -610,7 +633,7 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
         }
         assert refreshed_ids == {created.id, adoptee_id}
 
-        # The single-movie path never creates records
+        # The single-movie path never creates a record.
 
         before = Movie.query.count()
         assert refresh_criterion_collection_info(movie_id=adoptee_id) is True
@@ -620,16 +643,18 @@ def test_full_refresh_creates_catalog_records(app, monkeypatch):
 def test_catalog_exclusion_blocks_recreation_and_rendering(
     app, monkeypatch, admin_client
 ):
-    """`flask catalog exclude` deletes a bogus record and bars its TMDB
-    id: later full refreshes don't recreate it, the catalog page stops
-    rendering its release, and records with real library data refuse."""
+    """Make sure `flask catalog exclude` deletes a bad record and blocks its TMDB id.
+
+    A later full refresh does not create the record again. The catalog
+    page stops rendering its release. A record with real library data
+    refuses the command."""
 
     from tests.factories import make_movie_file
 
     fake_sparql(monkeypatch)
 
-    # CLI commands attach in the fitzflix.py entrypoint, not create_app,
-    # so the test app registers them itself
+    # The fitzflix.py entrypoint attaches the CLI commands, not
+    # create_app. Thus, the test app registers them itself.
 
     from app import cli as app_cli
 
@@ -650,19 +675,19 @@ def test_catalog_exclusion_blocks_recreation_and_rendering(
     with app.app_context():
         assert Movie.query.filter_by(tmdb_id=1863).first() is None
 
-        # The next full refresh skips the excluded id instead of
-        # recreating the record
+        # The next full refresh skips the excluded id. It does not create
+        # the record again.
 
         assert refresh_criterion_collection_info() is True
         assert Movie.query.filter_by(tmdb_id=1863).first() is None
 
-    # The catalog page neither renders the release nor links it
+    # The catalog page does not render the release and does not link it.
 
     _seed_release_cache(app, [release(1, "La Grande Illusion", 1937, tmdb_id=1863)])
     page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
     assert "La Grande Illusion" not in page
 
-    # A record with files is library data, never catalog junk
+    # A record with files is library data. It is never catalog junk.
 
     with app.app_context():
         owned = make_movie("Exclusion Owned", 1960, tmdb_id=555009)
@@ -676,8 +701,9 @@ def test_catalog_exclusion_blocks_recreation_and_rendering(
 
 
 def test_criterion_catalog_pagination():
-    """The page-number window keeps the ends and the neighborhood of
-    the current page, with gaps marked."""
+    """Make sure the page-number window keeps the ends and the current area.
+
+    The window marks the gaps."""
 
     from app.main.library import _page_window
 
@@ -689,8 +715,9 @@ def test_criterion_catalog_pagination():
 def test_shopping_list_links_direct_to_criterion_film_page(
     app, admin_client, monkeypatch
 ):
-    """A movie with a stored Criterion film id gets a direct film-page link
-    instead of a criterion.com search."""
+    """Make sure a movie with a stored Criterion film id gets a direct link.
+
+    The link opens the film page and not a criterion.com search."""
 
     from tests.factories import make_movie_file
 
@@ -710,9 +737,10 @@ def test_shopping_list_links_direct_to_criterion_film_page(
 
 
 def test_box_set_members_get_set_spine_and_title(app, monkeypatch):
-    """A film inside a box set matches through the set's P527 membership:
-    it takes the set's spine and title, and its own film-page id — but a
-    hand-curated set title is never overwritten."""
+    """Make sure a film in a box set matches through the P527 membership.
+
+    The film takes the spine and the title of the set, and its own
+    film-page id. The refresh never overwrites a hand-set set title."""
 
     fake_sparql(monkeypatch)
 

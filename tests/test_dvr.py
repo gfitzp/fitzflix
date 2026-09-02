@@ -1,7 +1,9 @@
-"""Virtual DVR channels (#182): the token gate on all three endpoints,
-the nightly lineup build (genre channels, duration cache), the cyclic
-schedule math, guide/playlist agreement, and the stream generator's
-program-to-program roll."""
+"""Test the virtual DVR channels (#182).
+
+These tests cover the token gate on all 3 endpoints, the nightly lineup
+build (genre channels, duration cache), the cyclic schedule math, the
+agreement between the guide and the playlist, and the roll of the
+stream generator from program to program."""
 
 import io
 import json
@@ -27,8 +29,9 @@ ENDPOINTS = [
 
 
 def _build_library(app, monkeypatch, horror_films=0, other_films=2, duration=3600.0):
-    """Seed owned films (optionally enough Horror for a genre channel),
-    stub the ffprobe duration, and run the lineup build."""
+    """Seed owned films, stub the ffprobe duration, and build the lineups.
+
+    The horror_films count can be large enough for a genre channel."""
 
     from app import dvr
 
@@ -49,8 +52,10 @@ def _build_library(app, monkeypatch, horror_films=0, other_films=2, duration=360
 
 @pytest.mark.parametrize("endpoint", ENDPOINTS)
 class TestDvrGate:
-    """Every endpoint 404s on a wrong token or while the feature is
-    unconfigured — indistinguishable from a missing route."""
+    """Test that every endpoint answers 404 on a wrong token.
+
+    The same occurs while the feature is not configured. The answer is
+    the same as for a missing route."""
 
     def test_rejects_wrong_token(self, client, endpoint):
         assert client.get(endpoint.format(token="0" * 24)).status_code == 404
@@ -76,7 +81,7 @@ def test_build_makes_mix_channel_and_caches_durations(app, monkeypatch):
     assert program["file_path"].endswith(".mkv")
     assert app.redis.hlen(dvr.DURATIONS_KEY) == 3
 
-    # A rebuild reads every duration from the cache, never the prober
+    # A rebuild reads every duration from the cache, never from the prober.
 
     def boom(path):
         raise AssertionError("cached duration was re-probed")
@@ -102,8 +107,10 @@ def test_build_makes_genre_channels_from_deep_genres(app, monkeypatch):
 
 
 def test_build_makes_criterion_channel_from_availability(app, monkeypatch):
-    """Owned films flat-rate on provider 258 get the Criterion channel;
-    below the special-channel bench, no channel appears."""
+    """Test that owned Criterion films make the Criterion channel.
+
+    Owned films with a flat rate on provider 258 get the Criterion
+    channel. Below the special-channel minimum, no channel appears."""
 
     from app import dvr
 
@@ -146,7 +153,7 @@ def test_build_makes_criterion_channel_from_availability(app, monkeypatch):
         "Criterion 2",
     }
 
-    # One film drops off Criterion: only two remain, below the bench
+    # One film drops off Criterion. Only 2 remain, below the minimum.
 
     def fake_thinner(tmdb_ids, **kwargs):
         return {t: (streaming if t < 9002 else nothing) for t in tmdb_ids}, []
@@ -158,8 +165,10 @@ def test_build_makes_criterion_channel_from_availability(app, monkeypatch):
 
 
 def test_build_makes_leaving_channel_with_last_call_note(app, monkeypatch):
-    """Owned films in the leaving set air as a last-call marathon, the
-    departure date leading every guide description."""
+    """Test that the leaving set makes a last-call channel.
+
+    Owned films in the leaving set air as a last-call marathon. The
+    departure date leads every guide description."""
 
     from app import dvr
 
@@ -186,7 +195,7 @@ def test_build_makes_leaving_channel_with_last_call_note(app, monkeypatch):
         for p in lineup["programs"]
     )
 
-    # The mix channel's copies of the same films carry no note
+    # The copies of the same films on the mix channel carry no note.
 
     mix = dvr.channel_lineup(app.redis, "fitzflix-mix")
     assert not any(p["overview"].startswith("Leaving") for p in mix["programs"])
@@ -195,10 +204,11 @@ def test_build_makes_leaving_channel_with_last_call_note(app, monkeypatch):
 def test_build_makes_genre_tv_channels_with_interleaved_blocks(
     app, client, monkeypatch
 ):
-    """A deep TV genre gets a channel airing its series in short
-    interleaved blocks: each series in cyclic broadcast order rotated
-    by the day, specials excluded, sub-title/episode-num in the
-    guide."""
+    """Test that a deep TV genre gets a channel with interleaved blocks.
+
+    The channel airs its series in short interleaved blocks. Each series
+    airs in cyclic broadcast order, rotated by the day. Specials are
+    excluded. The guide shows the sub-title and the episode-num."""
 
     from app import dvr
 
@@ -213,7 +223,7 @@ def test_build_makes_genre_tv_channels_with_interleaved_blocks(
             series.genres.append(animation)
             for episode in range(1, 10):
                 make_tv_file(series, 1, episode, "Bluray-1080p")
-        make_tv_file(first, 0, 1, "Bluray-1080p")  # a special: never airs
+        make_tv_file(first, 0, 1, "Bluray-1080p")  # a special never airs
         db.session.commit()
         assert dvr.build_channel_lineups(day=day) is True
 
@@ -224,7 +234,7 @@ def test_build_makes_genre_tv_channels_with_interleaved_blocks(
     assert len(programs) == 18
     assert all(p["episode_num"].startswith("S01") for p in programs)
 
-    # Blocks of two, alternating series, both fully represented
+    # Blocks of 2 alternate between the series. Both series are complete.
 
     assert [p["title"] for p in programs[:4]] == [
         "Alpha Toons",
@@ -234,7 +244,7 @@ def test_build_makes_genre_tv_channels_with_interleaved_blocks(
     ]
 
     # Each series airs in cyclic broadcast order from its day-rotated
-    # start (equal depth: quota is the full series)
+    # start. With equal depth, the quota is the full series.
 
     start = (day.toordinal() * 9) % 9
     expected = [f"S01E{((start + n) % 9) + 1:02d}" for n in range(9)]
@@ -252,9 +262,11 @@ def test_build_makes_genre_tv_channels_with_interleaved_blocks(
 
 
 def test_build_makes_themed_tv_channels(app, monkeypatch):
-    """Theme specs: British Sitcoms needs the sitcom keyword AND a
-    GB-registered network; Game Shows matches the keyword or a title
-    pin (Match Game PM carries no keywords at all)."""
+    """Test the themed TV channels.
+
+    British Sitcoms needs the sitcom keyword AND a GB-registered network.
+    Game Shows matches the keyword or a title pin. Match Game PM carries
+    no keywords at all."""
 
     from app import dvr
 
@@ -274,7 +286,7 @@ def test_build_makes_themed_tv_channels(app, monkeypatch):
         yank.networks.append(cbs)
         host = make_tv_series("The Match Game")
         host.keywords.append(game_show)
-        pinned = make_tv_series("Match Game PM")  # no keywords: title pin
+        pinned = make_tv_series("Match Game PM")  # no keywords: a title pin
         for series in (brit, yank, host, pinned):
             for episode in range(1, 10):
                 make_tv_file(series, 1, episode, "Bluray-1080p")
@@ -302,7 +314,7 @@ def test_schedule_math_wraps_the_lineup(app):
     assert dvr.program_at(lineup, 1000.0) == (0, 0.0)
     assert dvr.program_at(lineup, 1120.0) == (1, 20.0)
     assert dvr.program_at(lineup, 1170.0) == (0, 20.0)
-    # Joining before the epoch still lands inside the cycle
+    # A join before the epoch still goes into the cycle.
     index, offset = dvr.program_at(lineup, 940.0)
     assert (index, offset) == (0, 90.0)
 
@@ -312,20 +324,23 @@ def test_schedule_math_wraps_the_lineup(app):
         (1150.0, 1250.0),
         (1250.0, 1300.0),
     ]
-    # Contiguous: each airing stops exactly where the next starts
+    # Contiguous: each airing stops exactly where the next one starts.
     assert all(airings[n][1] == airings[n + 1][0] for n in range(len(airings) - 1))
 
 
 def test_hdhomerun_trio_describes_the_tuner(app, client, monkeypatch):
-    """Plex's manual tuner entry probes discover.json (also via the
-    pasted-playlist-URL alias), then reads the lineup; the three
+    """Test that the 3 HDHomeRun documents describe the tuner.
+
+    The manual tuner entry of Plex probes discover.json, also through
+    the alias for a pasted playlist URL. Then it reads the lineup. The 3
     documents must agree with the stored channels."""
 
     _build_library(app, monkeypatch, horror_films=8, other_films=2)
 
-    # SERVER_NAME pins url_for(_external=True) to the public hostname in
-    # production; these documents must ignore it and answer on the host
-    # the request came in on, or Plex tunes through CloudFront
+    # In production, SERVER_NAME pins url_for(_external=True) to the
+    # public hostname. These documents must ignore it. They must answer
+    # on the host that the request came in on. If not, Plex tunes
+    # through CloudFront.
 
     monkeypatch.setitem(app.config, "SERVER_NAME", "public.example.com")
 
@@ -338,8 +353,8 @@ def test_hdhomerun_trio_describes_the_tuner(app, client, monkeypatch):
     assert device["LineupURL"] == f'{device["BaseURL"]}/lineup.json'
     assert device["TunerCount"] == 4
 
-    # The alias answers identically when the playlist URL was pasted
-    # as the device address
+    # The alias gives the same answer when the user pasted the playlist
+    # URL as the device address.
 
     alias = client.get(
         f"/dvr/{TOKEN}/playlist.m3u/discover.json", base_url="http://localhost"
@@ -375,14 +390,17 @@ def test_playlist_and_guide_agree_on_channel_ids(app, client, monkeypatch):
     airings = [p for p in tv.findall("programme") if p.get("channel") == "horror"]
     assert airings, "guide carries no horror airings"
     assert all(a.find("title").text.startswith("Scary") for a in airings)
-    # Contiguous wall: each programme starts when the previous stops
+    # Contiguous wall: each programme starts when the previous one stops.
     stamps = [(a.get("start"), a.get("stop")) for a in airings]
     assert all(stamps[n][1] == stamps[n + 1][0] for n in range(len(stamps) - 1))
 
 
 def test_stream_rolls_programs_and_dies_cleanly(app, client, monkeypatch):
-    """The stream serves ffmpeg's bytes, rolls to the next program on
-    EOF, and ends (rather than spinning) when ffmpeg can't spawn."""
+    """Test that the stream rolls programs and ends cleanly.
+
+    The stream serves the bytes of ffmpeg. It rolls to the next program
+    on EOF. When ffmpeg cannot spawn, the stream ends. It does not
+    spin."""
 
     from app.main import dvr as dvr_routes
 
@@ -407,10 +425,10 @@ def test_stream_rolls_programs_and_dies_cleanly(app, client, monkeypatch):
             self.stdout = io.BytesIO(data)
 
         def kill(self):
-            """No real process to kill."""
+            """Do nothing. There is no real process to kill."""
 
         def wait(self):
-            """No real process to reap."""
+            """Return 0. There is no real process to reap."""
             return 0
 
     spawned = []
@@ -430,14 +448,15 @@ def test_stream_rolls_programs_and_dies_cleanly(app, client, monkeypatch):
     assert response.get_data() == b"T" * 70000
     assert len(spawned) == 2
 
-    # The first spawn joined mid-program (epoch 0 is long past) and
-    # the roll after EOF started the next program from the top
+    # The first spawn joined in the middle of the program, because epoch
+    # 0 is long past. The roll after EOF started the next program from
+    # the top.
 
     first, second = spawned
     assert "-ss" in first
     assert "-ss" not in second
     assert "h264_videotoolbox" in first
 
-    # An unknown channel is indistinguishable from a missing route
+    # An unknown channel gets the same answer as a missing route.
 
     assert client.get(f"/dvr/{TOKEN}/stream/nope.ts").status_code == 404

@@ -1,7 +1,9 @@
-"""The Recommendations page (#235): criteria-keyed shelves anchored by
-two interest films (or occasionally one, #249), the eligibility pool
-(owned or streaming), the fresh-per-reload draw, and the tile endpoint
-that refills a slot after a rating, watchlist add, or wave-off."""
+"""Test the Recommendations page (#235).
+
+The tests cover the criteria-keyed shelves that 2 interest films anchor
+(or sometimes 1 film, #249), the eligibility pool (owned or streaming),
+the new draw on each reload, and the tile endpoint. The tile endpoint
+refills a slot after a rating, a watchlist add, or a wave-off."""
 
 import json
 import random
@@ -23,7 +25,7 @@ from tests.test_recommendations import (
 
 
 def make_award(movie, award_id="Q102427", name="Academy Award for Best Picture"):
-    """An award WIN for the film."""
+    """Create an award WIN for the film."""
 
     row = MovieAward(
         movie_id=movie.id, award_id=award_id, award_name=name, win=True, year=None
@@ -34,8 +36,10 @@ def make_award(movie, award_id="Q102427", name="Academy Award for Best Picture")
 
 
 def admin_user(app):
-    """The seeded admin User object (shelf builders take the user, not
-    the id — provider picks ride on it)."""
+    """Return the seeded admin User object.
+
+    The shelf builders take the user, not the id. The provider picks go
+    with the user."""
 
     from app.models import User
 
@@ -43,9 +47,11 @@ def admin_user(app):
 
 
 def test_shelf_features_cover_awards_and_skip_language(app):
-    """The shelves' feature space: the engine's classes minus
-    language, with sentence-ready labels, plus one feature per award
-    WON — nominations never key a shelf."""
+    """Make sure the shelf feature space is correct.
+
+    The space is the engine classes without language, with labels that
+    fit in a sentence. It has 1 feature for each award WON. A nomination
+    never keys a shelf."""
 
     from app.models import TMDBKeyword
 
@@ -86,19 +92,23 @@ def test_shelf_features_cover_awards_and_skip_language(app):
             "award",
             "Academy Award for Best Picture winners",
         )
-        # Keyword names are stored lowercase; the label upcases the
-        # first character (Glenn: "“Poker” films", never "“poker”")
+        # Fitzflix stores the keyword names in lowercase. The label makes
+        # the first character uppercase (Glenn: "“Poker” films", never
+        # "“poker”").
         assert by_key["keyword:9717"] == ("keyword", "“Heist” films")
         assert "award:Q103360" not in by_key
-        # TMDB's bookkeeping keywords never key a shelf
+        # A TMDB bookkeeping keyword never keys a shelf.
         assert "keyword:179431" not in by_key
         assert not any(cls == "language" for cls, _ in by_key.values())
 
 
 def test_eligible_films_need_local_files_or_streaming(app):
-    """A shelf may suggest owned unseen films, and record-backed films
-    the availability cache says are streaming on the user's services —
-    never watchlisted films, seen films, or unavailable records."""
+    """Make sure the pool holds only owned or streaming films.
+
+    A shelf can suggest an owned unseen film. It can suggest a film with
+    a record that the availability cache reports as streaming on a
+    service of the user. It never suggests a film on the watchlist, a
+    seen film, or an unavailable record."""
 
     from app.models import UserStreamingProvider
 
@@ -111,9 +121,9 @@ def test_eligible_films_need_local_files_or_streaming(app):
         wanted = make_candidate("Pool Wanted", 1992)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
 
-        # Record-backed, file-less films with TMDB data: one streaming
-        # on the user's service, one not, one whose availability is
-        # still unfetched
+        # These films have a record, no files, and TMDB data. One streams
+        # on the service of the user. One does not. One has no fetched
+        # availability yet.
         from datetime import datetime
 
         streaming = make_movie("Pool Streaming", 1993, tmdb_id=910001)
@@ -147,8 +157,10 @@ def test_eligible_films_need_local_files_or_streaming(app):
 
 
 def test_build_shelves_anchors_and_criteria_overlap(app):
-    """A shelf's two anchors are interest films carrying the seed, its
-    criteria extend only with features both anchors share, and every
+    """Make sure the anchors and the criteria of a shelf agree.
+
+    The 2 anchors of a shelf are interest films that carry the seed. The
+    criteria extend only with features that both anchors share. Each
     suggested film carries the whole criteria set."""
 
     with app.app_context():
@@ -184,19 +196,20 @@ def test_build_shelves_anchors_and_criteria_overlap(app):
         assert len(shelf["anchor_ids"]) == 2
         assert set(shelf["movie_ids"]) <= suggestion_ids
         assert outsider_id not in shelf["movie_ids"]
-        # Both 1960s anchors and every 1960s pick share the decade, so
-        # the greedy extension may add it — every criterion must hold
-        # for anchors and picks alike
+        # Both 1960s anchors and each 1960s pick share the decade. Thus,
+        # the greedy extension can add it. Each criterion must hold for
+        # the anchors and for the picks.
         for key, label in shelf["criteria"]:
             assert key in ("genre:37", "decade:1960")
             assert label in ("Western films", "the 1960s")
 
 
 def test_single_holder_genre_or_decade_never_seeds(app):
-    """A lone liked film whose only features are a genre and a decade
-    still anchors nothing — one film is too weak an evidence base for
-    the broad classes; single-anchor shelves (#249) need a specific
-    feature (a person, keyword, or award) or copref coverage."""
+    """Make sure 1 liked film with only a genre and a decade anchors nothing.
+
+    One film is too weak an evidence base for the broad classes. A
+    single-anchor shelf (#249) needs a specific feature (a person, a
+    keyword, or an award) or copref coverage."""
 
     with app.app_context():
         user = admin_user(app)
@@ -213,10 +226,11 @@ def test_single_holder_genre_or_decade_never_seeds(app):
 
 
 def test_single_anchor_criteria_shelf_from_specific_feature(app):
-    """A director the user has loved exactly once may key a
-    single-anchor shelf (#249): kind criteria, the lone holder as the
-    only anchor, the director as a criterion, and only that director's
-    films suggested."""
+    """Make sure a director loved exactly 1 time can key a single-anchor shelf.
+
+    This is #249. The shelf has kind criteria. The 1 holder is the only
+    anchor. The director is a criterion. The shelf suggests only films
+    by that director."""
 
     with app.app_context():
         user = admin_user(app)
@@ -249,8 +263,10 @@ def test_single_anchor_criteria_shelf_from_specific_feature(app):
 
 
 def test_recommendations_page_renders_shelves(app, admin_client):
-    """The page shows a shelf's heading, the fanned anchor slot naming
-    both anchors under a "Because you liked" eyebrow, and its
+    """Make sure the page renders a shelf.
+
+    The page shows the heading of the shelf, the fanned anchor slot that
+    names both anchors under a "Because you liked" eyebrow, and the
     suggestion tiles."""
 
     with app.app_context():
@@ -270,27 +286,31 @@ def test_recommendations_page_renders_shelves(app, admin_client):
     assert "Western films" in page
     assert 'class="anchor-slot"' in page
     assert "Because you liked" in page
-    # The anchors are named only in the poster links' tooltip and alt
-    # text — no visible title list under the fan (Glenn, Aug 26 2026)
+    # Only the tooltip and the alt text of the poster links name the
+    # anchors. There is no visible title list under the fan (Glenn,
+    # 2026-08-26).
     assert 'title="Page Anchor A (1961)"' in page
     assert 'title="Page Anchor B (1963)"' in page
     assert "anchor-slot-titles" not in page
     assert "anchor-fan-back" in page and "anchor-fan-front" in page
     assert 'data-criteria="' in page
     assert any(title in page for title in pick_titles)
-    # The old prose caption is gone — the slot carries the anchors now
+    # The old prose caption is gone. The slot carries the anchors now.
     assert "Based on your interest in" not in page
-    # Anchors are evidence, never suggestions
+    # An anchor is evidence. It is never a suggestion.
     assert "data-suggestion-cell" in page
-    # The films ride in their own shelf-films row, which the phone
-    # layout turns into the one-card swipe strip beside the fixed
-    # anchor slot (Glenn, Aug 26 2026)
+    # The films go in their own shelf-films row. The phone layout makes
+    # that row the one-card swipe strip next to the fixed anchor slot
+    # (Glenn, 2026-08-26).
     assert "shelf-films" in page
 
 
 def test_recommendations_page_empty_states(app, admin_client):
-    """No diary yet: the log-a-few-films prompt. A diary but no
-    overlapping unseen films: the not-enough-overlap prompt."""
+    """Make sure the page shows the correct empty state.
+
+    With no diary, the page shows the log-some-films prompt. With a
+    diary but no unseen films in common, the page shows the
+    not-enough-overlap prompt."""
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
     assert "Log some films to get recommendations." in page
@@ -306,9 +326,11 @@ def test_recommendations_page_empty_states(app, admin_client):
 
 
 def test_tile_endpoint_refills_and_exhausts(app, admin_client):
-    """The tile endpoint returns the best remaining film matching the
-    criteria (excluding what's showing), then 204 once the criteria
-    set is spent; malformed criteria 400."""
+    """Make sure the tile endpoint refills a slot and then reports 204.
+
+    The endpoint returns the best remaining film that matches the
+    criteria. It excludes the films that show. When the criteria set is
+    used up, it returns 204. Malformed criteria return 400."""
 
     with app.app_context():
         western = genre(37, "Western")
@@ -338,9 +360,11 @@ def test_tile_endpoint_refills_and_exhausts(app, admin_client):
 
 
 def test_tile_endpoint_honors_every_criterion_and_fresh_verdicts(app, admin_client):
-    """A multi-criteria slot refills only with films carrying ALL the
-    criteria, and a film just rated, watchlisted, or waved off never
-    comes back as its own replacement."""
+    """Make sure a refill honors each criterion and each new verdict.
+
+    A slot with more than 1 criterion refills only with a film that
+    carries ALL the criteria. A film that the user rated, added to the
+    watchlist, or waved off never comes back as its own replacement."""
 
     with app.app_context():
         user_id = admin_id()
@@ -374,9 +398,11 @@ def test_tile_endpoint_honors_every_criterion_and_fresh_verdicts(app, admin_clie
 
 
 def test_reload_reshuffles_shelf_draw(app):
-    """Two draws with different rngs may differ — the build is
-    randomized, not day-frozen. (Deterministic given the same rng, so
-    the test asserts the mechanism, not luck.)"""
+    """Make sure 2 draws with different rngs can be different.
+
+    The build is random, not frozen for the day. The build is
+    deterministic for the same rng. Thus, the test asserts the
+    mechanism, not luck."""
 
     with app.app_context():
         user = admin_user(app)
@@ -408,7 +434,7 @@ def test_reload_reshuffles_shelf_draw(app):
 
 
 def make_copref(tmdb_a, tmdb_b, similarity):
-    """One directed co-preference similarity row."""
+    """Create 1 directed co-preference similarity row."""
 
     from app.models import MovieCopref
 
@@ -419,9 +445,11 @@ def make_copref(tmdb_a, tmdb_b, similarity):
 
 
 def copref_fixture(app):
-    """Two liked anchors (tmdb 501/502) whose neighbor lists jointly
-    cover four owned candidates (tmdb 601-604) plus one film close to
-    only one anchor — returns (user, anchor ids, candidate ids)."""
+    """Create 2 liked anchors (tmdb 501/502) with a joint neighbor list.
+
+    The neighbor lists together cover 4 owned candidates (tmdb 601-604).
+    One more film is close to only 1 anchor. Return (user, anchor ids,
+    candidate ids)."""
 
     user = admin_user(app)
     user_id = int(user.id)
@@ -447,10 +475,11 @@ def copref_fixture(app):
 
 
 def test_build_shelves_draws_a_copref_pair_shelf(app):
-    """Two liked films with a deep enough joint neighbor list yield a
-    copref shelf: kind "copref", the pair as anchors, a
-    copref:{tmdbA}:{tmdbB} criteria key, and only JOINT neighbors as
-    suggestions — a film similar to one anchor alone never shows."""
+    """Make sure 2 liked films with a deep joint neighbor list give a copref shelf.
+
+    The shelf has kind "copref", the pair as anchors, and a
+    copref:{tmdbA}:{tmdbB} criteria key. It suggests only JOINT
+    neighbors. A film similar to only 1 anchor never shows."""
 
     with app.app_context():
         user, anchor_ids, candidate_ids = copref_fixture(app)
@@ -473,7 +502,7 @@ def test_parse_criteria_copref_key(app):
     from app.rec_shelves import parse_criteria
 
     assert parse_criteria("copref:501:502") == [("copref", (501, 502))]
-    # A single-anchor shelf's key (#249)
+    # This is the key of a single-anchor shelf (#249).
     assert parse_criteria("copref:501") == [("copref", (501,))]
     assert parse_criteria("copref:") is None
     assert parse_criteria("copref:abc") is None
@@ -483,9 +512,11 @@ def test_parse_criteria_copref_key(app):
 
 
 def test_copref_tile_refills_by_joint_similarity(app, admin_client):
-    """The tile endpoint refills a copref slot with the next film most
-    similar to BOTH anchors, skips films already showing, and answers
-    204 once the joint list is spent."""
+    """Make sure the tile endpoint refills a copref slot by joint similarity.
+
+    The endpoint refills the slot with the next film most similar to
+    BOTH anchors. It skips the films that show. When the joint list is
+    used up, it returns 204."""
 
     with app.app_context():
         user, _, candidate_ids = copref_fixture(app)
@@ -508,8 +539,9 @@ def test_copref_tile_refills_by_joint_similarity(app, admin_client):
 
 
 def test_copref_shelf_page_render(app, admin_client):
-    """A copref shelf renders under its own heading with the anchor
-    slot and no criteria-style caption."""
+    """Make sure a copref shelf renders under its own heading.
+
+    The shelf has the anchor slot and no criteria-style caption."""
 
     with app.app_context():
         copref_fixture(app)
@@ -525,10 +557,11 @@ def test_copref_shelf_page_render(app, admin_client):
 
 
 def copref_single_fixture(app, count=4, second_anchor=False):
-    """One liked anchor (tmdb 501) whose neighbor list covers `count`
-    owned candidates (tmdb 601+) with NO partner anchor to pair with —
-    optionally a second pairless anchor (tmdb 502, neighbors 701+).
-    Returns (user, anchor ids, candidate ids)."""
+    """Create 1 liked anchor (tmdb 501) with NO partner anchor.
+
+    Its neighbor list covers `count` owned candidates (tmdb 601+). The
+    fixture can add a second anchor with no partner (tmdb 502, neighbors
+    701+). Return (user, anchor ids, candidate ids)."""
 
     user = admin_user(app)
     user_id = int(user.id)
@@ -560,11 +593,11 @@ def copref_single_fixture(app, count=4, second_anchor=False):
 
 
 def test_single_anchor_copref_shelf_for_pairless_anchor(app):
-    """An anchor whose neighborhood pairs with no other anchor may
-    front a single-anchor copref shelf (#249): one anchor id, a
-    copref:{tmdb} key, suggestions from its own neighbor list — and
-    two pairless anchors still yield only ONE single-anchor shelf per
-    load."""
+    """Make sure an anchor with no partner can front a single-anchor copref shelf.
+
+    This is #249. The shelf has 1 anchor id, a copref:{tmdb} key, and
+    suggestions from the neighbor list of the anchor. Two anchors with no
+    partner still give only ONE single-anchor shelf for each load."""
 
     with app.app_context():
         user, anchor_ids, candidate_ids = copref_single_fixture(app, second_anchor=True)
@@ -583,9 +616,11 @@ def test_single_anchor_copref_shelf_for_pairless_anchor(app):
 
 
 def test_single_anchor_budget_spans_both_kinds(app):
-    """One load never fronts two single-anchor shelves even when both
-    a pairless copref anchor and a one-holder criteria seed qualify:
-    the copref single draws first and exhausts the budget."""
+    """Make sure 1 load never fronts 2 single-anchor shelves.
+
+    This holds even when a copref anchor with no partner and a one-holder
+    criteria seed both qualify. The copref single draws first and uses
+    up the budget."""
 
     with app.app_context():
         user = admin_user(app)
@@ -594,9 +629,9 @@ def test_single_anchor_budget_spans_both_kinds(app):
         anchor = make_candidate("Budget Anchor", 1977, director=director)
         anchor.tmdb_id = 501
         log_watch(user_id, anchor, rating=5, liked=True)
-        # Ten candidates carrying BOTH signals, so five copref picks
-        # still leave the director seed enough films for a shelf —
-        # only the budget can block it
+        # There are 10 candidates that carry BOTH signals. Thus, after 5
+        # copref picks, the director seed still has enough films for a
+        # shelf. Only the budget can block it.
         for n in range(10):
             movie = make_candidate(f"Budget Pick {n}", 1984 + n, director=director)
             movie.tmdb_id = 601 + n
@@ -613,8 +648,10 @@ def test_single_anchor_budget_spans_both_kinds(app):
 
 
 def test_single_anchor_copref_tile_refill(app, admin_client):
-    """The tile endpoint refills a single-anchor copref slot from the
-    anchor's own neighbor list and answers 204 once it's spent."""
+    """Make sure the tile endpoint refills a single-anchor copref slot.
+
+    The endpoint uses the neighbor list of the anchor. When the list is
+    used up, it returns 204."""
 
     with app.app_context():
         _, _, candidate_ids = copref_single_fixture(app)
@@ -636,9 +673,10 @@ def test_single_anchor_copref_tile_refill(app, admin_client):
 
 
 def test_single_anchor_shelf_page_render(app, admin_client):
-    """A single-anchor copref shelf renders with the singular heading
-    and caption, a centered solo card in the anchor slot, and the
-    one-id criteria key."""
+    """Make sure a single-anchor copref shelf renders correctly.
+
+    The shelf has the singular heading and caption, a centered solo card
+    in the anchor slot, and the one-id criteria key."""
 
     with app.app_context():
         copref_single_fixture(app)
@@ -655,10 +693,12 @@ def test_single_anchor_shelf_page_render(app, admin_client):
 
 
 def test_anchors_require_a_rated_or_liked_verdict(app):
-    """A watchlist add or a bare unrated watch expresses interest —
-    both clear the weight bar — but neither may front a "Because you
-    liked" shelf: anchors are rated-or-liked films only (Glenn's rule,
-    Aug 26 2026)."""
+    """Make sure only a rated or liked film can be an anchor.
+
+    A watchlist add or a bare unrated watch shows interest. Both pass
+    the weight bar. But neither can front a "Because you liked" shelf.
+    Anchors are rated-or-liked films only (rule set by Glenn,
+    2026-08-26)."""
 
     with app.app_context():
         user = admin_user(app)
@@ -666,7 +706,7 @@ def test_anchors_require_a_rated_or_liked_verdict(app):
         western = genre(37, "Western")
 
         bare = make_candidate("Verdict Bare Watch", 1961, genre_row=western)
-        log_watch(user_id, bare)  # seen, never rated or liked
+        log_watch(user_id, bare)  # seen, not rated, not liked
         wanted = make_candidate("Verdict Watchlisted", 1963, genre_row=western)
         db.session.add(UserWatchlist(user_id=user_id, movie_id=wanted.id))
         for n in range(5):
@@ -677,7 +717,7 @@ def test_anchors_require_a_rated_or_liked_verdict(app):
 
         assert build_shelves(user, rng=random.Random(7)) == []
 
-        # The same films with real verdicts anchor immediately
+        # The same films with real verdicts anchor immediately.
 
         log_watch(user_id, bare, rating=4)
         rewatch = make_candidate("Verdict Liked", 1962, genre_row=western)
@@ -691,10 +731,11 @@ def test_anchors_require_a_rated_or_liked_verdict(app):
 
 
 def test_keyword_display_name_learns_from_overviews(app):
-    """Keyword casing resolves from mid-sentence overview prose: a
-    proper noun or acronym adopts its majority casing, a common noun
-    falls back to a capitalized first character, and sentence-start
-    capitals never vote."""
+    """Make sure the keyword case comes from mid-sentence overview prose.
+
+    A proper noun or an acronym adopts its majority case. A common noun
+    gets an uppercase first character. A capital at the start of a
+    sentence never votes."""
 
     with app.app_context():
         make_movie(
@@ -717,14 +758,14 @@ def test_keyword_display_name_learns_from_overviews(app):
         from app.rec_shelves import keyword_display_name
 
         assert keyword_display_name("fbi") == "FBI"
-        # "Poker" opens a sentence, so it doesn't vote; the
-        # mid-sentence lowercase wins and the fallback capitalizes
+        # "Poker" opens a sentence. Thus, it does not vote. The
+        # mid-sentence lowercase wins, and the fallback capitalizes.
         assert keyword_display_name("poker") == "Poker"
-        # No occurrences at all: plain fallback
+        # There are no occurrences. The plain fallback applies.
         assert keyword_display_name("new york city") == "New york city"
 
-        # Resolutions cache: new contrary evidence doesn't flip a
-        # cached answer until the TTL turns over
+        # Fitzflix caches the resolutions. New contrary evidence does not
+        # change a cached answer until the TTL expires.
         make_movie(
             "Case Bureau Three",
             1993,
@@ -735,8 +776,10 @@ def test_keyword_display_name_learns_from_overviews(app):
 
 
 def test_shelf_criteria_use_resolved_keyword_casing(app):
-    """A keyword chosen as a shelf criterion is labeled with the
-    overview-derived casing, not the raw lowercase name."""
+    """Make sure a keyword criterion uses the resolved case.
+
+    The label uses the case from the overviews, not the raw lowercase
+    name."""
 
     from app.models import TMDBKeyword
 
@@ -771,9 +814,11 @@ def test_shelf_criteria_use_resolved_keyword_casing(app):
 
 
 def test_shelf_kinds_mix_positions_across_draws(app):
-    """Copref shelves draw first to claim their films, but never own
-    the top of the page: the final order shuffles, so across reseeded
-    draws both kinds appear in the lead position."""
+    """Make sure the shelf kinds mix positions across draws.
+
+    The copref shelves draw first to claim their films. But they never
+    own the top of the page. The final order shuffles. Thus, across
+    reseeded draws, both kinds appear in the lead position."""
 
     with app.app_context():
         user, _, _ = copref_fixture(app)

@@ -1,6 +1,9 @@
-"""Sonarr/Radarr webhook endpoints: API-key auth, event filtering, and the
-download flow (quality-downgrade rename + import enqueue). The Sonarr/Radarr
-command callbacks point at an unroutable port and are logged-and-swallowed.
+"""Test the Sonarr and Radarr webhook endpoints.
+
+The tests cover the API-key auth, the event filter, and the download
+flow (the quality-downgrade rename and the import enqueue). The Sonarr
+and Radarr command callbacks point at a port that cannot route.
+Fitzflix logs those callbacks and ignores their errors.
 """
 
 import base64
@@ -145,9 +148,12 @@ def test_download_with_already_web_quality_skips_rename(app, client, tmp_path):
 def test_incomplete_download_is_refused_and_marked_failed(
     app, client, tmp_path, monkeypatch
 ):
-    """A provably truncated download never reaches the pipeline:
-    the grab is marked failed — blocklist + replacement search — the
-    junk file is deleted, and nothing is enqueued."""
+    """Make sure an incomplete download is refused and marked failed.
+
+    A download that is truncated never reaches the pipeline. Fitzflix
+    marks the grab as failed. That marks it on the blocklist and starts
+    a replacement search. Fitzflix deletes the junk file and enqueues
+    nothing."""
 
     from app.api import arr as arr_module
     from app.api import radarr as radarr_module
@@ -184,8 +190,11 @@ def test_incomplete_download_is_refused_and_marked_failed(
 def test_incomplete_download_kept_when_failed_mark_fails(
     app, client, tmp_path, monkeypatch
 ):
-    """If the sending app can't be told, the junk file stays put for
-    manual handling — but still never reaches the pipeline."""
+    """Make sure the junk file stays when the failed mark fails.
+
+    If Fitzflix cannot tell the app that sent the file, the junk file
+    stays in place for manual handling. But it never reaches the
+    pipeline."""
 
     from app.api import arr as arr_module
     from app.api import sonarr as sonarr_module
@@ -222,8 +231,11 @@ def test_incomplete_download_kept_when_failed_mark_fails(
 
 
 def test_mark_grab_failed_finds_grab_and_posts(app, monkeypatch):
-    """The history lookup finds the grab for the downloadId and posts
-    to /history/failed/{id} — the call that blocklists and re-searches."""
+    """Make sure mark_grab_failed finds the grab and posts the failure.
+
+    The history lookup finds the grab for the downloadId. It posts to
+    /history/failed/{id}. That call adds the grab to the blocklist and
+    starts a new search."""
 
     import json as jsonlib
 

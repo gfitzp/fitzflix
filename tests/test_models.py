@@ -1,4 +1,4 @@
-"""Ranking builders: the row_number windows that pick each title's best file."""
+"""Test the ranking builders: the row_number windows that select the best file."""
 
 from app import db
 from app.models import File, Movie, RefQuality, TVSeries, movie_file_rank, tv_file_rank
@@ -32,7 +32,7 @@ def test_fullscreen_ranks_below_widescreen(app):
         widescreen_dvd = make_movie_file(movie, "DVD")
         fullscreen_bluray = make_movie_file(movie, "Bluray-1080p", fullscreen=True)
         ranks = ranked_movie_files(db.session)
-        # A widescreen DVD beats even a better-quality fullscreen file
+        # A widescreen DVD outranks a fullscreen file, even one of better quality.
         assert ranks[widescreen_dvd.id] == 1
         assert ranks[fullscreen_bluray.id] == 2
 
@@ -48,7 +48,8 @@ def test_special_features_rank_in_their_own_groups(app):
             movie, "DVD", feature_type_name="Interviews", plex_title="Spielberg"
         )
         ranks = ranked_movie_files(db.session)
-        # Different features never compete with the main film or each other
+        # Different features do not compete with the main film. They do not
+        # compete with each other.
         assert ranks[main.id] == ranks[trailer.id] == ranks[interview.id] == 1
 
 
@@ -99,12 +100,13 @@ def test_tv_multi_episode_file_wins_quality_ties(app):
 
 
 def test_tv_replacement_ignores_the_edition_title(app):
-    """A TV episode's identity is series + season + episode span, never
-    the edition — for TV files the edition holds the filename's
-    episode-title segment, and two releases can title the same episode
-    differently (Glenn's Seeds of Doom case: the Blu-ray special named
-    the extra differently from the DVD, so neither replacement query
-    saw the two files as the same episode)."""
+    """Identify a TV episode by series, season, and episode span, not by edition.
+
+    For a TV file, the edition holds the episode-title segment of the
+    filename. Two releases can give the same episode different titles.
+    Example from Glenn, the Seeds of Doom case: the Blu-ray special gave
+    the extra a different name than the DVD did. Thus, neither replacement
+    query saw the two files as the same episode."""
 
     with app.app_context():
         series = make_tv_series("Doctor Who (1963)")
@@ -119,14 +121,14 @@ def test_tv_replacement_ignores_the_edition_title(app):
             edition="The Seeds of Doom - Graeme Harper Featurette",
         )
 
-        # The better retitled release prunes its predecessor…
+        # The better release with the new title prunes the older release.
         assert dvd in bluray.find_worse_files()
 
-        # …and the worse one can never prune the better
+        # The worse release can never prune the better release.
         assert bluray not in dvd.find_worse_files()
 
-        # An incoming same-episode file is blocked by a better release
-        # regardless of what either disc titled the extra
+        # A better release blocks an incoming file of the same episode.
+        # The title that each disc gave the extra is not important.
         blockers = File(
             media_library="TV Shows",
             dirname=dvd.dirname,
@@ -142,8 +144,9 @@ def test_tv_replacement_ignores_the_edition_title(app):
 
 
 def test_movie_replacement_still_respects_editions(app):
-    """Movies keep edition identity: different cuts of the same film
-    coexist, never pruning one another."""
+    """Keep the edition as part of the identity of a movie.
+
+    Different cuts of the same film coexist. They never prune each other."""
 
     with app.app_context():
         movie = make_movie("Blade Runner", 1982)

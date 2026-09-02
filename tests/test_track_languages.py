@@ -1,20 +1,20 @@
-"""Setting a track's language from the File page (#218), and the markup
-fix that page needed first (#222).
+"""Test the track language edit on the File page (#218) and its markup fix (#222).
 
-The language boxes are the only way to correct the und/zxx assignments
-MediaInfo falls back to when a disc's headers are vague, so the value
-that reaches mkvpropedit has to survive three hops: what a browser's
-datalist puts in the box, the route's diff against what's stored, and
-the argument mkvpropedit is handed. The end-to-end test does the last
-hop against a real Matroska file, since a rejected --set language would
-otherwise look like a silent no-op.
+When the headers of a disc are vague, MediaInfo falls back to und or
+zxx. The language boxes are the only way to correct those values. Thus,
+the value that reaches mkvpropedit must survive 3 steps: the value that
+the datalist of a browser puts in the box, the diff of the route
+against the stored value, and the argument that Fitzflix gives to
+mkvpropedit. The end-to-end test does the last step against a real
+Matroska file. Without that, a rejected --set language looks like a
+silent no-op.
 
-#222 rides along because it is the same template: a </div> that sat
-outside {% if subtitle_tracks %} closed the left column early on any
-file without subtitles, so the remux column escaped the grid row and
-stretched the width of the page. The grid it broke is gone now — every
-track control lives in the Tracks table — so the guard is a balance
-check over the whole page, which is the class of bug that was.
+#222 goes with this because it is the same template. A </div> outside
+{% if subtitle_tracks %} closed the left column early on each file
+without subtitles. Thus, the remux column escaped the grid row and
+stretched to the width of the page. That grid is gone now. Each track
+control is in the Tracks table. Thus, the guard is a balance check over
+the whole page. That is the class of bug that it was.
 """
 
 import os
@@ -30,8 +30,9 @@ from tests.conftest import _TMP
 
 @pytest.fixture(scope="module")
 def undetermined_mkv(app):
-    """A 1-second Matroska whose two audio tracks have no language set,
-    which is the state the File page exists to correct."""
+    """Build a 1-second Matroska with 2 audio tracks that have no language.
+
+    That is the state that the File page exists to correct."""
 
     base = os.path.join(_TMP, "undetermined-base.mp4")
     mkv = os.path.join(_TMP, "undetermined.mkv")
@@ -59,7 +60,7 @@ def undetermined_mkv(app):
 
 
 def _audio_languages(app, path):
-    """The language code of each audio track, read the way the app reads it."""
+    """Return the language code of each audio track, read the same way as the app."""
 
     from app.tracks import get_audio_tracks_from_file
 
@@ -68,9 +69,10 @@ def _audio_languages(app, path):
 
 
 def test_the_catalogue_is_the_codes_the_records_can_hold(app):
-    """Every offered language is a 3-character ISO 639-2 code — the width
-    of the column the answer is stored in — and the three this feature
-    exists to move between are all there."""
+    """Make sure that each offered language is a 3-character ISO 639-2 code.
+
+    That is the width of the column that stores the answer. The 3
+    languages that this feature exists to move between are all there."""
 
     from app.tracks import iso_639_2_languages
 
@@ -90,9 +92,10 @@ def test_the_catalogue_is_the_codes_the_records_can_hold(app):
 
 
 def test_a_typed_language_resolves_however_the_browser_filled_it_in(app):
-    """Browsers disagree over whether a datalist option's label is
-    offered for matching, so the name and the "English (eng)" pairing
-    have to resolve as readily as the bare code."""
+    """Resolve the name and the "English (eng)" pair the same as the bare code.
+
+    Browsers do not agree about the use of the label of a datalist option
+    for matching."""
 
     from app.tracks import resolve_language_code
 
@@ -104,17 +107,17 @@ def test_a_typed_language_resolves_however_the_browser_filled_it_in(app):
         assert resolve_language_code("English (eng)") == "eng"
         assert resolve_language_code("de") == "ger"
 
-        # ISO 639-2 gives twenty languages two codes and mkvtoolnix lists
-        # only the bibliographic one, but MediaInfo writes the
-        # terminological one into some track records. Refusing those
-        # would lock the whole property-edit form on 212 files
+        # ISO 639-2 gives 20 languages 2 codes. mkvtoolnix lists only the
+        # bibliographic code. MediaInfo writes the terminological code
+        # into some track records. If Fitzflix refuses those codes, the
+        # whole property-edit form locks on 212 files.
 
         assert resolve_language_code("deu") == "ger"
         assert resolve_language_code("fra") == "fre"
         assert resolve_language_code("German") == "ger"
 
-        # Nothing is guessed at: an unknown entry comes back as None so
-        # the caller can refuse the edit rather than write a bad code
+        # Fitzflix does not guess. An unknown entry comes back as None.
+        # Then the caller can refuse the edit instead of write a bad code.
 
         assert resolve_language_code("Gibberish") is None
         assert resolve_language_code("engg") is None
@@ -123,8 +126,10 @@ def test_a_typed_language_resolves_however_the_browser_filled_it_in(app):
 
 
 def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
-    """The hop that can't be faked: mkvpropedit accepts the argument and
-    the file comes back carrying the new codes."""
+    """Test the step that cannot be faked.
+
+    mkvpropedit accepts the argument, and the file comes back with the
+    new codes."""
 
     from app import db
     from app.tracks import mkvpropedit_unlocked
@@ -146,11 +151,11 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
     with app.app_context():
         assert mkvpropedit_unlocked(file_id, 1, None, None, {"a1": "eng"}) is True
 
-    # Only the track that was asked about moves
+    # Only the track that the caller asked about changes.
 
     assert _audio_languages(app, library_path) == ["eng", "und"]
 
-    # And the stored rows follow the file, since the edit rescans it
+    # The stored rows follow the file, because the edit scans the file again.
 
     with app.app_context():
         rows = (
@@ -165,9 +170,11 @@ def test_the_edit_rewrites_the_languages_in_the_file(app, undetermined_mkv):
 def _matroska_file_page(
     app, admin_client, *, subtitles, local=True, language="und", subtitle_default=True
 ):
-    """A Matroska file with one audio track (and optionally one subtitle
-    track), and its rendered File page. Returns the file's library path
-    only when `local`, since that is what the caller has to clean up."""
+    """Build a Matroska file with 1 audio track and render its File page.
+
+    The file can also have 1 subtitle track. Return the library path of
+    the file only when `local`, because that is what the caller must
+    clean up."""
 
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
@@ -222,7 +229,7 @@ def _matroska_file_page(
 
 
 class _Balance(HTMLParser):
-    """Records tags that close without opening, and tags left open."""
+    """Record the tags that close without an opening tag, and the open tags."""
 
     VOID = {
         "area",
@@ -262,11 +269,13 @@ class _Balance(HTMLParser):
 
 @pytest.mark.parametrize("subtitles", [False, True])
 def test_the_page_markup_stays_balanced(app, admin_client, subtitles):
-    """#222 was a </div> sitting outside its {% if subtitle_tracks %}: on
-    a file with no subtitle tracks the page closed one element too many,
-    the remux form escaped its grid row and stretched the width of the
-    page. That grid is gone, but the branch still is — so check the thing
-    that actually broke, on both sides of the condition."""
+    """Check the tag balance on both sides of the subtitle condition (#222).
+
+    #222 was a </div> outside its {% if subtitle_tracks %}. On a file
+    with no subtitle tracks, the page closed 1 element too many. The
+    remux form escaped its grid row and stretched to the width of the
+    page. That grid is gone, but the branch remains. Thus, check the
+    thing that broke."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=subtitles)
     try:
@@ -281,8 +290,7 @@ def test_the_page_markup_stays_balanced(app, admin_client, subtitles):
 
 
 def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
-    """#218: every audio and subtitle track gets a dropdown, showing the
-    language it holds now."""
+    """Give each audio and subtitle track a dropdown that shows its language (#218)."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
@@ -290,8 +298,9 @@ def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
         assert 'name="language_s1"' in page
         assert page.count("<select") == 2
 
-        # Glenn's call (Aug 24 2026): languages read as names, not codes,
-        # and (Aug 25 2026) they are picked, not typed
+        # Decision by Glenn (2026-08-24): languages read as names, not
+        # codes. Decision by Glenn (2026-08-25): the user selects them and
+        # does not type them.
 
         assert '<option value="und" selected>Undetermined</option>' in page
         assert '<option value="eng">English</option>' in page
@@ -301,12 +310,15 @@ def test_the_page_offers_a_language_dropdown_per_track(app, admin_client):
 
 
 def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_client):
-    """A select repeats its options for every track, so all 1,006 ISO
-    639-2 languages would put a megabyte of them on the 21-track Doctor
-    Who disc. The offer is the 183 languages that also carry a 639-1
-    code (Glenn's call, Aug 25 2026), which is a quarter of the table and
-    still covers anything buyable — plus whatever this collection already
-    uses, since und and zxx have no 639-1 code at all."""
+    """Offer only the 183 languages with a 639-1 code, plus the codes in use.
+
+    A select repeats its options for each track. All 1,006 ISO 639-2
+    languages put a megabyte of options on the Doctor Who disc with 21
+    tracks. The decision by Glenn (2026-08-25): offer the 183 languages
+    that also have a 639-1 code. That is a quarter of the table, and it
+    covers each language that a buyer can find. Also offer each code
+    that this collection already uses, because und and zxx have no 639-1
+    code."""
 
     from app import db
     from app.models import FileAudioTrack, FileSubtitleTrack
@@ -324,7 +336,7 @@ def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_cl
             codes = {code for code, name in choices}
             assert len(choices) < len(iso_639_2_languages()) / 4
 
-            # the 639-1 set, whole
+            # the whole 639-1 set
 
             major = {
                 iso_639_2
@@ -333,8 +345,8 @@ def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_cl
             }
             assert major and major <= codes
 
-            # and nothing a track holds is missing, or saving an
-            # untouched form would quietly change it
+            # No code that a track holds is missing. If a code is missing,
+            # a save of an untouched form changes the track silently.
 
             assert {"und", "zxx", "eng"} <= codes
             for model in (FileAudioTrack, FileSubtitleTrack):
@@ -349,7 +361,7 @@ def test_the_dropdown_offers_the_639_1_set_not_the_whole_iso_table(app, admin_cl
 
 
 class _Placement(HTMLParser):
-    """Where each named control sits, and which form it submits with."""
+    """Return the position of each named control and the form that it submits with."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -376,11 +388,14 @@ class _Placement(HTMLParser):
 
 
 def test_every_track_control_lives_in_the_listing(app, admin_client):
-    """Glenn's placement (Aug 24-25 2026): the language, the default and
-    forced flags and the remux selection all belong on the track's own
-    row, not in blocks below it. That puts them outside the forms they
-    submit with, so each carries a `form` attribute naming one — drop
-    that and the control silently stops being submitted."""
+    """Put each track control on the row of its track, with a `form` attribute.
+
+    The placement by Glenn (2026-08-24 to 2026-08-25): the language, the
+    default flag, the forced flag, and the remux selection are all on the
+    row of the track, not in blocks below it. That puts them outside the
+    forms that they submit with. Thus, each control has a `form`
+    attribute that names a form. Without that attribute, the browser
+    silently stops the submission of the control."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
@@ -389,8 +404,8 @@ def test_every_track_control_lives_in_the_listing(app, admin_client):
 
         assert {"mkvpropedit-form", "mkvmerge-form"} <= page_controls.form_ids
 
-        # name -> the form it has to reach. The property editor owns the
-        # flags; the remuxer owns which tracks survive
+        # Maps the name to the form that it must reach. The property
+        # editor owns the flags. The remuxer owns the tracks that remain.
 
         owners = {
             "language_a1": "mkvpropedit-form",
@@ -413,8 +428,9 @@ def test_every_track_control_lives_in_the_listing(app, admin_client):
 
 
 def test_the_remux_selection_starts_with_every_track_kept(app, admin_client):
-    """The remux drops whatever isn't ticked, so an untouched form has to
-    mean "change nothing"."""
+    """Make sure that an untouched remux form means "change nothing".
+
+    The remux drops each track that is not ticked."""
 
     _, library_path, page = _matroska_file_page(app, admin_client, subtitles=True)
     try:
@@ -429,8 +445,10 @@ def test_the_remux_selection_starts_with_every_track_kept(app, admin_client):
 
 
 def test_a_file_with_no_default_subtitle_says_so(app, admin_client):
-    """The subtitle default is a track OR nothing at all, and "nothing"
-    has no row of its own to live on — so the listing grows one."""
+    """Add a row for the "no default subtitle" option.
+
+    The subtitle default is a track OR nothing. "Nothing" has no row of
+    its own. Thus, the list gets 1 more row."""
 
     _, library_path, page = _matroska_file_page(
         app, admin_client, subtitles=True, subtitle_default=False
@@ -452,10 +470,11 @@ def test_a_file_with_no_default_subtitle_says_so(app, admin_client):
 
 
 def test_the_controls_are_disabled_when_the_file_is_not_local(app, admin_client):
-    """Both forms disable themselves through their fieldsets, which can't
-    reach controls living outside them — so each carries its own disabled
-    attribute. Otherwise the listing offers edits the route can only
-    refuse afterwards."""
+    """Give each control outside the fieldsets its own disabled attribute.
+
+    Both forms disable themselves through their fieldsets. A fieldset
+    cannot reach a control outside it. Without the attribute, the list
+    offers edits that the route can only refuse later."""
 
     _, library_path, page = _matroska_file_page(
         app, admin_client, subtitles=True, local=False
@@ -473,8 +492,10 @@ def test_the_controls_are_disabled_when_the_file_is_not_local(app, admin_client)
 
 
 def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
-    """A submitted box that still holds the stored code isn't a change,
-    so an untouched form must not rewrite any language."""
+    """Do not rewrite a language when the submitted box holds the stored code.
+
+    That is not a change. Thus, an untouched form must not rewrite any
+    language."""
 
     import inspect
 
@@ -505,7 +526,7 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
         assert len(jobs) == 1
         inspect.signature(mkvpropedit_task).bind(*jobs[0].args)
 
-        # The audio box moved und -> eng; the subtitle box was left alone
+        # The audio box changed from und to eng. The subtitle box did not change.
 
         assert jobs[0].args[4] == {"a1": "eng"}
     finally:
@@ -513,9 +534,11 @@ def test_only_the_changed_languages_are_sent_to_the_edit(app, admin_client):
 
 
 def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
-    """Nothing is guessed at and nothing partial is applied: a bad entry
-    stops the flag edits too, so the page a visitor comes back to still
-    shows what the file actually holds."""
+    """Refuse the whole edit on a bad entry.
+
+    Fitzflix does not guess, and it does not apply a partial edit. A bad
+    entry also stops the flag edits. Thus, the page that the visitor
+    comes back to still shows the real content of the file."""
 
     from tests.test_subtitle_triage import csrf_token_from
 
@@ -546,10 +569,13 @@ def test_an_unknown_language_refuses_the_whole_edit(app, admin_client):
 
 
 def test_a_terminologic_code_reads_as_a_name_and_is_not_a_change(app, admin_client):
-    """MediaInfo wrote "deu" into 212 of the library's files where
-    mkvtoolnix's table only carries "ger". The dropdown has to show
-    German, and picking that same entry back must not read as a request
-    to rewrite the track — nor refuse the flag edits alongside it."""
+    """Show German for "deu", and treat the same selection as no change.
+
+    MediaInfo wrote "deu" into 212 files of the library. The table of
+    mkvtoolnix has only "ger". The dropdown must show German. When the
+    user selects that same entry again, Fitzflix must not read that as a
+    request to rewrite the track. It must not refuse the flag edits
+    with it."""
 
     import inspect
 

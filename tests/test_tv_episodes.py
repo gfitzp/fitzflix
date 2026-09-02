@@ -1,6 +1,8 @@
-"""The TMDB TV refresh's series-level apply: aggregate credits,
-season-count healing, and the billed-cast surface. Episode metadata is
-deliberately not stored from any source."""
+"""Test the series-level apply of the TMDB TV refresh.
+
+This covers the aggregate credits, the season-count repair, and the
+billed-cast surface. By design, Fitzflix does not store episode
+metadata from any source."""
 
 from app import db
 from app.models import TMDBSeason
@@ -55,10 +57,10 @@ def test_apply_replaces_cast_and_crew_from_aggregate_credits(app):
         assert producer.job == "Producer"
         assert producer.episode_count == 86
 
-        # A refresh replaces wholesale: a role gone upstream disappears.
-        # An EMPTY crew list, though, keeps the stored rows (#252) — an
-        # every-credit wipe is likelier a glitched payload than TMDB
-        # truly dropping the whole department (the Aug 22 2026 shape)
+        # A refresh replaces all the rows. A role that is gone upstream
+        # disappears. But an EMPTY crew list keeps the stored rows (#252).
+        # A deletion of every credit is more probably a bad payload than a
+        # TMDB removal of the whole department (the 2026-08-22 shape)
         series.tmdb_tv_apply(
             {
                 "id": 121,
@@ -83,10 +85,12 @@ def test_apply_replaces_cast_and_crew_from_aggregate_credits(app):
 
 
 def test_apply_dedupes_credits_the_way_mysql_collates(app):
-    """Real payloads carry role variants distinct to Python but equal
-    under utf8mb4_general_ci — 'Self - Bee farmer' vs 'Self - Bee
-    Farmer', 'Curare' vs 'Curaré' — which 1062'd the first live
-    backfill. One row per collation-equal role must survive."""
+    """Test that one row survives for each collation-equal role.
+
+    Real payloads carry role variants that are different to Python but
+    equal under utf8mb4_general_ci. Examples: 'Self - Bee farmer' and
+    'Self - Bee Farmer', 'Curare' and 'Curaré'. These caused a 1062
+    error in the first live backfill."""
 
     with app.app_context():
         series = make_tv_series("Clarkson's Farm", tmdb_id=95396)
@@ -184,10 +188,13 @@ def test_apply_heals_stale_season_counts(app):
 
 
 def test_apply_skips_malformed_credit_entries(app, caplog):
-    """The 2026-08-22 overnight refresh: TMDB briefly served a bare list
-    where a cast member's role object belongs, and one such entry aborted
-    the whole apply. A malformed role, job, or person now logs its
-    fragment and is skipped; everything well-formed still lands."""
+    """Test that a malformed credit entry does not abort the apply.
+
+    In the overnight refresh of 2026-08-22, TMDB served a bare list for a
+    short time where the role object of a cast member belongs. One such
+    entry aborted the whole apply. Now a malformed role, job, or person
+    logs its fragment, and Fitzflix skips it. All the well-formed entries
+    still go into the database."""
 
     with app.app_context():
         series = make_tv_series("Futurama", tmdb_id=615)

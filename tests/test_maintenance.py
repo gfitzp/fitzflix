@@ -1,8 +1,10 @@
-"""Log rotation and database backup: archive naming, same-day collisions,
-retention pruning, and the no-partial-backup failure guarantee.
+"""Test the log rotation and the database backup.
 
-backup_database runs against a stub mysqldump script, so the gzip/prune
-plumbing is tested without a MariaDB server.
+The tests cover the archive naming, the same-day collisions, the
+retention pruning, and the no-partial-backup guarantee on failure.
+
+backup_database runs against a stub mysqldump script. Thus, the tests
+cover the gzip and prune plumbing without a MariaDB server.
 """
 
 import glob
@@ -39,7 +41,8 @@ def test_rotate_logs_archives_and_prunes(app):
     with gzip.open(archives[0], "rb") as f:
         assert f.read() == b"a log line\n"
 
-    # Same-day rotation: a second archive with a timestamped name, no clobber
+    # A same-day rotation makes a second archive with a timestamped name.
+    # It does not overwrite the first archive
 
     with open(log_file, "w") as f:
         f.write("another line\n")
@@ -90,7 +93,7 @@ def test_backup_database_dumps_and_prunes(app, mysqldump_stub):
     assert "-- fitzflix dump" in content
     assert "CREATE TABLE t" in content
 
-    # Same-day collision: the second backup gets a timestamped name
+    # On a same-day collision, the second backup gets a timestamped name
 
     with app.app_context():
         backup_database()
@@ -111,8 +114,10 @@ def test_backup_database_failure_leaves_no_partial(app, mysqldump_stub):
 def test_backup_database_uploads_to_s3_and_prunes_remote(
     app, mysqldump_stub, monkeypatch
 ):
-    """With AWS configured, the dump is copied to the backup prefix and
-    remote copies past the retention window are deleted."""
+    """Upload the dump to the backup prefix when AWS is configured.
+
+    The task deletes the remote copies that are older than the retention
+    window."""
 
     from datetime import datetime, timedelta, timezone
 
@@ -163,14 +168,15 @@ def test_backup_database_uploads_to_s3_and_prunes_remote(
     assert key.startswith("backup/fitzflix_test-")
     assert key.endswith(".sql.gz")
 
-    # Only the stale backup is deleted: not the fresh one, not the
-    # directory marker, and never the object just uploaded
+    # The task deletes only the stale backup. It does not delete the fresh
+    # backup or the directory marker. It never deletes the object that it
+    # uploaded
 
     assert deletes == [("test-bucket", "backup/fitzflix_test-2020-01-01.sql.gz")]
 
 
 def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeypatch):
-    """Without an AWS bucket, the backup succeeds without touching boto3."""
+    """Make sure the backup succeeds without boto3 when there is no AWS bucket."""
 
     import app.videos as videos
 
@@ -189,8 +195,9 @@ def test_backup_database_skips_s3_when_unconfigured(app, mysqldump_stub, monkeyp
 
 
 def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path):
-    """With a passphrase set, the nightly backup uploads an encrypted .env
-    that the documented openssl command can decrypt."""
+    """Upload an encrypted .env when a passphrase is set.
+
+    The documented openssl command can decrypt the file."""
 
     import os
     import subprocess
@@ -227,7 +234,7 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
     env_keys = [k for k in captured if "/dotenv-" in k and k.endswith(".enc")]
     assert len(env_keys) == 1
 
-    # Actually encrypted, and recoverable with the runbook's exact command
+    # The file is encrypted. The exact command in the runbook recovers it
 
     encrypted = captured[env_keys[0]]
     assert b"SECRET_KEY" not in encrypted
@@ -254,14 +261,17 @@ def test_backup_uploads_encrypted_env(app, mysqldump_stub, monkeypatch, tmp_path
     )
     assert decrypted.stdout == b"SECRET_KEY=abc123\n"
 
-    # The encrypted temp file didn't linger locally
+    # The encrypted temp file did not stay on the local disk
 
     assert not list(backup_dir.glob(".dotenv-*"))
 
 
 def test_backup_syncs_custom_posters(app, mysqldump_stub, monkeypatch):
-    """Custom posters mirror to S3: new and changed files upload, unchanged
-    ones don't, and remote copies of deleted files are removed."""
+    """Mirror the custom posters to S3.
+
+    The task uploads the new files and the changed files. It does not
+    upload the unchanged files. It removes the remote copies of the
+    deleted files."""
 
     import os
     import shutil
@@ -362,17 +372,18 @@ def test_restore_drill_skips_without_aws(app):
         assert restore_drill() is True
 
 
-# volume_alive: a path under the volumes root has to BE a mountpoint (#227)
+# volume_alive: a path under the volumes root must BE a mountpoint (#227)
 
 
 def test_volume_alive_rejects_a_volumes_path_that_is_not_a_mountpoint(
     monkeypatch, tmp_path
 ):
-    """The Aug 24 2026 failure: a share drops, macOS leaves the
-    mountpoint behind as an ordinary directory, and statvfs happily
-    answers for the boot disk. The old probe called that alive, and the
-    Plex refresh would have scanned an empty tree and emptied the trash
-    behind it."""
+    """Reject a path under the volumes root that is not a mountpoint.
+
+    This is the failure of 2026-08-24. A share drops. macOS leaves the
+    mountpoint behind as an ordinary directory. statvfs answers for the
+    boot disk. The old probe reported that as alive. Then the Plex
+    refresh would scan an empty tree and empty the trash behind it."""
 
     import app.maintenance as maintenance
 
@@ -381,7 +392,7 @@ def test_volume_alive_rejects_a_volumes_path_that_is_not_a_mountpoint(
     leftover.mkdir(parents=True)
     monkeypatch.setattr(maintenance, "VOLUMES_ROOT", str(volumes))
 
-    # Exactly what the outage looked like to the probe
+    # This is exactly what the probe saw during the outage
 
     assert os.statvfs(str(leftover))
     assert os.path.isdir(str(leftover))
@@ -405,8 +416,10 @@ def test_volume_alive_accepts_a_mounted_volumes_path(monkeypatch, tmp_path):
 def test_volume_alive_leaves_paths_outside_the_volumes_root_alone(
     monkeypatch, tmp_path
 ):
-    """Local directories are not mountpoints and were never expected to
-    be — the staging and log directories live on the boot disk."""
+    """Accept a local directory that is not a mountpoint.
+
+    Local directories were never expected to be mountpoints. The staging
+    directory and the log directory are on the boot disk."""
 
     import app.maintenance as maintenance
 
@@ -427,10 +440,12 @@ def test_volume_alive_is_false_for_a_path_that_isnt_there(tmp_path):
 def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
     app, monkeypatch, tmp_path
 ):
-    """With the leftover-directory case now visible to the probe, the
-    healer reaches paths where nothing is mounted. It must go straight
-    to remounting: `diskutil unmount force` aimed at something that
-    isn't a mountpoint is a hazard, not a no-op (#227)."""
+    """Do not force-unmount a leftover directory.
+
+    The probe now sees the leftover-directory case. Thus, the healer
+    reaches paths where nothing is mounted. It must go directly to the
+    remount. A `diskutil unmount force` on a path that is not a
+    mountpoint is a hazard. It is not a no-op (#227)."""
 
     import subprocess as subprocess_module
 
@@ -454,27 +469,30 @@ def test_heal_mounts_doesnt_force_unmount_a_leftover_directory(
 
     assert not any(command[0] == "diskutil" for command in calls), calls
 
-    # `mount` is the duplicate check (#233); it finds nothing here, so the
-    # healer goes straight on to remounting, then looks again to say where
-    # the share went when the remount doesn't take
+    # `mount` is the duplicate check (#233). It finds nothing here. Thus,
+    # the healer goes directly to the remount. When the remount fails,
+    # the healer reads `mount` again to report where the share went
 
     assert [command[0] for command in calls] == ["mount", "osascript", "mount"]
 
-    # The remount ran but the path is still not a mountpoint, so the
-    # probe still calls it dead — reported as a failure, not a success
+    # The remount ran. But the path is still not a mountpoint. Thus, the
+    # probe still reports it as dead. The action is a failure, not a
+    # success
 
     assert actions == [f"failed to remount {leftover}: still dead"]
 
 
 def _mount_output(*lines):
-    """`mount` output with the shares this app cares about."""
+    """Return `mount` output with the shares that this app uses."""
 
     return "\n".join(lines) + "\n"
 
 
 def test_share_mounted_elsewhere_finds_a_suffixed_duplicate(monkeypatch):
-    """#233. The share name in the mount table is URL-encoded, so a
-    share with a space in it only matches after unquoting."""
+    """Find a suffixed duplicate of a share (#233).
+
+    The share name in the mount table is URL-encoded. Thus, a share name
+    with a space matches only after unquoting."""
 
     import subprocess as subprocess_module
 
@@ -498,14 +516,16 @@ def test_share_mounted_elsewhere_finds_a_suffixed_duplicate(monkeypatch):
         "/Volumes/TV Shows-1"
     ]
 
-    # The share already on its canonical path is not its own duplicate
+    # A share that is already on its canonical path is not its own duplicate
 
     assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []
 
 
 def test_share_mounted_elsewhere_leaves_local_disks_alone(monkeypatch):
-    """A local volume that happens to parse out of `mount` is not ours
-    to unmount, however its name lines up."""
+    """Leave a local disk alone.
+
+    A local volume can also appear in the `mount` output. The healer
+    must not unmount it, even if its name matches."""
 
     import subprocess as subprocess_module
 
@@ -524,10 +544,12 @@ def test_share_mounted_elsewhere_leaves_local_disks_alone(monkeypatch):
 
 
 def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_path):
-    """The #233 failure: the share came back at /Volumes/<share>-1 while
-    a stub held the canonical path. Remounting can't free the canonical
-    path while the share is mounted somewhere else, so the healer used
-    to succeed at the mount call forever and leave the path dead."""
+    """Free a duplicate before the remount.
+
+    This is the #233 failure. The share came back at /Volumes/<share>-1
+    while a stub held the canonical path. A remount cannot free the
+    canonical path while the share is mounted at a different path. Thus,
+    the mount call always succeeded, and the healer left the path dead."""
 
     import subprocess as subprocess_module
 
@@ -560,15 +582,15 @@ def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_p
 
     actions = maintenance.heal_mounts([str(stub)], app.redis, app.config)
 
-    # The duplicate is unmounted, cleanly, BEFORE the remount is attempted
+    # The healer unmounts the duplicate cleanly BEFORE it tries the remount
 
     assert ["diskutil", "unmount", duplicate] in calls
     assert calls.index(["diskutil", "unmount", duplicate]) < next(
         i for i, command in enumerate(calls) if command[0] == "osascript"
     )
 
-    # Nothing was force-unmounted: the clean unmount succeeded, and the
-    # stub itself is not a mountpoint (#227)
+    # The healer force-unmounted nothing. The clean unmount succeeded,
+    # and the stub itself is not a mountpoint (#227)
 
     assert ["diskutil", "unmount", "force", duplicate] not in calls
     assert f"unmounted {duplicate} to free {stub}" in actions
@@ -577,9 +599,11 @@ def test_heal_mounts_frees_a_duplicate_before_remounting(app, monkeypatch, tmp_p
 def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
     app, monkeypatch, tmp_path
 ):
-    """Leaving the duplicate is worse than interrupting it: every config
-    path stays aimed at an empty directory on the boot disk, and
-    TRANSCODES_DIR pointed there fills the boot disk."""
+    """Force-unmount a duplicate that refuses a clean unmount.
+
+    To keep the duplicate is worse than to interrupt it. Each config path
+    stays aimed at an empty directory on the boot disk. A TRANSCODES_DIR
+    that points there fills the boot disk."""
 
     import subprocess as subprocess_module
 
@@ -616,7 +640,8 @@ def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
 
     actions = maintenance.heal_mounts([str(stub)], app.redis, app.config)
 
-    # Clean unmount first, force only after it refuses
+    # The healer tries a clean unmount first. It uses force only after
+    # the clean unmount refuses
 
     assert ["diskutil", "unmount", duplicate] in calls
     assert ["diskutil", "unmount", "force", duplicate] in calls
@@ -627,8 +652,10 @@ def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
 
 
 def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path):
-    """ "still dead" sends a person looking. Naming the path the share is
-    actually on makes the alert actionable."""
+    """Report where a stranded share went.
+
+    A "still dead" alert sends a person to look. The alert names the
+    path that the share is on. Thus, the person can act on it."""
 
     import subprocess as subprocess_module
 
@@ -653,7 +680,7 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
                 command, 0, stdout=output, stderr=""
             )
         if command[0] == "diskutil":
-            # Nothing frees the duplicate, so the remount can't land
+            # Nothing frees the duplicate. Thus, the remount cannot succeed
             return subprocess_module.CompletedProcess(
                 command, 1, stdout="", stderr="Resource busy"
             )
@@ -674,11 +701,13 @@ def test_heal_mounts_says_where_a_stranded_share_went(app, monkeypatch, tmp_path
 
 
 def test_mount_urls_keys_each_share_by_its_url_basename():
-    """NFS exports live on different volume roots (/volume2/Movies,
-    /volume3/TV Shows), so one server prefix can't address them; each
-    share carries a full URL, keyed by its mount-point name. An encoded
-    basename is decoded so it matches what os.path.basename says about
-    the /Volumes path."""
+    """Key each share in MOUNT_URLS by the basename of its URL.
+
+    The NFS exports are on different volume roots (/volume2/Movies,
+    /volume3/TV Shows). Thus, 1 server prefix cannot address them. Each
+    share carries a full URL, keyed by its mount-point name. Fitzflix
+    decodes an encoded basename. Then it matches what os.path.basename
+    returns for the /Volumes path."""
 
     from config import _mount_urls
 
@@ -693,9 +722,10 @@ def test_mount_urls_keys_each_share_by_its_url_basename():
 
 
 def test_heal_mounts_calls_out_a_share_missing_from_the_map(app, monkeypatch, tmp_path):
-    """A configured map that lacks the dead share must say so: a silent
-    skip would hide why the share never heals, and the old prefix scheme
-    would have attempted it."""
+    """Report a dead share that is missing from the configured map.
+
+    A silent skip would hide the reason that the share never heals. The
+    old prefix scheme would have tried the remount."""
 
     import subprocess as subprocess_module
 
@@ -726,10 +756,12 @@ def test_heal_mounts_calls_out_a_share_missing_from_the_map(app, monkeypatch, tm
 
 
 def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
-    """#239. An NFS device reads `host:/export/Share` with the share
-    name literal rather than URL-encoded; the smb-only match couldn't
-    see an NFS-mounted duplicate at all, so heal_mounts would keep
-    remounting into the void — the exact failure #233 fixed for SMB."""
+    """Find an NFS duplicate of a share (#239).
+
+    An NFS device reads `host:/export/Share`. The share name is literal,
+    not URL-encoded. The smb-only match could not see an NFS-mounted
+    duplicate at all. Thus, heal_mounts would continue to remount into
+    the void. That is the exact failure that #233 fixed for SMB."""
 
     import subprocess as subprocess_module
 
@@ -753,6 +785,6 @@ def test_share_mounted_elsewhere_finds_an_nfs_duplicate(monkeypatch):
         "/Volumes/TV Shows-1"
     ]
 
-    # The share already on its canonical path is not its own duplicate
+    # A share that is already on its canonical path is not its own duplicate
 
     assert maintenance.share_mounted_elsewhere("Movies", "/Volumes/Movies") == []

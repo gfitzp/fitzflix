@@ -1,13 +1,15 @@
-"""Episode titles into Plex: files carrying an edition title
-their Plex episodes by basename match, locked; everything else is left
-alone."""
+"""Test the sync of episode titles into Plex.
+
+A file with an edition sets the title of its Plex episode. The sync
+matches the episode by basename and locks the title. It does not touch
+anything else."""
 
 from app import db
 from tests.factories import make_file, make_tv_series
 
 
 class FakePlexServer:
-    """The local Plex API surface the title sync touches."""
+    """Fake the part of the local Plex API that the title sync uses."""
 
     def __init__(self, episodes):
         # episodes: [(ratingKey, title, filename)]
@@ -97,21 +99,22 @@ def test_edition_titles_reach_plex_locked(app, monkeypatch):
 
         fake = FakePlexServer(
             [
-                # Wrong title: gets rewritten and locked
+                # Wrong title: the sync rewrites and locks it.
                 (
                     "201",
                     "Episode 90001",
                     "Titled Show - S00E90001 - The Lost Special [DVD].mkv",
                 ),
-                # Already correct: untouched
+                # Already correct: the sync does not touch it.
                 (
                     "202",
                     "Already Right",
                     "Titled Show - S00E90002 - Already Right [DVD].mkv",
                 ),
-                # No edition on the file: agent title stays, however odd
+                # No edition on the file: the agent title stays, even if
+                # it is odd.
                 ("203", "Agent Title", "Titled Show - S01E01 - [DVD].mkv"),
-                # Not a Fitzflix file at all
+                # This is not a Fitzflix file.
                 ("204", "Someone Else", "Other Show - S01E01 - [DVD].mkv"),
             ]
         )
@@ -123,7 +126,7 @@ def test_edition_titles_reach_plex_locked(app, monkeypatch):
         assert plex_titles.sync_plex_episode_titles() is True
         assert fake.puts == [("201", "The Lost Special")]
 
-        # Idempotent: a second run changes nothing
+        # The sync is idempotent. A second run changes nothing.
         assert plex_titles.sync_plex_episode_titles() is True
         assert fake.puts == [("201", "The Lost Special")]
 
@@ -139,7 +142,7 @@ def test_pagination_walks_every_episode(app, monkeypatch):
         )
         db.session.commit()
 
-        # The target sits past the first page
+        # The target is after the first page.
         episodes = [
             (str(n), f"Filler {n}", f"Filler - S01E{n:02d} [DVD].mkv")
             for n in range(1, 1500)

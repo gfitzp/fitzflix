@@ -1,6 +1,8 @@
-"""The newly-added feeds (#246): the generic collection scraper, the
-first-seen snapshot diff, the per-provider discovery shelves, and the
-"added" availability badge."""
+"""Test the newly-added feeds (#246).
+
+The tests cover the generic collection scraper, the first-seen snapshot
+diff, the per-provider discovery shelves, and the "added" availability
+badge."""
 
 import json
 
@@ -16,8 +18,9 @@ from tests.test_leaving_criterion import (
 
 
 def new_item(tmdb_id, title, first_seen=None, runtime=100, scraped_title=None):
-    """A stored newly-added item: the trimmed enriched payload plus
-    the diff bookkeeping."""
+    """Return a stored newly-added item.
+
+    The item is the trimmed enriched payload plus the diff bookkeeping."""
 
     return {
         **shelf_item(tmdb_id, title, runtime=runtime),
@@ -28,8 +31,7 @@ def new_item(tmdb_id, title, first_seen=None, runtime=100, scraped_title=None):
 
 
 def plant_feed(app, items, provider_id=None):
-    """Store a newly-added feed for a provider (Criterion unless
-    said otherwise)."""
+    """Store a newly-added feed for a provider (default Criterion)."""
 
     from app.leaving_criterion import CRITERION_PROVIDER_ID
     from app.newly_added import NEWLY_ADDED_KEY
@@ -56,7 +58,7 @@ def test_fetch_collection_films_paginates_and_dedupes(app, monkeypatch):
         if params.get("page") == 1:
             return FakeResponse(text=LEAVING_HTML)
         if params.get("page") == 2:
-            # The same films again: the dedup case
+            # The same films again. This is the duplicate case
             return FakeResponse(text=LEAVING_HTML)
         return FakeResponse(text="<html>empty</html>")
 
@@ -72,10 +74,13 @@ def test_fetch_collection_films_paginates_and_dedupes(app, monkeypatch):
 
 
 def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
-    """The diff semantics: the first run only plants (null first_seen),
-    a later run stamps today's date on films new to the page and keeps
-    prior films' stamps and payloads, and films gone from the page
-    drop out. Matched films are carried over without re-matching."""
+    """Test the diff semantics of the refresh.
+
+    The first run only plants the films (null first_seen). A later run
+    stamps the date of today on the films that are new to the page. It
+    keeps the stamps and the payloads of the earlier films. The films
+    that left the page drop out. The run carries the matched films over
+    and does not match them again."""
 
     import app.newly_added as newly_added
 
@@ -99,16 +104,17 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
 
     key = NEWLY_ADDED_KEY.format(provider_id=CRITERION_PROVIDER_ID)
 
-    # First run: plants only
+    # The first run only plants the films
 
     assert refresh_newly_added() is True
     stored = json.loads(app.redis.get(key))
     assert [item["first_seen"] for item in stored["items"]] == [None]
     assert stored["items"][0]["scraped_title"] == "The Searchers"
 
-    # Second run, one new film and one unmatched newcomer: the prior
-    # film keeps its null stamp and isn't re-matched, the arrivals
-    # get today's date, the unmatched one keeps its scraped facts
+    # The second run has 1 new film and 1 unmatched newcomer. The
+    # earlier film keeps its null stamp, and the run does not match it
+    # again. The new films get the date of today. The unmatched film
+    # keeps its scraped facts
 
     scraped.append({"title": "Love & Mercy", "director": "Bill Pohlad", "year": 1956})
     scraped.append({"title": "Obscurity", "director": "Jane Doe", "year": 1956})
@@ -124,8 +130,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert by_title["Obscurity"]["director"] == "Jane Doe"
     assert match_calls == ["Love & Mercy", "Obscurity"]
 
-    # Third run with the planted film gone: it's pruned, the kept
-    # film's stamp survives
+    # In the third run, the planted film is gone. The run removes it.
+    # The stamp of the kept film survives
 
     scraped[:] = scraped[1:]
     refresh_newly_added()
@@ -136,7 +142,7 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     ]
     assert stored["items"][0]["first_seen"] == today
 
-    # A scrape outage keeps the previous snapshot untouched
+    # A scrape outage does not change the previous snapshot
 
     monkeypatch.setattr(newly_added, "fetch_collection_films", lambda url: [])
     refresh_newly_added()
@@ -174,11 +180,11 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
             new_item(9102, "Arrival Owned", first_seen=today),
             new_item(9103, "Arrival Wanted", first_seen=today, runtime=200),
             new_item(9104, "Arrival Dismissed", first_seen=today),
-            # Planted on the first run: on the page, but not news
+            # Planted on the first run. It is on the page, but it is not news
             new_item(9105, "Arrival Planted", first_seen=None),
-            # Stamped before the window opened: no longer news
+            # Stamped before the window opened. It is no longer news
             new_item(9106, "Arrival Stale", first_seen=stale),
-            # An unmatched film: skipped quietly
+            # An unmatched film. The shelf skips it quietly
             {
                 "title": "Arrival Unmatched",
                 "director": "Jane Doe",
@@ -196,10 +202,10 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert "Newly added to the Criterion Channel" in body
     arrivals_section = body.split('id="newly-added-shelf-258"')[1].split("<h4 ")[0]
     assert "Arrival Fresh (1956)" in arrivals_section
-    # Watchlisted arrivals belong to the watchlist shelf, never this
-    # one — and the feed itself is first-party proof they're watchable,
-    # so the synthesized Criterion match surfaces one there even with
-    # no TMDB availability cached
+    # A new film on the watchlist belongs to the watchlist shelf, never
+    # to this shelf. The feed itself is first-party proof that the film
+    # is watchable. Thus, the synthesized Criterion match shows the film
+    # there even with no cached TMDB availability
     assert "Arrival Wanted" not in arrivals_section
     watchlist_section = body.split('id="watchlist-shelf"')[1].split("<h4 ")[0]
     assert "Arrival Wanted (1956)" in watchlist_section
@@ -209,13 +215,13 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert "Arrival Stale" not in body
     assert "Arrival Unmatched" not in body
 
-    # "See more…" opens the in-app arrival inventory, at this
-    # provider's section
+    # "See more…" opens the in-app arrival inventory, at the section
+    # of this provider
 
     assert 'href="/newly-added#newly-added-258"' in body
 
-    # The runtime filter applies like everywhere else — including the
-    # emptied-not-hidden message (#198)
+    # The runtime filter applies here as it does everywhere else. This
+    # includes the emptied-not-hidden message (#198)
 
     filtered = admin_client.get("/?minutes=100").get_data(as_text=True)
     assert "Arrival Fresh (1956)" in filtered
@@ -223,8 +229,8 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
     assert 'id="newly-added-shelf-258"' in emptied
     assert "Nothing newly added fits in 10 minutes" in emptied
 
-    # The shelf suppresses the green corner fold — everything here is
-    # newly added by definition
+    # The shelf hides the green corner fold. Each film here is newly
+    # added by definition
 
     assert "data-no-new-fold" in body
 
@@ -232,13 +238,13 @@ def test_shelf_surfaces_recent_arrivals_and_excludes(app, admin_client):
 def test_shelf_hides_without_subscription_or_arrivals(app, admin_client):
     today = date.today().isoformat()
 
-    # No Criterion subscription: no shelf, even with a stored feed
+    # No Criterion subscription means no shelf, even with a stored feed
 
     plant_feed(app, [new_item(9201, "Arrival Hidden", first_seen=today)])
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="newly-added-shelf-258"' not in body
 
-    # Subscribed, but nothing inside the window: also no shelf
+    # Subscribed, but no film in the window. This also means no shelf
 
     subscribe_criterion(app)
     plant_feed(app, [new_item(9201, "Arrival Hidden", first_seen=None)])
@@ -247,11 +253,14 @@ def test_shelf_hides_without_subscription_or_arrivals(app, admin_client):
 
 
 def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatch):
-    """Wherever an unowned film's availability badge renders, a recent
-    arrival on that provider's newly-added feed turns it green with
-    the date; the leaving badge outranks it on a film that is somehow
-    both, and an OWNED film's strip carries neither annotation — the
-    copy on the shelf isn't going anywhere (Glenn, Aug 27 2026)."""
+    """Test that a new arrival turns the availability badge green.
+
+    The availability badge of an unowned film can render in many
+    places. A recent arrival on the newly-added feed of that provider
+    turns the badge green and adds the date. A film can be on both the
+    leaving set and the feed. Then the leaving badge outranks the added
+    badge. The strip of an OWNED film shows neither annotation. The copy
+    on the shelf stays (decided by Glenn, 2026-08-27)."""
 
     from app import db
     from app.leaving_criterion import CRITERION_PROVIDER_ID
@@ -299,14 +308,14 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
     card = admin_client.get(f"/movie_card?movie_id={arrived_id}").get_data(as_text=True)
     assert f"Criterion Channel &middot; added {label}" in card
 
-    # Departure urgency wins on the film carrying both marks
+    # The departure urgency wins on the film that has both marks
 
     page = admin_client.get(f"/movie/{both_id}").get_data(as_text=True)
     leaving_label = departs.strftime("%B %-d")
     assert f"Criterion Channel &middot; leaving {leaving_label}" in page
     assert f"Criterion Channel &middot; added {label}" not in page
 
-    # The owned film's strip stays plain despite the feed entry
+    # The strip of the owned film stays plain, even with the feed entry
 
     page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
     assert 'title="Streaming on Criterion Channel"' in page
@@ -314,17 +323,19 @@ def test_new_arrival_lights_its_availability_badge(app, admin_client, monkeypatc
 
 
 def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
-    """Unlike the home shelf, /newly-added excludes nothing: owned and
-    seen films stay listed, unmatched films trail as plain rows, and
-    the section links to the provider's own page. No subscription
-    required — like /leaving, the page renders from the stored feeds
-    alone."""
+    """Test that /newly-added lists the complete inventory.
+
+    Unlike the home shelf, /newly-added excludes nothing. The owned and
+    the seen films stay in the list. The unmatched films come last as
+    plain rows. The section links to the page of the provider. The page
+    needs no subscription. Like /leaving, it renders from the stored
+    feeds alone."""
 
     from app import db
     from app.models import UserMovieReview, UserWatchlist
     from app.videos import star_rating_fields
 
-    # A taste profile but no subscription: the page must still render
+    # A taste profile but no subscription. The page must still render
 
     user_id = subscribe_criterion(app)
     from app.models import UserStreamingProvider
@@ -358,7 +369,7 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
             new_item(9502, "Inventory Owned", first_seen=today),
             new_item(9503, "Inventory Seen", first_seen=today),
             new_item(9504, "Inventory Wanted", first_seen=today),
-            # Planted on the first run and aged out: neither is news
+            # One planted on the first run and one aged out. Neither is news
             new_item(9505, "Inventory Planted", first_seen=None),
             new_item(9506, "Inventory Stale", first_seen=stale),
             {
@@ -386,31 +397,34 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
     assert "Inventory Planted" not in body
     assert "Inventory Stale" not in body
 
-    # The unmatched film trails as a plain row, and the section links
-    # to the provider's own page
+    # The unmatched film comes last as a plain row. The section links
+    # to the page of the provider
 
     assert "Also new" in body
     assert "Inventory Unmatched (1962)" in body
     assert "Directed by Jane Doe" in body
     assert 'href="https://www.criterionchannel.com/newly-added"' in body
 
-    # Watchlisted films lead, owned films trail
+    # The films on the watchlist are first. The owned films are last
 
     assert body.index("Inventory Wanted") < body.index("Inventory Fresh")
     assert body.index("Inventory Fresh") < body.index("Inventory Owned")
 
-    # The standing nav link reaches the page from anywhere, and the
-    # page suppresses the green corner fold like the shelf does
+    # The standing nav link reaches the page from each page. This page
+    # hides the green corner fold, as the shelf does
 
     assert 'href="/newly-added"' in body
     assert "data-no-new-fold" in body
 
 
 def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
-    """/movie_states answers fold_new with the feed's label for a
-    subscribed provider's recent arrival — movie-keyed and tmdb-keyed
-    alike; the alert diff's own recently-available record outranks
-    it, and a non-subscriber gets no fold at all."""
+    """Test that a new arrival feeds the green poster fold.
+
+    /movie_states answers fold_new with the label of the feed for a
+    recent arrival on a subscribed provider. This applies to the
+    movie-keyed and the tmdb-keyed entries. The recently-available
+    record of the alert diff outranks the feed label. A user without a
+    subscription gets no fold."""
 
     import json as jsonlib
 
@@ -443,15 +457,15 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
     assert payload["movies"][str(movie_id)]["fold_new"] == label
     assert payload["tmdb"]["9702"]["fold_new"] == label
 
-    # An OWNED film never folds for a feed arrival — movie-keyed or
-    # through its tmdb id (Glenn, Aug 27 2026)
+    # An OWNED film never folds for a feed arrival. This applies to the
+    # movie key and to the tmdb id (decided by Glenn, 2026-08-27)
 
     assert payload["movies"][str(owned_id)]["fold_new"] is None
     assert payload["tmdb"]["9703"]["fold_new"] is None
 
-    # The alert diff's own record wins over the feed label — and on an
-    # owned film only the local-arrival label folds; a service arrival
-    # doesn't
+    # The record of the alert diff wins over the feed label. On an
+    # owned film, only the local-arrival label folds. A service arrival
+    # does not fold
 
     recent_key = f"fitzflix:availability:recent:{user_id}"
     app.redis.hset(
@@ -482,7 +496,7 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
     payload = admin_client.get(f"/movie_states?movie_ids={owned_id}").get_json()
     assert payload["movies"][str(owned_id)]["fold_new"] == "New in library"
 
-    # No subscription, no feed fold
+    # No subscription means no feed fold
 
     app.redis.delete(recent_key)
     with app.app_context():
@@ -496,11 +510,14 @@ def test_new_arrival_feeds_the_green_poster_fold(app, admin_client):
 
 
 def test_movie_page_poster_wears_the_fold(app, admin_client):
-    """An unowned record's movie-page poster renders its corner fold
-    server-side: green for a feed arrival, flipping red once the film
-    joins the leaving set — one fold, departure urgency first. An
-    OWNED film's poster ignores both signals; only the local file's
-    own recent arrival folds it (Glenn, Aug 27 2026)."""
+    """Test that the movie-page poster shows the corner fold.
+
+    The server renders the fold on the poster of an unowned record. The
+    fold is green for a feed arrival. It becomes red when the film
+    joins the leaving set. There is one fold, and the departure urgency
+    is first. The poster of an OWNED film ignores both signals. Only
+    the recent arrival of the local file folds it (decided by Glenn,
+    2026-08-27)."""
 
     import json as jsonlib
 
@@ -541,8 +558,8 @@ def test_movie_page_poster_wears_the_fold(app, admin_client):
     assert "poster-fold poster-fold-leaving" in page
     assert "poster-fold poster-fold-new" not in page
 
-    # The owned film — on the feed AND the leaving set — folds for
-    # neither; only a "New in library" record earns its green
+    # The owned film is on the feed AND the leaving set. It folds for
+    # neither. Only a "New in library" record gets the green fold
 
     page = admin_client.get(f"/movie/{owned_id}").get_data(as_text=True)
     assert "poster-fold poster-fold-leaving" not in page
@@ -559,8 +576,9 @@ def test_movie_page_poster_wears_the_fold(app, admin_client):
 
 
 def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
-    """The TMDB log page (an unowned film) renders the same server-
-    side fold on its poster."""
+    """Test that the TMDB log page (an unowned film) shows the same fold.
+
+    The server renders the fold on the poster."""
 
     import app.main.discover as discover
 
@@ -601,8 +619,8 @@ def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
     assert "There is nothing new now." in body
 
-    # A stored feed whose arrivals all predate tracking or the window
-    # reads the same as no feed
+    # A stored feed can have only arrivals from before the tracking or
+    # the window. The page reads it the same as no feed
 
     plant_feed(app, [new_item(9601, "Inventory Quiet", first_seen=None)])
     body = admin_client.get("/newly-added").get_data(as_text=True)

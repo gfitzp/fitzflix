@@ -1,7 +1,9 @@
-"""Streaming availability via TMDB's JustWatch-licensed watch-provider
-data: the cached registry and per-title lookups, the Profile picker,
-and the per-user surfaces (movie pages, TMDB search) with the
-mandatory JustWatch attribution."""
+"""Test the streaming availability through the watch-provider data of TMDB.
+
+TMDB licenses this data from JustWatch. These tests cover the cached
+registry, the per-title lookups, the Profile picker, and the per-user
+surfaces (movie pages, TMDB search) with the mandatory JustWatch
+attribution."""
 
 import json
 import re
@@ -12,22 +14,22 @@ from tests.factories import make_movie, make_movie_file
 
 
 class FakeTMDB:
-    """Canned TMDB response."""
+    """A canned TMDB response."""
 
     def __init__(self, payload):
         self.payload = payload
 
     def raise_for_status(self):
-        """Never an HTTP error."""
+        """Do nothing. The canned response is never an HTTP error."""
 
     def json(self):
-        """The canned payload."""
+        """Return the canned payload."""
 
         return self.payload
 
 
 def csrf_token_from(page_html):
-    """The CSRF token baked into a rendered form."""
+    """Return the CSRF token from a rendered form."""
 
     match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page_html)
     assert match, "no csrf token found in page"
@@ -35,7 +37,7 @@ def csrf_token_from(page_html):
 
 
 def plant_registry(app, providers):
-    """Store a fake provider registry in Redis, as the fetch would."""
+    """Store a fake provider registry in Redis, as the fetch does."""
 
     from app.streaming import REGISTRY_KEY
 
@@ -51,7 +53,7 @@ def plant_availability(app, tmdb_id, payload):
 
 
 def subscribe(app, provider_id, name, email=None):
-    """Add a streaming service to a user's profile directly."""
+    """Add a streaming service to the profile of a user directly."""
 
     from app import db
     from app.models import User, UserStreamingProvider
@@ -129,8 +131,8 @@ def test_title_availability_caches_even_when_empty(app, monkeypatch):
         first = streaming.title_availability(603)
         second = streaming.title_availability(603)
 
-    # A film with no US providers is cached as an empty payload rather
-    # than re-queried on every page view
+    # Fitzflix caches a film with no US providers as an empty payload.
+    # It does not query the film again on every page view.
 
     assert len(calls) == 1
     assert first["flatrate"] == [] and second["flatrate"] == []
@@ -150,9 +152,9 @@ def test_streaming_matches_only_subscription_kinds(app):
     matches = streaming_matches(availability, {8, 73, 1899})
     by_name = {m["provider_name"]: m["kind"] for m in matches}
 
-    # Netflix appears once (flatrate wins over its ads duplicate), Tubi
-    # comes through as free-with-ads, and Max — rent/buy only — is not a
-    # subscription match at all
+    # Netflix appears 1 time, because flatrate wins over its ads
+    # duplicate. Tubi comes through as free-with-ads. Max is rent/buy
+    # only. Thus, Max is not a subscription match at all.
 
     assert by_name == {"Netflix": "flatrate", "Tubi TV": "ads"}
 
@@ -165,7 +167,7 @@ CRITERION = {
 
 
 def plant_newly_added(app, tmdb_id, first_seen):
-    """Store a scraped newly-added feed entry, as the diff would."""
+    """Store a scraped newly-added feed entry, as the diff does."""
 
     from app.newly_added import NEWLY_ADDED_KEY
 
@@ -187,9 +189,9 @@ def plant_newly_added(app, tmdb_id, first_seen):
 
 
 def test_scraped_arrival_synthesizes_criterion_match(app, monkeypatch):
-    # Sept 1 2026: films live on the Channel's own newly-added page
-    # showed no Criterion service because TMDB's JustWatch feed hadn't
-    # caught up — the scrape is first-party word, so it wins
+    # 2026-09-01: films that were live on the newly-added page of the
+    # Channel showed no Criterion service, because the JustWatch feed of
+    # TMDB was behind. The scrape is first-party data. Thus, it wins.
 
     from datetime import date
 
@@ -211,8 +213,8 @@ def test_scraped_arrival_synthesizes_criterion_match(app, monkeypatch):
 
 
 def test_leaving_set_synthesizes_criterion_match_even_unfetched(app):
-    # The leaving store is equally first-party, and synthesis holds up
-    # even while the TMDB payload is unknown (None)
+    # The leaving store is also first-party. The synthesis works even
+    # while the TMDB payload is unknown (None).
 
     import calendar
     from datetime import date
@@ -235,7 +237,7 @@ def test_leaving_set_synthesizes_criterion_match_even_unfetched(app):
     assert [m["provider_id"] for m in matches] == [258]
     assert matches[0]["kind"] == "flatrate"
     assert matches[0]["leaving"] == departs.strftime("%B %-d")
-    # The registry stand-in still renders — the badge just has no logo
+    # The registry stand-in still renders. The badge only has no logo.
     assert matches[0]["provider_name"] == "Criterion Channel"
     assert matches[0]["logo_path"] is None
 
@@ -264,7 +266,8 @@ def test_no_synthesis_without_criterion_subscription(app):
 
     with app.app_context():
         assert streaming_matches(None, {8}, tmdb_id=22171) == []
-        # And the owned-film callers' tmdb_id=None skips synthesis too
+        # The tmdb_id=None of the owned-film callers also skips the
+        # synthesis.
         assert streaming_matches(None, {258}, tmdb_id=None) == []
 
 
@@ -286,8 +289,9 @@ def test_profile_picker_saves_and_removes_services(app, admin_client, monkeypatc
     assert "Netflix" in page and "Max" in page
     assert "Streaming data by JustWatch" in page
 
-    # The picker lists alphabetically, not by JustWatch display priority
-    # (Netflix outranks Max in priority but follows it in the alphabet)
+    # The picker lists in alphabetical order, not by the JustWatch
+    # display priority. Netflix outranks Max in priority, but follows it
+    # in the alphabet.
 
     assert page.index("Max") < page.index("Netflix")
 
@@ -312,7 +316,7 @@ def test_profile_picker_saves_and_removes_services(app, admin_client, monkeypatc
         assert rows[8].name == "Netflix"
         assert rows[8].logo_path == "/netflix.jpg"
 
-    # Unchecking a service removes it
+    # When the user unchecks a service, Fitzflix removes it.
 
     response = admin_client.post(
         "/profile",
@@ -360,7 +364,8 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
 
-    # The library badge leads, then the streaming match as a logo badge
+    # The library badge comes first. Then the streaming match shows as a
+    # logo badge.
 
     assert "In library" in page
     assert 'title="Streaming on Netflix"' in page
@@ -368,7 +373,7 @@ def test_movie_page_shows_streaming_on_your_services(app, admin_client, monkeypa
     assert "Streaming data by JustWatch" in page
     assert "All watch options" in page
 
-    # Owned films never advertise rentals — the film is on the shelf
+    # Owned films never advertise rentals. The film is on the shelf.
 
     assert "(rent)" not in page
 
@@ -396,9 +401,10 @@ def test_owned_movie_with_no_match_notes_the_local_copy(app, admin_client, monke
         {"link": None, "flatrate": [MAX], "ads": [], "rent": [], "buy": []},
     )
 
-    # The film streams somewhere, but not on the user's services — an
-    # owned film shows the library badge instead of a negative, and a
-    # bare library badge shows no JustWatch data so it carries no credit
+    # The film streams somewhere, but not on the services of the user.
+    # An owned film shows the library badge instead of a negative badge.
+    # A bare library badge shows no JustWatch data. Thus, it carries no
+    # credit.
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "In library" in page
@@ -465,8 +471,9 @@ def test_search_results_badge_unowned_matches(app, admin_client, monkeypatch):
 
     page = admin_client.get("/search/tmdb?q=streamable").get_data(as_text=True)
 
-    # The same logo badges as the movie-page strip, tooltips and all —
-    # streaming and rental side by side
+    # These are the same logo badges as the movie-page strip, with the
+    # tooltips. The streaming badge and the rental badge show side by
+    # side.
 
     assert 'title="Streaming on Netflix"' in page
     assert "/w45/netflix.jpg" in page
@@ -545,14 +552,16 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
         },
     )
 
-    # A film with no local file shows where it can be rented as a logo
-    # badge, filtered to the user's own services (Amazon isn't one of
-    # them) — and with a rental in hand there's no negative badge
+    # A film with no local file shows a logo badge for each rental
+    # store. The badges are filtered to the services of the user. Amazon
+    # is not one of them. With a rental available, there is no negative
+    # badge.
 
     page = admin_client.get("/review/tmdb/800").get_data(as_text=True)
     assert "Apple TV (rent)" in page
-    # Digital purchase is ignored — buying happens on physical media —
-    # so buy-only Max shows nothing even though it's a picked service
+    # Fitzflix ignores digital purchase, because a purchase occurs on
+    # physical media. Thus, buy-only Max shows nothing, although it is a
+    # picked service.
     assert "(buy)" not in page
     assert "Max (buy)" not in page and 'title="Buy from' not in page
     assert "Amazon Video" not in page
@@ -561,8 +570,10 @@ def test_review_tmdb_page_shows_rental_badge_for_your_stores(
 
 
 def test_unowned_movie_record_shows_rental_badge(app, admin_client, monkeypatch):
-    """A review-only movie record (no local files) gets the rental
-    badge on its movie page."""
+    """Test that a review-only movie record shows the rental badge.
+
+    A record with no local files gets the rental badge on its movie
+    page."""
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
 
@@ -596,9 +607,11 @@ def test_unowned_movie_record_shows_rental_badge(app, admin_client, monkeypatch)
 def test_unowned_film_with_nothing_shows_the_negative_badge(
     app, admin_client, monkeypatch
 ):
-    """No streaming match and no rentals on the user's services — the
-    rental elsewhere is filtered out — so the secondary badge says so,
-    with the credit."""
+    """Test that an unowned film with no options shows the negative badge.
+
+    There is no streaming match and no rental on the services of the
+    user. The filter removes the rental elsewhere. Thus, the secondary
+    badge says so, with the credit."""
 
     monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
 
@@ -628,8 +641,11 @@ def test_unowned_film_with_nothing_shows_the_negative_badge(
 
 
 def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
-    """A 404 is TMDB's answer (stale or wrong tmdb id), not an outage:
-    it caches as an empty payload instead of re-querying per view."""
+    """Test that a 404 caches as an empty payload.
+
+    A 404 is the answer of TMDB (a stale or wrong tmdb id), not an
+    outage. Fitzflix caches it as an empty payload instead of a new
+    query on each view."""
 
     import requests
 
@@ -655,8 +671,10 @@ def test_title_availability_caches_a_404_as_empty(app, monkeypatch):
 
 
 def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
-    """The batch helper reads cached titles directly and fetches only
-    the misses, which then land in the cache like any single lookup."""
+    """Test that the batch helper mixes cache hits and fetches.
+
+    The helper reads the cached titles directly and fetches only the
+    misses. The misses then go into the cache, as in a single lookup."""
 
     import app.streaming as streaming
 
@@ -684,7 +702,7 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
     assert results[901]["flatrate"] == [NETFLIX]
     assert app.redis.get(streaming.AVAILABILITY_KEY.format(tmdb_id=901))
 
-    # A fetch limit defers the overflow instead of stalling the render
+    # A fetch limit defers the overflow. It does not stall the render.
 
     with app.app_context():
         results, deferred = streaming.batch_title_availability(
@@ -699,9 +717,11 @@ def test_batch_availability_mixes_cache_hits_and_fetches(app, monkeypatch):
 def test_filmography_badges_unowned_films_on_your_services(
     app, admin_client, monkeypatch
 ):
-    """Availability moved into the popover (Aug 2026): filmography
-    tiles carry no provider badges, and an unowned career film's card
-    answers from the same cached availability the page warms."""
+    """Test that the filmography serves availability through the popover.
+
+    The availability moved into the popover (2026-08). Filmography tiles
+    carry no provider badges. The card of an unowned career film answers
+    from the same cached availability that the page warms."""
 
     import app.main.discover as discover
     import app.main.library as library
@@ -731,7 +751,7 @@ def test_filmography_badges_unowned_films_on_your_services(
         db.session.commit()
 
     def fake_tmdb_get(url, **kwargs):
-        """Person details and a two-film career."""
+        """Return the person details and a career of 2 films."""
 
         if url.endswith("/movie_credits"):
             return FakeTMDB(
@@ -760,8 +780,8 @@ def test_filmography_badges_unowned_films_on_your_services(
     subscribe(app, 8, "Netflix")
     subscribe(app, 2, "Apple TV")
 
-    # Both films stream on Netflix and rent on Apple TV, but only the
-    # unowned row may badge
+    # Both films stream on Netflix and rent on Apple TV. Only the unowned
+    # row may show a badge.
 
     for tmdb_id in (910, 911):
         plant_availability(
@@ -781,8 +801,8 @@ def test_filmography_badges_unowned_films_on_your_services(
     assert "Apple TV (rent)" not in page
     assert 'data-state-tmdb="911"' in page
 
-    # The unowned film's card serves the badges from the cached
-    # availability — logo, rent suffix, and the mandatory credit
+    # The card of the unowned film serves the badges from the cached
+    # availability: the logo, the rent suffix, and the mandatory credit.
 
     def fake_details_get(url, **kwargs):
         return FakeTMDB(
@@ -802,8 +822,10 @@ def test_filmography_badges_unowned_films_on_your_services(
 
 
 def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypatch):
-    """When the bounded batch defers ids, one warm task lands on the
-    maintenance queue and the marker stops reload storms."""
+    """Test that the filmography defers the overflow to a warm task.
+
+    When the bounded batch defers ids, 1 warm task goes into the
+    maintenance queue. The marker stops reload storms."""
 
     import app.main.library as library
 
@@ -832,7 +854,7 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
         db.session.commit()
 
     def fake_tmdb_get(url, **kwargs):
-        """Person details and a one-film career."""
+        """Return the person details and a career of 1 film."""
 
         if url.endswith("/movie_credits"):
             return FakeTMDB(
@@ -869,9 +891,11 @@ def test_filmography_defers_overflow_to_a_warm_task(app, admin_client, monkeypat
 
 
 def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
-    """Cache hits come back through a single MGET — a 400-film list
-    paid 400 round trips before Aug 2026 — and refresh re-fetches
-    every id, live entries included."""
+    """Test that the batch reads the cache in 1 call.
+
+    Cache hits come back through 1 MGET. Before 2026-08, a list of 400
+    films paid 400 round trips. A refresh fetches every id again, live
+    entries included."""
 
     import app.streaming as streaming
 
@@ -921,9 +945,12 @@ def test_batch_availability_reads_the_cache_in_one_call(app, monkeypatch):
 
 
 def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch):
-    """The nightly task re-fetches every film's availability, cached or
-    not, and restarts each entry's two-day life — the pages read this
-    cache and never fetch inline, so it has to be full every morning."""
+    """Test that the nightly refresh covers every film with a TMDB id.
+
+    The task fetches the availability of every film again, cached or
+    not. It restarts the 2-day life of each entry. The pages read this
+    cache and never fetch inline. Thus, the cache must be full every
+    morning."""
 
     import app.streaming as streaming
 
@@ -960,10 +987,12 @@ def test_refresh_availability_covers_every_film_with_a_tmdb_id(app, monkeypatch)
 
 
 def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypatch):
-    """The watchlist and the Criterion catalog answer from the cache
-    alone: an uncached film costs no TMDB call during the render (fifty
-    of them stalled the page four seconds before Aug 2026) — it's
-    handed to one background warm job instead."""
+    """Test that the list pages never fetch availability inline.
+
+    The watchlist and the Criterion catalog answer from the cache alone.
+    An uncached film costs no TMDB call during the render. Before
+    2026-08, 50 uncached films stalled the page for 4 seconds. The page
+    hands the film to 1 background warm job instead."""
 
     import app.main.discover as discover
     import app.main.library as library

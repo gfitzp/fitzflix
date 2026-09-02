@@ -1,6 +1,8 @@
-"""The ad-hoc Radarr hand-off: per-film request and withdrawal
-with the house settings, the Find-menu entries on the watchlist and
-movie page, and the badge cache."""
+"""Test the ad-hoc Radarr hand-off.
+
+The tests cover the per-film request and withdrawal with the house
+settings, the Find-menu entries on the watchlist and the movie page,
+and the badge cache."""
 
 import re
 
@@ -16,7 +18,7 @@ def csrf_token_from(page_html):
 
 
 class FakeRadarr:
-    """A stateful stand-in for the Radarr v3 API."""
+    """A stand-in for the Radarr v3 API that keeps state."""
 
     def __init__(self):
         self.movies = {}  # radarr id -> movie dict
@@ -83,14 +85,14 @@ def test_request_uses_the_house_settings(app, admin_client, monkeypatch):
 
     (added,) = fake.added
     assert added["tmdbId"] == 9942
-    assert added["qualityProfileId"] == 7  # "Fitzflix", resolved by name
+    assert added["qualityProfileId"] == 7  # "Fitzflix", found by name
     assert added["rootFolderPath"] == "/Volumes/Movies"
     assert added["monitored"] is True
     assert added["minimumAvailability"] == "released"
     assert added["addOptions"] == {"monitor": "movieOnly", "searchForMovie": True}
 
-    # The page now badges the request, and the Find-menu entry reverts
-    # to the plain Radarr link — withdrawal lives in Radarr itself
+    # The page now shows a badge for the request. The Find-menu entry
+    # returns to the plain Radarr link. The withdrawal occurs in Radarr
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Requested via Radarr" in page
@@ -100,8 +102,8 @@ def test_request_uses_the_house_settings(app, admin_client, monkeypatch):
 
 
 def test_withdraw_deletes_keeping_files(app, admin_client, monkeypatch):
-    # Route-level only since the Un-request entry left the UI (Aug
-    # 2026) — kept as the counterpart to the request branch
+    # This test is route-level only because the Un-request entry left
+    # the UI (2026-08). It stays as the counterpart to the request branch
     fake = wire(app, monkeypatch)
     with app.app_context():
         movie = make_movie("Major League", 1989, tmdb_id=9942)
@@ -147,8 +149,8 @@ def test_watchlist_tiles_offer_request_then_plain_link(app, admin_client, monkey
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
 
-    # The unowned tile carries the Find menu with the Request entry;
-    # the owned tile has no Find menu at all
+    # The unowned tile has the Find menu with the Request entry. The
+    # owned tile has no Find menu
 
     assert page.count("dropdown-toggle-split") == 1
     assert page.count("radarr_request_submit") == 1
@@ -162,8 +164,9 @@ def test_watchlist_tiles_offer_request_then_plain_link(app, admin_client, monkey
             "radarr_request_submit": "Request via Radarr",
         },
     )
-    # Once requested, the menu entry reverts to the plain Radarr link,
-    # titled to say the film is monitored — no Un-request entry
+    # After the request, the menu entry returns to the plain Radarr
+    # link. Its title says that Radarr monitors the film. There is no
+    # Un-request entry
     page = admin_client.get("/watchlist").get_data(as_text=True)
     assert "Un-request" not in page
     assert 'title="Radarr is monitoring this film">Radarr</a>' in page
@@ -197,5 +200,5 @@ def test_request_refuses_owned_films_and_non_admins(
     assert "already in the library" in response.get_data(as_text=True)
     assert fake.added == []
 
-    # Non-admins are turned away entirely
+    # The route refuses all non-admins
     assert user_client.post("/radarr", data={}).status_code == 302

@@ -1,6 +1,8 @@
-"""Credentials never reach the log: the SecretRedactor filter scrubs
-query-string keys by name and configured secret values wherever they
-appear, including inside a record's rendered traceback."""
+"""Test that credentials never reach the log.
+
+The SecretRedactor filter removes query-string keys by name. It also
+removes the configured secret values wherever they appear. This
+includes the rendered traceback of a record."""
 
 import logging
 
@@ -64,8 +66,10 @@ def test_filter_scrubs_message_args_and_traceback(caplog):
 
 
 def test_app_logger_carries_the_redactor(app, caplog):
-    """Every process logs through app.logger, and the filter is installed
-    in every mode, so a URL logged anywhere in the app is scrubbed."""
+    """Test that the filter is installed in every mode.
+
+    Every process logs through app.logger. Thus, Fitzflix redacts a URL
+    that the app logs from any location."""
 
     assert any(isinstance(f, SecretRedactor) for f in app.logger.filters)
     with caplog.at_level(logging.WARNING):

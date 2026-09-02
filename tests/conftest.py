@@ -1,9 +1,10 @@
-"""Shared fixtures: an isolated app wired to SQLite, Redis DB 9, and temp dirs.
+"""Provide the shared fixtures: an isolated app on SQLite, Redis DB 9, temp dirs.
 
-The suite never touches the production database, Redis DB 0, the mail server,
-or any external service: TMDB/Sonarr/Radarr point at an unroutable local port
-so calls fail fast, and AWS is unconfigured. Reference data (qualities and
-feature types) mirrors the production rows exactly.
+The suite never touches the production database, Redis DB 0, the mail
+server, or an external service. TMDB, Sonarr, and Radarr point at an
+unroutable local port. Thus, the calls fail fast. AWS is not configured.
+The reference data (qualities and feature types) mirrors the production
+rows exactly.
 """
 
 import os
@@ -23,7 +24,7 @@ MEMBER_EMAIL = "member@example.test"
 MEMBER_PASSWORD = "member-password"
 MEMBER_API_KEY = "fedcba9876543210fedcba9876543210"
 
-# quality_title, preference, physical_media — mirrors the production table
+# quality_title, preference, physical_media. This mirrors the production table
 
 QUALITIES = [
     ("Not in library", 0, False),
@@ -105,8 +106,8 @@ class TestConfig(Config):
     AWS_SECRET_KEY = None
     AWS_SQS_URL = None
 
-    # Unroutable port: external calls fail immediately instead of reaching
-    # a real service or hanging on a timeout
+    # This port is unroutable. Thus, external calls fail immediately. They
+    # do not reach a real service and do not hang on a timeout
 
     TMDB_API_KEY = None
     TMDB_API_URL = "http://127.0.0.1:1"
@@ -124,10 +125,11 @@ class TestConfig(Config):
 
 
 def _register_mysql_compat_functions(engine):
-    """Provide SQLite versions of the MariaDB functions the app's queries use.
+    """Provide SQLite versions of the MariaDB functions that the app queries use.
 
-    Registered on every new DBAPI connection: adddate and regexp_replace
-    appear in route queries, and utc_timestamp is the models' insert default.
+    This registers them on each new DBAPI connection. The route queries
+    use adddate and regexp_replace. The models use utc_timestamp as the
+    insert default.
     """
 
     import math as _math
@@ -135,8 +137,8 @@ def _register_mysql_compat_functions(engine):
     import sqlite3 as _sqlite3
     from datetime import date as _date, datetime as _datetime, timedelta as _timedelta
 
-    # Surface the real exception when a compat function fails, instead of
-    # sqlite's generic "user-defined function raised exception"
+    # Show the real exception when a compat function fails. Do not show
+    # the generic sqlite message "user-defined function raised exception"
 
     _sqlite3.enable_callback_tracebacks(True)
 
@@ -150,14 +152,14 @@ def _register_mysql_compat_functions(engine):
         return _re.sub(pattern, replacement, value) if value is not None else None
 
     def _floor(value):
-        # SQLAlchemy's SQLite dialect registers an unguarded math.floor;
-        # MariaDB's floor(NULL) is NULL, which matters now that review
-        # ratings are nullable
+        # The SQLite dialect of SQLAlchemy registers an unguarded math.floor.
+        # In MariaDB, floor(NULL) is NULL. This is important because review
+        # ratings are nullable now
         return _math.floor(value) if value is not None else None
 
     def _substring_index(value, delimiter, count):
-        # Only the count=-1 form (text after the last delimiter) is used,
-        # but mirror MySQL's general semantics anyway
+        # The app uses only the count=-1 form (the text after the last
+        # delimiter). But this mirrors the general semantics of MySQL
         if value is None or delimiter is None:
             return None
         parts = str(value).split(delimiter)
@@ -197,23 +199,24 @@ def app():
     from app import create_app, db
     from app.models import RefFeatureType, RefQuality, User
 
-    # watch_import_dir: the watchdog test drops files into IMPORT_DIR and
-    # expects them noticed, so the test app opts into the observer that
-    # production scopes to the import workers
+    # watch_import_dir: the watchdog test puts files into IMPORT_DIR and
+    # expects Fitzflix to notice them. Thus, the test app opts into the
+    # observer. In production, only the import workers run the observer
 
     application = create_app(TestConfig, watch_import_dir=True)
 
-    # Refuse to run against anything but the isolated stores
+    # Refuse to run against a store that is not isolated
 
     assert application.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite")
     assert application.redis.connection_pool.connection_kwargs.get("db") == 9
 
-    # The first app created in the process becomes get_app()'s singleton,
-    # which task modules (app.videos, app.atmos, ...) capture at import
-    # time. A test module importing one of them at TOP LEVEL runs during
-    # pytest collection — before this fixture — creating a real-config
-    # app and silently pointing every task function in the suite at
-    # production. Import task modules inside test functions instead.
+    # The first app created in the process becomes the singleton of
+    # get_app(). The task modules (app.videos, app.atmos, ...) capture it
+    # at import time. A test module that imports one of them at TOP LEVEL
+    # runs during pytest collection, before this fixture. That creates a
+    # real-config app. It silently points each task function in the
+    # suite at production. Import the task modules inside the test
+    # functions instead.
 
     from app import get_app
 
@@ -247,7 +250,7 @@ def app():
 
 @pytest.fixture(autouse=True)
 def clean_state(app):
-    """Start each test with empty Redis, and drop its DB rows afterwards."""
+    """Start each test with an empty Redis. Delete its DB rows afterwards."""
 
     app.redis.flushdb()
     yield
@@ -268,7 +271,7 @@ def client(app):
 
 
 def _signed_in_client(app, email):
-    """A test client whose session is logged in as the given user."""
+    """Return a test client with a session that is logged in as the given user."""
 
     from app.models import User
 
@@ -287,30 +290,31 @@ def _signed_in_client(app, email):
 
 @pytest.fixture
 def admin_client(app):
-    """A test client logged in as the admin user."""
+    """Return a test client that is logged in as the admin user."""
 
     return _signed_in_client(app, ADMIN_EMAIL)
 
 
 @pytest.fixture
 def user_client(app):
-    """A test client logged in as a regular (non-admin) user."""
+    """Return a test client that is logged in as a regular (non-admin) user."""
 
     return _signed_in_client(app, MEMBER_EMAIL)
 
 
 @pytest.fixture
 def incoming_dir():
-    """A staging directory outside IMPORT_DIR, invisible to the watchdog."""
+    """Return a staging directory outside IMPORT_DIR, hidden from the watchdog."""
 
     return os.path.join(_TMP, "incoming")
 
 
 @pytest.fixture
 def fake_tmdb(monkeypatch):
-    """A TMDB that responds successfully with no matches, instead of the
-    unroutable default — for tests asserting on log output, where the
-    connection-refused warning would be noise."""
+    """Replace the unroutable TMDB with one that answers with no matches.
+
+    Use this in tests that assert on the log output. There, the
+    connection-refused warning is noise."""
 
     class FakeResponse:
         def json(self):
@@ -319,8 +323,8 @@ def fake_tmdb(monkeypatch):
         def raise_for_status(self):
             pass
 
-    # tmdb_get's requests lives in app.models; app.videos stopped
-    # importing requests when its network-facing slices moved out
+    # The requests module that tmdb_get uses is in app.models. app.videos
+    # stopped importing requests when its network-facing parts moved out
 
     import app.models
 
@@ -331,7 +335,7 @@ def fake_tmdb(monkeypatch):
 
 @pytest.fixture
 def log_capture(app):
-    """Capture log records emitted through the application logger."""
+    """Capture the log records that the application logger emits."""
 
     import logging
 

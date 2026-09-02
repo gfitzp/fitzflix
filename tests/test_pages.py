@@ -1,5 +1,7 @@
-"""Page smoke tests: routes render, auth gates hold, and the maintenance
-page's filename tester works end-to-end without writing log lines.
+"""Smoke-test the pages.
+
+The routes render. The auth gates hold. The filename tester on the
+maintenance page works end-to-end and writes no log lines.
 """
 
 import logging
@@ -35,8 +37,9 @@ def test_movie_shopping_list_renders(admin_client):
 
 
 def test_system_page_is_monitoring_only(admin_client):
-    """The System page shows health and schedules; the bulk operations
-    live on the Library Maintenance page."""
+    """Test that the System page shows only health and schedules.
+
+    The bulk operations are on the Library Maintenance page."""
 
     response = admin_client.get("/system")
     assert response.status_code == 200
@@ -58,14 +61,16 @@ def test_relative_time_covers_past_and_future():
     assert _relative_time(now + timedelta(seconds=45)) == "in under a minute"
     assert _relative_time(now + timedelta(minutes=10, seconds=30)) == "in 10 minutes"
     assert _relative_time(now + timedelta(days=3)) == "in 3 days"
-    # Naive datetimes (rq job timestamps) are treated as UTC
+    # The function reads naive datetimes (rq job timestamps) as UTC
     assert _relative_time(datetime.utcnow() - timedelta(hours=2)) == "2 hours ago"
 
 
 def test_next_run_never_renders_as_the_past():
-    """A due job's stored next-run sits in the past until the scheduler's
-    60s tick re-queues it; that window is "due now", not "...ago", and
-    anything older means the scheduler has stalled."""
+    """Test that the next-run text never shows the past.
+
+    The stored next-run of a due job is in the past until the 60s tick
+    of the scheduler requeues the job. That window is "due now", not
+    "...ago". A time older than that means that the scheduler stalled."""
 
     from datetime import datetime, timedelta, timezone
 
@@ -76,7 +81,7 @@ def test_next_run_never_renders_as_the_past():
     assert _next_run_text(now - timedelta(seconds=30)) == "due now"
     assert _next_run_text(now - timedelta(seconds=110)) == "due now"
     assert _next_run_text(now - timedelta(minutes=10)) == "overdue"
-    # Naive datetimes (what rq-scheduler returns) are treated as UTC
+    # The function reads naive datetimes (rq-scheduler returns them) as UTC
     assert _next_run_text(datetime.utcnow() - timedelta(seconds=30)) == "due now"
 
 
@@ -88,8 +93,10 @@ def test_system_page_includes_health_poller(admin_client):
 
 
 def test_system_metrics_returns_uncached_fragment(admin_client):
-    """/system/metrics serves just the health card for the poller to swap
-    in: no page chrome, backlog column included, never cached."""
+    """Test that /system/metrics serves only the health card.
+
+    The poller swaps the card in. The fragment has no page chrome. It
+    includes the backlog column. The browser never caches it."""
 
     response = admin_client.get("/system/metrics")
     assert response.status_code == 200
@@ -128,12 +135,14 @@ def test_maintenance_page_shows_file_tools_and_bulk_ops(admin_client):
     assert "Duplicate movies" in body
     assert "Filename tester" in body
     assert "Bulk operations" in body
-    assert "WARNING:" in body  # the S3 sync form moved along too
+    assert "WARNING:" in body  # the S3 sync form also moved here
 
 
 def test_profile_page_holds_only_the_profile_forms(admin_client):
-    """The old all-in-one Admin page became /profile and only holds the
-    profile forms; everything else moved to /maintenance and /system."""
+    """Test that /profile holds only the profile forms.
+
+    The old all-in-one Admin page became /profile. All other content
+    moved to /maintenance and /system."""
 
     response = admin_client.get("/profile")
     assert response.status_code == 200
@@ -159,8 +168,10 @@ def test_nonadmin_nav_shows_profile_link_instead_of_admin_dropdown(user_client):
 
 
 def test_maintenance_system_and_rejects_require_admin(user_client):
-    """Non-admin users are flashed back to the home page; the profile at
-    /profile stays open to them."""
+    """Test that the admin pages send non-admin users to the home page.
+
+    The page shows a flash message. The profile at /profile stays open
+    to non-admin users."""
 
     for path in ("/maintenance", "/system", "/rejects"):
         response = user_client.get(path)
@@ -222,33 +233,38 @@ def test_tv_shopping_list_renders(admin_client):
 
 
 def test_service_worker_is_served_from_root_scope(client):
-    """The PWA's offline layer: /sw.js must be at the root (not /static/)
-    so its scope covers the whole application."""
+    """Test that Fitzflix serves /sw.js from the root.
+
+    The service worker is the offline layer of the PWA. It must be at
+    the root, not in /static/. Thus, its scope covers the application."""
 
     response = client.get("/sw.js")
     assert response.status_code == 200
     assert "javascript" in response.headers["Content-Type"]
     assert b"fitzflix-v2" in response.data
 
-    # The manifest is excluded from cache-first so start_url/icon/shortcut
-    # edits actually reach installed apps
+    # The cache-first rule excludes the manifest. Thus, the edits to
+    # start_url, icon, and shortcut reach the installed apps
 
     assert b"site.webmanifest" in response.data
 
 
 def test_service_worker_only_caches_successful_responses(client):
-    """A failed response kept cache-first is permanent: a proxy 502 stored
-    under a poster's URL was served in the image's place until that browser's
-    cache was emptied (#206). So every cache.put is gated on the response
-    being usable, and the static branch revalidates so a file replaced in
-    place isn't served stale forever."""
+    """Test that the service worker caches only successful responses.
+
+    A failed response in a cache-first cache is permanent. The cache
+    stored a proxy 502 under the URL of a poster. The browser showed it
+    in place of the image until the user emptied the cache (#206).
+    Thus, each cache.put occurs only if the response is usable. The
+    static branch revalidates. Thus, a file that Fitzflix replaces in
+    place does not stay stale forever."""
 
     body = client.get("/sw.js").get_data(as_text=True)
 
     assert "function isCacheable(response)" in body
     assert 'response.ok || response.type === "opaque"' in body
 
-    # Neither branch may write to the cache unconditionally
+    # No branch can write to the cache without the check
 
     assert body.count("cache.put(request, copy)") == body.count(
         "if (isCacheable(response))"
@@ -260,12 +276,12 @@ def test_pages_register_the_service_worker(admin_client):
     assert 'serviceWorker.register("/sw.js")' in body
     assert "site.webmanifest" in body
 
-    # The search type-ahead ships its keyboard navigation
+    # The search type-ahead includes its keyboard navigation
 
     assert "ArrowDown" in body
     assert "ArrowUp" in body
 
-    # The queue poller pauses while the tab is hidden
+    # The queue poller pauses when the tab is hidden
 
     assert "visibilitychange" in body
 
@@ -275,8 +291,8 @@ def test_manifest_declares_installable_app():
 
     with open("app/static/site.webmanifest") as f:
         manifest = json.load(f)
-    # The installed app opens at the landing page's recommendation
-    # shelves (Glenn's call, Aug 2026)
+    # The installed app opens at the recommendation shelves of the
+    # landing page (decided by Glenn, 2026-08)
     assert manifest["start_url"] == "/"
     assert manifest["scope"] == "/"
     assert manifest["display"] == "standalone"
@@ -290,9 +306,10 @@ def test_manifest_declares_installable_app():
 
 
 def test_recently_added_badges_quality_by_upgradability(app, admin_client):
-    """File Activity shows quality as badges colored by upgrade
-    eligibility: movie rules match the library page, and physical-media
-    TV seasons count as final."""
+    """Test that File Activity colors the quality badges by upgradability.
+
+    The movie rules match the library page. A TV season on physical
+    media counts as final."""
 
     from app import db
     from tests.factories import (
@@ -314,19 +331,22 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
-    # Movie rules: DVD is an upgrade candidate, Blu-ray is final
+    # The movie rules: DVD is an upgrade candidate. Blu-ray is final
     assert 'text-bg-warning">DVD' in page
     assert 'text-bg-success">Bluray-1080p' in page
-    # TV rules: a physical-media DVD season is final; SDTV is not
+    # The TV rules: a DVD season on physical media is final. SDTV is not
     assert 'text-bg-success">DVD' in page
     assert 'text-bg-warning">SDTV' in page
 
 
 def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
-    """Page 1 carries the card-fetch URL the queue poll's dashboard mode
-    keys on, and each landed card advertises the basenames trails can
-    match; deeper pages are a plain list. The separate in-flight list
-    is gone — those chips paint on the queue page's rows now."""
+    """Test that the File Activity page wires the live dashboard.
+
+    Page 1 has the card-fetch URL. The dashboard mode of the queue poll
+    keys on it. Each card of a file that arrived advertises the
+    basenames that the trails can match. The deeper pages are a plain
+    list. The separate in-flight list is gone. Those chips now paint on
+    the rows of the queue page."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -352,10 +372,12 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
 
 
 def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
-    """/file-activity/card serves one landed file's card for the trail
-    basename the poll knows — the File row's own name, the original
-    import filename, or either with a container-converted extension —
-    and 404s while no matching row exists yet."""
+    """Test that /file-activity/card matches the trail basenames.
+
+    The route serves the card of one file that arrived. The poll knows
+    the trail basename. The basename can be the name of the File row,
+    the original import filename, or either name with the extension of
+    a converted container. The route returns 404 if no row matches."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -368,9 +390,9 @@ def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
         db.session.commit()
 
     for basename in (
-        "Fragment Film (2013) - [Bluray-1080p].mkv",  # the File row's name
+        "Fragment Film (2013) - [Bluray-1080p].mkv",  # the name of the File row
         "Fragment.Film.2013.avi",  # the original import filename
-        "Fragment.Film.2013.mkv",  # converted to Matroska en route
+        "Fragment.Film.2013.mkv",  # the pipeline converted it to Matroska
     ):
         response = admin_client.get(
             "/file-activity/card", query_string={"basename": basename}
@@ -390,9 +412,11 @@ def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
 
 
 def test_genre_links_filter_the_library(app, admin_client):
-    """Genre names on the movie page link to the library filtered to
-    that TMDB genre; the filter composes with the quality
-    dropdown and an unknown genre 404s."""
+    """Test that the genre links filter the library.
+
+    A genre name on the movie page links to the library, filtered to
+    that TMDB genre. The filter works together with the quality
+    dropdown. An unknown genre returns 404."""
 
     from app import db
     from app.models import RefQuality
@@ -404,7 +428,7 @@ def test_genre_links_filter_the_library(app, admin_client):
         drama = genre(18, "Drama")
         cowboy = make_movie("Genre Cowboy", 1950)
         cowboy.genres.append(western)
-        # The overview gates the paragraph the genre links live in
+        # The genre links are in a paragraph that needs the overview
         cowboy.tmdb_overview = "A cowboy rides."
         make_movie_file(cowboy, "Bluray-1080p")
         oater = make_movie("Genre Oater on DVD", 1951)
@@ -417,7 +441,7 @@ def test_genre_links_filter_the_library(app, admin_client):
         cowboy_id = cowboy.id
         bluray_id = RefQuality.query.filter_by(quality_title="Bluray-1080p").one().id
 
-    # The movie page's genre line links to the filtered library
+    # The genre line of the movie page links to the filtered library
 
     page = admin_client.get(f"/movie/{cowboy_id}").get_data(as_text=True)
     assert "/library/movie?genre=37" in page
@@ -428,7 +452,7 @@ def test_genre_links_filter_the_library(app, admin_client):
     assert "Genre Oater on DVD" in listing
     assert "Genre Weeper" not in listing
 
-    # Quality composes with the genre filter
+    # The quality filter works together with the genre filter
 
     listing = admin_client.get(f"/library/movie?genre=37&quality={bluray_id}").get_data(
         as_text=True
@@ -440,8 +464,10 @@ def test_genre_links_filter_the_library(app, admin_client):
 
 
 def test_local_time_text_renders_server_local():
-    """Tooltip timestamps interpret naive rq/scheduler times as UTC and
-    render them in the server's local zone, in moment.js's LLL shape."""
+    """Test that the tooltip timestamps render in the local zone of the server.
+
+    The function reads naive rq and scheduler times as UTC. It renders
+    them in the LLL shape of moment.js."""
 
     from datetime import datetime, timezone
 
@@ -454,9 +480,12 @@ def test_local_time_text_renders_server_local():
 
 
 def test_every_template_reference_resolves(app):
-    """Every {% import/from/include/extends %} target in app/templates loads
-    through the Jinja environment. Guards against a dependency drop orphaning
-    a template served by a package (bootstrap/wtf.html, Aug 2026)."""
+    """Test that each template reference in app/templates resolves.
+
+    Each {% import/from/include/extends %} target loads through the
+    Jinja environment. A dropped dependency can orphan a template that
+    a package serves (bootstrap/wtf.html, 2026-08). This test catches
+    that."""
 
     from pathlib import Path
 
@@ -481,7 +510,7 @@ def test_every_template_reference_resolves(app):
 
 
 def test_every_render_template_target_exists(app):
-    """Every template name passed to render_template in app/*.py exists."""
+    """Test that each template name given to render_template in app/*.py exists."""
 
     from pathlib import Path
 

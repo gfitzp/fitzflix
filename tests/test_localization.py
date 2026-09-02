@@ -1,10 +1,12 @@
-"""End-to-end localization through local staging, and the mount-resilience
-behaviors: pre-flight deferral, best-effort rejects, and dead-mount detection.
+"""Test end-to-end localization through local staging and mount resilience.
+
+The mount-resilience behaviors are the pre-flight deferral, the
+best-effort rejects, and the dead-mount detection.
 
 The end-to-end test builds a real (tiny) Matroska file with ffmpeg and
-mkvmerge, runs localization_task and finalize_localization against it, and
-checks the file lands in the library with its database records — with all
-intermediate work done in the staging directory.
+mkvmerge. It runs localization_task and finalize_localization against
+the file. Then it checks that the file arrives in the library with its
+database records. All intermediate work occurs in the staging directory.
 """
 
 import errno
@@ -29,7 +31,7 @@ from tests.conftest import _TMP
 
 
 def settle(path, age_seconds=3600):
-    """Backdate a file's mtime so the completeness gate trusts it."""
+    """Backdate the mtime of a file. Then the completeness gate trusts it."""
 
     stamp = time.time() - age_seconds
     os.utime(path, (stamp, stamp))
@@ -37,7 +39,7 @@ def settle(path, age_seconds=3600):
 
 @pytest.fixture(scope="module")
 def sample_mkv(app):
-    """A 1-second Matroska file with an English audio track."""
+    """Build a 1-second Matroska file with an English audio track."""
 
     base = os.path.join(_TMP, "sample-base.mp4")
     mkv = os.path.join(_TMP, "sample.mkv")
@@ -88,8 +90,8 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
     with app.app_context():
         assert localization_task(source) is True
 
-        # The processed hidden file was left in staging, and the library copy
-        # was handed to the file-operation queue, not the sql queue
+        # The task left the processed hidden file in staging. It gave the
+        # library copy to the file-operation queue, not to the sql queue
 
         move_jobs = [
             job
@@ -103,12 +105,12 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert hidden.startswith(app.config["STAGING_DIR"])
         assert os.path.exists(hidden)
 
-        # The staged source copy is already cleaned up after mkvmerge
+        # The task already removed the staged source copy after mkvmerge
 
         assert os.listdir(app.config["STAGING_DIR"]) == [os.path.basename(hidden)]
 
-        # The move carries the file to a hidden destination name, empties
-        # staging, and enqueues the finalize on the sql queue
+        # The move puts the file at a hidden destination name. It empties
+        # staging. It enqueues the finalize on the sql queue
 
         assert videos.move_localized_file(*move_args) is True
         assert os.listdir(app.config["STAGING_DIR"]) == []
@@ -125,8 +127,8 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert destination_hidden.startswith(app.config["LIBRARY_DIR"])
         assert os.path.exists(destination_hidden)
 
-        # The move already inspected the file, so finalize receives the
-        # media details precomputed and never opens the file itself
+        # The move already inspected the file. Thus, finalize receives the
+        # precomputed media details. It never opens the file itself
 
         assert len(job_args) == 5
         inspection = job_args[4]
@@ -136,8 +138,8 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
 
         finalize_localization(*job_args)
 
-        # The finished file is in the library, staging is empty, the source
-        # is removed, and the database has the record
+        # The finished file is in the library. Staging is empty. The source
+        # is removed. The database has the record
 
         output = os.path.join(
             app.config["LIBRARY_DIR"],
@@ -152,12 +154,12 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
         assert file.movie.year == 2021
         assert file.quality.quality_title == "DVD"
 
-        # The video fields and track rows came from the inspection dict
+        # The video fields and the track rows came from the inspection dict
 
         assert file.format == "AVC"
         assert [t.language for t in file.audiotrack] == ["eng"]
 
-        # And the title lock was released
+        # The task released the title lock
 
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
@@ -168,13 +170,13 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
 
 @pytest.fixture(scope="module")
 def sample_mp4(app, sample_mkv):
-    """The MP4 intermediate built by the sample_mkv fixture."""
+    """Return the MP4 intermediate that the sample_mkv fixture builds."""
 
     return os.path.join(_TMP, "sample-base.mp4")
 
 
 def run_full_chain(app, source):
-    """Run localization -> move -> finalize, returning the enqueued names."""
+    """Run localization -> move -> finalize. Return the enqueued finalize args."""
 
     assert localization_task(source) is True
     move_jobs = [
@@ -203,7 +205,7 @@ def test_non_matroska_is_converted_to_mkv(app, sample_mp4, incoming_dir):
     with app.app_context():
         run_full_chain(app, source)
 
-        # The library file and the database record both carry the .mkv name
+        # The library file and the database record both have the .mkv name
 
         output = os.path.join(
             app.config["LIBRARY_DIR"],
@@ -217,7 +219,7 @@ def test_non_matroska_is_converted_to_mkv(app, sample_mp4, incoming_dir):
         assert file.basename == "Converted (2021) - [DVD].mkv"
         assert file.container == "Matroska"
 
-        # The untouched name remembers the original container
+        # The untouched name keeps the original container
 
         assert file.untouched_basename == "Converted (2021) - [DVD].mp4"
 
@@ -265,7 +267,7 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
         ]
         assert retries == [retry_job_id("localization_task", f"'{basename}'", 0, 0)]
 
-        # The file was left untouched — not rejected, not staged
+        # The task left the file untouched. It did not reject or stage it
         assert os.path.exists(source)
         assert os.listdir(app.config["STAGING_DIR"]) == []
     finally:
@@ -275,9 +277,11 @@ def test_localization_defers_when_volumes_dead(app, incoming_dir, monkeypatch):
 def test_staging_copy_transient_error_defers_and_retries(
     app, incoming_dir, monkeypatch
 ):
-    """An smbfs handle revoked mid-copy (EBADF) is a mount hiccup, not a bad
-    file: the partial staged copy is removed, the title lock is released,
-    and the task is rescheduled instead of rejecting a healthy source."""
+    """Defer and retry when smbfs revokes a handle during the copy.
+
+    The EBADF error is a mount problem, not a bad file. The task removes
+    the partial staged copy. It releases the title lock. It reschedules
+    itself. It does not reject a healthy source."""
 
     basename = "Flaky (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -304,8 +308,8 @@ def test_staging_copy_transient_error_defers_and_retries(
             retry_job_id("localization_task", f"'{basename}'", 1, 0)
         ]
 
-        # The retry carries the incremented attempt count and the original
-        # flags, and binds to the task's signature
+        # The retry carries the increased attempt count and the original
+        # flags. It binds to the signature of the task
 
         job = retries[0]
         assert job.kwargs["transient_retries"] == 1
@@ -315,13 +319,15 @@ def test_staging_copy_transient_error_defers_and_retries(
             *(job.args or ()), **(job.kwargs or {})
         )
 
-        # Partial staged copy removed, source untouched, nothing rejected
+        # The partial staged copy is removed. The source is untouched.
+        # Nothing is rejected
 
         assert os.listdir(app.config["STAGING_DIR"]) == []
         assert os.path.exists(source)
         assert basename not in rejected_files(app)
 
-        # The title lock was released, so the retry won't spin on it
+        # The task released the title lock. Thus, the retry does not spin
+        # on it
 
         identifier = json.dumps(
             {
@@ -340,12 +346,12 @@ def test_staging_copy_transient_error_defers_and_retries(
 
 
 def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monkeypatch):
-    """Each deferral schedules the next attempt under its own job id.
+    """Schedule each next attempt under its own job id.
 
-    rq rewrites a job's stored payload when the job returns, so a retry
-    scheduled under the id of the job scheduling it used to have its
-    attempt count reset the moment that job finished — the same attempt
-    repeating forever instead of the budget running out.
+    rq rewrites the stored payload of a job when the job returns. A
+    retry used to be scheduled under the id of the job that scheduled
+    it. Thus, its attempt count was reset the moment that job finished.
+    The same attempt repeated forever. The budget never ran out.
     """
 
     basename = "Stuck (2021) - [DVD].mkv"
@@ -380,7 +386,7 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
                 for job_id in registry.get_job_ids():
                     registry.remove(job_id, delete_job=True)
 
-            # And the attempt after the last one gives up instead of deferring
+            # The attempt after the last one gives up. It does not defer
 
             localization_task(source, transient_retries=videos.MAX_TRANSIENT_RETRIES)
             assert not any(
@@ -396,8 +402,9 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
 def test_staging_copy_transient_error_rejects_after_max_retries(
     app, incoming_dir, monkeypatch
 ):
-    """Once the retry budget is spent, a still-failing copy takes the
-    normal reject path rather than deferring forever."""
+    """Reject a copy that still fails after the retry budget is spent.
+
+    The copy takes the normal reject path. It does not defer forever."""
 
     basename = "Hopeless (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -423,7 +430,7 @@ def test_staging_copy_transient_error_rejects_after_max_retries(
 def test_staging_copy_permanent_error_rejects_immediately(
     app, incoming_dir, monkeypatch
 ):
-    """A non-transient error (e.g. disk full) doesn't burn retries."""
+    """Make sure a permanent error (for example, disk full) uses no retries."""
 
     basename = "Truly Broken (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -449,9 +456,10 @@ def test_staging_copy_permanent_error_rejects_immediately(
 def test_library_copy_transient_error_defers_and_keeps_lock(
     app, incoming_dir, monkeypatch
 ):
-    """A transient mount error during the library copy retries just the
-    copy: the localized output stays on staging, the title lock stays held,
-    and nothing is rejected — no need to redo the whole import."""
+    """Retry only the copy after a transient mount error during the library copy.
+
+    The localized output stays in staging. The task keeps the title lock.
+    It rejects nothing. There is no need to redo the whole import."""
 
     basename = "Flaky Move (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -489,8 +497,9 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             retry_job_id("move_localized_file", f"'{basename}'", 1)
         ]
 
-        # The retry carries the original chain — including the lock — plus
-        # the incremented attempt count, and binds to the task's signature
+        # The retry carries the original chain, including the lock. It also
+        # carries the increased attempt count. It binds to the signature of
+        # the task
 
         job = retries[0]
         assert list(job.args) == [source, file_details, "lock-sentinel", hidden]
@@ -499,8 +508,8 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
             *(job.args or ()), **(job.kwargs or {})
         )
 
-        # The localized output survives on staging for the retry, nothing
-        # was rejected, and finalize was not enqueued
+        # The localized output stays in staging for the retry. Nothing was
+        # rejected. The finalize was not enqueued
 
         assert os.path.exists(hidden)
         assert os.path.exists(source)
@@ -512,7 +521,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
 
 
 def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
-    """Once the retry budget is spent, the existing reject path takes over."""
+    """Use the existing reject path after the retry budget is spent."""
 
     basename = "Hopeless Move (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -600,7 +609,7 @@ def test_move_to_rejects_survives_dead_volume(app, incoming_dir, monkeypatch):
 
 
 def rejected_files(app):
-    """All real files anywhere under the rejects directory."""
+    """Return all real files under the rejects directory."""
 
     return [
         name
@@ -613,8 +622,10 @@ def rejected_files(app):
 def test_move_to_rejects_cross_volume_move_is_staged_atomically(
     app, incoming_dir, monkeypatch
 ):
-    """When rename fails, the copy is staged through a hidden name and the
-    source is only removed after the copy is promoted."""
+    """Stage a cross-volume move through a hidden name.
+
+    When the rename fails, the function copies the file to a hidden
+    name. It removes the source only after it promotes the copy."""
 
     from app import importing
 
@@ -641,7 +652,7 @@ def test_move_to_rejects_cross_volume_move_is_staged_atomically(
 
 
 def test_move_to_rejects_failed_copy_leaves_no_partial(app, incoming_dir, monkeypatch):
-    """A copy that dies partway leaves nothing in rejects, hidden or not."""
+    """Leave nothing in rejects, hidden or not, when a copy fails partway."""
 
     from app import importing
 
@@ -673,9 +684,12 @@ def test_move_to_rejects_failed_copy_leaves_no_partial(app, incoming_dir, monkey
 def test_move_to_rejects_unremovable_source_discards_the_copy(
     app, incoming_dir, monkeypatch
 ):
-    """The August 4th incident: the copy completes but the source can't be
-    deleted (revoked SMB handle). The state must collapse back to 'the
-    source stays where it is' — no duplicate left in rejects."""
+    """Discard the copy when the source cannot be removed.
+
+    This is the incident of 2026-08-04. The copy completes, but the
+    function cannot delete the source (revoked SMB handle). The state
+    must return to 'the source stays where it is'. No duplicate stays in
+    rejects."""
 
     from app import importing
 
@@ -739,8 +753,8 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
     class FakeResult:
         returncode = 0
         stderr = ""
-        # `mount` is read for duplicate mountpoints now (#233); an empty
-        # table means there is no duplicate to free
+        # The healer reads `mount` for duplicate mountpoints now (#233). An
+        # empty table means that there is no duplicate to free
         stdout = ""
 
     def fake_run(command, **kwargs):
@@ -763,7 +777,7 @@ def test_heal_mounts_remounts_with_cooldown(app, monkeypatch):
         'mount volume "smb://user@nas.local/Movies"',
     ]
 
-    # Cooldown prevents a remount loop
+    # The cooldown prevents a remount loop
     with app.app_context():
         assert maintenance.heal_mounts(["/Volumes/Movies"], app.redis, app.config) == []
 
@@ -776,7 +790,7 @@ def test_heal_mounts_alert_only_without_url(app):
 def test_copy_with_progress_reports_percentages(app, tmp_path):
     src = tmp_path / "big.mkv"
     dst = tmp_path / "copy.mkv"
-    src.write_bytes(os.urandom(96 * 1024 * 1024))  # three chunks
+    src.write_bytes(os.urandom(96 * 1024 * 1024))  # 3 chunks
 
     class FakeJob:
         meta = {}
@@ -801,9 +815,12 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
 def test_copy_with_progress_keeps_copy_when_source_close_fails(
     app, tmp_path, monkeypatch
 ):
-    """An SMB server that has lost its handle for a file serves every read
-    and then fails close() with EBADF forever. The bytes are all there, so
-    the copy stands rather than being retried until the share recovers."""
+    """Keep the copy when the close() of the source fails.
+
+    An SMB server that has lost its handle for a file serves each read.
+    Then it fails close() with EBADF forever. All the bytes are there.
+    Thus, the copy stands. Fitzflix does not retry it until the share
+    recovers."""
 
     src = tmp_path / "unclosable.mkv"
     dst = tmp_path / "copy.mkv"
@@ -839,8 +856,10 @@ def test_copy_with_progress_keeps_copy_when_source_close_fails(
 def test_copy_with_progress_raises_when_short_copy_fails_to_close(
     app, tmp_path, monkeypatch
 ):
-    """A close error over a copy that came up short is a real failure, and
-    still reaches the caller's transient-error handling."""
+    """Raise when a short copy fails to close.
+
+    A close error on a short copy is a real failure. It still reaches the
+    transient-error handling of the caller."""
 
     src = tmp_path / "truncated.mkv"
     dst = tmp_path / "copy.mkv"
@@ -885,7 +904,8 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
         movie = make_movie("Metadata Test", 2021)
         file = make_movie_file(movie, "DVD")
 
-        # Commit so save_track_metadata's own session can see the rows
+        # Commit here. Then the session of save_track_metadata can see the
+        # rows
 
         db.session.commit()
         details = {
@@ -918,7 +938,8 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
         assert lock
         assert videos.save_track_metadata(file.id, details, lock=lock) is True
 
-        # The task wrote through its own session; refresh this one's view
+        # The task wrote through its own session. Refresh the view of this
+        # session
 
         db.session.expire_all()
 
@@ -927,7 +948,7 @@ def test_save_track_metadata_writes_rows_and_releases_lock(app):
         assert [t.language for t in file.audiotrack] == ["eng"]
         assert len(file.subtrack) == 1
 
-        # The passed lock was released
+        # The task released the passed lock
         relock = app.lock_manager.lock("save-metadata-test", 1000)
         assert relock
         app.lock_manager.unlock(relock)
@@ -940,12 +961,12 @@ def test_upload_progress_callback_dedupes_by_percent(app, tmp_path, log_capture)
     with app.app_context():
         callback = videos.UploadProgressPercentage(str(source))
         for _ in range(200):
-            callback(5)  # 0.5% per call: two calls per whole percent
+            callback(5)  # 0.5% per call, 2 calls per whole percent
 
     messages = [
         r.getMessage() for r in log_capture if "Uploading to AWS" in r.getMessage()
     ]
-    # 200 callbacks collapse to one line per distinct percentage
+    # The 200 callbacks collapse to 1 line per distinct percentage
     assert len(messages) == len(set(messages))
     assert messages[-1].endswith("100%")
     assert 90 <= len(messages) <= 101
@@ -1012,9 +1033,12 @@ def test_rename_with_retries_raises_after_exhaustion(app, tmp_path, monkeypatch)
 def test_truncated_matroska_defers_even_when_size_is_stable(
     app, sample_mkv, incoming_dir
 ):
-    """The completeness gate: a partial MKV proves its own incompleteness
-    structurally, so even an old, size-stable file defers — this is the
-    stalled-network-copy case the size check can't see."""
+    """Defer a truncated MKV even when its size is stable.
+
+    This is the completeness gate. A partial MKV proves its own
+    incompleteness structurally. Thus, even an old, size-stable file
+    defers. This is the stalled-network-copy case. The size check cannot
+    see it."""
 
     basename = "Halfway (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
@@ -1042,7 +1066,7 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
             *(job.args or ()), **(job.kwargs or {})
         )
 
-        # Untouched: not staged, not rejected
+        # The file is untouched. It is not staged and not rejected
 
         assert os.path.exists(source)
         assert os.listdir(app.config["STAGING_DIR"]) == []
@@ -1052,8 +1076,10 @@ def test_truncated_matroska_defers_even_when_size_is_stable(
 
 
 def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
-    """A format with no declared length can't prove completeness, so a
-    recently-modified one waits for the mtime quiet period."""
+    """Make a new unprobeable file wait for the quiet period.
+
+    A format with no declared length cannot prove its completeness.
+    Thus, a recently modified file waits for the mtime quiet period."""
 
     basename = "Fresh (2021) - [DVD].dat"
     source = os.path.join(incoming_dir, basename)
@@ -1079,8 +1105,10 @@ def test_unprobeable_fresh_file_waits_out_the_quiet_period(app, incoming_dir):
 
 
 def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
-    """A file that never proves itself within the budget goes through the
-    normal pipeline: corrupt-but-complete files import as-is by design."""
+    """Import a file that never proves its completeness within the budget.
+
+    The file goes through the normal pipeline. By design, a corrupt but
+    complete file imports as it is."""
 
     basename = "Stubborn (2021) - [DVD].dat"
     source = os.path.join(incoming_dir, basename)
@@ -1095,7 +1123,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
             is True
         )
 
-        # It proceeded into the pipeline instead of deferring again
+        # The file went into the pipeline. It did not defer again
 
         assert not any(
             job.id.startswith("retry_") for job in scheduled_jobs(app.import_queue)
@@ -1107,7 +1135,8 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         ]
         assert len(move_jobs) == 1
 
-        # Clean up the staged working copy and hidden output of the aborted chain
+        # Remove the staged working copy and the hidden output of the aborted
+        # chain
 
         for _, _, files in os.walk(app.config["STAGING_DIR"]):
             assert files == [f".{basename}"] or files == []

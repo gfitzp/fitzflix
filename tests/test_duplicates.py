@@ -1,5 +1,7 @@
-"""Duplicate-movie detection on the Library Maintenance page: grouping by shared TMDB
-id, oldest-record-wins ordering, and the one-click merge enqueue.
+"""Test the duplicate-movie detection on the Library Maintenance page.
+
+The page groups the movies by a shared TMDB id. The oldest record is
+first. One click enqueues the merge.
 """
 
 import re
@@ -18,7 +20,7 @@ def csrf_token_from(page_html):
 
 
 def build_duplicates(app):
-    """Two records for the same film, plus an unrelated singleton."""
+    """Make 2 records for the same film, plus 1 unrelated singleton."""
 
     older = make_movie("Jaws", 1975, tmdb_id=578)
     older.date_created = datetime(2020, 1, 1)
@@ -39,11 +41,11 @@ def test_maintenance_lists_duplicate_groups_oldest_first(app, admin_client):
     assert "Jaws (1975)" in page
     assert "Jaws! (1975)" in page
 
-    # The older record is marked as the one that will be kept
+    # The page marks the older record as the record that it keeps
 
     assert re.search(r"Jaws \(1975\)</a>[^<]*<span[^>]*>[^<]*kept", page)
 
-    # The singleton isn't listed as a duplicate
+    # The page does not list the singleton as a duplicate
 
     assert "Sharknado" not in page
 
@@ -72,8 +74,8 @@ def test_merge_enqueues_refresh_for_each_duplicate(app, admin_client):
     ]
     assert len(jobs) == 1
 
-    # The newer record is the one refreshed (and thereby merged away);
-    # the older record survives
+    # The task refreshes the newer record. Thus, the merge removes it.
+    # The older record survives
 
     assert jobs[0].args == ("Movies", newer_id, 578)
     assert newer_id != older_id
