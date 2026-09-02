@@ -1,26 +1,30 @@
-"""Virtual DVR channel endpoints (#182): an HDHomeRun-flavored virtual
-tuner, the M3U playlist, the XMLTV guide, and the live MPEG-TS streams.
+"""Serve the virtual DVR channel endpoints (#182).
 
-Plex has no native M3U support — its manual "enter its network
-address" flow probes <address>/discover.json and expects the
-HDHomeRun HTTP protocol (the Channels DVR trick works the same way:
-it answers HDHomeRun JSON on its m3u URL). Manual entry skips SSDP
-discovery entirely, so the whole protocol here is three JSON
-documents: discover.json (device identity), lineup_status.json (no
-scanning), and lineup.json (channel number/name/stream URL triples).
-The guide is wired separately: Plex's channel-setup step accepts the
-XMLTV URL. The lineup's GuideNumber and the guide's channel id pair
-the two.
+The endpoints are an HDHomeRun-type virtual tuner, the M3U playlist,
+the XMLTV guide, and the live MPEG-TS streams.
 
-Plex fetches everything with no session cookie, so a secret path
-segment gates all of it exactly like the Plex webhook (404 when unset
-or wrong, indistinguishable from a missing route).
+Plex has no native M3U support. Its manual "enter its network address"
+flow probes <address>/discover.json and expects the HDHomeRun HTTP
+protocol. The Channels DVR trick works the same way. It answers
+HDHomeRun JSON on its m3u URL. Manual entry skips SSDP discovery
+completely. Thus, the whole protocol here is 3 JSON documents:
+discover.json (device identity), lineup_status.json (no scanning), and
+lineup.json (channel number, name, and stream URL triples). The guide
+is connected separately. The channel-setup step of Plex accepts the
+XMLTV URL. The GuideNumber of the lineup and the channel id of the
+guide pair the two.
 
-A stream is an endless chunked response: on connect the schedule math
-says what's playing and how far in, ffmpeg joins the file at that
-offset paced to real time, and when a program ends the next one spawns
-in its place. Transcode runs only while a channel is actually tuned;
-the guide and playlist are text rendered from the stored lineups.
+Plex fetches everything with no session cookie. Thus, a secret path
+segment gates all of it, the same as the Plex webhook. A missing or
+wrong token gets a 404. That response is the same as for a missing
+route.
+
+A stream is an endless chunked response. On connect, the schedule math
+says which program plays and how far in it is. ffmpeg joins the file at
+that offset, paced to real time. When a program ends, the next one
+spawns in its place. The transcode runs only while a client tunes the
+channel. The guide and the playlist are text rendered from the stored
+lineups.
 """
 
 import os
@@ -35,8 +39,8 @@ from flask import Response, current_app, request, url_for
 from app.dvr import channel_index, channel_lineup, program_at, programs_between
 from app.main import bp
 
-# How much guide to publish: a little history so Plex's grid has a
-# left edge, two days forward
+# How much guide to publish: some history and 2 days forward. The
+# history gives the grid of Plex a left edge.
 
 GUIDE_LOOKBEHIND_SECONDS = 6 * 3600
 GUIDE_LOOKAHEAD_SECONDS = 48 * 3600
@@ -47,28 +51,31 @@ TMDB_POSTER_URL = "https://image.tmdb.org/t/p/w500{poster_path}"
 
 
 def _authorized(token):
-    """Whether the path token matches DVR_TOKEN; always False while the
-    feature is unconfigured, so every route 404s."""
+    """Return True if the path token matches DVR_TOKEN.
+
+    The result is always False while the feature is not configured.
+    Thus, every route returns a 404."""
 
     expected = current_app.config["DVR_TOKEN"]
     return bool(expected) and secrets.compare_digest(token, expected)
 
 
 def _absolute(endpoint, **values):
-    """An absolute URL for the endpoint on the host THIS request
-    arrived at. SERVER_NAME pins url_for(_external=True) to the public
-    hostname, but Plex must get device/stream URLs on the address it
-    actually reached us by (loopback on the same machine) — tuning
-    through the public host would pull endless MPEG-TS through
-    CloudFront."""
+    """Return an absolute URL for the endpoint on the host of THIS request.
+
+    SERVER_NAME pins url_for(_external=True) to the public hostname. But
+    Plex must get the device and stream URLs on the address that it used
+    to reach Fitzflix (loopback on the same machine). A tune through the
+    public host would pull an endless MPEG-TS stream through CloudFront."""
 
     return request.host_url.rstrip("/") + url_for(endpoint, **values)
 
 
 def _xmltv_time(timestamp):
-    """An epoch timestamp as an XMLTV time string in the server's local
-    zone (YYYYMMDDHHMMSS +HHMM) — Plex schedules in the viewer's clock,
-    and the schedule math is UTC underneath."""
+    """Convert an epoch timestamp to an XMLTV time string in the local zone.
+
+    The format is YYYYMMDDHHMMSS +HHMM. Plex schedules in the clock of
+    the viewer. The schedule math is UTC underneath."""
 
     return (
         datetime.fromtimestamp(timestamp, tz=timezone.utc)
@@ -80,16 +87,19 @@ def _xmltv_time(timestamp):
 @bp.route("/dvr/<token>/discover.json")
 @bp.route("/dvr/<token>/playlist.m3u/discover.json")
 def dvr_discover(token):
-    """The HDHomeRun device-identity document Plex probes when a tuner
-    address is entered manually. The playlist.m3u alias tolerates the
-    full playlist URL being pasted as the address — Plex concatenates
-    /discover.json onto whatever was typed.
+    """Return the HDHomeRun device-identity document.
+
+    Plex probes this document when the user enters a tuner address
+    manually. The playlist.m3u alias accepts the full playlist URL as
+    the address. Plex adds /discover.json to the text that the user
+    typed.
     """
 
     if not _authorized(token):
         return "", 404
-    # Derived from the playlist route because it has exactly one URL
-    # rule — url_for on this endpoint could build either rule
+    # The base comes from the playlist route because that route has
+    # exactly one URL rule. url_for on this endpoint could build one of
+    # 2 rules.
 
     base = _absolute("main.dvr_playlist", token=token).rsplit("/playlist.m3u", 1)[0]
     return {
@@ -109,8 +119,9 @@ def dvr_discover(token):
 @bp.route("/dvr/<token>/lineup_status.json")
 @bp.route("/dvr/<token>/playlist.m3u/lineup_status.json")
 def dvr_lineup_status(token):
-    """The HDHomeRun scan-status document: a fixed lineup, no channel
-    scanning possible."""
+    """Return the HDHomeRun scan-status document.
+
+    The lineup is fixed. A channel scan is not possible."""
 
     if not _authorized(token):
         return "", 404
@@ -125,8 +136,10 @@ def dvr_lineup_status(token):
 @bp.route("/dvr/<token>/lineup.json")
 @bp.route("/dvr/<token>/playlist.m3u/lineup.json")
 def dvr_lineup(token):
-    """The HDHomeRun channel lineup: number, name, and stream URL per
-    channel — how Plex learns what it can tune."""
+    """Return the HDHomeRun channel lineup.
+
+    Each channel has a number, a name, and a stream URL. This is how
+    Plex learns which channels it can tune."""
 
     if not _authorized(token):
         return "", 404
@@ -142,8 +155,10 @@ def dvr_lineup(token):
 
 @bp.route("/dvr/<token>/playlist.m3u")
 def dvr_playlist(token):
-    """The M3U tuner playlist: one entry per channel, tvg-id keyed to
-    the XMLTV guide, stream URLs carrying the same token."""
+    """Return the M3U tuner playlist.
+
+    The playlist has one entry per channel. The tvg-id is the key into
+    the XMLTV guide. The stream URLs carry the same token."""
 
     if not _authorized(token):
         return "", 404
@@ -161,9 +176,12 @@ def dvr_playlist(token):
 
 @bp.route("/dvr/<token>/guide.xml")
 def dvr_guide(token):
-    """The XMLTV guide: every channel's airings from a few hours back
-    to two days out, rendered from the stored lineups — the same
-    schedule math the streams follow, so guide and stream agree."""
+    """Return the XMLTV guide.
+
+    The guide has the airings of every channel from some hours back to
+    2 days forward. Fitzflix renders it from the stored lineups with the
+    same schedule math that the streams use. Thus, the guide and the
+    stream agree."""
 
     if not _authorized(token):
         return "", 404
@@ -180,8 +198,8 @@ def dvr_guide(token):
         lineups.append(lineup)
         element = ElementTree.SubElement(tv, "channel", {"id": lineup["slug"]})
         ElementTree.SubElement(element, "display-name").text = lineup["name"]
-        # The number too: Plex's channel-mapping step pairs the tuner's
-        # GuideNumber against these names
+        # Also add the number. The channel-mapping step of Plex pairs the
+        # GuideNumber of the tuner against these names.
         ElementTree.SubElement(element, "display-name").text = str(lineup["number"])
 
     for lineup in lineups:
@@ -193,8 +211,9 @@ def dvr_guide(token):
             }
             programme = ElementTree.SubElement(tv, "programme", attributes)
             ElementTree.SubElement(programme, "title").text = program["title"]
-            # Episode programs carry the series as title plus these two
-            # (.get: movie programs and pre-upgrade lineups lack them)
+            # An episode program has the series as its title plus these 2
+            # fields. Use .get because movie programs and pre-upgrade
+            # lineups do not have them.
             if program.get("subtitle"):
                 ElementTree.SubElement(programme, "sub-title").text = program[
                     "subtitle"
@@ -224,12 +243,14 @@ def dvr_guide(token):
 
 
 def _ffmpeg_command(config, path, offset, audio_channels):
-    """The ffmpeg invocation for one program: join the file at the
-    offset, pace to real time, and emit H.264 + AC-3 in an MPEG-TS mux
-    with constant parameters so program boundaries splice cleanly.
+    """Return the ffmpeg command for one program.
 
-    Maps the first video and first audio track — the first audio track
-    is always the default track (the house rule).
+    The command joins the file at the offset and paces to real time. It
+    emits H.264 and AC-3 in an MPEG-TS mux with constant parameters.
+    Thus, the program boundaries splice cleanly.
+
+    It maps the first video track and the first audio track. The first
+    audio track is always the default track (the house rule).
     """
 
     bitrate = config["DVR_VIDEO_BITRATE_KBPS"]
@@ -271,13 +292,16 @@ def _ffmpeg_command(config, path, offset, audio_channels):
 
 @bp.route("/dvr/<token>/stream/<slug>.ts")
 def dvr_stream(token, slug):
-    """The channel's live stream: an endless MPEG-TS response that
-    starts mid-program wherever the schedule says the channel is now,
-    then rolls program to program until the client disconnects.
+    """Return the live stream of the channel.
 
-    ffmpeg spawns on connect and dies with the socket; a program whose
-    file is missing or whose transcode dies without output is skipped,
-    and a full lap of failures ends the stream rather than spinning.
+    The stream is an endless MPEG-TS response. It starts in the middle
+    of the program that the schedule gives for now. Then it continues
+    from program to program until the client disconnects.
+
+    ffmpeg spawns on connect and dies with the socket. The stream skips
+    a program if its file is missing or if its transcode dies without
+    output. A full lap of failures ends the stream. The stream does not
+    spin.
     """
 
     if not _authorized(token):
@@ -286,8 +310,8 @@ def dvr_stream(token, slug):
     if not lineup:
         return "", 404
 
-    # The generator outlives this request handler's app context, so it
-    # closes over plain values, never current_app
+    # The generator lives longer than the app context of this request
+    # handler. Thus, it closes over plain values, never current_app.
 
     config = {
         key: current_app.config[key]

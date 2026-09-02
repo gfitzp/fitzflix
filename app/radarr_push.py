@@ -1,19 +1,20 @@
-"""Ad-hoc Radarr requests: a per-film hand-off, never automatic.
+"""Send ad-hoc Radarr requests, one film at a time and never automatically.
 
-Glenn's revision of the original always-sync design: pushing every
+Glenn revised the original always-sync design. A push of every
 watchlist film to Radarr would queue hundreds of downloads and fill
-the volume, so requesting is a deliberate per-film action — an entry
-on the Find menu of unowned movie pages and watchlist tiles. The
-matching withdraw is route-side only (Glenn dropped the Un-request
-entry, Aug 2026): films are removed in Radarr itself, so the cached
-badge set can lag such a removal by up to its hour TTL.
-Radarr's root folder is the library volume itself, so a granted
-request downloads, renames, and flows back in through the existing
-Radarr webhook without any further wiring.
+the volume. Thus, a request is a deliberate action for one film. The
+action is an entry on the Find menu of unowned movie pages and
+watchlist tiles. The matching withdraw exists only as a route. Glenn
+removed the Un-request entry in 2026-08. The user removes films in
+Radarr itself. Thus, the cached badge set can show such a removal
+late, by up to its TTL of 1 hour.
+The root folder of Radarr is the library volume itself. Thus, a
+granted request downloads, renames, and comes back in through the
+existing Radarr webhook. No other connection is necessary.
 
-House settings (Glenn's spec): monitor the movie only, minimum
-availability Released, and the "Fitzflix" quality profile — resolved
-by name, never a hardcoded id.
+House settings (specified by Glenn): monitor the movie only, minimum
+availability Released, and the "Fitzflix" quality profile. Fitzflix
+finds the profile by name, never by a hardcoded id.
 """
 
 import json
@@ -22,8 +23,9 @@ import requests
 
 from flask import current_app
 
-# The hour-cached set of TMDB ids Radarr manages, for request badges;
-# refreshed immediately after every push or withdrawal
+# This is the set of TMDB ids that Radarr manages, cached for 1 hour,
+# for the request badges. Fitzflix refreshes the set immediately after
+# each push or withdrawal.
 
 RADARR_IDS_KEY = "fitzflix:radarr:tmdb_ids"
 RADARR_IDS_TTL = 3600
@@ -32,12 +34,13 @@ QUALITY_PROFILE_NAME = "Fitzflix"
 
 
 class RadarrError(Exception):
-    """A Radarr request that failed in a way the user should hear
-    about, message intact."""
+    """A Radarr request failed in a way that the user must know about.
+
+    The message stays as it is."""
 
 
 def radarr_configured():
-    """Whether the ad-hoc push can work at all."""
+    """Return True if the ad-hoc push can work at all."""
 
     return bool(
         current_app.config.get("RADARR_URL")
@@ -46,7 +49,7 @@ def radarr_configured():
 
 
 def _radarr(method, path, payload=None):
-    """One authenticated JSON call against the Radarr API."""
+    """Make one authenticated JSON call to the Radarr API."""
 
     r = requests.request(
         method,
@@ -60,9 +63,11 @@ def _radarr(method, path, payload=None):
 
 
 def radarr_tmdb_ids(refresh=False):
-    """The TMDB ids Radarr currently manages, hour-cached. Returns an
-    empty set (logged) when Radarr can't be reached — badges degrade,
-    buttons still work."""
+    """Return the TMDB ids that Radarr manages now, cached for 1 hour.
+
+    If Fitzflix cannot reach Radarr, this function logs the error and
+    returns an empty set. The badges are then incomplete. The buttons
+    continue to work."""
 
     if not refresh:
         cached = current_app.redis.get(RADARR_IDS_KEY)
@@ -80,9 +85,9 @@ def radarr_tmdb_ids(refresh=False):
 def request_movie(tmdb_id):
     """Add one film to Radarr, monitored and searched immediately.
 
-    Radarr insists on the full lookup object as the add body — a
-    minimal payload is refused — so the flow is lookup, decorate with
-    the house settings, post.
+    Radarr requires the full lookup object as the body of the add call.
+    It refuses a minimal payload. Thus, the flow is: look up the film,
+    add the house settings, then POST.
     """
 
     profiles = _radarr("GET", "/api/v3/qualityprofile")
@@ -122,7 +127,7 @@ def request_movie(tmdb_id):
 
 
 def withdraw_movie(tmdb_id):
-    """Remove one film from Radarr, keeping any files on disk."""
+    """Remove one film from Radarr and keep its files on the disk."""
 
     listing = _radarr("GET", f"/api/v3/movie?tmdbId={int(tmdb_id)}")
     if not listing:

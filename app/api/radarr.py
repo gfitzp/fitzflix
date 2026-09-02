@@ -17,7 +17,7 @@ from app.api.arr import (
 @bp.route("/radarr/add", methods=["POST"])
 @import_event_webhook("Radarr")
 def radarr_add(payload):
-    """Endpoint for Radarr to notify Fitzflix when a new video file is added."""
+    """Receive the Radarr notification that a new video file was added."""
 
     response = jsonify(request.get_json())
     downloaded_file_path = os.path.join(
@@ -25,8 +25,9 @@ def radarr_add(payload):
         payload["movieFile"].get("relativePath"),
     )
 
-    # A provably truncated download never reaches the pipeline:
-    # mark the grab failed so Radarr blocklists it and searches again
+    # A download that is truncated per its container never reaches the
+    # pipeline. Fitzflix marks the grab as failed. Thus, Radarr blocklists
+    # the release and searches again.
 
     if import_source_incomplete(downloaded_file_path):
         movie_id = payload["movie"].get("id")
@@ -38,7 +39,7 @@ def radarr_add(payload):
         )
         return response
 
-    # Rename the downloaded file with a downgraded quality title
+    # Rename the downloaded file with a downgraded quality title.
 
     original_quality = payload["movieFile"].get("quality")
     new_quality = downgrade_quality_title(
@@ -57,7 +58,8 @@ def radarr_add(payload):
             f"'{downloaded_file_path}' renamed as '{radarr_file_path}'"
         )
 
-    # Ask Radarr to refresh its movie data now that we've possibly renamed the file
+    # Ask Radarr to refresh its movie data, because the file possibly has
+    # a new name.
 
     id = payload["movie"].get("id")
     if id:
@@ -71,11 +73,11 @@ def radarr_add(payload):
             {"name": "RefreshMovie", "movieIds": [int(id)]},
         )
 
-    # Pass the file to Fitzflix for processing; tried copying the file to the import
-    # directory for processing but if another file came in while it was copying
-    # then the first copy was abandoned, and tried doing a hard link to the import
-    # directory but that wasn't supported on my NAS, so just sending the downloaded
-    # file directly to Radarr to be imported in place
+    # Send the file to Fitzflix for processing. An earlier version copied the
+    # file to the import directory. But if a second file arrived during the
+    # copy, the first copy was abandoned. A later version made a hard link in
+    # the import directory. But the NAS did not support hard links. Thus,
+    # Fitzflix now imports the downloaded file in place.
 
     job = current_app.import_queue.enqueue(
         "app.videos.localization_task",

@@ -1,16 +1,17 @@
-"""Streaming availability via TMDB's watch-provider endpoints.
+"""Streaming availability through the watch-provider endpoints of TMDB.
 
-The underlying data is licensed from JustWatch, and TMDB's terms make
-attribution mandatory: every surface that shows it must carry a
-"Streaming data by JustWatch" credit, or API access can be revoked.
-Availability is cached per title, refreshed nightly by the
-refresh_availability cron and held for two days so a missed night
-doesn't go cold (before Aug 2026 the day-cached entries expired in a
-cluster and the first page view of the day stalled behind 50 inline
-fetches under the rate limiter), and displays are customized to each
-user's chosen services —
-a per-user Profile setting, never site-wide. The payload carries no
-deep links; the only outbound link is the film's TMDB watch page.
+JustWatch licenses the underlying data. The terms of TMDB make
+attribution mandatory. Each surface that shows the data must show a
+"Streaming data by JustWatch" credit. If not, TMDB can revoke the API
+access. Fitzflix caches the availability per title. The
+refresh_availability cron refreshes it each night. The cache holds
+each entry for 2 days. Thus, one missed night does not make the cache
+cold. Before 2026-08, the day-cached entries expired in a cluster. The
+first page view of the day then stalled behind 50 inline fetches under
+the rate limiter. The displays show the services that each user
+selected. This is a per-user Profile setting, never a site-wide
+setting. The payload has no deep links. The only outbound link is the
+TMDB watch page of the film.
 """
 
 import json
@@ -26,8 +27,8 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import Movie, tmdb_get
 
-# This process's app instance, resolved lazily so the warm task can run
-# on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the warm task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
@@ -39,9 +40,10 @@ AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
 
 def provider_registry():
-    """US movie watch providers from TMDB's registry, sorted by display
-    priority and cached for a day; [] without an API key or when TMDB
-    is unreachable."""
+    """Return the US movie watch providers from the registry of TMDB.
+
+    The list is sorted by display priority and cached for CACHE_SECONDS.
+    The result is [] without an API key or when TMDB is not reachable."""
 
     if not current_app.config["TMDB_API_KEY"]:
         return []
@@ -81,13 +83,15 @@ def provider_registry():
 
 
 def title_availability(tmdb_id, refresh=False):
-    """The film's US watch-provider payload {link, flatrate, ads, rent,
-    buy}, cached for CACHE_SECONDS; None while unknown (no key, TMDB
-    down). refresh skips the cache read — the nightly task's way of
-    re-fetching a title whose entry is still live.
+    """Return the US watch-provider payload of the film, or None while unknown.
 
-    A film with no US providers caches an empty payload, so absence
-    doesn't re-query TMDB on every page view.
+    The payload is {link, flatrate, ads, rent, buy}. Fitzflix caches it
+    for CACHE_SECONDS. The result is None when there is no key or TMDB
+    is down. refresh=True skips the cache read. The nightly task uses
+    it to fetch a title again while its entry is still live.
+
+    A film with no US providers caches an empty payload. Thus, the
+    absence does not query TMDB again on each page view.
     """
 
     if tmdb_id is None or not current_app.config["TMDB_API_KEY"]:
@@ -106,9 +110,9 @@ def title_availability(tmdb_id, refresh=False):
         r.raise_for_status()
         region = (r.json().get("results") or {}).get(WATCH_REGION) or {}
     except requests.exceptions.HTTPError as e:
-        # A 404 is TMDB's answer, not an outage — the id has no watch
-        # record (a stale or wrong tmdb id) — so cache it as empty
-        # rather than re-querying on every page view
+        # A 404 is the answer of TMDB, not an outage. The id has no watch
+        # record (a stale or wrong tmdb id). Thus, Fitzflix caches it as
+        # empty and does not query again on each page view.
 
         if e.response is not None and e.response.status_code == 404:
             region = {}
@@ -136,17 +140,19 @@ def title_availability(tmdb_id, refresh=False):
 def batch_title_availability(
     tmdb_ids, max_workers=REFRESH_WORKERS, fetch_limit=None, refresh=False
 ):
-    """(payloads, deferred): availability for many titles at once, as
-    {tmdb_id: payload-or-None} plus the ids that weren't fetched.
+    """Return (payloads, deferred) for many titles at one time.
 
-    Cache hits are read in one MGET; misses fetch concurrently, each
-    through title_availability so caching and 404 handling match the
-    single-title path. All fetches share tmdb_get's app-wide rate
-    limiter, so fetch_limit bounds how long a render can stall behind
-    it — leftover ids come back for the caller to warm in the
-    background instead. The page renders pass fetch_limit=0 (Aug 2026):
-    they answer from the cache the nightly refresh keeps full and never
-    fetch inline. refresh re-fetches every id, cached or not."""
+    payloads is {tmdb_id: payload-or-None}. deferred is the list of the
+    ids that were not fetched. Fitzflix reads the cache hits in 1 MGET.
+    The misses are fetched concurrently. Each miss goes through
+    title_availability. Thus, the caching and the 404 handling are the
+    same as in the single-title path. All fetches share the app-wide
+    rate limiter of tmdb_get. Thus, fetch_limit bounds the time that a
+    render can stall behind the limiter. The ids that are left come
+    back to the caller. The caller can warm them in the background.
+    The page renders pass fetch_limit=0 (2026-08). They answer from the
+    cache that the nightly refresh keeps full. They never fetch inline.
+    refresh=True fetches each id again, cached or not."""
 
     results = {}
     ids = sorted({int(t) for t in tmdb_ids if t is not None})
@@ -176,7 +182,7 @@ def batch_title_availability(
     flask_app = current_app._get_current_object()
 
     def fetch(tmdb_id):
-        """One title's availability under its own app context."""
+        """Return the availability of one title under its own app context."""
 
         with flask_app.app_context():
             return tmdb_id, title_availability(tmdb_id, refresh=refresh)
@@ -188,9 +194,10 @@ def batch_title_availability(
 
 
 def warm_title_availability(tmdb_ids):
-    """Background task: fill the availability cache for the given
-    titles — the ids a page render found uncached — so the next visit
-    has every badge and count without waiting."""
+    """Fill the availability cache for the given titles (background task).
+
+    The ids are the ones that a page render found uncached. Thus, the
+    next visit has each badge and count without a wait."""
 
     with app.app_context():
         batch_title_availability(tmdb_ids)
@@ -198,12 +205,14 @@ def warm_title_availability(tmdb_ids):
 
 
 def refresh_availability():
-    """Nightly task (Aug 2026): re-fetch availability for every film
-    with a TMDB id, so the pages that read it — the watchlist, the
-    Criterion catalog, filmographies — always answer from a full cache
-    and never block on TMDB. Whole-library cost is a few thousand
-    requests, minutes under the rate limiter, and each entry's two-day
-    TTL restarts, so one missed night still serves yesterday's data."""
+    """Fetch the availability again for each film with a TMDB id (nightly task).
+
+    Added 2026-08. The pages that read the availability (the watchlist,
+    the Criterion catalog, the filmographies) then always answer from a
+    full cache. They never block on TMDB. The whole-library cost is
+    some thousand requests. They take minutes under the rate limiter.
+    The 2-day TTL of each entry restarts. Thus, one missed night still
+    serves the data of the day before."""
 
     with app.app_context():
         if not current_app.config["TMDB_API_KEY"]:
@@ -223,16 +232,17 @@ def refresh_availability():
 
 
 def user_provider_ids(user):
-    """The TMDB provider ids of the user's chosen services."""
+    """Return the TMDB provider ids of the services that the user selected."""
 
     return {row.provider_id for row in user.streaming_providers}
 
 
 def _criterion_provider():
-    """The provider registry's Criterion Channel entry — the name and
-    logo a synthesized match renders with — or a logo-less stand-in
-    when the registry can't be read (the badge template skips the
-    image for a null logo_path)."""
+    """Return the Criterion Channel entry of the provider registry.
+
+    A synthesized match renders with this name and logo. If Fitzflix
+    cannot read the registry, return a stand-in without a logo. The
+    badge template skips the image for a null logo_path."""
 
     from app.leaving_criterion import CRITERION_PROVIDER_ID
 
@@ -251,22 +261,23 @@ def _criterion_provider():
 
 
 def streaming_matches(availability, provider_ids, tmdb_id=None):
-    """Providers carrying the film that the user subscribes to —
-    streaming kinds only (flatrate, then free-with-ads); rent and buy
-    aren't subscriptions. Given the film's tmdb_id, a Criterion
-    Channel match also learns whether the film is on the month's
-    leaving set: its "leaving" key carries the departure date ("August
-    31") so the badge can light up wherever it renders (Glenn's ask,
-    Aug 2026 — watch it before it goes).
+    """Return the providers that carry the film and that the user subscribes to.
 
-    A film in the scraped newly-added or leaving store gets a
-    Criterion match synthesized outright (Glenn, Sept 1 2026): those
-    stores are the Channel's own catalog pages — first-party word the
-    film streams there — while TMDB's JustWatch-fed payload lags them
-    by days around the month turnover, which is exactly when the
-    discovery shelves push the film hardest. Synthesis (like the
-    annotations) needs the tmdb_id, so the owned-film callers that
-    deliberately pass None skip both."""
+    Only the streaming kinds count (flatrate, then free-with-ads). Rent
+    and buy are not subscriptions. If the caller gives the tmdb_id of
+    the film, a Criterion Channel match also learns if the film is on
+    the leaving set of the month. Its "leaving" key holds the departure
+    date ("August 31"). Thus, the badge can light up wherever it
+    renders (requested by Glenn, 2026-08, to watch it before it goes).
+
+    A film in the scraped newly-added store or leaving store gets a
+    synthesized Criterion match (decided by Glenn, 2026-09-01). Those
+    stores are the catalog pages of the Channel itself. They are the
+    first-party word that the film streams there. The JustWatch-fed
+    payload of TMDB is days behind them around the month turnover.
+    That is exactly when the discovery shelves push the film hardest.
+    The synthesis (like the annotations) needs the tmdb_id. Thus, the
+    owned-film callers that pass None on purpose skip both."""
 
     if not provider_ids:
         return []
@@ -279,9 +290,9 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
                     seen.add(provider["provider_id"])
                     matches.append({**provider, "kind": kind})
     if tmdb_id is not None:
-        # Imported here: leaving_criterion and newly_added reach this
-        # module through streaming_rail, so top-level imports would be
-        # circular
+        # Imported here. leaving_criterion and newly_added reach this
+        # module through streaming_rail. Thus, top-level imports would
+        # be circular.
         from app.leaving_criterion import CRITERION_PROVIDER_ID, leaving_departure
         from app.newly_added import newly_added_since
 
@@ -297,8 +308,8 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
                 if departs:
                     match["leaving"] = departs
             # The newly-added feeds (#246) mark a recent arrival on
-            # any provider's badge; departure urgency outranks it on
-            # the odd film that is somehow both
+            # the badge of any provider. Departure urgency outranks it
+            # on the rare film that is somehow both.
             if "leaving" not in match:
                 added = newly_added_since(tmdb_id, match["provider_id"])
                 if added:
@@ -307,12 +318,12 @@ def streaming_matches(availability, provider_ids, tmdb_id=None):
 
 
 def rental_matches(availability, provider_ids):
-    """Rent providers carrying the film that the user subscribes to.
+    """Return the rent providers of the film that the user subscribes to.
 
-    Digital purchase is deliberately ignored — buying happens on
-    physical media in this house — and rentals never join the
-    streaming match set. The cached payload still carries the buy
-    list, should that preference ever change."""
+    Digital purchase is ignored on purpose. Purchases in this house are
+    on physical media. Rentals never join the streaming match set. The
+    cached payload still holds the buy list, in case that preference
+    changes."""
 
     if not availability or not provider_ids:
         return []
@@ -327,29 +338,32 @@ def rental_matches(availability, provider_ids):
 
 
 def user_streaming(tmdb_id, user, negative=False, local=False, upgradable=None):
-    """The template payload for one film: the user's matches and the
-    TMDB watch-page link, or None when the user picked no services (the
+    """Return the template payload for one film, or None.
+
+    The payload holds the matches of the user and the TMDB watch-page
+    link. The result is None when the user selected no services (the
     surfaces stay quiet for them). negative=True keeps the payload when
-    nothing matched, so unowned-film pages can say "not on your
-    services" instead of nothing — and only those pages also list where
-    the film can be rented, since that's where the watch decision is
-    live. Rentals are filtered to the user's chosen services too
-    (renting elsewhere is a click away via the watch-page link), and a
-    rental never counts as a subscription match. local=True marks an
-    owned film: the strip leads with "In your library" so a streaming
-    badge never upstages the copy on the shelf, and the payload survives
-    an empty match list to say so. upgradable colors that library
-    badge (Glenn's Aug 2026 revision): True paints it amber — the
-    copy is worth upgrading — False green, None leaves it neutral for
-    surfaces that never looked."""
+    nothing matched. Thus, the pages of unowned films can say "not on
+    your services" instead of nothing. Only those pages also list where
+    the user can rent the film, because the watch decision is live
+    there. Fitzflix filters the rentals to the selected services of the
+    user too (a rental at a different place is 1 click away through the
+    watch-page link). A rental never counts as a subscription match.
+    local=True marks an owned film. The strip then starts with "In your
+    library". Thus, a streaming badge never outranks the copy on the
+    shelf. The payload survives an empty match list to say so.
+    upgradable colors that library badge (revision by Glenn, 2026-08).
+    True paints it amber, because the copy is worth an upgrade. False
+    paints it green. None leaves it neutral for the surfaces that never
+    looked."""
 
     provider_ids = user_provider_ids(user)
     if not provider_ids:
         return None
     availability = title_availability(tmdb_id)
-    # An owned film's strip never warns of a departure or trumpets an
-    # arrival (Glenn, Aug 27 2026) — the copy on the shelf isn't going
-    # anywhere — so the annotation lookups are skipped outright
+    # The strip of an owned film never warns of a departure or announces
+    # an arrival (decided by Glenn, 2026-08-27). The copy on the shelf
+    # stays. Thus, Fitzflix skips the annotation lookups completely.
     matches = streaming_matches(
         availability, provider_ids, tmdb_id=None if local else tmdb_id
     )

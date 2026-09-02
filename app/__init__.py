@@ -43,24 +43,26 @@ _app = None
 
 
 def safe_job_id(value):
-    """Flatten a string into rq 2's allowed job-id charset.
+    """Flatten a string into the job-id character set that rq 2 permits.
 
-    Job ids carry the dedup and retry-replacement semantics (file basenames,
-    deterministic retry:task:target ids), so disallowed characters are
-    mapped to underscores rather than the ids being abandoned.
+    Job ids carry the dedup and retry-replacement semantics. Examples are
+    file basenames and deterministic retry:task:target ids. Thus, this
+    function maps the disallowed characters to underscores. It does not
+    discard the ids.
     """
 
     return re.sub(r"[^A-Za-z0-9_-]", "_", value)
 
 
 def importable_basename(basename):
-    """Whether an import-directory name is a finished file worth sweeping.
+    """Return True if an import-directory name is a finished file worth a sweep.
 
-    Hidden names and transfer tools' intermediate artifacts must never
-    become localization jobs (#244: a transient `.mkv.staged` copy was
-    swept into a job of its own, and the restart that killed it left a
-    phantom File Activity row) — the artifact's promotion to its real
-    name fires its own filesystem event when the transfer completes.
+    Hidden names and the intermediate artifacts of transfer tools must
+    never become localization jobs (#244: a sweep put a transient
+    `.mkv.staged` copy into a job of its own, and the restart that
+    killed the job left a phantom File Activity row). When the transfer
+    completes, the promotion of the artifact to its real name causes its
+    own filesystem event.
     """
 
     if basename.startswith("."):
@@ -71,14 +73,15 @@ def importable_basename(basename):
 
 
 def retry_job_id(task, target, *attempt):
-    """Name a retry job after the attempt it schedules, not just its target.
+    """Name a retry job after the attempt that it schedules, not only its target.
 
-    rq re-saves a job's payload when the job returns, so a retry scheduled
-    under the id of the job scheduling it is overwritten with that job's own
-    stale kwargs the moment it finishes: the attempt counters never advance
-    and the chain retries forever instead of giving up. Folding the counters
-    into the id keeps replacement semantics for a re-deferred attempt while
-    giving each new attempt an id of its own.
+    rq saves the payload of a job again when the job returns. Thus, a
+    retry scheduled under the id of the job that schedules it is
+    overwritten with the stale kwargs of that job when the job
+    completes. The attempt counters never advance. The chain retries
+    forever and never gives up. This function puts the counters into
+    the id. Thus, a deferred attempt keeps the replacement semantics,
+    and each new attempt gets an id of its own.
     """
 
     counters = ":".join(str(count) for count in attempt)
@@ -100,66 +103,67 @@ def enqueue_import_scan(
 
 
 def cron_table(config):
-    """The recurring-jobs table: every scheduled task as a plain
-    row, config-dependent entries included only when configured. The
-    scheduler.py process registers these with rq's native CronScheduler;
-    nothing else registers cron jobs, so the table is authoritative on
-    every scheduler start.
+    """Return the table of recurring jobs, with every scheduled task as a row.
+
+    The table includes the config-dependent entries only when they are
+    configured. The scheduler.py process registers these rows with the
+    native CronScheduler of rq. Nothing else registers cron jobs. Thus,
+    the table is authoritative on every scheduler start.
     """
 
     table = [
-        # Rotate the application log daily at midnight
+        # Rotate the application log daily at midnight.
         (
             "0 0 * * *",
             "app.maintenance.rotate_logs",
             54000,
             "Rotating application logs",
         ),
-        # Back up the database nightly: the media files are archived at
-        # AWS, but the database itself exists only on this machine, so
-        # each dump is also copied to the S3 bucket
+        # Back up the database nightly. The media files are archived at
+        # AWS. But the database itself exists only on this machine. Thus,
+        # the task also copies each dump to the S3 bucket.
         (
             "30 0 * * *",
             "app.maintenance.backup_database",
             3600,
             "Backing up the database",
         ),
-        # Sweep the import directory hourly as a safety net in case the
-        # filesystem observer misses an arrival
+        # Sweep the import directory hourly as a safety net. The
+        # filesystem observer can miss an arrival.
         (
             "0 * * * *",
             "app.videos.manual_import_task",
             3600,
             "Scanning import directory for files",
         ),
-        # Monthly restore drill: prove the newest offsite dump restores
+        # Monthly restore drill: prove that the newest offsite dump restores.
         (
             "0 4 1 * *",
             "app.maintenance.restore_drill",
             3600,
             "Verifying the offsite database backup restores",
         ),
-        # Refresh Criterion spine numbers from Wikidata monthly; the 18th
-        # leaves time for Wikidata to catch up with the mid-month reveal
+        # Refresh the Criterion spine numbers from Wikidata monthly. The
+        # 18th gives Wikidata time to catch up with the mid-month reveal.
         (
             "0 3 18 * *",
             "app.videos.refresh_criterion_collection_info",
             3600,
             "Refreshing Criterion Collection information",
         ),
-        # Sweep orphaned partial files weekly, after the backup window
+        # Sweep orphaned partial files weekly, after the backup window.
         (
             "0 1 * * 0",
             "app.maintenance.cleanup_orphaned_files",
             3600,
             "Cleaning up orphaned partial files",
         ),
-        # Ask every library file whether the NAS still holds its handle.
-        # The state is invisible until an upload's close fails, so the
-        # sweep asks nightly instead of waiting to be surprised. 5am is
-        # after the night's other maintenance and far outside viewing
-        # hours: it is ~21k opens over SMB, a minute's work, and Plex
-        # reads the same shares.
+        # Ask every library file if the NAS still holds its handle. The
+        # state is invisible until the close of an upload fails. Thus,
+        # the sweep asks nightly instead of waiting for a surprise. 05:00
+        # is after the other maintenance of the night and far outside the
+        # viewing hours. It is approximately 21k opens over SMB, about 1
+        # minute of work, and Plex reads the same shares.
         (
             "0 5 * * *",
             "app.maintenance.smb_handle_sweep",
@@ -167,75 +171,77 @@ def cron_table(config):
             "Probing library files for lost SMB handles",
         ),
         ("*/10 * * * *", "app.maintenance.health_probe", 600, "Probing system health"),
-        # Sync Letterboxd diaries from each user's RSS feed; the
-        # task no-ops for users without a configured username
+        # Sync the Letterboxd diaries from the RSS feed of each user. The
+        # task does nothing for the users without a configured username.
         (
             "20,50 * * * *",
             "app.letterboxd.sync_letterboxd_feeds",
             900,
             "Syncing Letterboxd diaries",
         ),
-        # Discover provider-catalog films for the recommendation
-        # universe (#250): enumerate subscribed providers' catalogs,
-        # diff against the ever-seen sets, and turn a bounded batch of
-        # verified, well-scoring arrivals into file-less records. At
-        # 0:45 so the records' TMDB refreshes land before the 1:45
-        # recompute scores them
+        # Discover provider-catalog films for the recommendation universe
+        # (#250). The task lists the catalogs of the subscribed providers.
+        # It compares them with the ever-seen sets. It turns a bounded
+        # batch of verified, well-scoring arrivals into file-less
+        # records. It runs at 00:45. Thus, the TMDB refreshes of the
+        # records complete before the 01:45 recompute scores them.
         (
             "45 0 * * *",
             "app.provider_catalog.refresh_provider_catalogs",
             3600,
             "Discovering provider-catalog films for recommendations",
         ),
-        # Recompute per-user film recommendations nightly, after the log
-        # rotation and backup windows
+        # Recompute the per-user film recommendations nightly, after the
+        # log rotation and backup windows.
         (
             "45 1 * * *",
             "app.recommendations.recompute_recommendations",
             3600,
             "Recomputing film recommendations",
         ),
-        # Criterion24/7 now-playing heartbeat: the poller is
-        # self-scheduling (it re-enqueues at each film's end under a
-        # deterministic job id), so the cron checks the chain's pulse
-        # and scrapes only when the chain has died — never rescanning
-        # the currently-showing film on the half-hour
+        # Criterion24/7 now-playing heartbeat. The poller schedules
+        # itself. It enqueues itself again at the end of each film under
+        # a deterministic job id. Thus, the cron checks the pulse of the
+        # chain and scrapes only when the chain has died. It never scans
+        # the film that shows now again on the half hour.
         (
             "7,37 * * * *",
             "app.criterion_now.heartbeat_criterion_now",
             300,
             "Checking the Criterion24/7 poller's pulse",
         ),
-        # Refresh the leaving-Criterion set: daily attempts, but the
-        # task no-ops while the stored set's departure is still ahead,
-        # so this is really a monthly scrape that retries each morning
-        # (surviving a down server or an unpublished page) until the
-        # new month's page appears — it wasn't up yet the night before
-        # Sept 1 2026, so a single small-hours shot on the 1st would
-        # blank the shelf for the whole month
+        # Refresh the leaving-Criterion set. The task tries daily. But
+        # it does nothing while the departure of the stored set is still
+        # ahead. Thus, this is really a monthly scrape that retries each
+        # morning until the page of the new month appears. It survives a
+        # down server or an unpublished page. The page was not up on the
+        # night before 2026-09-01. Thus, a single attempt in the small
+        # hours of the 1st would empty the shelf for the whole month.
         (
             "0 6 * * *",
             "app.leaving_criterion.refresh_leaving_criterion",
             3600,
             "Refreshing the leaving-Criterion film set",
         ),
-        # Scrape and diff each provider's newly-added feed daily
-        # (#246) — the snapshot diff stamps the first-seen dates the
-        # discovery shelves and "added" badges read, so the cadence
-        # is what makes "newly added" mean something. In the 4:30
-        # refresh's shadow so the TMDB-heavy window stays contiguous
+        # Scrape and compare the newly-added feed of each provider daily
+        # (#246). The snapshot comparison stamps the first-seen dates
+        # that the discovery shelves and the "added" badges read. Thus,
+        # the daily cadence is what gives "newly added" a meaning. It
+        # runs next to the 04:30 refresh. Thus, the TMDB-heavy window
+        # stays contiguous.
         (
             "0 5 * * *",
             "app.newly_added.refresh_newly_added",
             1800,
             "Refreshing the newly-added streaming feeds",
         ),
-        # Month-start catch-up for both Criterion feeds: the Channel
-        # publishes the new month's pages sometime on the 1st — after
-        # the 5:00 and 6:00 morning runs, on Sept 1 2026 — so check
-        # again at noon rather than waiting for the next morning. The
-        # newly-added diff re-runs harmlessly, and the leaving task's
-        # currency guard makes its noon pass free when 6:00 succeeded
+        # Month-start catch-up for both Criterion feeds. The Channel
+        # publishes the pages of the new month at some time on the 1st.
+        # On 2026-09-01, that was after the 05:00 and 06:00 morning runs.
+        # Thus, check again at noon instead of the next morning. The
+        # newly-added comparison runs again without harm. The currency
+        # guard of the leaving task makes its noon pass free when the
+        # 06:00 run succeeded.
         (
             "0 12 1 * *",
             "app.newly_added.refresh_newly_added",
@@ -248,74 +254,79 @@ def cron_table(config):
             3600,
             "Month-start check of the leaving-Criterion film set",
         ),
-        # Refresh film awards from Wikidata weekly, early Monday
+        # Refresh the film awards from Wikidata weekly, early on Monday.
         (
             "15 4 * * 1",
             "app.awards.refresh_awards",
             7200,
             "Refreshing film awards from Wikidata",
         ),
-        # Rebuild the streaming rail nightly, after the 1:45 profiles
+        # Rebuild the streaming rail nightly, after the 01:45 profiles.
         (
             "15 2 * * *",
             "app.streaming_rail.recompute_streaming_rail",
             3600,
             "Recomputing the streaming rail",
         ),
-        # Pre-warm estimate payloads nightly, after the recompute has
-        # dropped the overlays and the rail's enrichments are cached —
-        # affinity people's careers plus the TMDB charts, pre-scored
-        # into the tmdb overlay so tiles paint without waiting
+        # Pre-warm the estimate payloads nightly. This runs after the
+        # recompute dropped the overlays and the enrichments of the rail
+        # are cached. The payloads are the careers of the affinity people
+        # plus the TMDB charts. The task scores them into the tmdb
+        # overlay. Thus, the tiles paint without a wait.
         (
             "45 2 * * *",
             "app.estimate_warm.warm_estimates",
             3600,
             "Pre-warming estimate payloads",
         ),
-        # Top up and rotate the Name That Frame pool nightly;
-        # the coordinator queues per-film extractions on the serial
-        # transcode lane, so a big backfill can't crowd anything out
+        # Fill and rotate the Name That Frame pool nightly. The
+        # coordinator queues the per-film extractions on the serial
+        # transcode lane. Thus, a big backfill cannot crowd out other
+        # work.
         (
             "5 3 * * *",
             "app.frames.refresh_frame_pool_task",
             3600,
             "Refreshing the Name That Frame pool",
         ),
-        # Sweep TMDB's change feeds and refresh just the library records
-        # that were edited since the last sweep — TMDB stores no
-        # last-updated stamp, so the changes lists are how edits reach
-        # the library without a bulk re-fetch. Adjacent to the 3:45
-        # in-production sweep (whose coverage it deliberately excludes)
-        # so the TMDB-heavy window stays contiguous
+        # Sweep the change feeds of TMDB and refresh only the library
+        # records that were edited after the last sweep. TMDB stores no
+        # last-updated stamp. Thus, the changes lists are how edits reach
+        # the library without a bulk fetch. The task runs next to the
+        # 03:45 in-production sweep. It deliberately excludes the
+        # coverage of that sweep. Thus, the TMDB-heavy window stays
+        # contiguous.
         (
             "35 3 * * *",
             "app.tmdb_changes.refresh_changed_records",
             1800,
             "Refreshing TMDB-changed records",
         ),
-        # Re-fetch episode data for in-production TV series nightly,
-        # clear of the 3:05 frame pool and 3:25 Plex title windows
+        # Fetch the episode data for in-production TV series again
+        # nightly, clear of the 03:05 frame pool and 03:25 Plex title
+        # windows.
         (
             "45 3 * * *",
             "app.tmdb_refresh.refresh_in_production_tv",
             3600,
             "Refreshing in-production TV series",
         ),
-        # Refresh every film's streaming availability nightly, last in
-        # the TMDB-heavy window: the watchlist, Criterion catalog, and
+        # Refresh the streaming availability of every film nightly, last
+        # in the TMDB-heavy window. The watchlist, Criterion catalog, and
         # filmography pages render from this cache and never fetch
-        # inline, so it has to be full before the day starts
+        # inline. Thus, the cache must be full before the day starts.
         (
             "30 4 * * *",
             "app.streaming.refresh_availability",
             3600,
             "Refreshing streaming availability",
         ),
-        # Diff watchlisted films' availability against last night's
-        # snapshot and alert the watchers (#156/#230): badge records
-        # for everyone, one digest email per opted-in user. After the
-        # 4:30 refresh so the diff reads tonight's cache, not
-        # yesterday's
+        # Compare the availability of the watchlisted films with the
+        # snapshot of the previous night and alert the watchers
+        # (#156/#230). The task writes badge records for everyone and 1
+        # digest email per opted-in user. It runs after the 04:30
+        # refresh. Thus, the comparison reads the cache of tonight, not
+        # of yesterday.
         (
             "30 5 * * *",
             "app.availability_alerts.notify_watchlist_availability",
@@ -324,8 +335,9 @@ def cron_table(config):
         ),
     ]
 
-    # Download files restored from Glacier: poll SQS hourly, offset from
-    # the import sweep so the maintenance worker isn't handed both at once
+    # Download the files restored from Glacier. Poll SQS hourly, offset
+    # from the import sweep. Thus, the maintenance worker does not get
+    # both at one time.
 
     if config.get("AWS_SQS_URL"):
         table.append(
@@ -337,8 +349,8 @@ def cron_table(config):
             )
         )
 
-    # Poll Plex watch history every 15 minutes as the self-healing
-    # backstop to the real-time webhook
+    # Poll the Plex watch history every 15 minutes as the self-healing
+    # backstop to the real-time webhook.
 
     if config.get("PLEX_URL") and config.get("PLEX_TOKEN"):
         table.append(
@@ -350,8 +362,9 @@ def cron_table(config):
             )
         )
 
-        # Title Plex episodes from filename-carried titles —
-        # replaces the external write-Plex's-SQLite-directly cron
+        # Title the Plex episodes from the titles in the filenames. This
+        # replaces the external cron that wrote the SQLite of Plex
+        # directly.
 
         table.append(
             (
@@ -362,10 +375,10 @@ def cron_table(config):
             )
         )
 
-        # Scan Plex libraries and empty their trashes, guarded per
-        # section on every declared location being mounted — replaces
-        # the external curl cron (a scan against a dropped mount plus
-        # emptyTrash rebuilds the library from scratch)
+        # Scan the Plex libraries and empty their trashes. A guard per
+        # section requires that every declared location is mounted. This
+        # replaces the external curl cron. A scan against a dropped mount
+        # plus emptyTrash rebuilds the library from nothing.
 
         table.append(
             (
@@ -376,8 +389,8 @@ def cron_table(config):
             )
         )
 
-    # Reconcile the Plex and Fitzflix watchlists both ways; the
-    # account-level discover API needs only the token, not the server
+    # Reconcile the Plex and Fitzflix watchlists in both directions. The
+    # account-level discover API needs only the token, not the server.
 
     if config.get("PLEX_TOKEN"):
         table.append(
@@ -389,12 +402,13 @@ def cron_table(config):
             )
         )
 
-    # Rebuild the virtual DVR channel lineups nightly (#182), rotating
-    # them the way the landing-page shelves rotate; the per-file
-    # duration cache makes every build after a file's first appearance
-    # nearly free. After the 4:30 availability refresh so the Criterion
-    # channel reads tonight's cache, not yesterday's, and after the
-    # 6:00 leaving-Criterion attempt
+    # Rebuild the virtual DVR channel lineups nightly (#182). The task
+    # rotates them the same way as the landing-page shelves rotate. The
+    # per-file duration cache makes every build after the first
+    # appearance of a file almost free. The task runs after the 04:30
+    # availability refresh. Thus, the Criterion channel reads the cache
+    # of tonight, not of yesterday. It also runs after the 06:00
+    # leaving-Criterion attempt.
 
     if config.get("DVR_TOKEN"):
         table.append(
@@ -419,13 +433,14 @@ def cron_table(config):
 
 
 def get_app(watch_import_dir=False):
-    """Return this process's application instance, creating it if needed.
+    """Return the application instance of this process, and create it if necessary.
 
-    Task modules resolve their app through this instead of calling
-    create_app() at import time, so importing them from a process that
-    already has an application (e.g. the web process importing app.videos)
-    doesn't build a second one. watch_import_dir only matters on the call
-    that actually creates the instance (supervisor.py's eager startup one).
+    Task modules resolve their app through this function instead of a
+    call to create_app() at import time. Thus, an import of them from a
+    process that already has an application does not build a second one.
+    An example is the web process that imports app.videos.
+    watch_import_dir is important only on the call that creates the
+    instance. That is the eager startup call of supervisor.py.
     """
 
     global _app
@@ -437,8 +452,9 @@ def get_app(watch_import_dir=False):
 def check_config(app):
     """Warn at startup about config values that would make tasks fail later.
 
-    Warnings only: a misconfigured optional feature shouldn't stop the app
-    from serving the rest of the library.
+    This function only warns. An optional feature with a bad
+    configuration must not stop the app from serving the rest of the
+    library.
     """
 
     for key in (
@@ -529,20 +545,21 @@ def check_config(app):
 
 
 def create_app(config_class=Config, watch_import_dir=False):
-    """Application factory: build and fully wire an app instance.
+    """Build and fully connect an app instance.
 
-    watch_import_dir starts the import-directory filesystem observer;
-    supervisor.py enables it for the import-program workers alone.
+    This is the application factory. watch_import_dir starts the
+    filesystem observer of the import directory. supervisor.py enables
+    it for the import-program workers only.
     """
 
     class MyHandler(FileSystemEventHandler):
-        """Handlers for watchdog to fire when filesystem events occur."""
+        """Hold the handlers that watchdog runs when filesystem events occur."""
 
         def process_new_file(self, path):
-            """Queue a localization for a file newly visible in the import directory."""
+            """Queue a localization for a file that appeared in the import directory."""
 
-            # Create redis lock using the filename, to prevent multiple workers
-            # from grabbing the same file at once
+            # Create a Redis lock with the filename. This prevents multiple
+            # workers from getting the same file at one time.
 
             lock = app.lock_manager.lock(os.path.basename(path), 30000)
             if lock:
@@ -554,8 +571,9 @@ def create_app(config_class=Config, watch_import_dir=False):
                 job_queue.extend(app.import_queue.job_ids)
                 app.logger.debug(job_queue)
 
-                # Use the file basename as the job id, so we can see if this file is
-                # already in the job_queue, and only add it if it doesn't already exist
+                # Use the file basename as the job id. Then the handler can
+                # see if this file is already in the job_queue. It adds the
+                # file only if the file is not there.
 
                 if safe_job_id(os.path.basename(path)) not in job_queue:
                     app.logger.info(
@@ -572,9 +590,9 @@ def create_app(config_class=Config, watch_import_dir=False):
                 app.lock_manager.unlock(lock)
 
         def on_moved(self, event):
-            """Process a file when it's moved within the watched directory."""
+            """Process a file when it is moved in the watched directory."""
 
-            # Process only those moved files that were previously invisible
+            # Process only the moved files that were invisible before.
 
             if (
                 not importable_basename(os.path.basename(event.src_path))
@@ -586,7 +604,7 @@ def create_app(config_class=Config, watch_import_dir=False):
         def on_created(self, event):
             """Process a file when it appears in the watched directory."""
 
-            # Process only those files that are not invisible or transient
+            # Process only the files that are not invisible or transient.
 
             if importable_basename(os.path.basename(event.src_path)) and os.path.isfile(
                 event.src_path
@@ -594,13 +612,13 @@ def create_app(config_class=Config, watch_import_dir=False):
                 self.process_new_file(event.src_path)
 
         def on_any_event(self, event):
-            """Process on any filesystem event."""
+            """Log any filesystem event."""
 
             app.logger.debug(event)
 
     app = Flask(__name__)
 
-    # Build the application configuration from the config.py file
+    # Build the application configuration from the config.py file.
 
     app.config.from_object(config_class)
     app.jinja_env.filters["quote_plus"] = lambda u: quote_plus(u)
@@ -609,16 +627,18 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.jinja_env.filters["review_html"] = review_html
 
-    # The poster tiles' action forms render their own csrf inputs
-    # without a form object threaded through every gallery route —
-    # the same name CSRFProtect would register, minus its enforcement
+    # The action forms of the poster tiles render their own csrf inputs.
+    # They do not need a form object passed through every gallery route.
+    # This is the same name that CSRFProtect would register, without its
+    # enforcement.
 
     from flask_wtf.csrf import generate_csrf
 
     app.jinja_env.globals["csrf_token"] = generate_csrf
 
-    # The built-in SECRET_KEY fallback lets anyone forge session cookies and
-    # password-reset tokens, so it's only acceptable in debug mode
+    # The built-in SECRET_KEY fallback lets anyone forge session cookies
+    # and password-reset tokens. Thus, it is acceptable only in debug
+    # mode.
 
     if app.config["SECRET_KEY"] == "fitzflix-secret" and not app.debug:
         raise RuntimeError(
@@ -626,9 +646,9 @@ def create_app(config_class=Config, watch_import_dir=False):
             "built-in default outside debug mode"
         )
 
-    # Configure the Redis connection and queues. TrackedQueue leaves
-    # per-file trail entries at enqueue time; jobs that aren't
-    # pipeline stages record nothing
+    # Configure the Redis connection and the queues. TrackedQueue writes
+    # per-file trail entries at enqueue time. Jobs that are not pipeline
+    # stages record nothing.
 
     from app.pipeline import TrackedQueue
 
@@ -640,11 +660,11 @@ def create_app(config_class=Config, watch_import_dir=False):
     app.transcode_queue = TrackedQueue("fitzflix-transcode", connection=app.redis)
     app.file_queue = TrackedQueue("fitzflix-file-operation", connection=app.redis)
 
-    # Configure the Redis redlock manager
+    # Configure the Redis redlock manager.
 
     app.lock_manager = Redlock([app.redis])
 
-    # Initialize application components
+    # Initialize the application components.
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -652,13 +672,14 @@ def create_app(config_class=Config, watch_import_dir=False):
     mail.init_app(app)
     moment.init_app(app)
 
-    # Needed to be able to set X- headers by web server to configure https protocol, etc.
+    # This lets the web server set the X- headers that configure the
+    # https protocol and related values.
 
     ProxyFix(app, x_proto=1, x_host=1, x_prefix=1)
 
     from app import models
 
-    # Build blueprints
+    # Register the blueprints.
 
     from app.errors import bp as errors_bp
 
@@ -676,23 +697,25 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.register_blueprint(api_bp, url_prefix="/api")
 
-    # Credentials never reach the log, whichever handler writes it; see
-    # app.redaction. Installed in every mode so tests cover it too
+    # Credentials never reach the log, with any handler that writes it.
+    # See app.redaction. Fitzflix installs this in every mode. Thus, the
+    # tests cover it too.
 
     from app.redaction import install as install_redaction
 
     install_redaction(app.logger, app.config)
 
     if not app.debug:
-        # Configure how to handle logs when running in production mode
+        # Configure the log handling for production mode.
 
-        # Both Flask instances in this package share the "app" logger, so only
-        # attach the mail and file handlers if an earlier create_app() hasn't
+        # Both Flask instances in this package share the "app" logger.
+        # Thus, attach the mail and file handlers only if an earlier
+        # create_app() did not.
 
         if app.config["MAIL_SERVER"] and not any(
             isinstance(handler, SMTPHandler) for handler in app.logger.handlers
         ):
-            # Email any exceptions
+            # Send an email for each exception.
 
             auth = None
             if app.config["MAIL_USERNAME"] or app.config["MAIL_PASSWORD"]:
@@ -718,8 +741,9 @@ def create_app(config_class=Config, watch_import_dir=False):
         if not any(
             isinstance(handler, logging.FileHandler) for handler in app.logger.handlers
         ):
-            # WatchedFileHandler notices when the rotate_logs maintenance task
-            # renames the log file, and reopens it before the next write
+            # WatchedFileHandler sees when the rotate_logs maintenance
+            # task renames the log file. It opens the file again before
+            # the next write.
 
             file_handler = WatchedFileHandler(app.config["LOG_FILE"])
             file_handler.setFormatter(
@@ -733,37 +757,40 @@ def create_app(config_class=Config, watch_import_dir=False):
         app.logger.setLevel(logging.INFO)
         app.logger.info("Fitzflix startup")
 
-    # Warn about configuration problems that would make tasks fail later
+    # Warn about the configuration problems that would make tasks fail
+    # later.
 
     check_config(app)
 
-    # Create the import and local staging directories
+    # Create the import directory and the local staging directory.
 
     os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
     try:
         os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
     except OSError:
-        # An unavailable staging volume shouldn't stop the app; localization
-        # falls back to processing files in place
+        # An unavailable staging volume must not stop the app. Then the
+        # localization processes the files in place.
         app.logger.warning(
             f"STAGING_DIR '{app.config['STAGING_DIR']}' could not be created"
         )
 
-    # Watch the import directory for file changes — but only when asked:
-    # supervisor.py enables this for the import-program workers alone, so
-    # the other workers and the web process don't each poll the (network-
-    # mounted) directory for no benefit. The polling emitter shuts itself
-    # down permanently on any OSError from that mount, so a keeper thread
-    # rebuilds the observer whenever it dies, then sweeps the directory for
-    # anything that arrived while blind
+    # Watch the import directory for file changes, but only when asked.
+    # supervisor.py enables this for the import-program workers only.
+    # Thus, the other workers and the web process do not each poll the
+    # network-mounted directory with no benefit. The polling emitter
+    # stops itself permanently on any OSError from that mount. Thus, a
+    # keeper thread rebuilds the observer each time it dies. Then the
+    # thread sweeps the directory for the files that arrived while the
+    # observer was blind.
 
     if watch_import_dir:
         event_handler = MyHandler()
 
         def start_observer():
             observer = PollingObserver()
-            # Only created/moved file events matter to the handler, so
-            # the emitter filters everything else before dispatch
+            # Only the created and moved file events are important to
+            # the handler. Thus, the emitter filters all other events
+            # before dispatch.
             observer.schedule(
                 event_handler,
                 path=app.config["IMPORT_DIR"],
@@ -777,10 +804,10 @@ def create_app(config_class=Config, watch_import_dir=False):
             enqueue_import_scan(app.import_queue)
 
         def write_observer_heartbeat():
-            # Expiring per-process heartbeat: the admin health card counts
-            # these keys to show how many processes are actually watching the
-            # import directory, and a dead or wedged process simply stops
-            # refreshing
+            # This is a per-process heartbeat that expires. The admin
+            # health card counts these keys to show how many processes
+            # watch the import directory. A dead or wedged process stops
+            # the refresh.
 
             try:
                 app.redis.set(
@@ -793,8 +820,9 @@ def create_app(config_class=Config, watch_import_dir=False):
             while True:
                 time.sleep(60)
                 try:
-                    # The failed emitter thread stays in the emitters set after
-                    # it dies, so check liveness rather than presence
+                    # The failed emitter thread stays in the emitters set
+                    # after it dies. Thus, check if it is alive, not if it
+                    # is present.
 
                     healthy = (
                         observer.is_alive()
@@ -825,12 +853,13 @@ def create_app(config_class=Config, watch_import_dir=False):
             name="import-observer-keeper",
         ).start()
 
-        # Process anything that arrived while the application wasn't watching
+        # Process the files that arrived while the application did not
+        # watch.
 
         enqueue_import_sweep()
 
-    # The first application created becomes this process's instance for
-    # modules that resolve their app through get_app()
+    # The first application created becomes the instance of this process
+    # for the modules that resolve their app through get_app().
 
     global _app
     if _app is None:

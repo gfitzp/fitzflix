@@ -4,16 +4,17 @@ from flask import request
 
 from app.models import User
 
-# Compared when no user matches the request, so a missing account takes the
-# same time to reject as a wrong key
+# Fitzflix compares this key when no user matches the request. Thus, a
+# missing account takes the same time to reject as a wrong key.
 
 _DUMMY_KEY = secrets.token_hex(16)
 
 
 def authenticate_api_request():
-    """Return the user authenticated by the request's Basic auth header, else None.
+    """Return the user that the Basic auth header identifies, or None.
 
-    The password field must hold the user's API key, shown on the admin page.
+    The password field must hold the API key of the user. The admin page
+    shows this key.
     """
 
     auth = request.authorization

@@ -1,18 +1,20 @@
-"""Derived files: the transcoded copies, tracked and source-linked.
+"""Track the transcoded copies as derived files linked to their source.
 
-Every Handbrake output gets a DerivedFile row pointing at the library
-original it came from — created by finalize_transcoding for new
-transcodes, and by the adoption sweep for the untracked copies already
-on the transcoded tree. Rows cascade away with their source File; the
-delete sites collect the physical paths before the row delete and
-enqueue the removal after the commit, exactly like the S3 deletes.
+Every Handbrake output gets a DerivedFile row. The row points at the
+library original that the output came from. finalize_transcoding creates
+the row for a new transcode. The adoption sweep creates the row for an
+untracked copy that is already on the transcoded tree. The rows cascade
+away with their source File. The delete sites collect the physical paths
+before the row delete. They enqueue the removal after the commit. This is
+the same procedure as for the S3 deletes.
 
-Derived rows live in their own table, never in File: File.file_path is
-LIBRARY_DIR-relative and unique, and ranking/shopping/import-replace
-all treat File rows as originals — see DerivedFile's docstring. The
-conversion legs (4K HDR → 1080p SDR, DV Profile 7 → 8.1) stay parked
-until HDR actually enters the library (census Aug 2026: zero targets);
-they'll create rows here with their own kinds when they arrive.
+Derived rows live in their own table, never in File. File.file_path is
+LIBRARY_DIR-relative and unique. The ranking, the shopping list, and the
+import-replace all treat File rows as originals. See the docstring of
+DerivedFile. The conversion legs (4K HDR to 1080p SDR, DV Profile 7 to
+8.1) stay parked until HDR enters the library (census 2026-08: zero
+targets). When they arrive, they will create rows here with their own
+kinds.
 """
 
 import os
@@ -34,9 +36,10 @@ VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4"}
 def record_transcode(file, output_file, kind="handbrake"):
     """Create or refresh the DerivedFile row for one transcode output.
 
-    Takes the absolute output path and stores it TRANSCODES_DIR-relative;
-    idempotent by file_path, so re-transcoding the same source updates
-    the existing row. Session work only — the caller commits."""
+    This function receives the absolute output path. It stores the path
+    relative to TRANSCODES_DIR. It is idempotent by file_path. Thus, a
+    second transcode of the same source updates the existing row. It does
+    session work only. The caller must commit the session."""
 
     relative = os.path.relpath(output_file, current_app.config["TRANSCODES_DIR"])
     row = DerivedFile.query.filter_by(file_path=relative).first()
@@ -55,9 +58,11 @@ def record_transcode(file, output_file, kind="handbrake"):
 
 
 def derived_paths_for(file):
-    """The absolute paths of a file's derived copies — collect these
-    BEFORE deleting the File row (the rows cascade away with it), then
-    hand them to purge_derived_paths after the commit."""
+    """Return the absolute paths of the derived copies of a file.
+
+    Collect these paths BEFORE you delete the File row. The derived rows
+    cascade away with it. Then give the paths to purge_derived_paths after
+    the commit."""
 
     return [
         os.path.join(current_app.config["TRANSCODES_DIR"], row.file_path)
@@ -66,10 +71,11 @@ def derived_paths_for(file):
 
 
 def purge_derived_paths(paths):
-    """Enqueue the physical removal of derived copies on the
-    file-operation queue. Call AFTER the row delete commits — same
-    posture as the S3 deletes, so a failed commit can't cost the
-    copies of rows that rolled back. No-op for an empty list."""
+    """Enqueue the physical removal of derived copies on the file queue.
+
+    Call this function AFTER the row delete commits. This is the same
+    rule as for the S3 deletes. Thus, a failed commit cannot remove the
+    copies of rows that rolled back. An empty list does nothing."""
 
     if not paths:
         return
@@ -83,9 +89,10 @@ def purge_derived_paths(paths):
 
 
 def remove_derived_paths(paths):
-    """Task: delete derived copies from the transcoded tree, pruning
-    any directory the removal leaves empty. A missing file is success —
-    the goal state is 'not there'."""
+    """Delete derived copies from the transcoded tree (a queue task).
+
+    The task also removes each directory that the removal leaves empty.
+    A missing file counts as success. The goal state is 'not there'."""
 
     with app.app_context():
         for path in paths:
@@ -100,17 +107,19 @@ def remove_derived_paths(paths):
             try:
                 os.rmdir(os.path.dirname(path))
             except OSError:
-                # Not empty (or already gone) — both fine
+                # The directory is not empty, or it is already gone. Both are fine.
                 pass
         return True
 
 
 def adopt_transcodes_task():
-    """Task: walk TRANSCODES_DIR and adopt every untracked transcode
-    whose source is identifiable — the file sits under its original's
-    dirname with the original's plex_title as its stem, exactly how
-    finalize_transcoding names outputs. Anything else is logged and
-    left alone. Returns {adopted, already, unmatched}."""
+    """Walk TRANSCODES_DIR and adopt every untracked transcode (a queue task).
+
+    The task adopts a transcode only when it can identify the source. The
+    file must be under the dirname of its original. Its stem must be the
+    plex_title of the original. This is how finalize_transcoding names
+    the outputs. The task logs all other files and leaves them alone.
+    It returns {adopted, already, unmatched}."""
 
     with app.app_context():
         root = current_app.config["TRANSCODES_DIR"]

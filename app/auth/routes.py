@@ -20,17 +20,17 @@ from app.models import User
 def login():
     """Log a user in."""
 
-    # If there's no user record, redirect to the registration page
+    # If there is no user record, redirect to the registration page.
 
     if User.query.first() is None:
         return redirect(url_for("auth.register"))
 
-    # If the user is already authenticated, redirect to the home page
+    # If the user is already authenticated, redirect to the home page.
 
     if current_user.is_authenticated:
         return redirect(url_for("main.index"))
 
-    # Form to log a user in
+    # The form to log a user in.
 
     form = LoginForm()
     if form.validate_on_submit():
@@ -66,27 +66,28 @@ def logout():
 def register():
     """Register a new user."""
 
-    # If the user is already logged in, redirect to the home page
+    # If the user is already logged in, redirect to the home page.
 
     if current_user.is_authenticated:
         return redirect(url_for("main.index"))
 
-    # See if any admin users exist
+    # Find out if an admin user exists.
 
     admin = User.query.filter_by(admin=True).first()
 
-    # If we don't want accounts to be created, and an admin user already exists,
-    # don't display the registration page. Instead, redirect to the login page.
+    # If the config does not permit new accounts, and an admin user
+    # exists, do not show the registration page. Redirect to the login
+    # page instead.
 
     if current_app.config["PREVENT_ACCOUNT_CREATION"] and admin:
         return redirect(url_for("auth.login"))
 
-    # Form to register a user
+    # The form to register a user.
 
     form = RegistrationForm()
     if form.validate_on_submit():
-        # If there's no admin user yet, set the admin flag to true,
-        # so the first account is now the admin account
+        # If there is no admin user yet, set the admin flag to true.
+        # Thus, the first account is the admin account.
 
         if not admin:
             user = User(email=form.email.data, admin=True)
@@ -98,7 +99,7 @@ def register():
         user.api_key = secrets.token_hex(16)
         db.session.add(user)
         db.session.commit()
-        flash("Congratulations, you are now a registered user!")
+        flash("You are now a registered user.")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/register.html", title="Register", form=form)
@@ -111,7 +112,7 @@ def reset_password_request():
     if current_user.is_authenticated:
         return redirect(url_for("main.index"))
 
-    # Form to request a new password
+    # The form to request a new password.
 
     form = ResetPasswordRequestForm()
     if form.validate_on_submit():
@@ -129,9 +130,9 @@ def reset_password_request():
 
 @bp.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
-    """Allow the user to reset their password.
+    """Let the user set a new password.
 
-    The user is directed to this page via an email containing their time-limited token.
+    An email with a time-limited token sends the user to this page.
     """
 
     if current_user.is_authenticated:
@@ -145,7 +146,7 @@ def reset_password(token):
     if form.validate_on_submit():
         user.set_password(form.password.data)
         db.session.commit()
-        flash("Your password has been reset")
+        flash("Fitzflix reset your password.")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/reset_password.html", form=form)

@@ -1,24 +1,25 @@
 """Virtual DVR channels (#182): lineups and schedule math.
 
-The library becomes a handful of 24/7 "live" channels that Plex tunes
-as an M3U tuner. A channel is a frozen, ordered program list plus an
-epoch timestamp stored in Redis; the schedule is pure arithmetic over
-the cumulative program durations, repeating from the epoch forever, so
-the XMLTV guide and the stream compute "what's on at time T" from the
-same snapshot and can never disagree. Nothing runs and no file is
-opened until Plex actually tunes a stream URL.
+The library becomes a small number of 24/7 "live" channels. Plex tunes
+them as an M3U tuner. A channel is a frozen, ordered program list and
+an epoch timestamp stored in Redis. The schedule is pure arithmetic
+over the cumulative program durations. It repeats from the epoch
+without end. Thus, the XMLTV guide and the stream compute "what is on
+at time T" from the same snapshot. They can never disagree. Nothing
+runs and no file is opened until Plex tunes a stream URL.
 
-Program durations must be the real container durations — scheduling
-from TMDB's runtime would drift the stream away from the guide by the
-accumulated error — so the build probes each file once with ffprobe
-and caches the result in Redis keyed by file id (a file row is never
-mutated in place, so the cache needs no invalidation).
+The program durations must be the real container durations. A
+schedule from the TMDB runtime would drift the stream away from the
+guide by the accumulated error. Thus, the build probes each file 1
+time with ffprobe. It caches the result in Redis, keyed by file id. A
+file row is never changed in place. Thus, the cache needs no
+invalidation.
 
-The lineup build is the only expensive part and runs as a nightly
-maintenance task, rotating lineups the way the landing-page shelves
-rotate. The guide Plex holds between its own refreshes can lag a
-rebuild by a few hours; the stream is always right, the label may be
-stale — authentically cable.
+The lineup build is the only expensive part. It runs as a nightly
+maintenance task. It rotates the lineups in the same way that the
+landing-page shelves rotate. The guide that Plex holds between its own
+refreshes can be some hours behind a rebuild. The stream is always
+correct. The label can be stale. This is authentically cable.
 """
 
 import json
@@ -54,8 +55,8 @@ from app.models import (
 )
 from app.streaming import batch_title_availability, streaming_matches
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the nightly task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
@@ -63,46 +64,49 @@ CHANNELS_KEY = "fitzflix:dvr:channels"
 LINEUP_KEY = "fitzflix:dvr:lineup:{slug}"
 DURATIONS_KEY = "fitzflix:dvr:durations"
 
-# Channel numbering: the all-library mix leads, genre channels follow
-# alphabetically. Numbers restate themselves every build, so a genre
-# arriving or leaving the top-N renumbers its neighbours — harmless,
-# Plex maps channels by tvg-id, not number
+# Channel numbering. The all-library mix comes first. The genre
+# channels follow in alphabetical order. The numbers are set again on
+# each build. Thus, a genre that enters or leaves the top-N renumbers
+# its neighbours. This is harmless. Plex maps channels by tvg-id, not
+# by number.
 
 MIX_CHANNEL_NUMBER = 100
 MIX_CHANNEL_NAME = "Fitzflix Mix"
 MIX_CHANNEL_SLUG = "fitzflix-mix"
 
-# A genre needs a real bench to sustain a channel; below this it just
-# feeds the mix
+# A genre needs a real bench to sustain a channel. Below this count,
+# it only feeds the mix.
 
 MIN_GENRE_FILMS = 8
 
 # Themed channels built from external signals (Criterion availability,
-# the leaving set) sit in their own number band and can run much
-# shallower — a three-film last-call marathon is authentically cable
+# the leaving set) are in their own number band. They can be much less
+# deep. A 3-film last-call marathon is authentically cable.
 
 CRITERION_CHANNEL_NUMBER = 140
 LEAVING_CHANNEL_NUMBER = 141
 MIN_SPECIAL_FILMS = 3
 
-# TV channels are genre- and theme-based, not per-series: several
-# series share a channel, airing in short interleaved blocks like
-# syndication. Auto genre channels (200+) come from the deepest TMDB
-# TV genres; themed channels (240+) come from the spec table below.
-# Each series' slot share is proportional to its episode depth, and
-# its cursor advances through broadcast order day over day
+# TV channels are genre-based and theme-based, not per-series. Several
+# series share a channel. They air in short interleaved blocks, like
+# syndication. The auto genre channels (200+) come from the deepest
+# TMDB TV genres. The themed channels (240+) come from the spec table
+# below. The slot share of each series is proportional to its episode
+# depth. Its cursor advances through the broadcast order from day to
+# day.
 
 TV_CHANNEL_NUMBER = 200
 TV_THEME_NUMBER = 240
 MIN_SERIES_EPISODES = 8
 TV_BLOCK = 2
 
-# Themed TV channels. A series belongs when it satisfies EVERY
-# predicate the spec declares — "genre" (TMDB TV genre name),
-# "keywords" (any-of, lowercase TMDB keywords), "network_country"
-# (any network registered to that country) — OR when its title
-# contains a "titles" pin (for series whose TMDB metadata is too thin
-# to match otherwise, e.g. Match Game PM carries no keywords at all)
+# Themed TV channels. A series belongs when it satisfies EACH predicate
+# that the spec declares. "genre" is a TMDB TV genre name. "keywords"
+# is an any-of list of lowercase TMDB keywords. "network_country"
+# matches any network registered to that country. A series also
+# belongs when its title contains a "titles" pin. Pins exist for a
+# series whose TMDB metadata is too thin to match in a different way.
+# For example, Match Game PM has no keywords at all.
 
 TV_THEME_SPECS = (
     {
@@ -117,23 +121,26 @@ TV_THEME_SPECS = (
     },
 )
 
-# AC-3 tops out at 5.1; sources with more channels downmix, sources
-# with fewer keep their layout
+# AC-3 has a maximum of 5.1 channels. A source with more channels is
+# downmixed. A source with fewer channels keeps its layout.
 
 AC3_MAX_CHANNELS = 6
 
 
 def _slugify(name):
-    """The channel id used in the M3U tvg-id, the XMLTV channel id, and
-    the stream URL: lowercase, runs of non-alphanumerics collapsed to
-    hyphens."""
+    """Return the channel id.
+
+    The M3U tvg-id, the XMLTV channel id, and the stream URL use it. It
+    is lowercase. Each run of non-alphanumeric characters becomes 1
+    hyphen."""
 
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 def _probe_duration(file_path):
-    """The container duration in seconds, or None — a header read, not
-    a full scan."""
+    """Return the container duration in seconds, or None.
+
+    This is a header read, not a full scan."""
 
     try:
         result = subprocess.run(
@@ -157,8 +164,10 @@ def _probe_duration(file_path):
 
 
 def _cached_duration(redis_client, file):
-    """The file's real duration in seconds, probing on first sight and
-    caching by file id thereafter; None when the probe fails."""
+    """Return the real duration of the file in seconds, or None if the probe fails.
+
+    This function probes the file on first sight. After that, it caches
+    the duration by file id."""
 
     cached = redis_client.hget(DURATIONS_KEY, str(file.id))
     if cached is not None:
@@ -176,11 +185,13 @@ def _cached_duration(redis_client, file):
 
 
 def _first_audio_channels(file_id):
-    """How many channels the file's first audio track carries, capped
-    at AC-3's 5.1 ceiling; 6 when the scan recorded nothing usable.
+    """Return the channel count of the first audio track of the file.
 
-    The first track is always the default track (the house rule), so
-    it is the one the stream maps.
+    The count has a maximum of 6, the 5.1 limit of AC-3. The result is
+    6 when the scan recorded nothing usable.
+
+    The first track is always the default track (the house rule). Thus,
+    it is the track that the stream maps.
     """
 
     track = (
@@ -196,9 +207,11 @@ def _first_audio_channels(file_id):
 
 
 def _best_files_by_movie():
-    """Each owned movie's best main-feature copy: never a fullscreen
-    copy while a widescreen one exists, then best quality — the same
-    ranking the movie cards use."""
+    """Return the best main-feature copy of each owned movie.
+
+    Never select a fullscreen copy while a widescreen copy exists. Then
+    select the best quality. This is the same ranking that the movie
+    cards use."""
 
     rows = (
         db.session.query(Movie, File)
@@ -215,8 +228,9 @@ def _best_files_by_movie():
 
 
 def _genre_names_by_movie(movie_ids):
-    """Map of movie id -> list of genre names, one query for the whole
-    candidate pool."""
+    """Return a map of movie id -> list of genre names.
+
+    This is 1 query for the whole candidate pool."""
 
     if not movie_ids:
         return {}
@@ -233,8 +247,10 @@ def _genre_names_by_movie(movie_ids):
 
 
 def _program(movie, file, duration, genres):
-    """The stored program record: everything the guide and the stream
-    need, so neither ever touches the database."""
+    """Return the stored program record.
+
+    It holds all that the guide and the stream need. Thus, they never
+    touch the database."""
 
     return {
         "movie_id": movie.id,
@@ -251,10 +267,11 @@ def _program(movie, file, duration, genres):
 
 
 def _criterion_movie_ids(best):
-    """Owned films streaming on the Criterion Channel right now, per
-    the availability cache. Cache-only reads: the nightly refresh keeps
-    every owned film's payload warm, and a cold entry just waits for
-    the next build."""
+    """Return the owned films that stream on the Criterion Channel now.
+
+    The source is the availability cache. This function reads only the
+    cache. The nightly refresh keeps the payload of each owned film
+    warm. A cold entry only waits for the next build."""
 
     by_tmdb = {}
     for movie_id, (movie, _) in best.items():
@@ -271,10 +288,11 @@ def _criterion_movie_ids(best):
 
 
 def _leaving_owned(best):
-    """Owned films in the current leaving-Criterion set, plus the
-    departure date. The channel airs OUR copies — the files aren't
-    going anywhere, the streaming availability is, so "leaving" is a
-    last-call programming cue, not a storage fact."""
+    """Return the owned films in the leaving-Criterion set, and the departure date.
+
+    The channel airs OUR copies. The files stay. The streaming
+    availability goes. Thus, "leaving" is a last-call programming cue,
+    not a storage fact."""
 
     leaving, departs = _leaving_set()
     if not leaving:
@@ -286,9 +304,11 @@ def _leaving_owned(best):
 
 
 def _series_catalog():
-    """Every series with owned regular episodes, annotated with its
-    episode count, TMDB genre names, lowercase keywords, and network
-    countries — the pool every TV channel selects from, built in four
+    """Return each series with owned regular episodes, with annotations.
+
+    The annotations are the episode count, the TMDB genre names, the
+    lowercase keywords, and the network countries. This is the pool
+    that each TV channel selects from. This function builds it in 4
     queries."""
 
     counts = dict(
@@ -339,8 +359,9 @@ def _series_catalog():
 
 
 def _movie_keywords_by_movie(movie_ids):
-    """Map of movie id -> set of lowercase keyword names, one query for
-    the whole candidate pool."""
+    """Return a map of movie id -> set of lowercase keyword names.
+
+    This is 1 query for the whole candidate pool."""
 
     if not movie_ids:
         return {}
@@ -357,14 +378,16 @@ def _movie_keywords_by_movie(movie_ids):
 
 
 def _channel_members(channel, ctx):
-    """Resolve one channel row to its members: explicit picks plus
-    rule matches. Returns (movie_ids, series_entries).
+    """Resolve one channel row to its members.
 
-    Genres and keywords are any-of matches against whichever library
-    the include flags open, network_country applies to series,
-    criterion/leaving restrict the rule-matched film pool, and a title
-    pin pulls a matching title in past every other filter — pins exist
-    for titles whose TMDB metadata is too thin to match by rule.
+    The members are the explicit picks and the rule matches. Return
+    (movie_ids, series_entries).
+
+    Genres and keywords are any-of matches against each library that
+    the include flags open. network_country applies to series.
+    criterion and leaving restrict the rule-matched film pool. A title
+    pin pulls a matching title in past each other filter. Pins exist
+    for the titles whose TMDB metadata is too thin to match by rule.
     """
 
     genre_terms = set(channel.rule_list("genres"))
@@ -415,10 +438,12 @@ def _channel_members(channel, ctx):
 
 
 def _channel_window(members, day, cap):
-    """The day's program window for a multi-series channel, as
-    (series, file) pairs: each series gets slots proportional to its
-    depth, aired as short interleaved blocks like syndication, and its
-    cursor starts a little further into broadcast order every day."""
+    """Return the program window of the day for a multi-series channel.
+
+    The window is a list of (series, file) pairs. Each series gets
+    slots proportional to its depth. They air as short interleaved
+    blocks, like syndication. The cursor of each series starts a
+    little further into the broadcast order each day."""
 
     members = sorted(members, key=lambda m: m["series"].title.lower())
     total = sum(m["episodes"] for m in members)
@@ -451,9 +476,10 @@ def _channel_window(members, day, cap):
 
 
 def _series_episodes(series_id):
-    """The series' best copy of every regular episode in broadcast
-    order — the same per-episode quality ranking the library pages
-    use, specials excluded."""
+    """Return the best copy of each regular episode, in broadcast order.
+
+    This is the same per-episode quality ranking that the library pages
+    use. Specials are excluded."""
 
     ranked = (
         db.session.query(File.id, tv_file_rank())
@@ -472,10 +498,11 @@ def _series_episodes(series_id):
 
 
 def _episode_program(series, file, duration):
-    """The stored program record for one episode: the series carries
-    the artwork, overview, and guide title; the file carries the
-    numbering and the optional episode title (File.edition, the house
-    convention)."""
+    """Return the stored program record for one episode.
+
+    The series supplies the artwork, the overview, and the guide title.
+    The file supplies the numbering and the optional episode title
+    (File.edition, the house convention)."""
 
     span = f"S{file.season:02d}E{file.episode:02d}"
     if file.last_episode and file.last_episode != file.episode:
@@ -499,9 +526,11 @@ def _episode_program(series, file, duration):
 
 
 def _merge_programs(movie_programs, episode_programs):
-    """A mixed channel's schedule: episodes carry the rhythm and the
-    movies space themselves evenly through the cycle, like a station's
-    nightly feature presentation."""
+    """Return the schedule of a mixed channel.
+
+    The episodes carry the rhythm. The movies space themselves evenly
+    through the cycle, like the nightly feature presentation of a
+    station."""
 
     if not movie_programs or not episode_programs:
         return movie_programs or episode_programs
@@ -519,11 +548,13 @@ def _merge_programs(movie_programs, episode_programs):
 
 
 def seed_default_channels():
-    """Create the default dial as editable rows, run once when the
-    channel table is empty: the all-library mix, the deepest movie
-    genres, the Criterion and Leaving Soon overlays, the deepest TV
-    genres ("TV"-suffixed), and the starter themes. From then on the
-    dial belongs to the admin editor and never reseeds."""
+    """Create the default dial as editable rows.
+
+    This function runs 1 time, when the channel table is empty. The
+    dial is the all-library mix, the deepest movie genres, the
+    Criterion and Leaving Soon overlays, the deepest TV genres (with a
+    "TV" suffix), and the starter themes. From then on, the dial
+    belongs to the admin editor. It never seeds again."""
 
     best = _best_files_by_movie()
     genres_by_movie = _genre_names_by_movie(list(best))
@@ -587,8 +618,9 @@ def seed_default_channels():
         ]
     )
     for offset, name in enumerate(top_tv):
-        # "TV" suffix so the guide never shows a movie genre channel
-        # and a TV genre channel under the same name (Comedy collides)
+        # The "TV" suffix makes sure that the guide never shows a movie
+        # genre channel and a TV genre channel with the same name
+        # (Comedy collides).
         rows.append(
             DVRChannel(
                 number=TV_CHANNEL_NUMBER + offset,
@@ -617,17 +649,18 @@ def seed_default_channels():
 
 
 def build_channel_lineups(day=None):
-    """Build every enabled channel's lineup from its stored definition
-    (the dvr_channel table, the admin editor's domain), seeding the
-    default dial on the very first run. Rule-matched films are seeded
-    daily shuffles capped at DVR_CHANNEL_FILMS; series air as
-    interleaved broadcast-order windows capped at DVR_CHANNEL_EPISODES;
-    a channel carrying both spaces its films evenly through the
-    episode cycle.
+    """Build the lineup of each enabled channel from its stored definition.
 
-    Runs nightly on the maintenance queue. Probing durations is the
-    only real cost, and the per-file cache makes every build after a
-    file's first appearance free.
+    The definition is in the dvr_channel table, the domain of the admin
+    editor. On the first run, this function seeds the default dial.
+    The rule-matched films are seeded daily shuffles, with a maximum of
+    DVR_CHANNEL_FILMS. The series air as interleaved broadcast-order
+    windows, with a maximum of DVR_CHANNEL_EPISODES. A channel with
+    both spaces its films evenly through the episode cycle.
+
+    This task runs each night on the maintenance queue. The duration
+    probes are the only real cost. The per-file cache makes each build
+    after the first appearance of a file free.
     """
 
     with app.app_context():
@@ -662,8 +695,9 @@ def build_channel_lineups(day=None):
         index = []
 
         def store(number, slug, name, programs):
-            """Write one channel's lineup and index it, dropping empty
-            channels."""
+            """Write the lineup of one channel and index it.
+
+            This function drops the empty channels."""
 
             if not programs:
                 current_app.logger.warning(f"DVR: channel {slug} has no programs")
@@ -683,8 +717,8 @@ def build_channel_lineups(day=None):
                 continue
             movie_ids, series_entries = _channel_members(channel, ctx)
 
-            # The Criterion/Leaving overlays keep their bench: a one-
-            # or two-film loop reads as broken, not as a marathon
+            # The Criterion/Leaving overlays keep their bench. A loop of
+            # 1 or 2 films reads as broken, not as a marathon.
 
             if (channel.criterion_only or channel.leaving_only) and not series_entries:
                 if len(movie_ids) < MIN_SPECIAL_FILMS:
@@ -733,8 +767,8 @@ def build_channel_lineups(day=None):
 
         redis_client.set(CHANNELS_KEY, json.dumps(index))
 
-        # A deleted or emptied channel's stored lineup would otherwise
-        # keep answering its stream URL forever
+        # Without this, the stored lineup of a deleted or emptied channel
+        # would answer its stream URL without end.
 
         kept = {LINEUP_KEY.format(slug=entry["slug"]) for entry in index}
         for key in redis_client.scan_iter(match=LINEUP_KEY.format(slug="*")):
@@ -749,26 +783,30 @@ def build_channel_lineups(day=None):
 
 
 def channel_index(redis_client):
-    """The stored channel list ([{number, slug, name}, ...]), or an
-    empty list before the first build."""
+    """Return the stored channel list ([{number, slug, name}, ...]).
+
+    The result is an empty list before the first build."""
 
     stored = redis_client.get(CHANNELS_KEY)
     return json.loads(stored) if stored else []
 
 
 def channel_lineup(redis_client, slug):
-    """The stored lineup for one channel, or None."""
+    """Return the stored lineup for one channel, or None."""
 
     stored = redis_client.get(LINEUP_KEY.format(slug=slug))
     return json.loads(stored) if stored else None
 
 
 def program_at(lineup, when):
-    """What the channel is playing at the given epoch timestamp: the
-    program index and how many seconds into it the moment falls.
+    """Return what the channel plays at the given epoch timestamp.
 
-    The lineup repeats from its epoch forever, so this is position
-    arithmetic over the cumulative durations — no state, no drift.
+    The result is the program index and the number of seconds into the
+    program at that moment.
+
+    The lineup repeats from its epoch without end. Thus, this is
+    position arithmetic over the cumulative durations. No state, no
+    drift.
     """
 
     total = sum(program["duration"] for program in lineup["programs"])
@@ -781,9 +819,10 @@ def program_at(lineup, when):
 
 
 def programs_between(lineup, start, stop):
-    """The channel's airings overlapping [start, stop): yields
-    (start_ts, stop_ts, program) tuples, cycling the lineup as needed.
-    This is what the XMLTV guide renders."""
+    """Yield the airings of the channel that overlap [start, stop).
+
+    Each item is a (start_ts, stop_ts, program) tuple. The lineup
+    cycles as necessary. The XMLTV guide renders this."""
 
     index, offset = program_at(lineup, start)
     cursor = start - offset

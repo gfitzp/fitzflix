@@ -1,5 +1,7 @@
-"""The user's own pages (the routes.py split): the viewing history with
-its per-row editors, review editing, and the profile."""
+"""Serve the own pages of the user (split from routes.py).
+
+These are the viewing history with its per-row editors, the review
+editor, and the profile."""
 
 import csv
 import io
@@ -20,7 +22,7 @@ from flask import (
     request,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its actual home.
 from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager
 
@@ -78,11 +80,12 @@ from app.videos import (
 @bp.route("/review/<int:review_id>/edit", methods=["GET", "POST"])
 @login_required
 def review_edit(review_id):
-    """Add or edit the review on one logged viewing.
+    """Add or edit the review on 1 logged viewing.
 
-    Each viewing — a Letterboxd import row, a Plex watch, or a manual log
-    from the movie page — is its own row; this edits that row in place,
-    unlike the movie page's form, which always logs a new viewing.
+    Each viewing is its own row. A viewing is a Letterboxd import row, a
+    Plex watch, or a manual log from the movie page. This edits that row
+    in place. The form of the movie page is different. It always logs a
+    new viewing.
     """
 
     user_review = UserMovieReview.query.filter_by(
@@ -91,21 +94,21 @@ def review_edit(review_id):
     movie = user_review.movie
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
 
-    # The history page is paginated; its per-row forms and Edit-date
-    # links carry the page so every redirect lands back where the row
-    # lives instead of on page 1
+    # The history page has pages. Its per-row forms and Edit-date links
+    # carry the page number. Thus, each redirect goes back to the page
+    # of the row, not to page 1.
 
     page = request.args.get("page", None, type=int)
 
-    # Feed-originated rows sync FROM Letterboxd: while the entry
-    # stays in the feed window, every poll re-asserts Letterboxd's
-    # rating, like, and text over local edits — so this editor refuses
-    # guid rows outright rather than accepting changes that revert
+    # Rows from the feed sync FROM Letterboxd. While the entry stays in
+    # the feed window, each poll applies the rating, the like, and the
+    # text of Letterboxd over local edits. Thus, this editor refuses
+    # guid rows fully. It does not accept changes that revert.
 
     if user_review.letterboxd_guid:
         flash(
-            f"'{title}' syncs from your Letterboxd account — edit it on "
-            f"Letterboxd instead",
+            f"'{title}' syncs from your Letterboxd account. Edit it on "
+            f"Letterboxd instead.",
             "info",
         )
         return redirect(url_for("main.history", page=page))
@@ -116,23 +119,23 @@ def review_edit(review_id):
         movie_review_form.review_submit.data or quick_present
     ) and movie_review_form.validate_on_submit():
         if quick_present and quick_rating is None:
-            flash("That rating didn't make sense", "warning")
+            flash("That rating is not valid.", "warning")
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
-        # A logged viewing can't be "not interested" — the ladder
-        # hides its ✕ here, and a stray 0 is refused rather than stored
+        # A logged viewing cannot be "not interested". The ladder hides
+        # its ✕ here. This refuses a stray 0. It does not store it.
 
         if quick_rating == 0:
             flash(
-                f"You've logged '{title}' — the lowest rating for a "
-                f"seen film is 1 star",
+                f"You logged '{title}'. The lowest rating for a "
+                f"seen film is 1 star.",
                 "warning",
             )
             return redirect(url_for("main.review_edit", review_id=review_id, page=page))
-        # Only a ladder tap changes the stars (and the liked flag that
-        # follows them) — saving a text or date edit must never wipe
-        # the viewing's existing rating. Tapping the CURRENT rating
-        # clears the stars instead: the viewing itself stays, an
-        # explicit diary entry being edited is never deleted here
+        # Only a ladder tap changes the stars and the liked flag that
+        # follows them. A saved text or date edit must never delete the
+        # existing rating of the viewing. A tap on the CURRENT rating
+        # clears the stars instead. The viewing itself stays. This never
+        # deletes an explicit diary entry that the user edits.
 
         if quick_rating is not None:
             if user_review.rating is not None and float(user_review.rating) == float(
@@ -146,15 +149,15 @@ def review_edit(review_id):
                     setattr(user_review, field, value)
                 user_review.liked = quick_rating >= 3
 
-        # The date and text only change when their fields actually
-        # RODE IN THE POST — the history page's per-row forms and
-        # star-only ladder taps carry no date field, and an absent
-        # field must never read as "clear the watch date"
+        # The date and the text change only if their fields ARRIVED IN
+        # THE POST. The per-row forms of the history page and the
+        # star-only ladder taps carry no date field. An absent field
+        # must never read as "clear the watch date".
 
         if "date_watched" in request.form:
-            # The date-only form field can't improve on a stored
-            # timestamp (e.g. a Plex watch's actual clock time), so only
-            # replace the value when the calendar date itself changed
+            # The date-only form field cannot improve a stored timestamp
+            # (for example, the actual clock time of a Plex watch).
+            # Thus, replace the value only if the calendar date changed.
             new_date = movie_review_form.date_watched.data
             if new_date is None:
                 user_review.date_watched = None
@@ -164,9 +167,9 @@ def review_edit(review_id):
             ):
                 user_review.date_watched = _watched_timestamp(new_date)
 
-        # Text changes on a row that was already reviewed keep the original
-        # review date and stamp date_updated instead; a first review (no
-        # date_reviewed yet) sets the review date
+        # A text change on a row that already has a review keeps the
+        # original review date. It stamps date_updated instead. A first
+        # review (no date_reviewed yet) sets the review date.
 
         if "review" in request.form:
             new_text = movie_review_form.review.data or ""
@@ -179,10 +182,11 @@ def review_edit(review_id):
 
         db.session.commit()
         if _ladder_fetch():
-            # This page edits ONE viewing, so the row's state comes from
-            # that row — not the latest-viewing lookup the movie page
-            # uses. Clearing the stars repaints the row back to the
-            # engine's estimate (the universal-star-row rule, extended to bare watches)
+            # This page edits 1 viewing. Thus, the state of the row comes
+            # from that row. It does not come from the latest-viewing
+            # lookup that the movie page uses. When the user clears the
+            # stars, the row shows the estimate of the engine again (the
+            # universal-star-row rule, extended to bare watches).
             estimated = None
             if user_review.rating is None:
                 profile = stored_profile(current_app.redis, current_user.id)
@@ -233,10 +237,12 @@ def review_edit(review_id):
 
 
 def _review_export_response(review_export_form):
-    """The review-export POST: build the Letterboxd-format CSV and email
-    it to the user. Lives on the Profile page since #215 (History held
-    the form before that). Returns a response once the form has
-    submitted, None otherwise."""
+    """Handle the review-export POST.
+
+    This builds the CSV in the Letterboxd format and emails it to the
+    user. The form lives on the Profile page since #215. History held
+    the form before that. This returns a response after the form is
+    submitted, or None."""
 
     if not (
         review_export_form.export_submit.data
@@ -244,8 +250,8 @@ def _review_export_response(review_export_form):
     ):
         return None
 
-    # Create the header columns for the CSV, per the Letterboxd import
-    # format (https://letterboxd.com/about/importing-data/)
+    # Create the header columns for the CSV in the Letterboxd import
+    # format (https://letterboxd.com/about/importing-data/).
 
     csv_export = [
         [
@@ -260,20 +266,20 @@ def _review_export_response(review_export_form):
         ]
     ]
 
-    # Compile the list of this user's reviews for export. By default
-    # only entries added or edited since the last export are included,
-    # so each Letterboxd upload contains exactly the new rows; the
-    # "Full export" checkbox exports everything. New rows are detected
-    # by id rather than date_watched, which can be backdated past the
-    # last export
+    # Collect the reviews of this user for the export. By default, this
+    # includes only the entries added or edited after the last export.
+    # Thus, each Letterboxd upload contains exactly the new rows. The
+    # "Full export" checkbox exports all rows. This finds new rows by
+    # id, not by date_watched. A date_watched can be set to a date
+    # before the last export.
 
     export_query = (
         UserMovieReview.query.join(
             Movie, (Movie.id == UserMovieReview.movie_id)
         ).filter(UserMovieReview.user_id == int(current_user.id))
-        # Rows that came FROM the Letterboxd feed never export back
-        # to Letterboxd — they are already there, and the
-        # round-trip would duplicate them
+        # Rows that came FROM the Letterboxd feed never export back to
+        # Letterboxd. They are already there. A round trip would make
+        # duplicates.
         .filter(UserMovieReview.letterboxd_guid.is_(None))
     )
 
@@ -302,9 +308,9 @@ def _review_export_response(review_export_form):
             flash("No entries to export", "info")
         return redirect(url_for("main.profile"))
     for r in review_export:
-        # Letterboxd accepts ratings of 0.5-5 and calendar dates only,
-        # so unrated reviews export a blank rating and watched
-        # timestamps are truncated to YYYY-MM-DD
+        # Letterboxd accepts only ratings of 0.5-5 and calendar dates.
+        # Thus, an unrated review exports a blank rating. Watched
+        # timestamps are cut to YYYY-MM-DD.
 
         rating = ""
         if r.modified_rating:
@@ -313,8 +319,8 @@ def _review_export_response(review_export_form):
                 if r.modified_rating == int(r.modified_rating)
                 else r.modified_rating
             )
-        # Rewatch per the Letterboxd spec: Yes/No, blank when unknown
-        # (rows that predate the flag)
+        # Rewatch in the Letterboxd format: Yes or No. It is blank if
+        # unknown (rows from before the flag existed).
 
         rewatch = "" if r.rewatch is None else ("Yes" if r.rewatch else "No")
         csv_export.append(
@@ -332,16 +338,16 @@ def _review_export_response(review_export_form):
 
     current_app.logger.debug(csv_export)
 
-    # Write out the CSV file in memory, no need to write it out to disk
+    # Write the CSV file in memory. There is no need to write it to disk.
 
     f = io.StringIO()
     review_writer = csv.writer(f, quoting=csv.QUOTE_ALL)
     for review in csv_export:
         review_writer.writerow(review)
 
-    # Send an email to the user with the CSV file as an attachment;
-    # incremental files are named for their cutoff so exports since
-    # different dates are distinguishable in the inbox
+    # Send an email to the user with the CSV file as an attachment. The
+    # name of an incremental file carries its cutoff date. Thus, the
+    # user can tell exports from different dates apart in the inbox.
 
     if incremental:
         filename = f"reviews-since-{last_exported_at.strftime('%Y-%m-%d')}.csv"
@@ -354,16 +360,16 @@ def _review_export_response(review_export_form):
         recipients=[current_user.email],
         text_body=render_template("email/reviews.txt", user=current_user),
         html_body=render_template("email/reviews.html", user=current_user),
-        # Attach as UTF-8 bytes: a str payload makes the email
-        # package fall back to raw-unicode-escape, which mangles
-        # curly quotes into literal \\u2019 sequences in the file
+        # Attach the file as UTF-8 bytes. With a str payload, the email
+        # package uses raw-unicode-escape. That changes curly quotes
+        # into literal \\u2019 sequences in the file.
         attachments=[
             (filename, "text/csv; charset=utf-8", f.getvalue().encode("utf-8"))
         ],
     )
 
-    # Advance the export bookkeeping: either mode leaves Letterboxd
-    # current through this moment
+    # Advance the export records. Both modes make Letterboxd current
+    # through this moment.
 
     current_user.date_reviews_exported = datetime.now()
     current_user.last_export_review_id = (
@@ -383,7 +389,7 @@ def _review_export_response(review_export_form):
     else:
         flash(f"Emailed your reviews to {current_user.email}", "success")
 
-    # Discard the in-memory CSV file
+    # Discard the CSV file in memory.
 
     f.close()
 
@@ -392,10 +398,12 @@ def _review_export_response(review_export_form):
 
 
 def _review_upload_response(review_upload_form):
-    """The review-import POST: a Letterboxd account export zip, or the
-    legacy JSON-lines ratings file. On Profile since #215, like the
-    export. Returns a response once the form has submitted, None
-    otherwise."""
+    """Handle the review-import POST.
+
+    The upload is a Letterboxd account export zip, or the legacy
+    JSON-lines ratings file. The form lives on the Profile page since
+    #215, like the export. This returns a response after the form is
+    submitted, or None."""
 
     if not (
         review_upload_form.upload_submit.data
@@ -407,9 +415,10 @@ def _review_upload_response(review_upload_form):
     data = upload.read()
 
     if data[:4] == b"PK\x03\x04" or (upload.filename or "").lower().endswith(".zip"):
-        # A Letterboxd account export, imported as-is: diary, ratings,
-        # reviews, and film likes. Parsing is local and fast; matching
-        # unowned films needs TMDB, so that runs as a task
+        # A Letterboxd account export, imported as it is: the diary, the
+        # ratings, the reviews, and the film likes. The parse is local
+        # and fast. The match of unowned films needs TMDB. Thus, the
+        # match runs as a task.
 
         films = parse_letterboxd_export(data)
         if films:
@@ -424,7 +433,7 @@ def _review_upload_response(review_upload_form):
             flash("No importable films found in that Letterboxd export", "warning")
 
     else:
-        # Legacy JSON-lines ratings file, one film per line
+        # The legacy JSON-lines ratings file, with 1 film for each line.
 
         for rating in data.splitlines():
             if not rating.strip():
@@ -447,26 +456,27 @@ def _review_upload_response(review_upload_form):
 @bp.route("/history", methods=["GET", "POST"])
 @login_required
 def history():
-    """Display all of a user's viewings and reviews."""
+    """Show all the viewings and the reviews of a user."""
 
-    # Paginate a user's movie reviews, show 50 reviews per page
+    # Split the movie reviews of the user into pages of 50 reviews.
 
     page = request.args.get("page", 1, type=int)
 
-    # Chronological by watch date, newest first — unreviewed viewings (Plex
-    # watches) sort by recency like everything else. Dated rows only: this
-    # page is the diary, and a dateless row is a preference signal (a
-    # rating-ladder tap, ratings.csv), not a viewing. Those rows still
-    # drive recommendations and the stats below, and stay editable from
-    # their film's page.
+    # The order is by watch date, newest first. Viewings without a
+    # review (Plex watches) sort by recency like all other rows. Only
+    # dated rows show. This page is the diary. A row without a date is
+    # a preference signal (a rating-ladder tap, ratings.csv), not a
+    # viewing. Those rows still drive the recommendations and the stats
+    # below. The user can edit them from the page of their film.
 
-    # Day, then time of day, then title (#196). A midnight date_watched
-    # means "no time recorded" rather than "watched at 00:00" — only a
-    # watch logged on the day it happened keeps a clock time, see
-    # _watched_timestamp — so sorting on the raw timestamp sank every
-    # date-only row below any timed row on the same day, however late it
-    # was actually logged. Fall back to the time the row was written,
-    # which is the best evidence left of when the viewing happened.
+    # The order is day, then time of day, then title (#196). A midnight
+    # date_watched means "no time recorded", not "watched at 00:00".
+    # Only a watch logged on the day of the watch keeps a clock time.
+    # See _watched_timestamp. Thus, a sort on the raw timestamp put
+    # each date-only row below each timed row on the same day. The time
+    # of the log was not important. Use the time when the row was
+    # written as the fallback. It is the best remaining evidence of the
+    # time of the viewing.
 
     watched_time = db.func.nullif(
         db.func.time(UserMovieReview.date_watched), "00:00:00"
@@ -495,11 +505,11 @@ def history():
         url_for("main.history", page=reviews.prev_num) if reviews.has_prev else None
     )
 
-    # The ratings distribution: five whole-star bins, each absorbing the
-    # half-step below it (2.5 and 3.0 both bin as "about 3 stars") — most
-    # ratings are whole stars, so ten half-star buckets rendered as
-    # near-empty slivers. Only rated reviews count — Letterboxd-era
-    # reviews can be unrated likes or text-only.
+    # The ratings distribution has 5 whole-star bins. Each bin includes
+    # the half step below it. Thus, 2.5 and 3.0 both bin as "about 3
+    # stars". Most ratings are whole stars. Thus, 10 half-star bins
+    # rendered as almost empty slivers. Only rated reviews count.
+    # Reviews from the Letterboxd era can be unrated likes or text only.
 
     rating_counts = dict(
         db.session.query(UserMovieReview.modified_rating, db.func.count())
@@ -535,9 +545,10 @@ def history():
         int(rating_summary[2] or 0),
     )
 
-    # Unrated viewings — Plex watches, unrated imports — preview the
-    # engine's estimate in their ladder until Glenn's own stars land,
-    # through the shared score source like every other surface
+    # Unrated viewings (Plex watches, unrated imports) show the estimate
+    # of the engine in their ladder until Glenn sets his own stars. The
+    # estimate comes through the shared score source, like each other
+    # surface.
 
     estimates = {}
     profile = stored_profile(current_app.redis, current_user.id)
@@ -574,18 +585,18 @@ def history():
 @bp.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
-    """User profile: email address and API key."""
+    """Show the user profile: the email address and the API key."""
 
-    # Form to update the user's email address
+    # The form to update the email address of the user.
 
     email_form = EditProfileForm(current_user.email)
     if email_form.submit.data and email_form.validate_on_submit():
         current_user.email = email_form.email.data
         db.session.commit()
-        flash("Your email address has been changed.", "success")
+        flash("Updated your email address.", "success")
         return redirect(url_for("main.profile"))
 
-    # Form to generate a new API key
+    # The form to generate a new API key.
 
     api_refresh_form = UpdateAPIKeyForm()
     if (
@@ -597,9 +608,10 @@ def profile():
         flash("Regenerated the API key.", "success")
         return redirect(url_for("main.profile"))
 
-    # Button to wipe the user's Name That Frame standings (Glenn's
-    # ask, Aug 27 2026) — the score rows go, the dealt-frames record
-    # stays, so a fresh start doesn't replay frames just seen
+    # This button deletes the Name That Frame standings of the user
+    # (requested by Glenn, 2026-08-27). It deletes the score rows. It keeps
+    # the record of the dealt frames. Thus, a new game does not show the
+    # frames that the user saw recently.
 
     reset_frames_form = ResetFrameScoresForm()
     if (
@@ -608,11 +620,11 @@ def profile():
     ):
         UserFrameScore.query.filter_by(user_id=int(current_user.id)).delete()
         db.session.commit()
-        flash("Your Name That Frame scores and statistics have been reset.", "success")
+        flash("Reset your Name That Frame scores and statistics.", "success")
         return redirect(url_for("main.profile"))
 
-    # Form to map this account to a Plex username, so Plex watches land in
-    # this user's diary
+    # The form to map this account to a Plex username. Thus, Plex
+    # watches go into the diary of this user.
 
     letterboxd_form = LetterboxdUsernameForm()
     if letterboxd_form.letterboxd_submit.data and letterboxd_form.validate_on_submit():
@@ -652,11 +664,12 @@ def profile():
                 flash("Removed your Plex username mapping.", "success")
         return redirect(url_for("main.profile"))
 
-    # This user's playback device: the Plex player their play buttons
-    # send films to. The user enters just an address (ip or hostname,
-    # port optional — Companion's 32500 is assumed); Fitzflix probes it
-    # and reads the machine id off the player itself, so a device is
-    # only ever saved verified-reachable. Blank removes the device
+    # The playback device of this user: the Plex player that the play
+    # buttons send films to. The user enters only an address (ip or
+    # hostname, with an optional port). The default port is 32500, the
+    # Companion port. Fitzflix probes the address. It reads the machine
+    # id from the player itself. Thus, Fitzflix saves a device only if
+    # it is reachable. A blank address removes the device.
 
     plex_player_form = PlexPlayerForm()
     if (
@@ -670,17 +683,17 @@ def profile():
             db.session.commit()
             flash("Removed your playback device.", "success")
         elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+            flash("That is not an ip:port or a hostname:port.", "danger")
         else:
             if ":" not in address.strip("[]"):
                 address = f"{address}:32500"
             player = probe_player(address)
             if player is None:
                 flash(
-                    f"No Plex player answered at {address}. Make sure the "
-                    "Plex app is open on the device with 'Advertise as "
-                    "Player' enabled, and that this address is reachable "
-                    "from the Fitzflix server.",
+                    f"No Plex player answered at {address}. Make sure that "
+                    "the Plex app is open on the device with 'Advertise as "
+                    "Player' enabled. Make sure that the Fitzflix server "
+                    "can reach this address.",
                     "danger",
                 )
             else:
@@ -694,12 +707,12 @@ def profile():
                 )
         return redirect(url_for("main.profile"))
 
-    # This user's Infuse target (#192): the same Apple TV, driven over
-    # Apple's Companion protocol instead of Plex Companion. Saving an
-    # address starts the one-time PIN pairing, which must live in a
-    # single process across the PIN round-trip — so it runs as a
-    # user-request queue task and the PIN crosses over through Redis;
-    # the PIN form below only appears while a pairing is waiting
+    # The Infuse target of this user (#192): the same Apple TV, driven
+    # with the Companion protocol of Apple instead of Plex Companion. A
+    # saved address starts the one-time PIN pairing. The pairing must
+    # live in 1 process across the PIN round trip. Thus, it runs as a
+    # user-request queue task, and the PIN crosses through Redis. The
+    # PIN form below appears only while a pairing waits.
 
     infuse_form = InfusePlayerForm()
     if infuse_form.infuse_player_submit.data and infuse_form.validate_on_submit():
@@ -710,21 +723,21 @@ def profile():
             db.session.commit()
             flash("Removed your Infuse player.", "success")
         elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That doesn't look like an ip:port or hostname:port.", "danger")
+            flash("That is not an ip:port or a hostname:port.", "danger")
         else:
             if ":" not in address.strip("[]"):
                 address = f"{address}:{COMPANION_PORT}"
             if start_pairing(current_user.id, address):
                 flash(
-                    "Look at the Apple TV — it should show a PIN within a "
-                    "few seconds. Enter it below to finish pairing.",
+                    "Look at the Apple TV. It shows a PIN in some seconds. "
+                    "Enter the PIN below to complete the pairing.",
                     "info",
                 )
             else:
                 flash(
-                    "A pairing is already waiting for its PIN — enter that "
-                    "below, or give it a couple of minutes to expire before "
-                    "starting over.",
+                    "A pairing already waits for its PIN. Enter that PIN "
+                    "below, or wait 2 minutes for it to expire before you "
+                    "start again.",
                     "warning",
                 )
         return redirect(url_for("main.profile"))
@@ -733,15 +746,15 @@ def profile():
     if infuse_pin_form.infuse_pin_submit.data and infuse_pin_form.validate_on_submit():
         pin = (infuse_pin_form.infuse_pin.data or "").strip()
         if not pin.isdigit():
-            flash("The PIN is the number shown on the Apple TV's screen.", "danger")
+            flash("The PIN is the number on the screen of the Apple TV.", "danger")
         else:
             submit_pin(current_user.id, pin)
             ok, message = pairing_outcome(current_user.id)
             flash(message, {True: "success", False: "danger", None: "info"}[ok])
         return redirect(url_for("main.profile"))
 
-    # Which app plain play buttons target, asked only while both are
-    # configured; with a single app there is no choice to make
+    # The app that plain play buttons target. Fitzflix asks only while
+    # both apps are configured. With 1 app, there is no choice.
 
     default_player_form = DefaultPlayerForm()
     if (
@@ -759,9 +772,9 @@ def profile():
     if not default_player_form.default_player_submit.data:
         default_player_form.default_player.data = current_user.preferred_player
 
-    # Form to pick the streaming services availability displays are
-    # customized to — a per-user setting, never site-wide. The picker
-    # offers every registry provider, alphabetically
+    # The form to select the streaming services for the availability
+    # displays. This is a per-user setting, never a site-wide setting.
+    # The picker offers each registry provider, in alphabetical order.
 
     registry = provider_registry()
     subscribed = {row.provider_id: row for row in current_user.streaming_providers}
@@ -792,9 +805,9 @@ def profile():
     if not streaming_form.providers_submit.data:
         streaming_form.providers.data = list(subscribed)
 
-    # The watchlist availability digest opt-ins (#156/#230): the
-    # nightly email is off unless asked for, and rentals are a further
-    # opt-in on top of it
+    # The opt-ins for the watchlist availability digest (#156/#230). The
+    # nightly email is off unless the user asks for it. Rentals are a
+    # second opt-in on top of it.
 
     alerts_form = AvailabilityAlertsForm()
     if alerts_form.alerts_submit.data and alerts_form.validate_on_submit():
@@ -807,9 +820,9 @@ def profile():
         alerts_form.notify_availability.data = current_user.notify_availability
         alerts_form.notify_rentals.data = current_user.notify_rentals
 
-    # The review import / export forms, moved here from History (#215)
-    # — account-level plumbing rather than something to pass on the way
-    # to the diary
+    # The review import and export forms, moved here from History
+    # (#215). They are account-level functions. They are not something
+    # to pass on the way to the diary.
 
     review_export_form = ReviewExportForm()
     export_response = _review_export_response(review_export_form)

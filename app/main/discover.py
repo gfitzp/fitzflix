@@ -1,6 +1,8 @@
-"""The discovery surfaces (the routes.py split): the landing rails, the
-Recommendations page, the TMDB log page, the poster popover cards (film
-and series), the watchlist, and the Radarr hand-off."""
+"""Serve the discovery surfaces (the routes.py split).
+
+The surfaces are the landing rails, the Recommendations page, the TMDB
+log page, the poster popover cards (film and series), the watchlist,
+and the Radarr hand-off."""
 
 import os
 import traceback
@@ -21,7 +23,7 @@ from flask import (
     request,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its actual home.
 from flask_login import current_user, login_required
 from sqlalchemy.orm import contains_eager, selectinload
 
@@ -119,43 +121,47 @@ from app.videos import (
 )
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
-# The top watchlist shelf runs bigger than the 12-card discovery
-# shelves (Glenn, Aug 30 2026): it's the already-wanted films, so it
-# earns three rows before the discovery shelves start
+# The top watchlist shelf is bigger than the 12-card discovery shelves
+# (Glenn, 2026-08-30). It holds the films that the user already wants.
+# Thus, it gets 3 rows before the discovery shelves start.
 
 WATCHLIST_SHELF_SIZE = 18
 
 
 def _fits(movie, minutes):
-    """True when the film fits the evening's runtime filter."""
+    """Return True when the film fits the runtime filter of the evening."""
 
     return bool(movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
 
 
 def _movie_key(movie):
-    """The page-wide claim id for a movie-backed card: the tmdb id the
-    streaming-sourced shelves also use, so the cross-shelf no-repeat
-    set recognizes the same film everywhere — with a local-only
-    fallback for the rare film TMDB doesn't know."""
+    """Return the page-wide claim id for a movie-backed card.
+
+    The id is the tmdb id that the streaming-sourced shelves also use.
+    Thus, the cross-shelf no-repeat set recognizes the same film
+    everywhere. A local-only fallback covers the rare film that TMDB
+    does not know."""
 
     return movie.tmdb_id if movie.tmdb_id else f"m{movie.id}"
 
 
 def watchlist_shelf_rows(user):
-    """(urgent, rows) for the landing page's top watchlist shelf: the
-    films the user already said they want that can actually be watched
-    tonight — owned locally, or streaming on one of their services,
-    answered from the availability cache the nightly refresh keeps
-    full (a film added since last night simply waits for tonight's
-    warm).
+    """Return (urgent, rows) for the top watchlist shelf of the landing page.
 
-    `urgent` is the leaving-soon films — streaming departures the
-    fold rules already treat as the page's loudest badge — best-first
-    by suggested rating; they hold the shelf's leading slots in order,
-    because a watchlisted film about to leave is the most urgent card
-    on the whole page. `rows` is everything else, best-first by
-    suggested rating from the shared score source. Owned films never
-    count as leaving (the disc isn't going anywhere)."""
+    The rows are the films that the user already wants and that the user
+    can watch tonight. A film is watchable when it is owned locally, or
+    when it streams on one of the services of the user. The answer comes
+    from the availability cache that the nightly refresh keeps full. A
+    film added since last night waits for the warm of tonight.
+
+    `urgent` is the films that leave soon. These are the streaming
+    departures that the fold rules already treat as the loudest badge
+    of the page. They are sorted best-first by suggested rating. They
+    hold the leading slots of the shelf in order, because a watchlisted
+    film that leaves soon is the most urgent card on the whole page.
+    `rows` is everything else, sorted best-first by suggested rating
+    from the shared score source. Owned films never count as leaving.
+    The disc does not go anywhere."""
 
     user_id = int(user.id)
     entries = (
@@ -200,10 +206,11 @@ def watchlist_shelf_rows(user):
     if not watchable:
         return [], []
 
-    # Suggested ratings from the one shared score source: the stored
-    # map covers the unlogged candidates (the recompute's cut deepens
-    # by watchlisted films for exactly this), and the rest — mostly
-    # rewatch intents, already logged — score live once and patch in
+    # The suggested ratings come from the one shared score source. The
+    # stored map covers the unlogged candidates. The cut of the recompute
+    # goes deeper by the watchlisted films exactly for this. The rest are
+    # mostly rewatch intents, already logged. They score live one time
+    # and patch into the map.
 
     profile = stored_profile(current_app.redis, user_id)
     scores = stored_scores(current_app.redis, user_id) if profile else {}
@@ -237,26 +244,27 @@ def watchlist_shelf_rows(user):
 @bp.route("/index")
 @login_required
 def index():
-    """The landing page: what to watch tonight (GitHub #46/#61).
+    """Render the landing page: what to watch tonight (GitHub #46/#61).
 
-    Since Aug 30 2026 the page opens with the watchlist shelf — the
-    films the user already said they want that are watchable tonight,
-    leaving-soon departures leading — and every shelf below it is pure
-    discovery, watchlist excluded at the source: the library rail, the
-    Criterion departures, the newly-added feeds, the streaming rail,
-    and the rewatch shelf, all picked by the one shared daily_shelf
-    recipe with a page-wide no-repeat set.
+    Since 2026-08-30, the page opens with the watchlist shelf. That
+    shelf holds the films that the user already wants and can watch
+    tonight. The departures that leave soon lead it. Every shelf below
+    it is pure discovery. The watchlist is excluded at the source. The
+    discovery shelves are the library rail, the Criterion departures,
+    the newly-added feeds, the streaming rail, and the rewatch shelf.
+    The one shared daily_shelf recipe picks all of them with a
+    page-wide no-repeat set.
 
-    ?minutes=N filters every shelf at view time to films that fit the
-    evening — the computed recommendations themselves never consider
-    length, and films with unknown runtimes hide only from filtered
-    views.
+    ?minutes=N filters every shelf at view time to the films that fit
+    the evening. The computed recommendations never consider the
+    length. Films with unknown runtimes hide only from filtered views.
 
-    The default view's shelves are frozen for the calendar day (#204):
-    the first render snapshots each rail's cards and later renders
-    replay them, with only a no-longer-eligible film's slot replaced —
-    see frozen_shelf. The ?minutes= view stays a live pick, a
-    transient planning lens rather than the shelf."""
+    The shelves of the default view are frozen for the calendar day
+    (#204). The first render makes a snapshot of the cards of each
+    rail. Later renders replay the snapshot. Only the slot of a film
+    that is no longer eligible is replaced. See frozen_shelf. The
+    ?minutes= view stays a live pick. It is a transient planning lens,
+    not the shelf."""
 
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
@@ -265,10 +273,10 @@ def index():
     freeze = minutes is None
 
     # The watchlist is a SOURCE now, not a per-shelf sort key (Glenn,
-    # Aug 30 2026): its watchable films fill the top shelf, and every
-    # discovery shelf below excludes watchlisted films at the source —
-    # the page reads "what you already want", then "ways to discover
-    # something else if none of that appeals"
+    # 2026-08-30). Its watchable films fill the top shelf. Every
+    # discovery shelf below excludes the watchlisted films at the
+    # source. The page reads "what you already want", then "ways to
+    # discover something else if none of that appeals".
 
     watchlisted_ids = {
         movie_id
@@ -285,14 +293,15 @@ def index():
             .filter(Movie.tmdb_id.isnot(None))
         }
 
-    # The top shelf claims its films first, always; the discovery
-    # shelves claim afterwards in a day-shuffled order, so no single
-    # shelf gets first pick of the shared candidates every day
+    # The top shelf always claims its films first. The discovery shelves
+    # claim after it, in a day-shuffled order. Thus, no single shelf gets
+    # the first pick of the shared candidates every day.
 
     shown = set()
     wl_urgent, wl_rows = watchlist_shelf_rows(current_user)
-    # Candidates that clear every other test, so an empty rail can tell
-    # "nothing fits the filter" from "nothing left to recommend" (#198)
+    # The candidates that pass every other test. Thus, an empty rail can
+    # separate "nothing fits the filter" from "nothing left to recommend"
+    # (#198).
     watchlist_eligible = len(wl_urgent) + len(wl_rows)
     if minutes:
         wl_urgent = [row for row in wl_urgent if _fits(row["movie"], minutes)]
@@ -319,9 +328,10 @@ def index():
         is not None
     )
 
-    # The library rail's source: the nightly ranking, minus films
-    # logged or waved off since the recompute (they drop immediately
-    # rather than lingering until tonight) and minus the watchlist
+    # The source of the library rail: the nightly ranking, minus the
+    # films logged or refused since the recompute, and minus the
+    # watchlist. Those films drop immediately. They do not stay until
+    # tonight.
 
     rec_rows = []
     computed_at = None
@@ -347,9 +357,9 @@ def index():
                 continue
             rec_rows.append({"movie": movie, "because": item.get("because", [])[:3]})
     elif has_history:
-        # Diary rows but nothing stored yet (first deploy, or a brand-new
-        # reviewer): compute once now instead of waiting for tonight; the
-        # marker keeps repeat page loads from re-enqueueing
+        # There are diary rows but nothing stored yet (the first deploy,
+        # or a new reviewer). Compute one time now instead of a wait for
+        # tonight. The marker prevents a new enqueue on each page load.
 
         if current_app.redis.set(
             f"fitzflix:recs:requested:{int(current_user.id)}", "1", nx=True, ex=3600
@@ -360,10 +370,11 @@ def index():
                 description="Computing film recommendations",
             )
 
-    # The rewatch shelf's source: owned films the user liked whose last
-    # watch is long past — old favorites otherwise have no surface,
-    # since the engine's candidates exclude logged films. Re-added ones
-    # (declared rewatch intent) live on the watchlist shelf now
+    # The source of the rewatch shelf: owned films that the user liked
+    # and whose last watch is long past. Old favorites have no other
+    # surface, because the candidates of the engine exclude logged
+    # films. Films added again (a declared rewatch intent) live on the
+    # watchlist shelf now.
 
     again_rows = []
     again_ranked = watch_again_shelf(current_user.id)
@@ -382,11 +393,11 @@ def index():
                 {"movie": again_movie, "last_watched": item["last_watched"]}
             )
 
-    # The streaming rail's source: films streaming on this user's
-    # services, from the nightly discover-pool recompute. Films logged
-    # or acquired since the run drop out immediately; a user with a
-    # profile and provider picks but no stored rail gets a one-off
-    # compute enqueued
+    # The source of the streaming rail: films that stream on the
+    # services of this user, from the nightly discover-pool recompute.
+    # Films logged or acquired since the run drop out immediately. A user
+    # with a profile and provider picks but no stored rail gets one
+    # compute enqueued.
 
     rail_rows = []
     rail_computed_at = None
@@ -436,49 +447,50 @@ def index():
                 description="Computing the streaming rail",
             )
 
-    # The departure shelf's source: what leaves the Criterion Channel
-    # at month's end, taste-ranked, for Criterion subscribers —
-    # watchlisted departures live on the watchlist shelf, leading it
+    # The source of the departure shelf: the films that leave the
+    # Criterion Channel at the end of the month, taste-ranked, for
+    # Criterion subscribers. Watchlisted departures live on the
+    # watchlist shelf and lead it.
 
     shelf = leaving_shelf(current_user)
     leaving_rows = shelf["items"] if shelf else []
     shelf_departs = shelf["departs"].strftime("%B %-d") if shelf else None
     shelf_url = shelf["url"] if shelf else None
 
-    # The newly-added discovery shelves' sources (#246): recent
-    # arrivals on a subscribed provider's own newly-added feed,
-    # generic over provider — only the Criterion Channel feeds one
-    # today. The availability-alert email already covers watchlisted
-    # arrivals; these shelves are for films the database has never
-    # heard of
+    # The sources of the newly-added discovery shelves (#246): recent
+    # arrivals on the own newly-added feed of a subscribed provider. The
+    # code is generic over providers. Today, only the Criterion Channel
+    # feeds a shelf. The availability-alert email already covers the
+    # watchlisted arrivals. These shelves are for films that the database
+    # has never seen.
 
     newly_feeds = newly_added_shelves(current_user)
 
-    # Every discovery shelf runs the one shared recipe (daily_shelf):
-    # taste-ranked rows walk no-repeat quality tiers into day-stable
-    # random slots, frozen for the day (#204), never repeating a film
-    # another shelf already claimed. The claim order shuffles daily so
-    # candidates the shelves share spread around instead of always
-    # going to whichever shelf picked first; the page's render order
-    # stays fixed
+    # Every discovery shelf runs the one shared recipe (daily_shelf).
+    # Taste-ranked rows walk the no-repeat quality tiers into day-stable
+    # random slots. The slots are frozen for the day (#204). A shelf
+    # never repeats a film that a different shelf already claimed. The
+    # claim order shuffles daily. Thus, the candidates that the shelves
+    # share spread around. They do not always go to the shelf that
+    # picked first. The render order of the page stays fixed.
 
     def movie_fits(row):
-        """The runtime filter for movie-backed rows."""
+        """Apply the runtime filter to a movie-backed row."""
 
         return _fits(row["movie"], minutes)
 
     def payload_fits(item):
-        """The runtime filter for stored-payload rows."""
+        """Apply the runtime filter to a stored-payload row."""
 
         return bool(item.get("runtime") and item["runtime"] <= minutes)
 
     def movie_row_key(row):
-        """A movie-backed row's page-wide claim id."""
+        """Return the page-wide claim id of a movie-backed row."""
 
         return _movie_key(row["movie"])
 
     def payload_key(item):
-        """A stored-payload row's page-wide claim id."""
+        """Return the page-wide claim id of a stored-payload row."""
 
         return item["tmdb_id"]
 
@@ -522,13 +534,13 @@ def index():
     rail = picked["rail"]
     shelf_items = picked["leaving"]
 
-    # A rail the runtime filter emptied says so rather than vanishing —
-    # silence reads as "there's nothing here" (#198). Each flag means
-    # the rail had films and the filter took them all
+    # A rail that the runtime filter emptied says so. It does not
+    # disappear. Silence reads as "there is nothing here" (#198). Each
+    # flag means that the rail had films and the filter removed them all.
 
     def filtered_out(shown_cards, eligible):
-        """True when a rail had films and the runtime filter took
-        every one of them."""
+        """Return True when a rail had films and the runtime filter
+        removed every one of them."""
 
         return bool(minutes) and not shown_cards and eligible > 0
 
@@ -540,8 +552,8 @@ def index():
                 "provider_id": feed["provider_id"],
                 "label": feed["label"],
                 "source": feed["source"],
-                # "films", not "items": a dict's .items in Jinja is
-                # the method, not the key
+                # Use "films", not "items". In Jinja, the .items of a dict
+                # is the method, not the key.
                 "films": films,
                 "filtered_out": filtered_out(
                     films, eligible_counts[f"newly:{feed['provider_id']}"]
@@ -579,13 +591,15 @@ def index():
 @bp.route("/criterion-now")
 @login_required
 def criterion_now():
-    """The Criterion24/7 card fragment, re-fetched by the home
-    page once a minute while it's visible so an open tab follows the
-    feed — the film swaps when the poller stores the next one, and the
-    "minutes in" / "next film" line keeps time in between. Empty (200)
-    when there's nothing to show: not a subscriber, no stored film, or
-    one gone stale — the page's container empties and the card
-    disappears just as a reload would drop it."""
+    """Render the Criterion24/7 card fragment.
+
+    The home page fetches it again every minute while the page is
+    visible. Thus, an open tab follows the feed. The film changes when
+    the poller stores the next one. The "minutes in" and "next film"
+    line keeps time between the polls. The response is empty (200) when
+    there is nothing to show: the user is not a subscriber, there is no
+    stored film, or the film is stale. Then the container on the page
+    empties and the card disappears, the same as after a reload."""
 
     return render_template(
         "_criterion_now_card.html",
@@ -597,31 +611,33 @@ def criterion_now():
 @bp.route("/file-activity")
 @login_required
 def file_activity():
-    """The File Activity dashboard: the old Recently Added page and the
-    Pipeline Activity trails merged (Glenn, Aug 2026). Landed files
-    render as full cards here, each with its trail chips filled by
-    base.html's queue poll; files still in flight show as chips on the
-    queue page's job rows, and the poll adds a file's card here via
-    /file-activity/card once cataloging lands."""
+    """Render the File Activity dashboard.
+
+    This page merges the old Recently Added page and the Pipeline
+    Activity trails (Glenn, 2026-08). A file that arrived renders as a
+    full card here. The queue poll of base.html fills the trail chips of
+    each card. A file still in flight shows as chips on the job rows of
+    the queue page. When the cataloging completes, the poll adds the card
+    of the file here through /file-activity/card."""
 
     page = request.args.get("page", 1, type=int)
 
-    # Show only files added or updated in the last 7 days — the page's
-    # recency horizon, matching pipeline.TRAIL_TTL_SECONDS so a card
-    # keeps its trail chips for as long as it stays on the page. (This
-    # window once meant "still in S3 Standard, re-downloadable without a
-    # Glacier thaw", but the live lifecycle rule has transitioned
-    # untouched/ to Deep Archive at 0 days for some time — verified
-    # against the bucket Aug 2026 — so files here are usually already
-    # frozen after their first day.)
+    # Show only the files added or updated in the last 7 days. This is
+    # the recency horizon of the page. It matches
+    # pipeline.TRAIL_TTL_SECONDS. Thus, a card keeps its trail chips
+    # while it stays on the page. This window once meant "still in S3
+    # Standard, downloadable again without a Glacier thaw". But the live
+    # lifecycle rule has moved untouched/ to Deep Archive at 0 days for
+    # some time (verified against the bucket, 2026-08). Thus, the files
+    # here are usually already frozen after their first day.
 
-    # The cards read each file's tracks, film, and series: selectin
-    # loads fetch those per page instead of per file (291 queries for
-    # 100 cards before Aug 2026)
+    # The cards read the tracks, film, and series of each file. The
+    # selectin loads fetch those per page instead of per file (291
+    # queries for 100 cards before 2026-08).
 
     recently_added = (
         File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
-        .distinct()  # need .distinct() in order to get the result numbers per page correct
+        .distinct()  # .distinct() makes the result numbers per page correct
         .outerjoin(Movie, (Movie.id == File.movie_id))
         .outerjoin(TVSeries, (TVSeries.id == File.series_id))
         .options(
@@ -649,8 +665,9 @@ def file_activity():
         else None
     )
 
-    # Import pipeline activity, assembled from live state: running and queued
-    # imports, deferred retries, and whatever sits in the rejects folder
+    # The import pipeline activity comes from the live state: the running
+    # and queued imports, the deferred retries, and the contents of the
+    # rejects folder.
 
     import_activity = None
     if page == 1:
@@ -684,8 +701,8 @@ def file_activity():
                 )
         deferred.sort(key=lambda entry: entry["next_run"])
 
-        # A file can accumulate several scheduled retries; show each file
-        # once, with its soonest retry time
+        # A file can collect several scheduled retries. Show each file one
+        # time, with its soonest retry time.
 
         unique_deferred = []
         seen_descriptions = set()
@@ -745,13 +762,14 @@ def file_activity():
 
 
 def _file_for_trail_basename(basename):
-    """The File row a pipeline trail belongs to, or None.
+    """Return the File row that a pipeline trail belongs to, or None.
 
-    A trail's basename can be the original import filename (the
-    localization stages), that name with its extension swapped to .mkv
-    (container conversion), or the File row's own basename (every
-    file_id-keyed stage) — so match exactly against both stored names
-    first, then fall back to the stem, newest file first.
+    The basename of a trail can be the original import filename (the
+    localization stages). It can be that name with its extension changed
+    to .mkv (the container conversion). It can be the own basename of
+    the File row (every file_id-keyed stage). Thus, first match exactly
+    against both stored names. Then fall back to the stem, newest file
+    first.
     """
 
     recency = db.func.coalesce(File.date_updated, File.date_added).desc()
@@ -783,12 +801,13 @@ def _file_for_trail_basename(basename):
 @bp.route("/file-activity/card")
 @login_required
 def file_activity_card():
-    """One file's card fragment for the File Activity dashboard,
-    fetched by the queue poll when a trail with no card yet finishes
-    cataloging — the chips blossom into the full card (poster, quality
-    badge, tracks, links) without a reload. Keyed by the trail's
-    basename; 404 means the File row isn't visible yet and the poll
-    simply tries again."""
+    """Render the card fragment of one file for the File Activity dashboard.
+
+    The queue poll fetches it when a trail with no card completes its
+    cataloging. The chips become the full card (poster, quality badge,
+    tracks, links) without a reload. The key is the basename of the
+    trail. A 404 means that the File row is not visible yet. Then the
+    poll tries again."""
 
     basename = request.args.get("basename", "", type=str)
     if not basename:
@@ -807,21 +826,23 @@ def file_activity_card():
 @bp.route("/movie_card")
 @login_required
 def movie_card():
-    """The poster popover's card fragment (#45c): one film's title,
-    credits, meta line (runtime, genres, and the US rating, so the
-    card says what sort of film it is), synopsis, availability, and
-    at-a-glance badges — keyed
-    by movie_id for library records, or tmdb_id for films with no
-    local row (the streaming rail and the leaving shelf). Purely
-    informational since Glenn's Aug 2026 revision: the star ladder
-    and watchlist toggle live on the gallery tiles, so the card
-    carries the In-library badge in its shopping colors (amber =
-    worth upgrading, green = settled) and the watchlist badge
-    instead. ?context=criterion (#77a) recolors that badge with the
-    Criterion page's settled rule — green only when the disc is owned
-    AND the copy matches the release's format — instead of the
-    generic shopping answer. Fetched only when a poster is hovered or
-    tapped, so gallery pages stay light."""
+    """Render the card fragment of the poster popover (#45c).
+
+    The card shows the title, the credits, the meta line, the synopsis,
+    the availability, and the at-a-glance badges of one film. The meta
+    line has the runtime, the genres, and the US rating. Thus, the card
+    says what sort of film it is. The key is movie_id for library
+    records, or tmdb_id for films with no local row (the streaming rail
+    and the leaving shelf). The card is only informational since the
+    revision of Glenn in 2026-08. The star ladder and the watchlist
+    toggle live on the gallery tiles. Thus, the card carries the
+    In-library badge in its shopping colors (amber = worth an upgrade,
+    green = settled) and the watchlist badge instead. ?context=criterion
+    (#77a) recolors that badge with the settled rule of the Criterion
+    page instead of the generic shopping answer. That rule is green only
+    when the disc is owned AND the copy matches the format of the
+    release. The browser fetches the card only when the user hovers or
+    taps a poster. Thus, the gallery pages stay light."""
 
     movie_id = request.args.get("movie_id", type=int)
     tmdb_id = request.args.get("tmdb_id", type=int)
@@ -857,10 +878,11 @@ def movie_card():
             is not None
         )
 
-        # The In-library badge wears the shopping list's answer (Glenn's
-        # Aug 2026 revision, replacing the quality-tier badge): amber
-        # when the copy is worth upgrading, green when it's settled.
-        # ?context=criterion swaps in the Criterion catalog's rule
+        # The In-library badge shows the answer of the shopping list (the
+        # revision of Glenn in 2026-08). That revision replaced the
+        # quality-tier badge. The badge is amber when the copy is worth an
+        # upgrade. It is green when the copy is settled. ?context=criterion
+        # uses the rule of the Criterion catalog instead.
 
         upgradable = library_upgradable(
             movie, criterion=request.args.get("context") == "criterion"
@@ -914,7 +936,7 @@ def movie_card():
             ),
         )
 
-    # No local record: the card renders from TMDB directly
+    # There is no local record. The card renders from TMDB directly.
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
@@ -953,8 +975,8 @@ def movie_card():
         if person.get("id") is not None
     ]
 
-    # The US rating, first certified release wins — the same answer the
-    # cataloger stores for library records
+    # The US rating. The first certified release wins. This is the same
+    # answer that the cataloger stores for library records.
     certification = next(
         (
             date.get("certification")
@@ -990,17 +1012,21 @@ def movie_card():
 @bp.route("/tv_card")
 @login_required
 def tv_card():
-    """The poster popover's card fragment for one TV series — the film
-    card's shape in TV terms: title, the run's meta line, synopsis,
-    billed cast, the In-library badge in its shopping colors, and how
-    much of the run is on the shelf. Keyed by series_id for library
-    records, or tmdb_id for a series with no local row (a person's
-    unowned television credits). Fetched only when a poster is hovered
-    or tapped, so the TV Library and filmography pages stay light.
+    """Render the card fragment of the poster popover for one TV series.
 
-    No streaming strip, watchlist badge, or play button: watch
-    providers, the watchlist, and the Apple TV hand-off are all
-    film-keyed here, so the card carries only what it can answer."""
+    This is the shape of the film card in TV terms. It shows the title,
+    the meta line of the run, the synopsis, the billed cast, the
+    In-library badge in its shopping colors, and how much of the run is
+    on the shelf. The key is series_id for library records, or tmdb_id
+    for a series with no local row (the unowned television credits of a
+    person). The browser fetches the card only when the user hovers or
+    taps a poster. Thus, the TV Library and filmography pages stay
+    light.
+
+    The card has no streaming strip, no watchlist badge, and no play
+    button. The watch providers, the watchlist, and the Apple TV
+    hand-off are all film-keyed here. Thus, the card carries only what
+    it can answer."""
 
     series_id = request.args.get("series_id", type=int)
     tmdb_id = request.args.get("tmdb_id", type=int)
@@ -1023,13 +1049,13 @@ def tv_card():
             .limit(TOP_BILLING_CUTOFF)
         )
 
-        # What's on the shelf, counted the way the TV Library page
-        # counts it: seasons that have files, and the distinct episode
-        # numbers within them. Season 0 is called Specials there rather
-        # than counted as a season, and the card says it the same way —
-        # otherwise a show with specials reads as owning more seasons
-        # than TMDB says exist. A series record with no files at all is
-        # a leftover, and badges nothing
+        # The contents of the shelf, counted the way the TV Library page
+        # counts them: the seasons that have files, and the distinct
+        # episode numbers in them. That page calls season 0 Specials. It
+        # does not count it as a season. The card says it the same way.
+        # Otherwise, a show with specials reads as if it owns more
+        # seasons than TMDB says exist. A series record with no files is
+        # a leftover, and it badges nothing.
 
         season_counts = (
             db.session.query(File.season, db.func.count(db.func.distinct(File.episode)))
@@ -1040,9 +1066,9 @@ def tv_card():
         owned_seasons = sum(1 for season, _ in season_counts if season)
         return render_template(
             "_tv_card.html",
-            # No year appended: every other TV surface titles a series
-            # by its TMDB name alone, and the meta line opens with the
-            # run of years anyway
+            # No year is appended. Every other TV surface titles a series
+            # by its TMDB name only. The meta line opens with the run of
+            # years anyway.
             display_title=series.tmdb_name if series.tmdb_name else series.title,
             href=url_for("main.tv", series_id=series.id),
             meta_line=tv_meta_line(
@@ -1066,7 +1092,7 @@ def tv_card():
             owned_episodes=sum(count for _, count in season_counts),
         )
 
-    # No local record: the card renders from TMDB directly
+    # There is no local record. The card renders from TMDB directly.
 
     if not current_app.config["TMDB_API_KEY"]:
         abort(404)
@@ -1091,8 +1117,8 @@ def tv_card():
     first_year = (details.get("first_air_date") or "")[:4]
     last_year = (details.get("last_air_date") or "")[:4]
 
-    # aggregate_credits bills the whole run, matching the TVCast rows
-    # a local record would have
+    # aggregate_credits bills the whole run. This matches the TVCast rows
+    # that a local record would have.
 
     billed_cast = sorted(
         (details.get("aggregate_credits") or {}).get("cast") or [],
@@ -1115,7 +1141,7 @@ def tv_card():
             details.get("number_of_episodes"),
             [genre.get("name") for genre in details.get("genres") or []],
         ),
-        # The US content rating, the same answer tmdb_tv_apply stores
+        # The US content rating. This is the same answer that tmdb_tv_apply stores.
         content_rating=next(
             (
                 country.get("rating")
@@ -1135,17 +1161,17 @@ def tv_card():
     )
 
 
-# One request may carry at most this many films; every gallery page
-# shows a bounded set (rails of 12, paginated walls), so the cap only
-# guards against abuse
+# One request can carry at most this many films. Every gallery page
+# shows a bounded set (rails of 12, paginated walls). Thus, the cap only
+# guards against abuse.
 MOVIE_STATES_LIMIT = 300
 
-# How many enriched payloads one state batch may FETCH from TMDB for
-# the tmdb-keyed lane — sized to cover a whole filmography page in a
-# single hydration pass (fetches run 10 abreast, so ~100 completes in
-# a couple of seconds) while bounding the burst one request can aim
-# at TMDB; cached payloads and overlay hits cost nothing and are
-# never capped
+# How many enriched payloads one state batch can FETCH from TMDB for
+# the tmdb-keyed lane. The size covers a whole filmography page in one
+# hydration pass. The fetches run 10 at a time. Thus, approximately 100
+# fetches complete in 2 seconds. The cap also bounds the burst that one
+# request can aim at TMDB. Cached payloads and overlay hits cost
+# nothing. They are never capped.
 
 MOVIE_STATES_TMDB_FETCHES = 100
 
@@ -1153,16 +1179,17 @@ MOVIE_STATES_TMDB_FETCHES = 100
 @bp.route("/movie_states")
 @login_required
 def movie_states():
-    """Batch ladder-and-watchlist state for the poster tiles (#45c,
-    Aug 2026 revision): one fetch per gallery page hydrates every
-    tile's star row and watchlist toggle, so no gallery route has to
-    compute per-film verdicts itself. ?movie_ids= and ?tmdb_ids= are
-    comma-separated; tmdb ids are answered under their own key (mapped
-    through a local record when one exists, empty state otherwise).
-    Estimates come from the shared score source: the stored map,
-    live-scoring a bounded number of missing films through the
-    resolver that patches the map — the same source every other
-    estimate surface reads."""
+    """Return the ladder and watchlist state for a batch of poster tiles.
+
+    This is #45c, 2026-08 revision. One fetch per gallery page hydrates
+    the star row and the watchlist toggle of every tile. Thus, no
+    gallery route has to compute the per-film verdicts itself.
+    ?movie_ids= and ?tmdb_ids= are comma-separated. Fitzflix answers
+    tmdb ids under their own key. It maps them through a local record
+    when one exists. Otherwise, it returns an empty state. The estimates
+    come from the shared score source: the stored map. A bounded number
+    of missing films score live through the resolver that patches the
+    map. Every other estimate surface reads the same source."""
 
     def parse_ids(name):
         return [
@@ -1186,9 +1213,10 @@ def movie_states():
         }
     all_ids = set(movie_ids) | set(tmdb_to_movie.values())
 
-    # The newest verdict per film — the row the movie page displays —
-    # gathered in one query and reduced here (newest review first,
-    # bare watches last, id breaking ties, like _latest_review_row)
+    # The newest verdict per film. This is the row that the movie page
+    # displays. One query gathers the rows, and this code reduces them
+    # (newest review first, bare watches last, id breaks ties, the same
+    # as _latest_review_row).
 
     latest = {}
     if all_ids:
@@ -1224,19 +1252,19 @@ def movie_states():
             .filter(UserWatchlist.movie_id.in_(all_ids))
         }
 
-    # Poster folds (#197, plus #156/#230's badge and #246's feeds):
-    # the per-user corner overlays every gallery tile paints through
-    # this one batched fetch — green for a watchlist film that
-    # recently became available (the nightly alert diff's record) or
-    # a film recently arrived on a subscribed provider's newly-added
-    # feed, red for a film in the leaving-Criterion set, subscribers
-    # only. The client paints at most one fold, red outranking green.
-    # Ownership overrides it all (Glenn, Aug 27 2026): an owned film's
-    # copy isn't going anywhere, so it never wears the red fold, and
-    # its only green fold is the local file's own recent arrival.
-    # Movie-keyed tiles need their tmdb ids for both lookups; one
-    # query covers them, and each set parses once per request on
-    # flask.g
+    # Poster folds (#197, plus the badge of #156/#230 and the feeds of
+    # #246): the per-user corner overlays that every gallery tile paints
+    # through this one batched fetch. The fold is green for a watchlist
+    # film that recently became available (the record of the nightly
+    # alert diff), or for a film that recently arrived on the newly-added
+    # feed of a subscribed provider. The fold is red for a film in the
+    # leaving-Criterion set, for subscribers only. The client paints at
+    # most one fold. Red outranks green. Ownership overrides it all
+    # (Glenn, 2026-08-27). The copy of an owned film does not go
+    # anywhere. Thus, it never shows the red fold. Its only green fold is
+    # the recent arrival of the local file itself. Movie-keyed tiles need
+    # their tmdb ids for both lookups. One query covers them. Each set
+    # parses one time per request on flask.g.
 
     recent = recent_availability(current_user)
     provider_ids = set(user_provider_ids(current_user))
@@ -1259,10 +1287,11 @@ def movie_states():
     profile = stored_profile(current_app.redis, current_user.id)
     scores = stored_scores(current_app.redis, current_user.id)
 
-    # Estimate-eligible films the map doesn't cover — records created
-    # since the last nightly recompute — score live through the shared
-    # resolver, whose patch makes the number permanent for every other
-    # surface; request order decides who makes the cap
+    # The estimate-eligible films that the map does not cover are the
+    # records created since the last nightly recompute. They score live
+    # through the shared resolver. Its patch makes the number permanent
+    # for every other surface. The request order decides which films
+    # make the cap.
 
     if profile:
         ordered_ids = list(
@@ -1275,9 +1304,9 @@ def movie_states():
                 ]
             )
         )
-        # Every miss on the page scores in this one pass — the work is
-        # local queries only, so even a full 300-id batch stays quick —
-        # and the resolver's patches make the next request free
+        # Every miss on the page scores in this one pass. The work is
+        # local queries only. Thus, even a full 300-id batch stays quick.
+        # The patches of the resolver make the next request free.
 
         misses = [
             movie_id
@@ -1293,15 +1322,15 @@ def movie_states():
             if score is not None:
                 scores[movie.id] = score
 
-    # The tmdb-keyed lane: ids with no record at all — most of a
-    # filmography page — still estimate, from the overlay when it
-    # holds them and otherwise scored live from enriched payloads.
-    # Missing payloads warm in PARALLEL first (the rail's enrichment
-    # pattern), so one hydration pass covers a whole career page in a
-    # couple of seconds instead of twenty films per reload; the fetch
-    # cap bounds the burst a single request can aim at TMDB, and the
-    # page itself never waits — hydration is an async fetch after
-    # render
+    # The tmdb-keyed lane: ids with no record at all (most of a
+    # filmography page) still get an estimate. The estimate comes from
+    # the overlay when the overlay holds them. Otherwise, they score
+    # live from the enriched payloads. Missing payloads warm in PARALLEL
+    # first (the enrichment pattern of the rail). Thus, one hydration
+    # pass covers a whole career page in 2 seconds, instead of 20 films
+    # per reload. The fetch cap bounds the burst that a single request
+    # can aim at TMDB. The page itself never waits. The hydration is an
+    # async fetch after the render.
 
     tmdb_estimates = {}
     unmatched = [tmdb_id for tmdb_id in tmdb_ids if tmdb_id not in tmdb_to_movie]
@@ -1361,16 +1390,16 @@ def movie_states():
         row = latest.get(movie_id)
         flagged = movie_id in flagged_ids
         estimated = None
-        # The estimate previews until the user's own stars exist — a
-        # bare watch (a Plex viewing, an unrated import) still shows it
+        # The estimate shows until the own stars of the user exist. A
+        # bare watch (a Plex viewing, an unrated import) still shows it.
         if (row is None or row.rating is None) and not flagged:
             score = scores.get(movie_id)
             if score is not None:
                 estimated = estimated_rating(profile, score)
         recent_label = (recent.get(movie_id) or {}).get("label")
         if movie_id in owned_fold_ids:
-            # Ownership gates the folds: only the local file's own
-            # arrival goes green, and the red fold never paints
+            # Ownership gates the folds. Only the arrival of the local
+            # file itself goes green. The red fold never paints.
             fold_new = recent_label if recent_label == NEW_IN_LIBRARY_LABEL else None
             fold_leaving = None
         else:
@@ -1419,8 +1448,10 @@ def movie_states():
 @bp.route("/leaving")
 @login_required
 def leaving():
-    """The complete leaving-Criterion departure inventory: every film
-    on the month's leaving page, owned and seen included."""
+    """Render the complete leaving-Criterion departure inventory.
+
+    This is every film on the leaving page of the month, with the owned
+    and seen films included."""
 
     return render_template(
         "leaving.html",
@@ -1432,10 +1463,11 @@ def leaving():
 @bp.route("/newly-added")
 @login_required
 def newly_added():
-    """The complete newly-added inventory (#246): every recent arrival
-    on every provider's feed, owned and seen included — the shelf's
-    "See more…" destination, with the provider's own page linked from
-    each section."""
+    """Render the complete newly-added inventory (#246).
+
+    This is every recent arrival on the feed of every provider, with the
+    owned and seen films included. It is the "See more…" destination of
+    the shelf. Each section links to the own page of the provider."""
 
     return render_template(
         "newly_added.html",
@@ -1448,9 +1480,10 @@ WATCHLIST_BUCKETS = ("all", "local", "services", "rent", "unavailable")
 
 
 def watchlist_bucket(row):
-    """The one exclusive availability bucket a watchlist row files
-    under — owned beats streaming beats renting — or None while the
-    film's availability is still being fetched."""
+    """Return the one exclusive availability bucket of a watchlist row.
+
+    Owned outranks streaming. Streaming outranks renting. The result is
+    None while the fetch of the availability of the film continues."""
 
     if row["owned"]:
         return "local"
@@ -1466,15 +1499,17 @@ def watchlist_bucket(row):
 @bp.route("/watchlist", methods=["GET", "POST"])
 @login_required
 def watchlist():
-    """The user's want-to-watch list: the funnel stage before the
-    shopping list. Availability is still batch-warmed here so each
-    tile's popover — where the badges live since Glenn's Aug 2026
-    revision — answers "how can I watch this" from a hot cache."""
+    """Render the want-to-watch list of the user.
 
-    # The availability filter: default ALL, narrowable to one
-    # exclusive bucket of the list — the removal redirect keeps it in
-    # place. The title and runtime filters (#216/#195) ride the same
-    # query string and survive the redirect the same way
+    This is the funnel stage before the shopping list. This page still
+    warms the availability in a batch. Thus, the popover of each tile
+    answers "how can I watch this" from a hot cache. The badges live in
+    the popover since the revision of Glenn in 2026-08."""
+
+    # The availability filter: the default is ALL. The user can narrow
+    # it to one exclusive bucket of the list. The removal redirect keeps
+    # the filter in place. The title and runtime filters (#216/#195) go
+    # with the same query string. They survive the redirect the same way.
 
     availability_filter = request.args.get("availability", "all")
     if availability_filter not in WATCHLIST_BUCKETS:
@@ -1492,8 +1527,8 @@ def watchlist():
     ):
         clear_watchlist(current_user.id, watchlist_form.movie_id.data)
         db.session.commit()
-        # A background post from the tile (#187) wants JSON state, not
-        # a redirect — the client clears the tile itself
+        # A background post from the tile (#187) wants the JSON state,
+        # not a redirect. The client clears the tile itself.
         if _card_fetch():
             return jsonify({"on_watchlist": False})
         flash("Removed from your watchlist", "success")
@@ -1508,8 +1543,9 @@ def watchlist():
             )
         )
 
-    # contains_eager rides the join: without it every entry.movie below
-    # lazy-loads its own row — 400 queries on a 400-film list
+    # contains_eager goes with the join. Without it, every entry.movie
+    # below lazy-loads its own row. That is 400 queries on a 400-film
+    # list.
 
     entries = (
         UserWatchlist.query.filter_by(user_id=int(current_user.id))
@@ -1519,11 +1555,11 @@ def watchlist():
         .all()
     )
 
-    # Availability like the other list surfaces: cache-only, from the
-    # store the nightly refresh keeps full; anything uncached (a film
-    # added since last night) is warmed in the background, never
-    # fetched inline — fifty fetches under the rate limiter cost this
-    # page four seconds before Aug 2026
+    # The availability works like the other list surfaces. It is
+    # cache-only, from the store that the nightly refresh keeps full.
+    # Fitzflix warms an uncached film (a film added since last night) in
+    # the background. It never fetches inline. 50 fetches under the rate
+    # limiter cost this page 4 seconds before 2026-08.
 
     provider_ids = user_provider_ids(current_user)
     availability_by_id = {}
@@ -1547,8 +1583,8 @@ def watchlist():
                 ),
             )
 
-    # Owned films badge with the library mark, so owned-wanted and
-    # unowned-wanted read at a glance
+    # Owned films show the library mark. Thus, the user can separate
+    # owned-wanted and unowned-wanted at a glance.
 
     owned_ids = {
         movie_id
@@ -1557,8 +1593,9 @@ def watchlist():
         .filter(Movie.files.any(File.feature_type_id.is_(None)))
     }
 
-    # The ad-hoc Radarr hand-off: admins get request/withdraw
-    # entries on unowned tiles' Find menus, from the hour-cached id set
+    # The ad-hoc Radarr hand-off: admins get request and withdraw
+    # entries on the Find menus of unowned tiles, from the hour-cached
+    # id set.
 
     radarr_ids = (
         radarr_tmdb_ids() if current_user.admin and radarr_configured() else set()
@@ -1572,8 +1609,8 @@ def watchlist():
         rentals = []
         if provider_ids and movie.tmdb_id:
             availability = availability_by_id.get(movie.tmdb_id)
-            # Owned rows skip the leaving/newly-added annotations —
-            # the copy on the shelf isn't going anywhere
+            # Owned rows skip the leaving and newly-added annotations.
+            # The copy on the shelf does not go anywhere.
             streaming = streaming_matches(
                 availability,
                 provider_ids,
@@ -1589,11 +1626,11 @@ def watchlist():
                 "owned": movie.id in owned_ids,
                 "streaming": streaming,
                 "rentals": rentals,
-                # Warming state: a film whose availability hasn't
-                # been fetched yet can't be classified for the
-                # streaming/rental filters — it must be reported as
-                # pending, never silently dropped. Films without a
-                # tmdb_id are known-negative, not pending
+                # The warming state: Fitzflix cannot classify a film for
+                # the streaming and rental filters before it fetches the
+                # availability. It must report the film as pending. It
+                # must never drop it silently. A film without a tmdb_id
+                # is known-negative, not pending.
                 "availability_pending": bool(
                     not (movie.id in owned_ids)
                     and provider_ids
@@ -1604,23 +1641,23 @@ def watchlist():
             }
         )
 
-    # The filter semantics (Glenn's Aug 2026 revision): the four
-    # buckets are exclusive — every film lands in exactly one, by the
-    # best way to watch it. LOCAL = owned library files, whatever else
-    # carries the film; ON MY SERVICES = unowned, on a subscribed
-    # streaming service (a rental listing too doesn't move it); FOR
-    # RENT = unowned, rentable, and on no subscribed service;
-    # UNAVAILABLE = none of the above with the availability actually
-    # known. A film still warming has no bucket: it's reported as
-    # pending rather than filed as unavailable
+    # The filter semantics (the revision of Glenn in 2026-08): the 4
+    # buckets are exclusive. Every film goes into exactly one bucket, by
+    # the best way to watch it. LOCAL = owned library files, whatever
+    # else carries the film. ON MY SERVICES = unowned, on a subscribed
+    # streaming service. An additional rental listing does not move it.
+    # FOR RENT = unowned, rentable, and on no subscribed service.
+    # UNAVAILABLE = none of the above, with the availability known. A
+    # film that still warms has no bucket. Fitzflix reports it as
+    # pending. It does not file it as unavailable.
 
     for row in rows:
         row["bucket"] = watchlist_bucket(row)
 
-    # Title and runtime narrow the list before the buckets count, so
-    # the pills always add up within the current search. Runtime
-    # semantics match the landing page: films that fit the evening,
-    # with unknown runtimes hidden only from filtered views
+    # The title and runtime filters narrow the list before the buckets
+    # count. Thus, the pills always add up in the current search. The
+    # runtime semantics match the landing page: films that fit the
+    # evening, with unknown runtimes hidden only from filtered views.
 
     total = len(rows)
     if q:
@@ -1655,8 +1692,8 @@ def watchlist():
         minutes=minutes,
         total=total,
         counts=counts,
-        # The warming note only matters where unfetched films are
-        # actually hidden — every view but ALL and IN LIBRARY
+        # The warming note matters only where unfetched films are hidden.
+        # That is every view except ALL and IN LIBRARY.
         pending=(
             pending if availability_filter in ("services", "rent", "unavailable") else 0
         ),
@@ -1672,21 +1709,23 @@ def watchlist():
 @login_required
 @admin_required
 def radarr_request():
-    """The ad-hoc Radarr hand-off: request one unowned film for
-    download — a deliberate per-film action from the Find menu on the
-    movie page or a watchlist tile, never automatic (an auto-sync of
-    the whole watchlist would fill the volume). The withdraw branch
-    has no UI since Glenn dropped the Un-request entry (Aug 2026) —
-    films are removed in Radarr itself — but stays as the route-level
-    counterpart. An `origin` query param carries where the visitor
-    came from, validated to a local path."""
+    """Request one unowned film for download through Radarr.
+
+    This is the ad-hoc Radarr hand-off. It is a per-film action that
+    the user takes on purpose from the Find menu on the movie page or a
+    watchlist tile. It is never automatic. An auto-sync of the whole
+    watchlist would fill the volume. The withdraw branch has no UI
+    since Glenn removed the Un-request entry (2026-08). The user
+    removes films in Radarr itself. But the branch stays as the
+    route-level counterpart. An `origin` query param carries where the
+    visitor came from. Fitzflix validates it to a local path."""
 
     radarr_form = RadarrForm()
     origin = request.args.get("origin", "", type=str)
     if not origin.startswith("/") or origin.startswith("//"):
         origin = None
     if not radarr_form.validate_on_submit() or not radarr_form.movie_id.data:
-        flash("That Radarr request didn't make sense", "warning")
+        flash("That Radarr request was not valid.", "warning")
         return redirect(origin or url_for("main.index"))
     movie = Movie.query.filter_by(id=radarr_form.movie_id.data).first_or_404()
     dest = redirect(origin or url_for("main.movie", movie_id=movie.id))
@@ -1696,10 +1735,10 @@ def radarr_request():
     )
 
     if not radarr_configured():
-        flash("Radarr isn't configured, so films can't be requested.", "warning")
+        flash("Radarr is not configured. Fitzflix cannot request films.", "warning")
         return dest
     if not movie.tmdb_id:
-        flash(f"'{title}' has no TMDB id, so Radarr can't look it up.", "warning")
+        flash(f"'{title}' has no TMDB id. Radarr cannot find it.", "warning")
         return dest
 
     try:
@@ -1715,8 +1754,8 @@ def radarr_request():
                 return dest
             request_movie(movie.tmdb_id)
             flash(
-                f"Requested '{title}' via Radarr — when a download lands "
-                f"it imports automatically.",
+                f"Requested '{title}' through Radarr. When the download "
+                f"arrives, Fitzflix imports it automatically.",
                 "success",
             )
         elif radarr_form.radarr_remove_submit.data:
@@ -1726,19 +1765,21 @@ def radarr_request():
         flash(str(e), "warning")
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        flash("Radarr couldn't be reached; try again in a moment.", "danger")
+        flash("Fitzflix could not reach Radarr. Try again in a moment.", "danger")
     return dest
 
 
 @bp.route("/recommendations")
 @login_required
 def recommendations():
-    """The Recommendations page (#235): shelves of unseen films keyed
-    by shared criteria — genres, keywords, awards won, people — each
-    anchored by two films the user has expressed interest in (or
-    occasionally one, #249). Every reload draws a fresh set of
-    shelves; acting on a suggestion swaps just that film through the
-    tile endpoint below. This page replaced the old /rate drive."""
+    """Render the Recommendations page (#235).
+
+    The page shows shelves of unseen films keyed by shared criteria:
+    genres, keywords, awards won, and people. Two films that the user
+    showed interest in anchor each shelf (or sometimes 1 film, #249).
+    Every reload draws a new set of shelves. An action on a suggestion
+    replaces only that film, through the tile endpoint below. This page
+    replaced the old /rate drive."""
 
     built = build_shelves(current_user)
     wanted = {
@@ -1751,8 +1792,9 @@ def recommendations():
         for movie in Movie.query.filter(Movie.id.in_(list(wanted) or [0]))
     }
 
-    # The genres a copref shelf's anchors share, named for its subtitle
-    # (Glenn, Aug 30 2026) — resolved in one query across all shelves
+    # The genres that the anchors of a copref shelf share, named for its
+    # subtitle (Glenn, 2026-08-30). One query resolves them across all
+    # shelves.
 
     shared_ids = {
         genre_id for shelf in built for genre_id in shelf.get("shared_genre_ids", ())
@@ -1806,11 +1848,13 @@ def recommendations():
 @bp.route("/recommendations/tile")
 @login_required
 def recommendations_tile():
-    """One replacement tile for a Recommendations shelf slot: the next
-    eligible film matching the shelf's criteria that isn't already on
-    the page. ?criteria= carries the shelf's comma-joined feature keys
-    and ?exclude= the movie ids currently showing; 204 means the
-    criteria set is exhausted and the slot should close up."""
+    """Render one replacement tile for a Recommendations shelf slot.
+
+    The tile is the next eligible film that matches the criteria of the
+    shelf and that is not already on the page. ?criteria= carries the
+    comma-joined feature keys of the shelf. ?exclude= carries the movie
+    ids that show now. A 204 means that the criteria set is exhausted.
+    Then the slot must close."""
 
     criteria = parse_criteria(request.args.get("criteria"))
     if criteria is None:
@@ -1831,29 +1875,30 @@ def recommendations_tile():
 @bp.route("/review/tmdb/<int:tmdb_id>", methods=["GET", "POST"])
 @login_required
 def review_tmdb(tmdb_id):
-    """Review a film that isn't in the library, looked up on TMDB.
+    """Review a film that is not in the library, looked up on TMDB.
 
-    Reviewing creates a review-only movie record — enriched afterwards
-    through the standard TMDB refresh pipeline — so the film shows up in
-    search and filmographies like any other seen-but-unowned title. Films
-    already in the library redirect to their movie page, which has the
-    same review form.
+    The review creates a review-only movie record. The standard TMDB
+    refresh pipeline enriches it afterwards. Thus, the film shows in
+    search and in filmographies like every other seen-but-unowned title.
+    A film already in the library redirects to its movie page. That page
+    has the same review form.
     """
 
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
     if movie:
-        # A live ladder tap aimed here after the record appeared (the
-        # landing card's first tap creates it) forwards with the method
-        # and body intact — 307, not 302 — so the movie route's full
-        # ladder handling (re-rate, toggle-off, ✕) takes over; poster-
-        # card watchlist toggles (#45c) forward the same way
+        # A live ladder tap can aim here after the record appeared (the
+        # first tap on the landing card creates the record). Fitzflix
+        # forwards it with the method and body intact (307, not 302).
+        # Thus, the full ladder handling of the movie route (re-rate,
+        # toggle-off, ✕) takes over. Poster-card watchlist toggles (#45c)
+        # forward the same way.
 
         if (_ladder_fetch() or _card_fetch()) and request.method == "POST":
             return redirect(url_for("main.movie", movie_id=movie.id), code=307)
         return redirect(url_for("main.movie", movie_id=movie.id))
 
     if not current_app.config["TMDB_API_KEY"]:
-        flash("TMDB_API_KEY is not configured, so TMDB can't be queried.", "warning")
+        flash("TMDB_API_KEY is not configured. Fitzflix cannot query TMDB.", "warning")
         return redirect(url_for("main.history"))
 
     try:
@@ -1868,13 +1913,13 @@ def review_tmdb(tmdb_id):
         r.raise_for_status()
     except Exception:
         current_app.logger.warning(traceback.format_exc())
-        flash("TMDB could not be reached; try again in a moment.", "warning")
+        flash("Fitzflix could not reach TMDB. Try again in a moment.", "warning")
         return redirect(url_for("main.history"))
 
     details = r.json()
 
-    # Runtime, genres, US certification, and top billing, mirroring what
-    # the movie page shows for library films
+    # The runtime, genres, US certification, and top billing. This
+    # mirrors what the movie page shows for library films.
 
     genres = [
         (g.get("id"), g.get("name"))
@@ -1895,8 +1940,8 @@ def review_tmdb(tmdb_id):
         key=lambda person: person.get("order", 99),
     )
 
-    # The filmography page serves any TMDB person id, so every cast member
-    # links whether or not they have local credit rows
+    # The filmography page serves every TMDB person id. Thus, every cast
+    # member links, with or without local credit rows.
 
     cast = [
         {
@@ -1909,8 +1954,8 @@ def review_tmdb(tmdb_id):
         if person.get("id") is not None
     ]
 
-    # (person id, name) pairs for the directed-by line, matching the
-    # movie page; the filmography route serves any TMDB person id
+    # The (person id, name) pairs for the directed-by line. This matches
+    # the movie page. The filmography route serves every TMDB person id.
 
     directors = []
     for person in (details.get("credits") or {}).get("crew") or []:
@@ -1922,15 +1967,16 @@ def review_tmdb(tmdb_id):
     release_year = (details.get("release_date") or "")[:4]
     if not film_title or not release_year.isdigit():
         flash(
-            "TMDB has no title or release year for that film yet, so it "
-            "can't be reviewed.",
+            "TMDB has no title or release year for that film yet. Fitzflix "
+            "cannot review it.",
             "warning",
         )
         return redirect(url_for("main.history"))
     year = int(release_year)
 
-    # Watchlist add: creates the same review-only record a log would, so
-    # the film is enriched and first-class from the moment it's wanted
+    # The watchlist add creates the same review-only record that a log
+    # creates. Thus, the film is enriched and first-class from the moment
+    # the user wants it.
 
     watchlist_form = WatchlistForm()
     if watchlist_form.add_watchlist_submit.data and watchlist_form.validate_on_submit():
@@ -1957,8 +2003,9 @@ def review_tmdb(tmdb_id):
         flash(f"Added '{film_title} ({year})' to your watchlist", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # Like the movie page, the date starts blank — a date-less verdict
-    # by default, with the field there when the date is actually known
+    # The date starts blank, the same as on the movie page. The default
+    # is a verdict without a date. The field is there when the user knows
+    # the date.
 
     movie_review_form = MovieReviewForm()
     quick_present, quick_rating = _quick_rating()
@@ -1966,14 +2013,14 @@ def review_tmdb(tmdb_id):
         movie_review_form.review_submit.data or quick_present
     ) and movie_review_form.validate_on_submit():
         if quick_present and quick_rating is None:
-            flash("That rating didn't make sense", "warning")
+            flash("That rating is not valid.", "warning")
             return redirect(url_for("main.review_tmdb", tmdb_id=tmdb_id))
         movie, created = find_or_create_tmdb_movie(
             tmdb_id, film_title, year, details=details
         )
 
-        # The ladder's ✕ is the not-interested flag, never a
-        # review — same flow as the dedicated button below
+        # The ✕ of the ladder is the not-interested flag, never a
+        # review. This is the same flow as the dedicated button below.
 
         if quick_present and quick_rating == 0:
             if _mark_not_interested(current_user.id, movie.id):
@@ -1989,13 +2036,13 @@ def review_tmdb(tmdb_id):
                 _enqueue_profile_recompute()
                 if not _ladder_fetch():
                     flash(
-                        f"Got it — '{film_title} ({year})' won't be recommended",
+                        f"Fitzflix will not recommend '{film_title} ({year})'.",
                         "info",
                     )
             elif not _ladder_fetch():
                 flash(
-                    f"You've logged '{film_title} ({year})' — the lowest "
-                    f"rating for a seen film is 1 star",
+                    f"You logged '{film_title} ({year})'. The lowest "
+                    f"rating for a seen film is 1 star.",
                     "warning",
                 )
             if _ladder_fetch():
@@ -2003,17 +2050,17 @@ def review_tmdb(tmdb_id):
             return redirect(url_for("main.movie", movie_id=movie.id))
 
         rating = quick_rating
-        # A bare submission (no rating or text) is a plain diary
-        # entry — a watch, not a review — so it carries no review date.
-        # Rewatch is computed the way Plex watches compute it: any earlier
-        # row for this user and film makes this a repeat viewing.
+        # A bare submission (no rating or text) is a plain diary entry.
+        # It is a watch, not a review. Thus, it carries no review date.
+        # Fitzflix computes rewatch the way it does for Plex watches. An
+        # earlier row for this user and film makes this a repeat viewing.
 
         is_review = bool(
             rating is not None or (movie_review_form.review.data or "").strip()
         )
 
-        # A repeat star tap on a film already reviewed today corrects
-        # that review in place — same rule as the movie page
+        # A second star tap on a film already reviewed today corrects
+        # that review in place. This is the same rule as on the movie page.
 
         edited = None
         if (
@@ -2048,11 +2095,11 @@ def review_tmdb(tmdb_id):
         clear_not_interested(current_user.id, movie.id)
         db.session.commit()
         if rating is not None:
-            # The redirect lands on the movie page, where a positive
-            # rating earns the "since you liked…" strip (a just-created
-            # record has no features yet, so its strip stays empty
-            # until the enrichment lands — harmless). A poster-card
-            # rating (#45c) never moves the drive's anchor
+            # The redirect goes to the movie page. There, a positive
+            # rating gets the "since you liked…" strip. A new record has
+            # no features yet. Thus, its strip stays empty until the
+            # enrichment arrives. This is harmless. A poster-card rating
+            # (#45c) never moves the anchor of the drive.
             if not request.form.get("from_card"):
                 set_last_response(
                     current_app.redis,
@@ -2081,11 +2128,12 @@ def review_tmdb(tmdb_id):
             flash(f"Logged '{film_title} ({year})' in your history", "success")
         return redirect(url_for("main.movie", movie_id=movie.id))
 
-    # The engine's preview, as on the movie page: the shared score
-    # source's TMDB-keyed lane feeds the ladder's estimate (a record-less
-    # film can't have the user's own stars yet), and "Might interest you"
-    # keeps the coarse-scorer rule the TMDB search results use — minus
-    # the person term, since there's no person context here either
+    # The preview of the engine, as on the movie page. The TMDB-keyed
+    # lane of the shared score source feeds the estimate of the ladder.
+    # A film with no record cannot have the own stars of the user yet.
+    # "Might interest you" keeps the coarse-scorer rule that the TMDB
+    # search results use, minus the person term, because there is no
+    # person context here.
 
     estimated = None
     might_interest = False
@@ -2101,8 +2149,8 @@ def review_tmdb(tmdb_id):
         )
         might_interest = coarse > marker_bar(profile)
 
-    # A movie-shaped stand-in so the shared store-search dropdown and the
-    # external-site links render for a film with no local record
+    # A movie-shaped stand-in. Thus, the shared store-search dropdown and
+    # the external-site links render for a film with no local record.
 
     store_lookup = SimpleNamespace(
         title=film_title,

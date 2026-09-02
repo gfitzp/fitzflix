@@ -137,7 +137,7 @@ def test_flag_refuses_a_record_that_left_the_list(app, admin_client):
         },
         follow_redirects=True,
     )
-    assert "isn&#39;t awaiting TMDB triage" in response.get_data(as_text=True)
+    assert "is not waiting for TMDB triage" in response.get_data(as_text=True)
     with app.app_context():
         record = db.session.get(Movie, matched_id)
         assert record.tmdb_ignored is False

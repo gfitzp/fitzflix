@@ -1,6 +1,7 @@
-"""Operations pages (the routes.py split): system health, scheduled
-tasks, library maintenance, triage surfaces, the queue, and the
-pipeline trails."""
+"""Serve the operations pages (the split from routes.py).
+
+The pages are the system health, the scheduled tasks, the library
+maintenance, the triage pages, the queue, and the pipeline trails."""
 
 import os
 import shutil
@@ -19,7 +20,7 @@ from flask import (
     request,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
 from app import db, enqueue_import_scan
@@ -76,7 +77,7 @@ from rq.registry import FailedJobRegistry
 @login_required
 @admin_required
 def system():
-    """System status: health, worker and scheduler state, and failed jobs."""
+    """Show the system status: health, worker and scheduler state, and failed jobs."""
 
     queues_by_name = {
         queue.name: queue
@@ -90,7 +91,7 @@ def system():
         )
     }
 
-    # Form to requeue or forget a failed background job
+    # This form requeues or forgets a failed background job
 
     failed_job_form = FailedJobForm()
     if (
@@ -124,8 +125,8 @@ def system():
             if job is None:
                 continue
 
-            # rq 2's stored Result carries the structured error;
-            # exc_info remains as the fallback for older failures
+            # The stored Result of rq 2 has the structured error. exc_info
+            # stays as the fallback for older failures
 
             error = ""
             try:
@@ -147,8 +148,9 @@ def system():
                     "error": error,
                 }
             )
-    # rq 2 job timestamps are timezone-aware, so the missing-date fallback
-    # must be aware too or the sort can't compare them
+    # The job timestamps of rq 2 are timezone-aware. Thus, the fallback for
+    # a missing date must also be aware. Otherwise, the sort cannot compare
+    # them
 
     failed_jobs.sort(
         key=lambda job: job["failed_at"] or datetime.min.replace(tzinfo=timezone.utc),
@@ -168,10 +170,10 @@ def system():
 
 
 def _scheduled_tasks():
-    """Status of the recurring scheduled tasks, for the polled fragment.
+    """Return the status of the recurring scheduled tasks, for the polled fragment.
 
-    The schedulers share one scheduled-jobs set, so each scheduler's
-    results are filtered to its own queue.
+    The schedulers share 1 set of scheduled jobs. Thus, this function
+    filters the results of each scheduler to its own queue.
     """
 
     scheduled_tasks = []
@@ -185,24 +187,25 @@ def _scheduled_tasks():
                     "name": meta.get("description") or cron_job.func_name,
                     "schedule": _cron_description(cron_string),
                     "cron_string": cron_string,
-                    # rq.cron records enqueue times, so "last ran" means
-                    # "last started" now, not "last finished"
+                    # rq.cron records the enqueue times. Thus, "last ran"
+                    # now means "last started", not "last finished"
                     "last_run": _naive_utc(cron_job.latest_enqueue_time),
                     "next_run": _naive_utc(next_run),
                     "next_run_text": _next_run_text(_naive_utc(next_run)),
                 }
             )
 
-    # Most-frequent first (Glenn's ordering): every-X-minutes by X,
-    # hourly by minute, daily by time, weekly by day and time, monthly by
-    # day-of-month and time
+    # The most frequent task is first (order requested by Glenn). The
+    # every-X-minutes tasks sort by X, the hourly tasks by minute, the
+    # daily tasks by time, the weekly tasks by day and time, and the
+    # monthly tasks by day of month and time
 
     scheduled_tasks.sort(key=lambda task: _cron_frequency_key(task["cron_string"]))
     return scheduled_tasks
 
 
-# cron counts day-of-week from Sunday, and accepts 7 as a second
-# spelling of it
+# cron counts the day of week from Sunday. It also accepts 7 as a
+# second spelling of Sunday
 
 _WEEKDAY_NAMES = (
     "Sunday",
@@ -214,8 +217,8 @@ _WEEKDAY_NAMES = (
     "Saturday",
 )
 
-# How a within-the-hour schedule reads out loud: "Twice hourly at :20
-# and :50". Counts past twelve keep the numeral ("13 times hourly")
+# This is the wording of a schedule inside the hour: "Twice hourly at
+# :20 and :50". A count above 12 keeps the numeral ("13 times hourly")
 
 _TIMES_PER_HOUR = {
     2: "Twice",
@@ -233,15 +236,16 @@ _TIMES_PER_HOUR = {
 
 
 def _cron_description(cron_string):
-    """Human-readable text for a five-field cron string: "Daily at
-    1:45 AM", "Four times hourly at :03, :18, :33, and :48".
+    """Return readable text for a 5-field cron string.
 
-    Generated rather than looked up. The map this replaces had drifted
-    nine schedules behind the cron table (app/__init__.py), because a
-    lookup only stays right if whoever adds a job remembers to add a
-    second line here. Grammar the rules below don't cover — ranges,
-    hour steps, a month field — falls back to the raw cron string,
-    which is terse but never wrong.
+    Examples: "Daily at 1:45 AM", "Four times hourly at :03, :18, :33,
+    and :48". This function generates the text. It does not look it
+    up. The map that it replaced was 9 schedules behind the cron table
+    (app/__init__.py). A lookup stays correct only if the person who
+    adds a job remembers to add a second line here. If the rules below
+    do not cover the grammar (ranges, hour steps, a month field), the
+    function returns the raw cron string. That string is short but
+    never wrong.
     """
 
     try:
@@ -281,9 +285,11 @@ def _cron_description(cron_string):
 
 
 def _within_the_hour_text(minute):
-    """Text for a schedule whose hour field is a wildcard — a step
-    ("Every 10 minutes") or the minutes it lands on ("Hourly at :30").
-    None when the field uses syntax past a step or a plain list."""
+    """Return the text for a schedule whose hour field is a wildcard.
+
+    The text is a step ("Every 10 minutes") or the minutes of the
+    schedule ("Hourly at :30"). Return None if the field uses syntax
+    other than a step or a plain list."""
 
     if minute == "*":
         return "Every minute"
@@ -305,8 +311,10 @@ def _within_the_hour_text(minute):
 
 
 def _cron_field_values(field):
-    """The plain integers a cron field lists, or None if it uses any
-    syntax past a comma-separated list — a wildcard, range, or step."""
+    """Return the plain integers that a cron field lists.
+
+    Return None if the field uses syntax other than a comma-separated
+    list (a wildcard, a range, or a step)."""
 
     try:
         return [int(value) for value in field.split(",")]
@@ -315,8 +323,10 @@ def _cron_field_values(field):
 
 
 def _and_list(items):
-    """Join items the way the schedule text reads them: "a and b" for
-    two, and an Oxford-comma list for three or more."""
+    """Join the items in the style of the schedule text.
+
+    The text is "a and b" for 2 items, and a list with an Oxford comma
+    for 3 or more items."""
 
     if len(items) == 2:
         return " and ".join(items)
@@ -326,9 +336,10 @@ def _and_list(items):
 
 
 def _clock_text(hour, minute):
-    """A 24-hour cron time as the page says it: "1:45 AM", or the words
-    for the two times that have them. None if either field is out of
-    range."""
+    """Return a 24-hour cron time in the style of the page.
+
+    The text is "1:45 AM", or a word for the 2 times that have one.
+    Return None if a field is out of range."""
 
     if not 0 <= hour <= 23 or not 0 <= minute <= 59:
         return None
@@ -340,8 +351,9 @@ def _clock_text(hour, minute):
 
 
 def _ordinal(number):
-    """1 -> "1st", 18 -> "18th": the day-of-month in a monthly
-    schedule's description."""
+    """Return the ordinal of a day of month for a monthly schedule.
+
+    Examples: 1 -> "1st", 18 -> "18th"."""
 
     if 11 <= number % 100 <= 13:
         suffix = "th"
@@ -351,8 +363,10 @@ def _ordinal(number):
 
 
 def _naive_utc(when):
-    """rq.cron hands back timezone-aware UTC datetimes; the relative and
-    tooltip renderers speak naive-UTC like the rest of rq."""
+    """Convert a timezone-aware UTC datetime to naive UTC.
+
+    rq.cron returns timezone-aware UTC datetimes. The relative-time and
+    tooltip renderers use naive UTC, like the rest of rq."""
 
     if when is None:
         return None
@@ -362,9 +376,11 @@ def _naive_utc(when):
 
 
 def _cron_frequency_key(cron_string):
-    """Sort key for the scheduled-tasks table: frequency class first
-    (every-X-minutes, hourly, daily, weekly, monthly), then the class's
-    own parameter — X, the minute, the time, the day+time."""
+    """Return the sort key for the scheduled-tasks table.
+
+    The frequency class comes first (every-X-minutes, hourly, daily,
+    weekly, monthly). Then comes the parameter of the class (X, the
+    minute, the time, or the day and time)."""
 
     try:
         minute, hour, dom, _, dow = cron_string.split()
@@ -382,11 +398,14 @@ def _cron_frequency_key(cron_string):
 
 
 def _local_time_text(when):
-    """A naive-UTC timestamp (rq job and scheduler times) rendered in
-    the server's local zone for mouseover tooltips — the server shares
-    a household, and therefore a timezone, with its viewers. Matches
-    moment.js's LLL format so the queue table's browser-local tooltips
-    and these server-local ones read identically."""
+    """Render a naive-UTC timestamp in the local zone of the server.
+
+    The rq job and scheduler times are naive UTC. The mouseover
+    tooltips show them in the local zone of the server. The server is
+    in the same household as its viewers. Thus, it is in the same
+    timezone. The format matches the LLL format of moment.js. Thus,
+    the browser-local tooltips of the queue table and these
+    server-local tooltips look the same."""
 
     if when is None:
         return ""
@@ -395,13 +414,14 @@ def _local_time_text(when):
 
 
 def _next_run_text(next_run):
-    """Render a task's next-run time without ever calling it the past.
+    """Render the next-run time of a task. Never call it the past.
 
-    A due job's stored time sits in the past until the scheduler's next
-    tick (60s interval) moves it onto the queue and re-computes the
-    following run, so the 5s poll routinely catches slightly-past values:
-    those are "due now". Older than a couple of ticks means the scheduler
-    has actually stalled, which the health card's badge also shows.
+    The stored time of a due job is in the past until the next tick of
+    the scheduler (60 s interval). That tick moves the job onto the
+    queue and computes the next run. Thus, the 5 s poll frequently
+    sees a value a little in the past. Those values are "due now". A
+    value older than 2 ticks means that the scheduler stalled. The
+    badge of the health card also shows this.
     """
 
     if next_run.tzinfo is None:
@@ -415,18 +435,20 @@ def _next_run_text(next_run):
 
 
 def _relative_time(moment_dt):
-    """Coarse relative-time text: '4 minutes ago', or 'in 4 minutes' for
-    future times like a task's next run.
+    """Return coarse relative-time text.
 
-    The health fragment is re-rendered by every poll, so server-side text
-    stays current without flask-moment — whose scripts wouldn't re-run
-    inside swapped-in HTML anyway.
+    Examples: '4 minutes ago', or 'in 4 minutes' for a future time such
+    as the next run of a task. Each poll renders the health fragment
+    again. Thus, the server-side text stays current without
+    flask-moment. The scripts of flask-moment would not run again
+    inside swapped-in HTML in any case.
     """
 
     if moment_dt.tzinfo is None:
         moment_dt = moment_dt.replace(tzinfo=timezone.utc)
-    # round(), not int(): truncation toward zero would undercount future
-    # spans ("in 3 days" minus a microsecond is still 3 days, not 2)
+    # Use round(), not int(). Truncation toward zero would undercount the
+    # future spans ("in 3 days" minus 1 microsecond is still 3 days, not
+    # 2)
     seconds = round((datetime.now(timezone.utc) - moment_dt).total_seconds())
     future = seconds < 0
     seconds = abs(seconds)
@@ -448,11 +470,11 @@ def _relative_time(moment_dt):
 @login_required
 @admin_required
 def system_metrics():
-    """The live health fragment the System page's poller swaps in.
+    """Return the live health fragment that the poller of the System page swaps in.
 
-    Everything rendered here reads Redis or the local filesystem; the
-    external-service badges come from the health_probe task's snapshot, so
-    polling generates no external traffic.
+    All content rendered here reads Redis or the local filesystem. The
+    external-service badges come from the snapshot of the health_probe
+    task. Thus, the polling makes no external traffic.
     """
 
     fragment = render_template(
@@ -471,19 +493,23 @@ def system_metrics():
 @login_required
 @admin_required
 def maintenance():
-    """Library maintenance: rejected-file triage, duplicate movies, the
-    filename tester, and the library-wide bulk operations."""
+    """Show the library maintenance page.
 
-    # Form to update the Criterion Collection information for the entire movie library
+    The page has the rejected-file triage, the duplicate movies, the
+    filename tester, and the bulk operations for the whole library."""
+
+    # This form updates the Criterion Collection information for the whole
+    # movie library
 
     criterion_refresh_form = CriterionRefreshForm()
     if (
         criterion_refresh_form.criterion_refresh.data
         and criterion_refresh_form.validate_on_submit()
     ):
-        # On the user-request queue, like the monthly scheduled refresh runs
-        # on maintenance: the forced Wikidata fetch would otherwise block
-        # the single sql worker on network I/O
+        # This job goes on the user-request queue. The monthly scheduled
+        # refresh runs on the maintenance queue in the same way. Otherwise,
+        # the forced Wikidata fetch would block the single sql worker on
+        # network I/O
 
         current_app.request_queue.enqueue(
             "app.videos.refresh_criterion_collection_info",
@@ -498,13 +524,14 @@ def maintenance():
         )
         return redirect(url_for("main.maintenance"))
 
-    # Form to update the TMDB data for the entire library, both movies and TV shows
+    # This form updates the TMDB data for the whole library, both movies
+    # and TV shows
 
     tmdb_refresh_form = TMDBRefreshForm()
     if tmdb_refresh_form.tmdb_refresh.data and tmdb_refresh_form.validate_on_submit():
-        # Records detached from TMDB (#207) are left out: refresh_tmdb_info
-        # would decline them anyway, and a title search is exactly what
-        # detaching them was meant to prevent
+        # This excludes the records detached from TMDB (#207).
+        # refresh_tmdb_info would refuse them in any case. The detachment
+        # exists to prevent a title search
 
         movies = (
             Movie.query.filter(Movie.tmdb_ignored == False)
@@ -517,9 +544,9 @@ def maintenance():
             .all()
         )
 
-        # On the user-request queue: each job is a TMDB API call plus
-        # artwork downloads, and thousands of them would starve the single
-        # sql worker of import work for the whole run
+        # These jobs go on the user-request queue. Each job is a TMDB API
+        # call plus artwork downloads. Thousands of them would block the
+        # import work of the single sql worker for the whole run
 
         for movie in movies:
             current_app.request_queue.enqueue(
@@ -560,7 +587,7 @@ def maintenance():
 
         return redirect(url_for("main.maintenance"))
 
-    # Form to rescan metadata for all the files
+    # This form scans the metadata of all files again
 
     metadata_scan_form = TrackMetadataScanForm()
 
@@ -585,10 +612,11 @@ def maintenance():
         flash("Manually scanning import directory for files", "info")
         return redirect(url_for("main.maintenance"))
 
-    # Form to merge a group of movies that share a TMDB id: each duplicate
-    # is fed through refresh_tmdb_info, whose merge path (serialized with
-    # the import pipeline by title locks) moves files and reviews to the
-    # oldest record and deletes the duplicate
+    # This form merges a group of movies that share a TMDB id. Each
+    # duplicate goes through refresh_tmdb_info. Its merge path moves the
+    # files and the reviews to the oldest record and deletes the
+    # duplicate. Title locks serialize the merge path with the import
+    # pipeline
 
     movie_merge_form = MovieMergeForm()
     if movie_merge_form.merge_submit.data and movie_merge_form.validate_on_submit():
@@ -620,7 +648,8 @@ def maintenance():
             )
         return redirect(url_for("main.maintenance"))
 
-    # Form to preview how a filename would be parsed and filed on import
+    # This form shows how Fitzflix would parse and file a filename on
+    # import
 
     filename_test_form = FilenameTestForm()
     filename_test_result = None
@@ -658,12 +687,14 @@ def maintenance():
 @login_required
 @admin_required
 def runtime_triage():
-    """Triage files whose estimated length disagrees with their film's
-    TMDb runtime (#234) — the shape of a title collision at capture
-    time, or a truncated download. The page lists the estimate's
-    ingredients; Acknowledge accepts a known-benign mismatch (a
-    full-disc rip, a deliberately longer recording) so it stops
-    reappearing. Re-importing the file clears the acknowledgement."""
+    """Triage the files whose estimated length differs from the TMDb runtime (#234).
+
+    This is the shape of a title collision at capture time, or of a
+    truncated download. The page lists the inputs of the estimate.
+    Acknowledge accepts a mismatch that is known to be harmless (a
+    full-disc rip, or a recording that is longer by design). Then the
+    file no longer appears. A new import of the file clears the
+    acknowledgement."""
 
     form = RuntimeMismatchForm()
     if form.acknowledge_submit.data and form.validate_on_submit() and form.file_id.data:
@@ -674,8 +705,8 @@ def runtime_triage():
         file.runtime_mismatch_reviewed = datetime.now()
         db.session.commit()
         flash(
-            f"Acknowledged '{file.plex_title}' — its length is accepted "
-            f"as-is until the file is replaced",
+            f"Acknowledged '{file.plex_title}'. Its length is accepted "
+            f"as it is until the file is replaced",
             "success",
         )
         return redirect(url_for("main.runtime_triage"))
@@ -689,10 +720,11 @@ def runtime_triage():
 
 
 def _tmdb_unmatched():
-    """The records still sitting at a NULL tmdb_id without the ignored
-    flag — the rows the TMDB triage page (#226) exists to empty, and
-    the population the maintenance page's bulk refresh would otherwise
-    answer with a blind title search."""
+    """Return the records that still have a NULL tmdb_id and no ignored flag.
+
+    These are the rows that the TMDB triage page (#226) exists to
+    remove. Without the triage, the bulk refresh of the maintenance
+    page would answer them with a blind title search."""
 
     movies = (
         Movie.query.filter(Movie.tmdb_id.is_(None), Movie.tmdb_ignored.isnot(True))
@@ -713,12 +745,14 @@ def _tmdb_unmatched():
 @login_required
 @admin_required
 def tmdb_triage():
-    """Triage records with no TMDB match (#226): every movie and series
-    still at a NULL tmdb_id without the ignored flag, with per-row
-    actions — flag it as unmatchable through the Remove button's clear
-    path, or match it to an id entered by hand. Every action removes a
-    row, so the list is naturally self-emptying; a newly imported
-    record only appears here if its title search missed."""
+    """Triage the records with no TMDB match (#226).
+
+    The page lists each movie and series that still has a NULL tmdb_id
+    and no ignored flag. Each row has 2 actions. The first flags the
+    record as unmatchable through the clear path of the Remove button.
+    The second matches the record to an id typed by hand. Each action
+    removes a row. Thus, the list empties itself. A new imported record
+    appears here only if its title search found nothing."""
 
     form = TMDBTriageForm()
     if form.validate_on_submit() and (form.flag_submit.data or form.lookup_submit.data):
@@ -731,11 +765,11 @@ def tmdb_triage():
             record = db.session.get(TVSeries, form.series_id.data)
             library = "TV Shows"
 
-        # A record that gained an id (or the flag) since the page
-        # rendered has left the list — never flag a matched record
+        # A record that got an id (or the flag) after the page rendered
+        # is no longer on the list. Never flag a matched record
 
         if record is None or record.tmdb_id is not None or record.tmdb_ignored:
-            flash("That record isn't awaiting TMDB triage.", "warning")
+            flash("That record is not waiting for TMDB triage.", "warning")
             return redirect(url_for("main.tmdb_triage"))
 
         display = (
@@ -749,7 +783,7 @@ def tmdb_triage():
                 record.tmdb_tv_clear()
             db.session.commit()
             flash(
-                f"Flagged '{display}' as unmatchable; no refresh will "
+                f"Flagged '{display}' as unmatchable. No refresh will "
                 f"search TMDB for it again",
                 "success",
             )
@@ -759,11 +793,11 @@ def tmdb_triage():
             flash(f"Enter a TMDB ID to match '{display}'.", "warning")
             return redirect(url_for("main.tmdb_triage"))
 
-        # The movie/TV pages' by-hand match, minus their redirect
-        # gymnastics: enqueue the refresh at the front of the queue and
-        # give it a moment to apply so the row is gone on reload. If
-        # the id already belongs to another record, the refresh's merge
-        # path folds this one into it
+        # This is the by-hand match of the movie and TV pages, without
+        # their complex redirects. Enqueue the refresh at the front of the
+        # queue. Then give it a moment to apply. Thus, the row is gone on
+        # reload. If the id already belongs to a different record, the
+        # merge path of the refresh merges this record into it
 
         refresh_job = current_app.sql_queue.enqueue(
             "app.videos.refresh_tmdb_info",
@@ -780,7 +814,7 @@ def tmdb_triage():
             flash(f"Matched '{display}' to TMDB id {form.tmdb_id.data}", "success")
         else:
             flash(
-                f"Still refreshing TMDB data for '{display}' — reload in " f"a moment",
+                f"Still refreshing TMDB data for '{display}'. Reload in a moment",
                 "info",
             )
         return redirect(url_for("main.tmdb_triage"))
@@ -800,22 +834,22 @@ def tmdb_triage():
 @login_required
 @admin_required
 def subtitle_triage(file_id):
-    """Triage subtitle tracks that look forced but aren't flagged.
+    """Triage the subtitle tracks that look forced but have no flag.
 
-    A file can hide more than one forced track, so candidates carry
-    checkboxes and the selected set is flagged in one mkvpropedit
-    invocation, preserving the file's current defaults; dismissing
-    marks the whole file's subtitles as reviewed. Either action retires
-    the file's inspection aids.
+    A file can hide more than 1 forced track. Thus, the candidates have
+    checkboxes. One mkvpropedit call flags the selected set. It keeps
+    the current defaults of the file. Dismiss marks the subtitles of
+    the whole file as reviewed. Both actions delete the inspection aids
+    of the file.
 
-    With a file_id the page shows ONE file's candidates — the
-    all-files page loads every pending file's snapshots at once, so
-    the per-file view is the fast path from a file's own page. An
-    `origin` query param carries where the visitor came from; actions
-    redirect back there.
+    With a file_id, the page shows the candidates of ONE file. The
+    all-files page loads the snapshots of each pending file at the same
+    time. Thus, the per-file view is the fast path from the page of a
+    file. An `origin` query param records where the visitor came from.
+    The actions redirect back to that page.
     """
 
-    # Only ever bounce to a local path — an absolute or scheme-relative
+    # Redirect only to a local path. An absolute or scheme-relative
     # origin would be an open redirect
 
     origin = request.args.get("origin", "", type=str)
@@ -823,14 +857,18 @@ def subtitle_triage(file_id):
         origin = None
 
     def done():
-        """After a successful action: back to the origin page, or the
-        triage list the form lived on."""
+        """Redirect after a successful action.
+
+        The target is the origin page, or the triage list that had the
+        form."""
 
         return redirect(origin or url_for("main.subtitle_triage", file_id=file_id))
 
     def stay():
-        """After a refused action: back to the same triage view,
-        keeping the origin for the next attempt."""
+        """Redirect after a refused action.
+
+        The target is the same triage view. This keeps the origin for
+        the next attempt."""
 
         return redirect(url_for("main.subtitle_triage", file_id=file_id, origin=origin))
 
@@ -844,13 +882,13 @@ def subtitle_triage(file_id):
             FileSubtitleTrack.file_id == file.id,
         ).all()
         if not tracks:
-            flash("Select at least one track to flag as forced.", "warning")
+            flash("Select at least 1 track to flag as forced.", "warning")
             return stay()
 
         if file.container != "Matroska":
             flash(
-                f"'{file.basename}' isn't an MKV file, so its subtitle flags "
-                f"can't be edited in place.",
+                f"'{file.basename}' is not an MKV file. Fitzflix cannot edit "
+                f"its subtitle flags in place.",
                 "danger",
             )
             return stay()
@@ -860,8 +898,8 @@ def subtitle_triage(file_id):
             flash(f"'{file.basename}' is not present locally.", "warning")
             return stay()
 
-        # Preserve the file's current selections, adding the selected
-        # tracks to the forced set — one mkvpropedit invocation per file
+        # Keep the current selections of the file. Add the selected tracks
+        # to the forced set. This is 1 mkvpropedit call per file
 
         audio_default = FileAudioTrack.query.filter_by(
             file_id=file.id, default=True
@@ -920,8 +958,8 @@ def subtitle_triage(file_id):
     candidates = forced_subtitle_candidates(file_id=file_id)
 
     # The inspection aids (cue timelines, burned-in snapshots) are the
-    # expensive part, and only the per-file view renders them —
-    # the all-files page is just the worklist of links
+    # expensive part. Only the per-file view renders them. The all-files
+    # page is only the worklist of links
 
     if focus_file:
         for entry in candidates:
@@ -951,22 +989,22 @@ def subtitle_triage(file_id):
 @login_required
 @admin_required
 def lossy_audio_triage(file_id):
-    """Triage files whose first audio track is lossy while a lossless
-    track rides behind (#212).
+    """Triage the files whose first audio track is lossy with a lossless track behind it (#212).
 
-    Promoting a lossless track enqueues the same mkvpropedit task the
-    file page's default-audio radio uses — a non-first default audio
-    track triggers the remux that puts it in the lead — preserving the
-    file's subtitle defaults and forced flags; "Keep as-is" records
-    that the pairing is not redundant (a commentary, say) so the file
-    stops reappearing. The listening-clip comparison (#223) is the
-    evidence for that call, generated proactively on import and on
-    demand here.
+    The promotion of a lossless track enqueues the same mkvpropedit
+    task that the default-audio radio of the file page uses. A default
+    audio track that is not first starts the remux that puts it in the
+    lead. The task keeps the subtitle defaults and the forced flags of
+    the file. "Keep as-is" records that the pair is not redundant (for
+    example, a commentary). Then the file no longer appears. The
+    listening-clip comparison (#223) is the evidence for that
+    decision. Fitzflix makes it in advance on import, and on demand
+    here.
 
-    Same page split as the subtitle triage: the all-files page is the
-    worklist, the per-file view carries the clips and forms, and an
-    `origin` query param bounces actions back where the visitor
-    came from.
+    The page split is the same as in the subtitle triage. The all-files
+    page is the worklist. The per-file view has the clips and the
+    forms. An `origin` query param redirects the actions back to the
+    page that the visitor came from.
     """
 
     origin = request.args.get("origin", "", type=str)
@@ -995,8 +1033,8 @@ def lossy_audio_triage(file_id):
 
         if file.container != "Matroska":
             flash(
-                f"'{file.basename}' isn't an MKV file, so its tracks can't "
-                f"be reordered in place.",
+                f"'{file.basename}' is not an MKV file. Fitzflix cannot "
+                f"reorder its tracks in place.",
                 "danger",
             )
             return stay()
@@ -1006,8 +1044,8 @@ def lossy_audio_triage(file_id):
             flash(f"'{file.basename}' is not present locally.", "warning")
             return stay()
 
-        # Preserve the file's current subtitle selections; the promoted
-        # track becomes the default audio, and mkvpropedit's remux pass
+        # Keep the current subtitle selections of the file. The promoted
+        # track becomes the default audio. The remux pass of mkvpropedit
         # moves it into the lead
 
         subtitle_default = FileSubtitleTrack.query.filter_by(
@@ -1038,8 +1076,8 @@ def lossy_audio_triage(file_id):
             description=f"'{file.basename}'",
         )
 
-        # The remux renumbers tracks, so every aid set pictures streams
-        # that are about to move — drop them all
+        # The remux renumbers the tracks. Thus, each aid set shows streams
+        # that will move. Delete all of them
 
         remove_triage_snapshots(file.id)
         flash(
@@ -1071,8 +1109,8 @@ def lossy_audio_triage(file_id):
             description=f"Audio comparison for '{file.basename}'",
         )
         flash(
-            f"Generating listening clips for '{file.basename}' — they'll "
-            f"appear here once the transcode queue gets to it",
+            f"Generating listening clips for '{file.basename}'. They appear "
+            f"here when the transcode queue runs the job",
             "info",
         )
         return stay()
@@ -1082,8 +1120,8 @@ def lossy_audio_triage(file_id):
     )
     candidates = lossy_audio_candidates(file_id=file_id)
 
-    # The listening clips are the expensive part, and only the per-file
-    # view renders them — the all-files page is just the worklist
+    # The listening clips are the expensive part. Only the per-file view
+    # renders them. The all-files page is only the worklist
 
     if focus_file:
         for entry in candidates:
@@ -1107,10 +1145,10 @@ def lossy_audio_triage(file_id):
 
 
 def _duplicate_movie_groups():
-    """Movies sharing a TMDB id, each group oldest-first.
+    """Return the groups of movies that share a TMDB id, oldest first in each group.
 
-    The oldest record is the one refresh_tmdb_info keeps when merging, so
-    the first movie in each group is the survivor.
+    refresh_tmdb_info keeps the oldest record when it merges. Thus, the
+    first movie in each group is the one that stays.
     """
 
     duplicated_ids = [
@@ -1135,7 +1173,7 @@ def _duplicate_movie_groups():
 
 
 def _rejected_files():
-    """Every real file under the rejects directory, newest first."""
+    """Return each real file under the rejects directory, newest first."""
 
     rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
     entries = []
@@ -1156,12 +1194,12 @@ def _rejected_files():
                     "basename": name,
                     "reason": os.path.dirname(relative_path) or "unknown",
                     "size": stats.st_size,
-                    # ctime, not mtime: the move into the rejects tree
-                    # updates the inode change time, while both rename
-                    # and copy2 PRESERVE the file's own (possibly
-                    # years-old) mtime — and the SMB share refuses
-                    # utime, so stamping at reject time isn't an
-                    # option (the Army of Darkness report)
+                    # Use ctime, not mtime. The move into the rejects
+                    # tree updates the inode change time. But rename and
+                    # copy2 both KEEP the mtime of the file. That mtime
+                    # can be years old. The SMB share refuses utime. Thus,
+                    # Fitzflix cannot set a time at reject time (the
+                    # Army of Darkness report)
                     "rejected_at": datetime.fromtimestamp(stats.st_ctime, timezone.utc),
                 }
             )
@@ -1173,10 +1211,10 @@ def _rejected_files():
 @login_required
 @admin_required
 def rejects():
-    """Triage rejected files: send them back for re-import, or delete them.
+    """Triage the rejected files: send them back for import, or delete them.
 
-    Re-importing is just a move into the import directory — the filesystem
-    watcher and the hourly sweep take it from there.
+    A new import is only a move into the import directory. The
+    filesystem watcher and the hourly sweep do the rest.
     """
 
     rejects_dir = os.path.realpath(current_app.config["REJECTS_DIR"])
@@ -1184,7 +1222,7 @@ def rejects():
 
     if form.validate_on_submit():
         # The posted path must resolve to a real file inside the rejects
-        # directory: no traversal, no symlink escapes
+        # directory. No traversal and no symlink escape is permitted
 
         requested = os.path.realpath(os.path.join(rejects_dir, form.file_path.data))
         if not requested.startswith(rejects_dir + os.sep) or not os.path.isfile(
@@ -1204,8 +1242,8 @@ def rejects():
             destination = os.path.join(current_app.config["IMPORT_DIR"], basename)
             if os.path.exists(destination):
                 flash(
-                    f"'{basename}' already exists in the import directory; "
-                    f"not overwriting it.",
+                    f"'{basename}' already exists in the import directory. "
+                    f"Fitzflix did not overwrite it.",
                     "danger",
                 )
                 return redirect(url_for("main.rejects"))
@@ -1215,8 +1253,8 @@ def rejects():
             )
             flash(f"Moved '{basename}' to the import directory.", "success")
 
-        # Tidy the reason folder if this was its last file (never the
-        # rejects directory itself)
+        # Remove the reason folder if this was its last file. Never remove
+        # the rejects directory
 
         reason_dir = os.path.dirname(requested)
         if reason_dir != rejects_dir:
@@ -1238,9 +1276,9 @@ def rejects():
 @bp.route("/queue")
 @login_required
 def queue():
-    """Show a list of all localization and transcode tasks in queue.
+    """Show a list of all localization and transcode tasks in the queue.
 
-    See api.queue_details for how the queue is generated.
+    See api.queue_details for the generation of the queue.
     """
 
     return render_template("queue.html", title="Queue")
@@ -1252,8 +1290,8 @@ def queue():
 def files():
     """Show a list of all the files in the library.
 
-    An admin page (#186 follow-up): a whole-library file inventory whose
-    every row links into the file management pages."""
+    This is an admin page (follow-up to #186). It is a file inventory
+    of the whole library. Each row links to the file management pages."""
 
     page = request.args.get("page", 1, type=int)
     q = request.args.get("q", None, type=str)
@@ -1286,13 +1324,13 @@ def files():
         .subquery()
     )
 
-    # A lossy FIRST track flags a file — except the E-AC-3 Atmos twin
-    # leading the Atmos pipeline's trio (#55b), which is deliberate:
-    # DD+ Atmos first for Apple TV passthrough, the lossless original
-    # riding behind. Those files are configured exactly as wanted, so
-    # they're not lossless-upgrade candidates (#212). atmos imports
-    # lazily like its other callers — it resolves the worker app
-    # singleton at module import time
+    # A lossy FIRST track flags a file. The exception is the E-AC-3 Atmos
+    # twin that leads the 3-track set of the Atmos pipeline (#55b). That
+    # is by design. DD+ Atmos is first for Apple TV passthrough, and the
+    # lossless original is behind it. Those files are configured exactly
+    # as wanted. Thus, they are not lossless-upgrade candidates (#212).
+    # The atmos import is lazy, like in its other callers. It resolves
+    # the worker app singleton at module import time
 
     from app.atmos import EAC3_ATMOS_CODEC
 

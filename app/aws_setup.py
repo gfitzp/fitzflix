@@ -1,17 +1,19 @@
-"""Idempotent provisioning of the AWS pieces Fitzflix depends on.
+"""Provision the AWS components that Fitzflix depends on. This is idempotent.
 
-`flask aws provision` drives this. Each step reports what it found and
-only creates or updates what's missing, so running it against an already
-configured account is safe — existing lifecycle rules and notification
-configurations are always preserved and appended to, never replaced.
+`flask aws provision` runs this module. Each step reports what it
+found. It creates or updates only the components that are missing.
+Thus, a run against an account that is already configured is safe.
+The module always keeps the existing lifecycle rules and notification
+configurations. It appends to them. It never replaces them.
 
-Because S3 configuration reads are eventually consistent, a read-modify-
-write can be handed a stale, partial view and faithfully write it back —
-which is how a set of hand-made lifecycle rules was once lost (restored
-from a survey taken minutes earlier). Two defenses now apply: the
-as-found configuration is saved to a timestamped snapshot file before any
-write, and a run that finds fewer lifecycle rules than the newest
-snapshot recorded refuses to write without --force.
+S3 configuration reads are eventually consistent. Thus, a
+read-modify-write step can get a stale, partial view and write it
+back. This is how a set of hand-made lifecycle rules was lost 1 time.
+Fitzflix restored them from a survey taken some minutes before. Two
+defenses now apply. First, the module saves the configuration as found
+to a snapshot file with a timestamp before each write. Second, if a
+run finds fewer lifecycle rules than the newest snapshot recorded, it
+refuses to write without --force.
 """
 
 import glob
@@ -25,22 +27,22 @@ ABORT_RULE_ID = "fitzflix-abort-incomplete-multipart"
 TRANSITION_RULE_ID = "fitzflix-untouched-to-deep-archive"
 NOTIFICATION_ID = "fitzflix-restore-completed"
 
-# Failed multipart uploads (a killed backup upload, a dropped connection
-# mid-archive) hold invisible, billable parts until aborted; one day gives
-# any legitimate retry time to finish
+# A failed multipart upload (a killed backup upload, or a dropped
+# connection during an archive) holds invisible parts that AWS bills
+# until an abort. One day gives a legitimate retry the time to complete
 
 ABORT_AFTER_DAYS = 1
 
-# How long a deleted or replaced original's previous version stays
-# recoverable. Deep Archive bills a 180-day minimum storage duration, so
-# expiring noncurrent versions any sooner costs exactly the same in
-# early-deletion fees — 180 days is the largest recovery window that's
-# free relative to any shorter setting
+# This is the time that the previous version of a deleted or replaced
+# original stays recoverable. Deep Archive bills a minimum storage
+# duration of 180 days. Thus, to expire the noncurrent versions sooner
+# costs exactly the same in early-deletion fees. 180 days is the largest
+# recovery window that is free compared with a shorter setting
 
 UNTOUCHED_NONCURRENT_RETENTION_DAYS = 180
 
-# Replaced posters churn small noncurrent versions on every change; a
-# month is plenty of time to undo a poster mistake
+# A replaced poster makes a small noncurrent version on each change. One
+# month is sufficient time to undo a poster mistake
 
 CUSTOM_POSTERS_NONCURRENT_RETENTION_DAYS = 30
 
@@ -48,19 +50,21 @@ CUSTOM_POSTERS_RULE_ID = "fitzflix-custom-posters-noncurrent"
 
 
 class StaleReadSuspected(Exception):
-    """The bucket reported fewer lifecycle rules than the newest snapshot
-    knows about — writing now could persist a stale partial read."""
+    """The bucket reported fewer lifecycle rules than the newest snapshot.
+
+    A write now could make a stale partial read permanent."""
 
 
 def _snapshot_dir(config):
-    """Where provision snapshots live, beside the application log."""
+    """Return the directory of the provision snapshots, beside the app log."""
 
     return os.path.join(os.path.dirname(config["LOG_FILE"]), "aws-snapshots")
 
 
 def _save_snapshot(config, payload):
-    """Write the as-found AWS configuration to a timestamped snapshot
-    file; returns its path.
+    """Write the AWS configuration as found to a snapshot file.
+
+    The file name has a timestamp. This function returns the path.
     """
 
     directory = _snapshot_dir(config)
@@ -72,8 +76,9 @@ def _save_snapshot(config, payload):
 
 
 def _newest_snapshot_rule_count(config):
-    """The lifecycle-rule count the newest snapshot recorded, or None
-    when no snapshots exist yet.
+    """Return the lifecycle-rule count that the newest snapshot recorded.
+
+    Return None if no snapshot exists yet.
     """
 
     snapshots = sorted(glob.glob(os.path.join(_snapshot_dir(config), "*.json")))
@@ -84,10 +89,10 @@ def _newest_snapshot_rule_count(config):
 
 
 def provision(config, s3, sqs, echo=print, force=False):
-    """Ensure the bucket, its rules, the queue, and the wiring all exist.
+    """Make sure that the bucket, its rules, the queue, and the wiring exist.
 
-    Returns a list of (component, status) pairs, status being "present",
-    "created", or "updated".
+    This function returns a list of (component, status) pairs. The
+    status is "present", "created", or "updated".
     """
 
     bucket = config["AWS_BUCKET"]
@@ -97,7 +102,7 @@ def provision(config, s3, sqs, echo=print, force=False):
         results.append((component, status))
         echo(f"{status.upper():>8}  {component}")
 
-    # 1. The bucket itself
+    # 1. The bucket
 
     try:
         s3.head_bucket(Bucket=bucket)
@@ -112,7 +117,8 @@ def provision(config, s3, sqs, echo=print, force=False):
         s3.create_bucket(**create_args)
         report(f"bucket {bucket}", "created")
 
-    # 2. Versioning: the recovery layer for deleted or overwritten objects
+    # 2. Versioning. This is the recovery layer for deleted or overwritten
+    # objects
 
     versioning = s3.get_bucket_versioning(Bucket=bucket).get("Status")
     if versioning == "Enabled":
@@ -123,7 +129,7 @@ def provision(config, s3, sqs, echo=print, force=False):
         )
         report("bucket versioning", "created" if versioning is None else "updated")
 
-    # 3. Lifecycle rules, appended to whatever already exists
+    # 3. The lifecycle rules. Fitzflix appends them to the rules that exist
 
     try:
         rules = s3.get_bucket_lifecycle_configuration(Bucket=bucket)["Rules"]
@@ -132,8 +138,8 @@ def provision(config, s3, sqs, echo=print, force=False):
             raise
         rules = []
 
-    # Guard against acting on a stale partial read, then record the
-    # as-found configuration before anything modifies it
+    # Prevent an action on a stale partial read. Then record the
+    # configuration as found before a step modifies it
 
     known_count = _newest_snapshot_rule_count(config)
     if known_count is not None and len(rules) < known_count and not force:
@@ -154,9 +160,10 @@ def provision(config, s3, sqs, echo=print, force=False):
 
     changed = False
 
-    # 3a. A bucket-wide abort for incomplete multipart uploads: the
-    # per-prefix rules a bucket may already carry don't cover prefixes
-    # added later (backup/, for one), so this rule filters on nothing
+    # 3a. A bucket-wide abort for incomplete multipart uploads. A bucket
+    # can already have per-prefix rules. Those rules do not cover the
+    # prefixes added later (for example backup/). Thus, this rule has no
+    # filter
 
     if any(rule.get("ID") == ABORT_RULE_ID for rule in rules):
         report("lifecycle: bucket-wide incomplete-multipart abort", "present")
@@ -174,8 +181,9 @@ def provision(config, s3, sqs, echo=print, force=False):
         changed = True
         report("lifecycle: bucket-wide incomplete-multipart abort", "created")
 
-    # 3b. Transition archived originals to Glacier Deep Archive on arrival.
-    # Detected by content, not rule id — an existing hand-made rule counts
+    # 3b. Move the archived originals to Glacier Deep Archive on arrival.
+    # Fitzflix detects the rule by content, not by rule id. Thus, an
+    # existing hand-made rule counts
 
     untouched_prefix = f"{config['AWS_UNTOUCHED_PREFIX']}/"
 
@@ -203,10 +211,10 @@ def provision(config, s3, sqs, echo=print, force=False):
         changed = True
         report(f"lifecycle: {untouched_prefix} Deep Archive transition", "created")
 
-    # Once a deleted object's noncurrent versions expire, its delete
-    # marker is all that remains; expired-marker cleanup removes those.
-    # Only set where it wouldn't conflict — AWS forbids combining it with
-    # a Days/Date expiration in the same rule
+    # After the noncurrent versions of a deleted object expire, only its
+    # delete marker remains. The expired-marker cleanup removes those
+    # markers. Set it only where it does not conflict. AWS does not permit
+    # it together with a Days/Date expiration in the same rule
 
     marker_label = f"lifecycle: {untouched_prefix} expired delete-marker cleanup"
     expiration = untouched_rule.get("Expiration", {})
@@ -219,10 +227,10 @@ def provision(config, s3, sqs, echo=print, force=False):
         changed = True
         report(marker_label, "updated")
 
-    # 3c. Noncurrent-version retention on that rule: versioning is what
-    # makes a deleted or replaced original recoverable, and this is how
-    # long the recovery window stays open. Raised when shorter, left
-    # alone when someone configured longer
+    # 3c. The noncurrent-version retention on that rule. Versioning makes
+    # a deleted or replaced original recoverable. This value is the time
+    # that the recovery window stays open. Fitzflix increases it if it is
+    # shorter. It does not change it if a person configured a longer time
 
     retention_label = (
         f"lifecycle: {untouched_prefix} noncurrent-version retention "
@@ -238,8 +246,8 @@ def provision(config, s3, sqs, echo=print, force=False):
         changed = True
         report(retention_label, "created" if current_days is None else "updated")
 
-    # 3d. Noncurrent-version retention for the custom posters mirror,
-    # detected by content so a hand-made rule counts
+    # 3d. The noncurrent-version retention for the custom posters mirror.
+    # Fitzflix detects it by content. Thus, a hand-made rule counts
 
     posters_prefix = f"{config['AWS_CUSTOM_POSTERS_PREFIX']}/"
     posters_label = (
@@ -294,7 +302,7 @@ def provision(config, s3, sqs, echo=print, force=False):
     queue_arn = attributes["QueueArn"]
     bucket_arn = f"arn:aws:s3:::{bucket}"
 
-    # 4b. The queue must let S3 deliver to it
+    # 4b. The queue must permit S3 to deliver messages to it
 
     policy = json.loads(
         attributes.get("Policy") or '{"Version": "2012-10-17", "Statement": []}'
@@ -323,8 +331,8 @@ def provision(config, s3, sqs, echo=print, force=False):
         )
         report("sqs queue policy allows S3", "updated")
 
-    # 5. The bucket's restore-completed event notification, merged into
-    # whatever notification configurations already exist
+    # 5. The restore-completed event notification of the bucket. Fitzflix
+    # merges it into the notification configurations that exist
 
     notification = s3.get_bucket_notification_configuration(Bucket=bucket)
     notification.pop("ResponseMetadata", None)

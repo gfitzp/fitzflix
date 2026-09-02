@@ -1,39 +1,45 @@
-"""Watchlist availability alerts (#156/#230).
+"""Send the watchlist availability alerts (#156, #230).
 
-Watchlisting a film is a "tell me when I can watch this" intent, so a
-nightly task diffs each watchlisted film's availability against a
-stored snapshot and tells the watchers what changed. Three triggers:
+A watchlist entry means "tell me when I can watch this film". Thus, a
+nightly task compares the availability of each watchlisted film with a
+stored snapshot. Then it tells the watchers what changed. There are 3
+triggers:
 
-- The film's first copy arrives in the library. Upgrades of an
-  already-owned film stay silent — the snapshot diff is on set
-  membership (owned at all), so a replaced file never fires.
-- The film turns up on a flat-rate service the user subscribes to
-  (free-with-ads counts too, matching streaming_matches everywhere
-  else). The diff is per film against the nightly availability cache,
-  so this generalizes issue #156's Criterion-specific "newly added"
-  signal to every service on the user's profile.
-- The film becomes rentable on one of the user's services — an
-  additional per-user opt-in, since a rental is an extra fee and only
-  reads as "available" if the user says so.
+- The first copy of the film arrives in the library. An upgrade of a
+  film that the user already owns sends nothing. The snapshot compares
+  set membership (owned or not owned). Thus, a replaced file never
+  triggers an alert.
+- The film appears on a flat-rate service that the user subscribes to.
+  A free-with-ads service counts too. This matches streaming_matches
+  in all other places. The comparison is per film against the nightly
+  availability cache. Thus, this extends the Criterion-only "newly
+  added" signal of issue #156 to each service on the profile of the
+  user.
+- The film becomes rentable on one of the services of the user. This
+  is a second per-user opt-in. A rental is an extra fee. Thus, it only
+  counts as "available" if the user says so.
 
-Plus the leaving-Criterion urgency case from #156: a watchlisted,
-unowned film in the stored leaving set warns Criterion subscribers
-when the set is first stored and again inside the final week.
+There is also the leaving-Criterion urgency case from #156. A
+watchlisted film that the user does not own can be in the stored
+leaving set. Then Fitzflix warns the Criterion subscribers when it
+first stores the set, and again inside the final week.
 
-Delivery is one batched digest email per user per run — never a mail
-per film — and strictly opt-in (User.notify_availability, the first
-per-user mail besides password resets), with the Profile page as the
-unsubscribe path. Every event also stamps a per-user "recently
-available" record that the watchlist page renders as a badge for a
-month, opted in or not. A Redis marker per user/film/event kind
-dedups across runs, so an availability flap can't re-mail.
+Delivery is 1 batched digest email per user per run. Fitzflix never
+sends a mail per film. The mail is strictly opt-in
+(User.notify_availability). It is the first per-user mail other than
+the password reset. The Profile page is the unsubscribe path. Each
+event also stamps a per-user "recently available" record. The
+watchlist page shows that record as a badge for 1 month, opted in or
+not. A Redis marker per user, film, and event kind removes duplicates
+across runs. Thus, an availability flap cannot send the mail again.
 
-Snapshot rules, in the Plex-history-poller tradition: a film seen for
-the first time (new to the snapshot, or newly watchlisted) only
-plants its entry — no notification for what was already true when the
-user started watching for it. A film whose availability is uncached
-tonight keeps its previous entry untouched, so a cache gap can't
-manufacture a false "newly available" when the payload returns.
+The snapshot rules follow the Plex history poller. A film that
+Fitzflix sees for the first time (new to the snapshot, or newly
+watchlisted) only plants its entry. Fitzflix sends no notification for
+a condition that was already true when the user started to watch for
+it. If the availability of a film is not cached tonight, its previous
+entry stays as it is. Thus, a cache gap cannot make a false "newly
+available" event when the payload returns.
 """
 
 import json
@@ -54,8 +60,9 @@ from app.streaming import (
     user_provider_ids,
 )
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, the nightly task can run on a worker and not build a second
+# application.
 
 app = LocalProxy(get_app)
 
@@ -64,48 +71,51 @@ OWNED_KEY = "fitzflix:availability:owned-movies"
 SENT_KEY = "fitzflix:availability:notified:{user_id}:{movie_id}:{kind}"
 RECENT_KEY = "fitzflix:availability:recent:{user_id}"
 
-# The dedup horizon: long enough that a service dropping and re-adding
-# a film (or a library file replaced in place) can't re-mail, short
-# enough that a genuine re-arrival a year later reads as news again
+# This is the dedup horizon. It is long enough that a service that
+# drops and adds a film again cannot send the mail again. The same
+# applies to a library file replaced in place. It is short enough that
+# a real arrival 1 year later counts as news again.
 
 SENT_SECONDS = 180 * 86400
 LEAVING_SENT_SECONDS = 60 * 86400
 
-# How long the watchlist badge calls an event "recent", and the badge
-# store's own expiry (a margin past the badge window so pruning has
-# something to prune, but an abandoned account's key still dies)
+# RECENT_DAYS is how long the watchlist badge calls an event "recent".
+# RECENT_KEY_SECONDS is the expiry of the badge store. It is a margin
+# past the badge window. Thus, the prune step has something to prune,
+# but the key of an abandoned account still expires.
 
 RECENT_DAYS = 31
 RECENT_KEY_SECONDS = 45 * 86400
 
 LEAVING_SOON_DAYS = 7
 
-# The local-arrival badge label. Shared because ownership gates the
-# poster folds (Glenn, Aug 27 2026): an owned film's only green fold
-# is this one — a service arrival or feed arrival never folds a film
-# whose copy is already on the shelf
+# This is the badge label for a local arrival. It is shared because
+# ownership gates the poster folds (requested by Glenn, 2026-08-27).
+# This is the only green fold of an owned film. A service arrival or a
+# feed arrival never folds a film that is already on the shelf.
 
 NEW_IN_LIBRARY_LABEL = "New in library"
 
 
 def _text(value):
-    """A str from a Redis-returned field that may be bytes."""
+    """Return a str from a Redis field that can be bytes."""
 
     return value.decode() if isinstance(value, bytes) else value
 
 
 def snapshot_provider_diff(tmdb_ids):
-    """(newly_streaming, newly_rentable, provider_names) for the given
-    films, updating the stored snapshot in place.
+    """Return (newly_streaming, newly_rentable, provider_names).
 
-    The first two map tmdb_id -> the set of provider ids that appeared
-    since the last run, split by kind: "streaming" is flatrate plus
-    free-with-ads (the streaming_matches definition), "rentable" is
-    the rent list. provider_names maps provider id -> display name,
-    from the registry plus the payloads themselves. Films new to the
-    snapshot only plant their entry; films with no cached availability
-    keep their previous entry and produce no diff; snapshot entries
-    for films nobody watchlists anymore are pruned.
+    This also updates the stored snapshot in place. The first 2 values
+    map tmdb_id to the set of provider ids that appeared after the last
+    run. They are split by kind. "streaming" is flatrate plus
+    free-with-ads (the streaming_matches definition). "rentable" is the
+    rent list. provider_names maps a provider id to a display name. The
+    names come from the registry and from the payloads. A film that is
+    new to the snapshot only plants its entry. A film with no cached
+    availability keeps its previous entry and makes no diff. This
+    prunes the snapshot entries of the films that nobody watchlists
+    now.
     """
 
     redis = current_app.redis
@@ -161,10 +171,13 @@ def snapshot_provider_diff(tmdb_ids):
 
 
 def snapshot_owned_diff():
-    """(owned, newly_owned): every movie id with a main-feature file,
-    and the ones that gained their first since the stored snapshot —
-    membership diff only, so an upgraded copy of an owned film never
-    counts. The first run plants the snapshot and reports nothing."""
+    """Return (owned, newly_owned).
+
+    owned is each movie id with a main-feature file. newly_owned is the
+    movie ids that got their first file after the stored snapshot. This
+    compares membership only. Thus, an upgraded copy of an owned film
+    never counts. The first run plants the snapshot and reports
+    nothing."""
 
     redis = current_app.redis
     owned = {
@@ -181,8 +194,10 @@ def snapshot_owned_diff():
 
 
 def _leaving_set():
-    """(tmdb ids, departure date) of the stored leaving-Criterion set
-    while its departure hasn't passed; (set(), None) otherwise."""
+    """Return (tmdb ids, departure date) of the stored leaving set.
+
+    This applies to the leaving-Criterion set if its departure date has
+    not passed. In all other cases, return (set(), None)."""
 
     from app.leaving_criterion import LEAVING_KEY
 
@@ -200,8 +215,10 @@ def _leaving_set():
 
 
 def _first_event(user_id, movie_id, kind, ttl=SENT_SECONDS):
-    """True exactly once per user/film/kind inside the dedup horizon —
-    the Redis marker that keeps a flapping provider from re-mailing."""
+    """Return True 1 time per user, film, and kind in the dedup horizon.
+
+    This is the Redis marker that prevents a second mail from a
+    provider that flaps."""
 
     return bool(
         current_app.redis.set(
@@ -214,8 +231,10 @@ def _first_event(user_id, movie_id, kind, ttl=SENT_SECONDS):
 
 
 def _record_recent(user_id, movie_id, label):
-    """Stamp one film recently-available for this user's watchlist
-    badge, with today's date so the badge ages out after RECENT_DAYS."""
+    """Stamp one film as recently available for the watchlist badge.
+
+    The stamp has the date of today. Thus, the badge expires after
+    RECENT_DAYS."""
 
     key = RECENT_KEY.format(user_id=int(user_id))
     current_app.redis.hset(
@@ -227,8 +246,10 @@ def _record_recent(user_id, movie_id, label):
 
 
 def recent_availability(user):
-    """{movie_id: {"date", "label"}} for this user's events inside the
-    badge window, pruning aged-out entries as it reads."""
+    """Return {movie_id: {"date", "label"}} for the events of the user.
+
+    This includes only the events in the badge window. It prunes the
+    expired entries as it reads."""
 
     key = RECENT_KEY.format(user_id=int(user.id))
     cutoff = date.today() - timedelta(days=RECENT_DAYS)
@@ -245,8 +266,10 @@ def recent_availability(user):
 
 
 def _provider_labels(provider_ids, names):
-    """The display names for a set of provider ids, alphabetical, as
-    one comma-joined string; the raw id stands in for a nameless one."""
+    """Return the display names of a set of provider ids as one string.
+
+    The names are in alphabetical order and separated by commas. The
+    raw id replaces a name that is missing."""
 
     return ", ".join(
         sorted(str(names.get(provider_id, provider_id)) for provider_id in provider_ids)
@@ -254,11 +277,13 @@ def _provider_labels(provider_ids, names):
 
 
 def _poster_url(movie):
-    """An absolute artwork URL for the digest email, mirroring the
-    tile macro's source order: the custom poster (served off this
-    site, so it needs the external static URL) first, else TMDB's
-    hosted rendition; None with no artwork at all — the template
-    drops the image cell rather than shipping a placeholder."""
+    """Return an absolute artwork URL for the digest email.
+
+    The source order is the same as in the tile macro. The custom poster
+    comes first. This site serves it. Thus, it needs the external static
+    URL. If there is no custom poster, use the rendition that TMDB
+    hosts. Return None if there is no artwork. Then the template drops
+    the image cell and does not send a placeholder."""
 
     if movie.custom_poster:
         return url_for(
@@ -272,9 +297,11 @@ def _poster_url(movie):
 
 
 def _send_digest(user, events):
-    """One batched digest mail for one user's events — never a mail
-    per film. The subject leads with the availability count; a digest
-    of nothing but leaving warnings says that instead."""
+    """Send one batched digest mail for the events of one user.
+
+    Fitzflix never sends a mail per film. The subject starts with the
+    availability count. A digest with only leaving warnings says that
+    instead."""
 
     available = sum(len(events[kind]) for kind in ("local", "streaming", "rent"))
     if available:
@@ -298,10 +325,12 @@ def _send_digest(user, events):
 
 
 def notify_watchlist_availability():
-    """Nightly task, after the availability refresh: diff every
-    watchlisted film's availability and library presence against the
-    stored snapshots, stamp the per-user badge records, and send each
-    opted-in user at most one digest email."""
+    """Run the nightly alert task, after the availability refresh.
+
+    This compares the availability and the library presence of each
+    watchlisted film with the stored snapshots. It stamps the per-user
+    badge records. It sends each opted-in user a maximum of 1 digest
+    email."""
 
     with app.app_context():
         entries = (
@@ -339,10 +368,10 @@ def notify_watchlist_availability():
                     "poster": _poster_url(movie),
                 }
 
-                # Owned beats streaming beats renting, the watchlist
-                # bucket order: a film that just arrived locally never
-                # also reports its streaming debut, and an owned film
-                # reports nothing but its own arrival
+                # The order is the watchlist bucket order: owned before
+                # streaming before rent. A film that just arrived
+                # locally never also reports its streaming debut. An
+                # owned film reports only its own arrival.
 
                 if movie.id in newly_owned:
                     if _first_event(user.id, movie.id, "local"):
@@ -367,10 +396,11 @@ def notify_watchlist_availability():
                         )
                         _record_recent(user.id, movie.id, "New to rent")
 
-            # The leaving-Criterion warning (#156): once when the set
-            # first lands, once more inside the final week. No badge —
-            # departure isn't availability, and the leaving badge
-            # already renders wherever the film's providers do
+            # This is the leaving-Criterion warning (#156). It occurs 1
+            # time when the set first arrives, and 1 more time inside
+            # the final week. There is no badge. A departure is not
+            # availability. The leaving badge already shows in each
+            # place that shows the providers of the film.
 
             if leaving_departs and CRITERION_PROVIDER_ID in provider_ids:
                 departs_label = leaving_departs.strftime("%B %-d")

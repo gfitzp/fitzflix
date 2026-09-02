@@ -1,17 +1,17 @@
-"""The recurring-jobs process: rq's native cron plus the scheduled-job
-mover, replacing rq-scheduler.
+"""Run the recurring-jobs process: the native cron of rq and the
+scheduled-job mover. This process replaces rq-scheduler.
 
-One process does both halves of what rq-scheduler did: a CronScheduler
-holds the cron_table registrations and enqueues them on schedule, and an
-RQScheduler moves due entries out of every queue's ScheduledJobRegistry
-(the enqueue_in defers and retries). Running the mover here — instead of
-per-worker with_scheduler subprocesses — keeps the workers fork-free and
-leaves the supervisor layout untouched.
+One process does the two halves of the work of rq-scheduler. A
+CronScheduler holds the cron_table registrations and enqueues them on
+schedule. An RQScheduler moves the due entries out of the
+ScheduledJobRegistry of each queue. These entries are the enqueue_in
+defers and the retries. The mover runs here, not in per-worker
+with_scheduler subprocesses. Thus, the workers do not fork and the
+supervisor layout does not change.
 
-Both loops are driven from this main thread because each class's own
-start()/work() insists on installing signal handlers, which only the main
-thread may do; the public stepping methods they loop over are called here
-directly instead.
+This main thread drives the two loops. The start() and work() methods of
+each class install signal handlers. Only the main thread can do that.
+Thus, this module calls the public step methods of each loop directly.
 """
 
 import importlib
@@ -31,12 +31,14 @@ from app import cron_table, get_app
 
 
 class LocalTimeCronJob(CronJob):
-    """Cron fields read on the server's local clock — the rq-scheduler
-    use_local_timezone semantics rq.cron lacks (it evaluates crons in
-    UTC, which would shift every job by the UTC offset: the nightly
-    backup at 8:30 PM instead of 12:30 AM). The next time is always
-    computed from NOW, never from the last run, so a restart never
-    replays a missed occurrence — also the old scheduler's behavior."""
+    """Read the cron fields on the local clock of the server.
+
+    This is the use_local_timezone behavior of rq-scheduler. rq.cron does
+    not have it. rq.cron evaluates the cron fields in UTC. That would
+    shift each job by the UTC offset. For example, the nightly backup
+    would run at 8:30 PM, not at 12:30 AM. This class always computes
+    the next time from now, never from the last run. Thus, a restart
+    never replays a missed occurrence. The old scheduler did the same."""
 
     def get_next_enqueue_time(self):
         local_now = now().astimezone()
@@ -44,9 +46,10 @@ class LocalTimeCronJob(CronJob):
         return next_local.astimezone(timezone.utc)
 
 
-# Last-enqueued times, persisted outside the CronScheduler hash (whose
-# TTL dies with the process) so the System page's "Last ran" column
-# survives restarts — the register_cron flow's run-history semantics
+# This key holds the last-enqueued times. They live outside the
+# CronScheduler hash, because the TTL of that hash ends with the process.
+# Thus, the "Last ran" column of the System page survives a restart. This
+# is the run-history behavior of the register_cron flow.
 
 LATEST_KEY = "fitzflix:cron:latest"
 
@@ -74,8 +77,9 @@ def request_stop(signum, frame):
 signal.signal(signal.SIGTERM, request_stop)
 signal.signal(signal.SIGINT, request_stop)
 
-# A crashed predecessor can leave a stale registry entry that would make
-# this birth look like a duplicate; sweep first
+# A crashed predecessor can leave a stale registry entry. That entry
+# would make this birth look like a duplicate. Thus, sweep the registry
+# first.
 
 cron_scheduler_registry.cleanup(app.redis)
 
@@ -91,12 +95,12 @@ for entry in cron_table(app.config):
         meta={"cron_string": entry["cron"], "description": entry["description"]},
         result_ttl=86400,
     )
-    # Re-class for local-time evaluation, and recompute the initial
-    # next-run the constructor already derived in UTC
+    # Change the class for local-time evaluation. Then compute the first
+    # next-run time again, because the constructor derived it in UTC.
     cron_job.__class__ = LocalTimeCronJob
     cron_job.next_enqueue_time = cron_job.get_next_enqueue_time()
-# Restore each job's last-enqueued time from the durable record, so a
-# restart doesn't blank the System page's "Last ran" column
+# Restore the last-enqueued time of each job from the durable record.
+# Thus, a restart does not blank the "Last ran" column of the System page.
 
 stored_latest = app.redis.hgetall(LATEST_KEY)
 for cron_job in cron.get_jobs():
@@ -109,8 +113,8 @@ for cron_job in cron.get_jobs():
 
 cron.register_birth()
 
-# Publish the table immediately so the System page's reader sees it
-# before the first enqueue
+# Publish the table immediately. Thus, the reader of the System page
+# sees the table before the first enqueue.
 
 cron.save_jobs_data()
 

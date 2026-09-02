@@ -1,19 +1,20 @@
-"""Name That Frame (GitHub #52): the guessing game itself.
+"""Play Name That Frame (GitHub #52). This module is the game itself.
 
-Rounds draw from the pre-extracted pool (app/frames.py) — the page
-never touches ffmpeg. Four difficulties, per Glenn's issues: Easy
-serves only films the current user has rated, with four choices;
-Hard (slug "difficult") has eight; Difficult (slug "siracusa",
-renamed per #203) takes free text, fuzzy-matched against the film's
-titles; Extra Difficult (slug "extra", #202) is free text too, but
-opens on a tight crop of the frame and scores by how early the guess
-lands — with the points doubled when the named film is one the user
-hasn't rated. The library-wide difficulties deal rated films by
-default too, each with an include-unrated switch (inverted per
-Glenn's ask, Aug 27 2026), and a plain /game visit reopens at the
-difficulty last chosen. Frames are served through an authenticated route
-keyed by the pool's opaque tokens, so neither the image URL nor the
-page markup leaks the answer before a guess lands."""
+A round draws from the pre-extracted pool (app/frames.py). The page
+never touches ffmpeg. There are 4 difficulties, per the issues of
+Glenn. Easy serves only the films that the current user has rated,
+with 4 choices. Hard (slug "difficult") has 8 choices. Difficult (slug
+"siracusa", renamed per #203) takes free text. Fitzflix fuzzy-matches
+the text against the titles of the film. Extra Difficult (slug
+"extra", #202) takes free text too. But it opens on a tight crop of
+the frame. It scores by how early the correct guess arrives. The
+points double if the user has not rated the named film. The
+library-wide difficulties also deal rated films by default. Each has
+an include-unrated switch (inverted as requested by Glenn,
+2026-08-27). A plain /game visit opens again at the difficulty that
+the user chose last. An authenticated route serves the frames. The key
+of the route is the opaque token of the pool. Thus, the image URL and
+the page markup do not leak the answer before a guess arrives."""
 
 import hashlib
 import io
@@ -51,77 +52,82 @@ from app.main import bp
 from app.main.forms import GuessFrameForm
 from app.models import Movie, MovieCast, UserFrameScore, UserMovieReview, movie_genres
 
-# Difficulty → number of multiple-choice options (None = free text)
+# This maps a difficulty to its number of multiple-choice options.
+# None means free text.
 
 DIFFICULTIES = {"easy": 4, "difficult": 8, "siracusa": None, "extra": None}
 
-# Extra Difficult (#202) zooms in instead of widening the choices: the
-# round opens on a tight crop and the player either guesses or zooms
-# out. A miss zooms out too, so a round is up to three looks at the
-# same spot — crop, wider crop, full frame — worth 3, 2, and 1 points.
-# The live round (token + stage) is held server-side so the image
-# route can't be talked into serving the full frame early.
+# Extra Difficult (#202) zooms in. It does not widen the choices. The
+# round opens on a tight crop. The player guesses or zooms out. A miss
+# also zooms out. Thus, a round is a maximum of 3 looks at the same
+# spot: the crop, a wider crop, and the full frame. They are worth 3,
+# 2, and 1 points. The server holds the live round (token + stage).
+# Thus, the image route cannot serve the full frame early.
 
 EXTRA_STAGES = 3
-EXTRA_ZOOM = {1: 0.3, 2: 0.6}  # crop side, as a fraction of the frame's
+EXTRA_ZOOM = {1: 0.3, 2: 0.6}  # crop side, as a fraction of the frame side
 EXTRA_ROUND_KEY = "fitzflix:frames:extra:{user_id}"
 
-# How many of the answer's top-billed cast anchor the shared-cast
-# distractor tier (#201)
+# This is the number of top-billed cast members of the answer that
+# anchor the shared-cast distractor tier (#201).
 
 TOP_CAST_SIZE = 5
 
-# The library-wide difficulties deal only films the user has rated by
-# default (inverted per Glenn's ask, Aug 27 2026 — rated-only proved
-# the mode actually played, so the switch now *widens* the deals to
-# unrated films instead of narrowing them): a per-user, per-difficulty
-# include-unrated flag, held in a Redis set of slugs with no expiry —
-# it's a preference, not round state. Easy never widens.
+# By default, the library-wide difficulties deal only the films that
+# the user has rated. This was inverted as requested by Glenn
+# (2026-08-27). Rated-only was the mode that the players used. Thus,
+# the switch now *widens* the deals to unrated films. It does not
+# narrow them. The include-unrated flag is per user and per
+# difficulty. A Redis set of slugs holds it, with no expiry. It is a
+# preference, not round state. Easy never widens.
 
 RATED_FILTER_DIFFICULTIES = ("difficult", "siracusa", "extra")
 UNRATED_FILTER_KEY = "fitzflix:frames:unrated:{user_id}"
 
-# Naming an unrated film on Extra Difficult doubles the stage's
-# points (Glenn's ask, Aug 27 2026). The bonus is only ever disclosed
-# after it lands — a prompt quoting doubled points would itself mark
-# the answer as a film the player hasn't rated.
+# A correct guess of an unrated film on Extra Difficult doubles the
+# points of the stage (requested by Glenn, 2026-08-27). Fitzflix shows
+# the bonus only after the guess arrives. A prompt that quotes doubled
+# points would tell the player that the answer is an unrated film.
 
 UNRATED_BONUS = 2
 
-# The game reopens at the difficulty the user last chose (Glenn's
-# ask, Aug 27 2026) — a plain /game visit used to reset to Easy
+# The game opens again at the difficulty that the user chose last
+# (requested by Glenn, 2026-08-27). Before, a plain /game visit reset
+# the difficulty to Easy.
 
 LAST_DIFFICULTY_KEY = "fitzflix:frames:difficulty:{user_id}"
 
-# A zoomed Extra Difficult win earns bragging rights (Glenn's ask,
-# Aug 27 2026): the winning crop is cut and stashed the moment the
-# guess grades, because the round state clears and the played frame
-# gets replaced — sometimes deleted — seconds after the reveal. The
-# stash is PNG because the async Clipboard API only takes image/png.
-# An hour is plenty of time to paste a brag somewhere.
+# A zoomed Extra Difficult win earns bragging rights (requested by
+# Glenn, 2026-08-27). Fitzflix cuts and stores the winning crop when
+# it grades the guess. That is necessary because the round state
+# clears, and the played frame is replaced (sometimes deleted) some
+# seconds after the reveal. The store is PNG because the async
+# Clipboard API only takes image/png. One hour is sufficient time to
+# paste a brag.
 
 BRAG_KEY = "fitzflix:frames:brag:{token}"
 BRAG_TTL = 3600
 
-# Distractors stay within the answer's era (Glenn, Aug 20 2026: an
-# option decades away hands the round to process of deduction) —
-# each difficulty tries its tight window first, then its widened one
+# The distractors stay in the era of the answer (requested by Glenn,
+# 2026-08-20). An option that is decades away gives the round away by
+# deduction. Each difficulty tries its tight window first, then its
+# wide window.
 
 YEAR_WINDOWS = {"easy": (5, 10), "difficult": (2, 5)}
 
-# How close a free-text (Difficult) guess must come to a real title, after
-# normalization — loose enough for a typo, tight enough that a random
-# film name doesn't score
+# This is how close a free-text (Difficult) guess must come to a real
+# title, after normalization. It is loose enough for a typo. It is tight
+# enough that a random film name does not score.
 
 FUZZY_THRESHOLD = 0.75
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,64}")
 
-# Spelled-out numbers fold to digits during normalization, so
-# 'Pelham 123' meets 'Pelham One Two Three' (Glenn's report, Aug 27
-# 2026) — the squeezed comparison pass then bridges '1 2 3' vs '123'.
-# Applied to guess and title alike, the fold is direction-agnostic:
-# 'apollo thirteen' names Apollo 13 the same way.
+# Normalization folds number words to digits. Thus, 'Pelham 123'
+# matches 'Pelham One Two Three' (reported by Glenn, 2026-08-27). Then
+# the squeezed comparison pass bridges '1 2 3' and '123'. The fold
+# applies to the guess and to the title. Thus, the direction is not
+# important. 'apollo thirteen' names Apollo 13 in the same way.
 
 NUMBER_WORDS = {
     "zero": "0",
@@ -156,7 +162,7 @@ NUMBER_WORDS = {
 
 
 def _display_title(movie):
-    """The site-wide display grammar: TMDB title and year when known."""
+    """Return the site-wide display form: the TMDB title and year if known."""
 
     title = movie.tmdb_title or movie.title
     year = (
@@ -168,9 +174,11 @@ def _display_title(movie):
 
 
 def _normalize(text):
-    """Fold a title for fuzzy comparison: unaccent, casefold, drop
-    punctuation, strip a leading article, fold spelled-out numbers to
-    digits, collapse whitespace."""
+    """Fold a title for fuzzy comparison.
+
+    This removes the accents, casefolds, removes the punctuation,
+    removes a leading article, folds number words to digits, and
+    collapses the whitespace."""
 
     text = unidecode(text or "").casefold()
     text = re.sub(r"[^a-z0-9 ]+", " ", text)
@@ -182,16 +190,17 @@ def _normalize(text):
 
 
 def _fuzzy_match(guess, movie):
-    """True when the guess lands close enough to any of the film's
-    titles — local or TMDB, with or without the year, and with or
-    without a subtitle: both halves around a ':' (or the
-    filename-safe ' - ') stand alone, so 'Rogue One' names 'Rogue
-    One: A Star Wars Story' and 'Wrath of Khan' names its Star Trek
-    (Glenn's reports, Aug 27 2026). Each pair is compared
-    twice: as normalized words, and with the spaces squeezed out —
-    normalization turns punctuation into spaces, so 'M*A*S*H'
-    normalizes to 'm a s h' and only the squeezed pass lets a player
-    type 'mash' (Glenn's report, Aug 27 2026)."""
+    """Return True if the guess is close enough to a title of the film.
+
+    The titles are the local title and the TMDB title, with and without
+    the year, and with and without a subtitle. The two halves around a
+    ':' (or the filename-safe ' - ') stand alone. Thus, 'Rogue One'
+    names 'Rogue One: A Star Wars Story', and 'Wrath of Khan' names its
+    Star Trek film (reported by Glenn, 2026-08-27). This compares each
+    pair 2 times: as normalized words, and with the spaces removed.
+    Normalization turns punctuation into spaces. Thus, 'M*A*S*H'
+    normalizes to 'm a s h'. Only the squeezed pass lets a player type
+    'mash' (reported by Glenn, 2026-08-27)."""
 
     normalized = _normalize(guess)
     if not normalized:
@@ -218,9 +227,10 @@ def _fuzzy_match(guess, movie):
 
 
 def _include_unrated(difficulty):
-    """Whether the user has widened a library-wide difficulty to films
-    they haven't rated — rated-only is the default (inverted per
-    Glenn's ask, Aug 27 2026)."""
+    """Return True if the user widened a difficulty to unrated films.
+
+    This applies to the library-wide difficulties. Rated-only is the
+    default (inverted as requested by Glenn, 2026-08-27)."""
 
     return difficulty in RATED_FILTER_DIFFICULTIES and bool(
         current_app.redis.sismember(
@@ -240,20 +250,23 @@ def _set_include_unrated(difficulty, on):
 
 
 def _rated_only(difficulty):
-    """Whether a library-wide difficulty's deals narrow to rated films
-    — the default, unless the user has opted unrated films in. (Easy
-    handles its always-rated world separately.)"""
+    """Return True if the deals of a difficulty narrow to rated films.
+
+    This applies to the library-wide difficulties. It is the default,
+    unless the user opted in the unrated films. Easy handles its
+    always-rated world separately."""
 
     return difficulty in RATED_FILTER_DIFFICULTIES and not _include_unrated(difficulty)
 
 
 def _rated_movie_ids():
-    """Movies the current user has actually RATED — a star rating, not
-    just a diary row. Easy's world and the rated-films filter both
-    read this; it used to accept any diary entry, but the Netflix
-    history import seeded unrated watches nobody remembers (Glenn's
-    Conversation report, Aug 27 2026), so a bare watch no longer
-    counts."""
+    """Return the movies that the current user RATED.
+
+    A rating is a star rating, not only a diary row. The world of Easy
+    and the rated-films filter read this. Before, this accepted each
+    diary entry. But the Netflix history import seeded unrated watches
+    that nobody remembers (reported by Glenn for The Conversation,
+    2026-08-27). Thus, a bare watch no longer counts."""
 
     return {
         movie_id
@@ -265,15 +278,18 @@ def _rated_movie_ids():
 
 
 def _display_year(year, tmdb_title, tmdb_release_date):
-    """The year the site displays for a film — TMDB's when it rules
-    the title, the local one otherwise."""
+    """Return the year that the site shows for a film.
+
+    This is the TMDB year if the TMDB title rules. In all other cases,
+    it is the local year."""
 
     return tmdb_release_date.year if tmdb_title and tmdb_release_date else year
 
 
 def _shared_cast_movie_ids(answer_id):
-    """Movies crediting any of the answer's top-billed cast — the
-    distractors that keep a familiar face from naming the film."""
+    """Return the movies that credit a top-billed cast member of the answer.
+
+    These distractors prevent a known face from naming the film."""
 
     top_cast = [
         credit_id
@@ -295,7 +311,7 @@ def _shared_cast_movie_ids(answer_id):
 
 
 def _shared_genre_movie_ids(answer_id):
-    """Movies sharing any of the answer's TMDB genres."""
+    """Return the movies that share a TMDB genre with the answer."""
 
     answer_genres = db.session.query(movie_genres.c.genre_id).filter(
         movie_genres.c.movie_id == answer_id
@@ -310,20 +326,22 @@ def _shared_genre_movie_ids(answer_id):
 
 
 def _build_options(answer_id, difficulty, rated_only=False):
-    """The round's shuffled multiple-choice list: the answer plus
-    random distractors, drawn down Glenn's ladder (#201): films
-    sharing the answer's top-billed cast within its era first — one
-    Star Trek film among strangers hands the round to Spock's ears —
-    then same-genre films within the era, any film within the era,
-    and same-genre films outside it. Each rung tries the difficulty's
-    tight year window before the widened one (±5→±10 on Easy, ±2→±5
-    on Hard; Glenn's rule, Aug 20 2026), since an option decades away
-    is its own giveaway. Easy — and any difficulty with the
-    rated-films filter on, where an unrated option would mark the
-    answer by elimination — walks the ladder over the user's rated
-    films first before padding from the whole library, and
-    anything-goes is the last resort so a round can always fill its
-    slots."""
+    """Return the shuffled multiple-choice list of the round.
+
+    The list is the answer plus random distractors. The distractors
+    come from the ladder of Glenn (#201). First come the films that
+    share the top-billed cast of the answer, in its era. One Star Trek
+    film among strangers gives the round away through the ears of
+    Spock. Then come the same-genre films in the era, then each film in
+    the era, then the same-genre films outside the era. Each rung tries
+    the tight year window of the difficulty before the wide window
+    (±5 then ±10 on Easy, ±2 then ±5 on Hard, the rule of Glenn,
+    2026-08-20). An option that is decades away gives the answer away.
+    Easy walks the ladder over the rated films of the user first. The
+    same applies to a difficulty with the rated-films filter on,
+    because an unrated option would mark the answer by elimination.
+    Then it pads from the whole library. The last resort is any film.
+    Thus, a round can always fill its slots."""
 
     count = DIFFICULTIES[difficulty]
     answer = db.session.get(Movie, answer_id)
@@ -353,11 +371,12 @@ def _build_options(answer_id, difficulty, rated_only=False):
             and abs(year - answer_year) <= span
         ]
 
-    # The base ladder: shared cast in era, shared genre in era, any
-    # film in era, shared genre out of era — tight window before wide
-    # at every rung. Easy's universe stays the rated films, walking
-    # the whole ladder over them per Glenn's fallback before padding
-    # from the unrated library the same way.
+    # This is the base ladder: shared cast in the era, shared genre in
+    # the era, each film in the era, shared genre out of the era. Each
+    # rung tries the tight window before the wide window. The world of
+    # Easy stays the rated films. It walks the whole ladder over them,
+    # per the fallback of Glenn. Then it pads from the unrated library
+    # in the same way.
 
     cast_mates = _shared_cast_movie_ids(answer_id)
     genre_mates = _shared_genre_movie_ids(answer_id)
@@ -391,9 +410,11 @@ def _build_options(answer_id, difficulty, rated_only=False):
 
 
 def _round_tokens(difficulty, rated_only=False):
-    """The pooled tokens this difficulty may serve — Easy's world is
-    the user's rated films always, and the other difficulties narrow
-    to the same world when the rated-films filter is on."""
+    """Return the pooled tokens that this difficulty can serve.
+
+    The world of Easy is always the rated films of the user. The other
+    difficulties narrow to the same world if the rated-films filter is
+    on."""
 
     entries = pool_entries()
     if difficulty == "easy" or rated_only:
@@ -407,9 +428,11 @@ def _round_tokens(difficulty, rated_only=False):
 
 
 def _score_row(difficulty):
-    """The user's standings row for one difficulty, created on first
-    use — the DB keeps the running streak and the personal best, so
-    scores survive sessions and devices (Glenn's ask, Aug 20 2026)."""
+    """Return the standings row of the user for one difficulty.
+
+    This creates the row on first use. The database keeps the current
+    streak and the personal best. Thus, the scores survive sessions and
+    devices (requested by Glenn, 2026-08-20)."""
 
     row = UserFrameScore.query.filter_by(
         user_id=int(current_user.id), difficulty=difficulty
@@ -426,16 +449,18 @@ def _score_row(difficulty):
 
 
 def _deal_token(tokens):
-    """Pick this round's frame without repeats (Glenn's Finding Nemo
-    report, Aug 20 2026): every dealt frame is stamped with its turn
-    number in a per-user sorted set, and deals prefer frames that set
-    has never held. When a difficulty runs out of those the frames do
-    come around again, but least-recently-seen first rather than at
-    random (#200) — and never twice in a row, since the last-dealt
-    frame is remembered server-side, so a plain page visit can't echo
-    it either. The record is shared across difficulties (a frame seen
-    on Easy is spoiled for Difficult too); the nightly pass reads it to
-    retire spent frames first, and forgets a token once it leaves the
+    """Pick the frame of this round without repeats.
+
+    Glenn reported a repeat with Finding Nemo (2026-08-20). A per-user
+    sorted set stamps each dealt frame with its turn number. A deal
+    prefers the frames that the set never held. When a difficulty has
+    no more of those, the frames come around again. But they come
+    least-recently-seen first, not at random (#200). A frame never
+    comes 2 times in a row, because the server remembers the last-dealt
+    frame. Thus, a plain page visit cannot repeat it. The record is
+    shared across the difficulties. A frame seen on Easy is spoiled for
+    Difficult too. The nightly pass reads the record to retire the
+    spent frames first. It forgets a token when the token leaves the
     pool."""
 
     if not tokens:
@@ -452,8 +477,8 @@ def _deal_token(tokens):
     if unseen:
         token = random.choice(unseen)
     else:
-        # The difficulty has lapped: replay it oldest-first, breaking
-        # ties at random so a lapped pool isn't a fixed carousel
+        # The difficulty has lapped. Replay it oldest first. Break the
+        # ties at random. Thus, a lapped pool is not a fixed carousel.
         repeats = [token for token in tokens if token != last] or list(tokens)
         random.shuffle(repeats)
         token = min(repeats, key=lambda token: served.get(token, 0))
@@ -464,11 +489,12 @@ def _deal_token(tokens):
 
 
 def _enqueue_frame_replacement(movie):
-    """Queue the per-round pool top-up (Glenn's ask, Aug 27 2026):
-    once a round is graded, its film's frame gets swapped for a frame
-    of an unpooled film on the transcode queue — the pool turns over
-    continuously instead of waiting for the nightly pass. Fired only
-    on a reveal; a skipped frame keeps its slot."""
+    """Queue the per-round pool top-up (requested by Glenn, 2026-08-27).
+
+    After Fitzflix grades a round, the transcode queue swaps the frame
+    of its film for a frame of a film that is not in the pool. Thus,
+    the pool turns over continuously and does not wait for the nightly
+    pass. This runs only on a reveal. A skipped frame keeps its slot."""
 
     current_app.transcode_queue.enqueue(
         "app.frames.replace_frame_task",
@@ -479,10 +505,11 @@ def _enqueue_frame_replacement(movie):
 
 
 def _extra_round():
-    """The user's live Extra Difficult round — {token, stage} — or
-    None. Server-side state is what makes the stages honest: the
-    posted stage never decides the points, and the image route never
-    serves more frame than the round has earned."""
+    """Return the live Extra Difficult round of the user, or None.
+
+    The round is {token, stage}. The server-side state makes the stages
+    honest. The posted stage never decides the points. The image route
+    never serves more of the frame than the round has earned."""
 
     payload = current_app.redis.get(
         EXTRA_ROUND_KEY.format(user_id=int(current_user.id))
@@ -497,7 +524,7 @@ def _extra_round():
 
 
 def _save_extra_round(token, stage):
-    """Persist the live round's token and stage for the current user."""
+    """Store the token and the stage of the live round of the current user."""
 
     current_app.redis.set(
         EXTRA_ROUND_KEY.format(user_id=int(current_user.id)),
@@ -507,46 +534,50 @@ def _save_extra_round(token, stage):
 
 
 def _clear_extra_round():
-    """Drop the current user's live round — it ended or was skipped."""
+    """Delete the live round of the current user. It ended or was skipped."""
 
     current_app.redis.delete(EXTRA_ROUND_KEY.format(user_id=int(current_user.id)))
 
 
-# A crop window must be at least this fraction actual picture —
-# pixels above ACTIVE_LUMA (defined with the extraction floor in
-# app/frames.py). The active-area box is a bounding box, not a mask:
-# a starfield's box spans the whole frame, but a window between the
-# stars is still black (Glenn's Empire Strikes Back report, Aug 27
-# 2026), so the centre hunts for light before the crop is cut.
+# A crop window must be at least this fraction of real picture. Real
+# picture means pixels above ACTIVE_LUMA (defined with the extraction
+# floor in app/frames.py). The active-area box is a bounding box, not
+# a mask. The box of a starfield spans the whole frame. But a window
+# between the stars is still black (reported by Glenn for The Empire
+# Strikes Back, 2026-08-27). Thus, the centre looks for light before
+# Fitzflix cuts the crop.
 
 CROP_MIN_ACTIVE = 0.10
 
 
 def _active_picture_box(image):
-    """The bounding box of the frame's actual picture: everything
-    brighter than near-black. Letterboxed and pillarboxed transfers
-    bake their bars into the frame, and a zoom window that lands on a
-    bar is a wall of black (Glenn's report, Aug 27 2026) — so the
-    Extra Difficult crops confine themselves to this box. None when
-    no pixel clears the bar (the caller falls back to the full
-    frame)."""
+    """Return the bounding box of the real picture of the frame.
+
+    The real picture is each pixel brighter than near-black. A
+    letterboxed or pillarboxed transfer bakes its bars into the frame.
+    A zoom window that arrives on a bar is a wall of black (reported by
+    Glenn, 2026-08-27). Thus, the Extra Difficult crops stay in this
+    box. Return None if no pixel is above the limit. Then the caller
+    uses the full frame."""
 
     mask = image.convert("L").point(lambda v: 255 if v > ACTIVE_LUMA else 0)
     return mask.getbbox()
 
 
 def _crop_box(token, stage, width, height, active=None, centre=None):
-    """The stage's crop rectangle: sized by the stage's zoom, centred
-    at a point hashed from the token — anywhere in the frame's active
-    picture area (the whole frame when no `active` box is given) —
-    and clamped to that area's edges. The clamping is what keeps the
-    stages nested wherever the centre lands, so zooming out always
-    reveals more of the same spot. (An early version instead pinned
-    the centre where the widest stage fit unclamped, which confined
-    every crop to the middle fifth of the frame — Glenn noticed,
-    Aug 27 2026.) A caller that has looked at the pixels may pass its
-    own `centre` (both coordinates as 0-1 fractions) — _crop_centre
-    does, steering the window onto actual picture."""
+    """Return the crop rectangle of the stage.
+
+    The zoom of the stage sets the size. The centre is a point hashed
+    from the token. It can be anywhere in the active picture area of
+    the frame (the whole frame if there is no `active` box). The
+    rectangle is clamped to the edges of that area. The clamp keeps the
+    stages nested for each centre. Thus, a zoom out always shows more
+    of the same spot. An early version pinned the centre where the
+    widest stage fit without a clamp. That confined each crop to the
+    middle fifth of the frame (noticed by Glenn, 2026-08-27). A caller
+    that has looked at the pixels can pass its own `centre` (the 2
+    coordinates as 0-1 fractions). _crop_centre does that to steer the
+    window onto real picture."""
 
     bound_left, bound_top, bound_right, bound_bottom = active or (0, 0, width, height)
     span_w = bound_right - bound_left
@@ -568,14 +599,16 @@ def _crop_box(token, stage, width, height, active=None, centre=None):
 
 
 def _crop_centre(token, image, active):
-    """The round's crop centre: the first token-hashed candidate whose
-    stage-one window holds enough actual picture, falling back to the
-    brightest candidate when none does. Every stage shares the one
-    centre, so the crops stay nested, and the choice is a pure
-    function of the token and the frame, so reloads serve the same
-    window. Without the hunt, a window could land on the black space
-    *inside* the active area — a starfield's bounding box spans the
-    frame (Glenn's Empire Strikes Back report, Aug 27 2026)."""
+    """Return the crop centre of the round.
+
+    This is the first token-hashed candidate whose stage-1 window holds
+    enough real picture. If no candidate does, it is the brightest
+    candidate. Each stage shares the one centre. Thus, the crops stay
+    nested. The choice is a pure function of the token and the frame.
+    Thus, a reload serves the same window. Without this search, a
+    window could arrive on the black space *inside* the active area.
+    The bounding box of a starfield spans the frame (reported by Glenn
+    for The Empire Strikes Back, 2026-08-27)."""
 
     digest = hashlib.sha256(token.encode()).digest()
     grey = image.convert("L")
@@ -594,9 +627,10 @@ def _crop_centre(token, image, active):
 
 
 def _stage_crop_image(token, stage):
-    """The stage's window onto the pooled frame as a PIL image — the
-    piece both the round page and the brag stash serve — or None when
-    the pooled image won't decode."""
+    """Return the window of the stage onto the pooled frame as a PIL image.
+
+    The round page and the brag store serve this piece. Return None if
+    the pooled image does not decode."""
 
     from PIL import Image
 
@@ -611,11 +645,12 @@ def _stage_crop_image(token, stage):
 
 
 def _cropped_frame_response(token, stage):
-    """The Extra Difficult crop: the stage's window onto the pooled
-    frame, cut server-side — the full frame never reaches the page
-    before stage three. None when the image won't decode, so the
-    route can fall back to the full frame rather than 500 on a bad
-    pool entry."""
+    """Return the Extra Difficult crop as a response.
+
+    The crop is the window of the stage onto the pooled frame. The
+    server cuts it. The full frame never reaches the page before stage
+    3. Return None if the image does not decode. Then the route can
+    serve the full frame and not return a 500 on a bad pool entry."""
 
     crop = _stage_crop_image(token, stage)
     if crop is None:
@@ -623,16 +658,18 @@ def _cropped_frame_response(token, stage):
     buffer = io.BytesIO()
     crop.save(buffer, format="JPEG", quality=90)
     buffer.seek(0)
-    # Uncached: the same token serves different pixels as the round
-    # advances, and crops are cheap to cut again
+    # Do not cache. The same token serves different pixels as the round
+    # advances. A crop is cheap to cut again.
     return send_file(buffer, mimetype="image/jpeg", max_age=0)
 
 
 def _stash_brag_crop(token, stage):
-    """Cut the winning stage's crop and park it under a fresh share
-    token for the reveal's brag buttons — done synchronously at
-    grading time, before the frame replacement can delete the pooled
-    image out from under it. None when the image won't decode."""
+    """Cut the crop of the winning stage and store it under a share token.
+
+    The brag buttons of the reveal use the share token. This runs
+    synchronously at grading time, before the frame replacement can
+    delete the pooled image. Return None if the image does not
+    decode."""
 
     crop = _stage_crop_image(token, stage)
     if crop is None:
@@ -647,9 +684,10 @@ def _stash_brag_crop(token, stage):
 
 
 def _render_extra_round(token, stage, form, missed=None):
-    """The Extra Difficult guessing page at one stage — reached fresh,
-    by zooming out, or by a mid-round miss (which shows what it
-    wasn't)."""
+    """Render the Extra Difficult guessing page at one stage.
+
+    The player reaches the page with a new deal, with a zoom out, or
+    with a mid-round miss. A miss shows the wrong guess."""
 
     score = UserFrameScore.query.filter_by(
         user_id=int(current_user.id), difficulty="extra"
@@ -678,17 +716,19 @@ def _render_extra_round(token, stage, form, missed=None):
 
 
 def _extra_post(form, token, movie):
-    """Grade one Extra Difficult action: Zoom Out or a mid-round miss
-    advances the stage; a hit banks the stage's points; a stage-three
-    miss — or giving up, once the round is past its first zoom-out —
-    ends the round and the streak (#202; the surrender rule is
-    Glenn's ask, Aug 27 2026: a started round is won or lost)."""
+    """Grade one Extra Difficult action.
+
+    A Zoom Out or a mid-round miss advances the stage. A hit banks the
+    points of the stage. A stage-3 miss ends the round and the streak.
+    A give-up after the first zoom out does the same (#202). The
+    surrender rule was requested by Glenn (2026-08-27): a started round
+    is won or lost."""
 
     round_ = _extra_round()
     if round_ is None or round_.get("token") != token:
-        # The posted round isn't the live one — a stale tab, or the
-        # round was skipped elsewhere. Deal or resume instead of
-        # grading against the wrong stage.
+        # The posted round is not the live round. The tab is stale, or
+        # the user skipped the round in a different tab. Deal or resume.
+        # Do not grade against the wrong stage.
         return redirect(url_for("main.name_that_frame", difficulty="extra"))
     stage = min(int(round_.get("stage") or 1), EXTRA_STAGES)
 
@@ -701,20 +741,20 @@ def _extra_post(form, token, movie):
     guessed = "" if gave_up else (form.guess.data or "").strip()
     correct = False if gave_up else _fuzzy_match(guessed, movie)
     if not gave_up and not correct and stage < EXTRA_STAGES:
-        # A mid-round miss zooms out instead of ending the round —
-        # the wrong guess buys the same look a Zoom Out would
+        # A mid-round miss zooms out. It does not end the round. The
+        # wrong guess buys the same look as a Zoom Out.
         stage += 1
         _save_extra_round(token, stage)
         return _render_extra_round(token, stage, form, missed=guessed or None)
 
     _clear_extra_round()
-    # Naming the film while still zoomed in is the brag-worthy feat —
-    # a full-frame win is just a win
+    # A correct guess while zoomed in is the feat worth a brag. A
+    # full-frame win is only a win.
     brag = _stash_brag_crop(token, stage) if correct and stage < EXTRA_STAGES else None
     points_won = EXTRA_STAGES + 1 - stage if correct else 0
-    # The unrated bonus stays secret until it lands: the round prompt
-    # quoted base points all along, and only now may the reveal say
-    # the film was one the player hadn't rated
+    # The unrated bonus stays secret until it applies. The round prompt
+    # quoted the base points. Only now can the reveal say that the
+    # player had not rated the film.
     doubled = bool(points_won) and movie.id not in _rated_movie_ids()
     if doubled:
         points_won *= UNRATED_BONUS
@@ -764,9 +804,10 @@ def _extra_post(form, token, movie):
 @bp.route("/game", methods=["GET", "POST"])
 @login_required
 def name_that_frame():
-    """One round per page: a pooled frame and a guess form, then the
-    reveal. The token names the round; the answer only ever lives
-    server-side in the pool hash."""
+    """Serve one round per page: a pooled frame, a guess form, the reveal.
+
+    The token names the round. The answer lives only on the server, in
+    the pool hash."""
 
     form = GuessFrameForm()
 
@@ -778,8 +819,8 @@ def name_that_frame():
         entry = pool_entries().get(token)
         movie = db.session.get(Movie, entry["movie_id"]) if entry else None
         if movie is None:
-            # The round's frame rotated out of the pool mid-game —
-            # deal a fresh one rather than erroring
+            # The frame of the round left the pool during the game. Deal
+            # a new frame. Do not return an error.
             return redirect(url_for("main.name_that_frame", difficulty=difficulty))
 
         if difficulty == "extra":
@@ -818,10 +859,10 @@ def name_that_frame():
                 "answer": _display_title(movie),
                 "new_best": new_best,
             },
-            # The reveal shows the answer as a standard poster tile —
-            # popover card plus the ladder and watchlist toggle, so a
-            # film worth chasing can be rated or banked on the spot
-            # (Glenn's ask, Aug 20 2026)
+            # The reveal shows the answer as a standard poster tile: the
+            # popover card plus the ladder and the watchlist toggle.
+            # Thus, the player can rate or watchlist an interesting film
+            # immediately (requested by Glenn, 2026-08-20).
             answer_movie=movie,
             token=token,
             options=None,
@@ -837,8 +878,9 @@ def name_that_frame():
             pool_size=len(pool_entries()),
         )
 
-    # A plain /game visit reopens at the last difficulty the user
-    # chose (Glenn's ask, Aug 27 2026) — a preference, so no expiry
+    # A plain /game visit opens again at the difficulty that the user
+    # chose last (requested by Glenn, 2026-08-27). It is a preference.
+    # Thus, it has no expiry.
     difficulty = request.args.get("difficulty")
     last_key = LAST_DIFFICULTY_KEY.format(user_id=int(current_user.id))
     if difficulty in DIFFICULTIES:
@@ -847,9 +889,9 @@ def name_that_frame():
         stored = (current_app.redis.get(last_key) or b"").decode()
         difficulty = stored if stored in DIFFICULTIES else "easy"
 
-    # The include-unrated switch: the checkbox always submits a hidden
-    # unrated=0 alongside a checked unrated=1, so an absent "1" is a
-    # deliberate un-tick, not a bare visit
+    # This is the include-unrated switch. The checkbox always submits a
+    # hidden unrated=0 with a checked unrated=1. Thus, a missing "1" is
+    # a deliberate un-tick, not a bare visit.
     if difficulty in RATED_FILTER_DIFFICULTIES and "unrated" in request.args:
         _set_include_unrated(difficulty, "1" in request.args.getlist("unrated"))
     rated_only = _rated_only(difficulty)
@@ -858,12 +900,12 @@ def name_that_frame():
     stage = None
     dealt = False
     if difficulty == "extra":
-        # A visit resumes the live round at its stage rather than
-        # dealing — a refresh mustn't be a free zoom reset — so Skip
-        # abandons it explicitly. But only an untouched round skips:
-        # past the first zoom-out the round is won, lost, or given up
-        # (Glenn's rule, Aug 27 2026), so a hand-typed ?skip=1 can't
-        # dodge the loss either
+        # A visit resumes the live round at its stage. It does not deal.
+        # A refresh must not be a free zoom reset. Thus, Skip abandons
+        # the round explicitly. But only an untouched round skips. After
+        # the first zoom out, the round is won, lost, or given up (the
+        # rule of Glenn, 2026-08-27). Thus, a hand-typed ?skip=1 cannot
+        # avoid the loss.
         round_ = _extra_round()
         if request.args.get("skip") and round_ and int(round_.get("stage") or 1) <= 1:
             _clear_extra_round()
@@ -887,9 +929,9 @@ def name_that_frame():
         options = _build_options(tokens[token]["movie_id"], difficulty, rated_only)
 
     if dealt:
-        # Every dealt frame counts as seen (Glenn's win-rate rule,
-        # Aug 27 2026): a skipped or refreshed-away round is a frame
-        # the player looked at and didn't name
+        # Each dealt frame counts as seen (the win-rate rule of Glenn,
+        # 2026-08-27). In a skipped or refreshed round, the player looked
+        # at the frame and did not name it.
         score = _score_row(difficulty)
         score.rounds_seen = (score.rounds_seen or 0) + 1
         db.session.commit()
@@ -924,11 +966,12 @@ def name_that_frame():
 @bp.route("/game/brag/<token>")
 @login_required
 def game_brag(token):
-    """The stashed winning crop for a just-won zoomed round, by its
-    share token — what the reveal's brag buttons copy or share. The
-    stash outlives the played frame's replacement but only by
-    BRAG_TTL; after that the brag is a 404, which the page reports
-    as expired."""
+    """Serve the stored winning crop of a zoomed round, by its share token.
+
+    The brag buttons of the reveal copy or share this image. The store
+    survives the replacement of the played frame, but only for
+    BRAG_TTL. After that, the brag is a 404. The page reports that as
+    expired."""
 
     if not TOKEN_PATTERN.fullmatch(token):
         abort(404)
@@ -941,12 +984,14 @@ def game_brag(token):
 @bp.route("/game/frame/<token>")
 @login_required
 def game_frame(token):
-    """One pooled frame, by its opaque token. Auth-gated — library
-    frames never ride the public static path — and only tokens the
-    pool actually holds resolve. While the token is the user's live
-    Extra Difficult round, the server-side stage decides how much of
-    the frame serves (#202) — the ?stage in the page's URL is only a
-    cache-buster, so asking for a later stage yields nothing extra."""
+    """Serve one pooled frame, by its opaque token.
+
+    This route needs authentication. A library frame never goes through
+    the public static path. Only a token that the pool holds resolves.
+    While the token is the live Extra Difficult round of the user, the
+    server-side stage decides how much of the frame serves (#202). The
+    ?stage in the URL of the page is only a cache-buster. Thus, a
+    request for a later stage gives nothing extra."""
 
     if not TOKEN_PATTERN.fullmatch(token) or not current_app.redis.hexists(
         POOL_KEY, token

@@ -12,23 +12,23 @@ from app.api import bp
 
 @bp.route("/queue-details")
 def queue_details():
-    """Return the number of tasks in queue, and details on tasks currently running.
+    """Return the number of queued tasks and the details of the running tasks.
 
-    This endpoint is checked every 5 seconds so the website can update the current number
-    of tasks in queue, and the details of the tasks that are currently running.
+    The website polls this endpoint every 5 seconds. Then it updates the
+    number of queued tasks and the details of the tasks that run now.
 
-    No @login_required: this is polled via XHR, so an expired session should get
-    a clean 401 JSON response instead of a redirect to the HTML login page.
+    This route has no @login_required. The browser polls it through XHR.
+    Thus, an expired session must get a clean 401 JSON response, not a
+    redirect to the HTML login page.
     """
 
     if current_user.is_authenticated:
         details = current_user.get_queue_details()
 
-        # The per-file pipeline trails: where each recent file
-        # sits in its journey through the import pipeline. The queue
-        # page's poll takes the default 25; the dedicated pipeline
-        # page asks for the full retained set with ?files=…,
-        # clamped to what Redis actually keeps
+        # The per-file pipeline trails show where each recent file is in
+        # the import pipeline. The poll of the queue page uses the default
+        # of 25. The dedicated pipeline page asks for the full retained set
+        # with ?files=. Fitzflix clamps that number to what Redis keeps.
 
         from app.pipeline import ACTIVE_LIMIT, pipeline_trails
 
@@ -38,19 +38,20 @@ def queue_details():
         )
         return jsonify(details)
 
-    # The user could not be authenticated, return a 401 http error code
+    # The user is not authenticated. Return a 401 HTTP error code.
 
     return jsonify({}), 401
 
 
 @bp.route("/plex/webhook/<token>", methods=["POST"])
 def plex_webhook(token):
-    """Plex webhook receiver: record movie scrobbles as watches.
+    """Receive Plex webhooks and record movie scrobbles as watches.
 
-    Plex webhooks can't carry auth headers, so a secret path segment gates
-    the endpoint (404 when unset or wrong, indistinguishable from a missing
-    route). Scrobbles enqueue the same apply task the history poller uses;
-    the shared dedup marker keeps the two sources from double-counting.
+    Plex webhooks cannot carry auth headers. Thus, a secret path segment
+    gates the endpoint. A missing or wrong token gets a 404. That response
+    is the same as for a missing route. A scrobble enqueues the same apply
+    task that the history poller uses. The shared dedup marker prevents a
+    double count from the two sources.
     """
 
     expected = current_app.config["PLEX_WEBHOOK_TOKEN"]
@@ -58,7 +59,7 @@ def plex_webhook(token):
         return jsonify({}), 404
 
     # Plex posts multipart form data with the JSON in a "payload" field
-    # (plus an optional thumbnail file); accept a raw JSON body too
+    # and an optional thumbnail file. Fitzflix also accepts a raw JSON body.
 
     try:
         if "payload" in request.form:
@@ -72,9 +73,10 @@ def plex_webhook(token):
     if payload.get("event") != "media.scrobble" or metadata.get("type") != "movie":
         return "", 204
 
-    # Live TV airings type as "movie" too, and Plex scrobbles them
-    # repeatedly while a channel plays: a virtual-channel surf (#182)
-    # must never write a diary watch, however Plex matched the airing
+    # Live TV airings also have the type "movie". Plex scrobbles them
+    # again and again while a channel plays. A virtual-channel surf (#182)
+    # must never write a diary watch. The match that Plex made for the
+    # airing is not important.
 
     if metadata.get("live"):
         return "", 204
@@ -86,7 +88,7 @@ def plex_webhook(token):
             tmdb_id = int(match.group(1))
             break
     if tmdb_id is None:
-        # Legacy metadata agent: the guid is a single string
+        # The legacy metadata agent sends the guid as one string.
         match = re.search(r"themoviedb://(\d+)", metadata.get("guid") or "")
         if match:
             tmdb_id = int(match.group(1))

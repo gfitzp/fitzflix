@@ -7,16 +7,16 @@ from app.models import Movie, TVSeries
 
 
 def register(app):
-    """Attach the application's CLI commands to the Flask app."""
+    """Attach the CLI commands of the application to the Flask app."""
 
     @app.cli.group()
     def refresh():
-        """Refresh data from various services."""
+        """Refresh data from external services."""
         pass
 
     @refresh.command()
     def criterion():
-        """Refresh Criterion Collection info from Wikipedia."""
+        """Refresh the Criterion Collection info from Wikidata."""
 
         app.sql_queue.enqueue(
             "app.videos.refresh_criterion_collection_info",
@@ -30,7 +30,7 @@ def register(app):
     @click.argument("library", required=False)
     @click.argument("tmdb_id", required=False)
     def tmdb(library=None, tmdb_id=None):
-        """Refresh library information from TMDB."""
+        """Refresh the library information from TMDB."""
 
         movies = []
         tv_shows = []
@@ -63,8 +63,8 @@ def register(app):
                 .all()
             )
 
-        # The refresh's network phase belongs on the request queue; it hands
-        # its payload to the sql queue for the database writes
+        # The network phase of the refresh belongs on the request queue.
+        # It gives its payload to the sql queue for the database writes.
 
         if movies:
             for movie in movies:
@@ -99,7 +99,7 @@ def register(app):
     @refresh.command()
     @click.argument("file_id")
     def file(file_id):
-        """Refresh metadata for file having specified file ID."""
+        """Refresh the metadata for the file with the specified file ID."""
 
         app.file_queue.enqueue(
             "app.videos.track_metadata_scan_task",
@@ -111,7 +111,7 @@ def register(app):
 
     @app.cli.command()
     def sync():
-        """Sync library with AWS storage."""
+        """Sync the library with the AWS storage."""
 
         app.request_queue.enqueue(
             "app.videos.sync_aws_s3_storage_task",
@@ -124,7 +124,7 @@ def register(app):
 
     @app.cli.command()
     def scan():
-        """Scan import directory for files to be imported."""
+        """Scan the import directory for files to import."""
 
         enqueue_import_scan(app.request_queue, at_front=True)
         app.logger.info("Scanning import directory for files")
@@ -142,7 +142,7 @@ def register(app):
 
     @app.cli.group()
     def aws():
-        """Manage the AWS infrastructure Fitzflix depends on."""
+        """Manage the AWS infrastructure that Fitzflix depends on."""
         pass
 
     @aws.command()
@@ -153,10 +153,12 @@ def register(app):
         "than the newest local snapshot (i.e. the reduction is intended).",
     )
     def provision(force):
-        """Idempotently create the S3 bucket, lifecycle rules, SQS queue,
-        and restore-notification wiring described in the README. Safe to
-        re-run: existing configuration is preserved and reported, and the
-        as-found configuration is snapshotted before any change."""
+        """Create the AWS components that the README describes, idempotently.
+
+        These are the S3 bucket, the lifecycle rules, the SQS queue, and
+        the restore-notification connections. It is safe to run this
+        again. It keeps and reports the existing configuration. It takes
+        a snapshot of the found configuration before any change."""
 
         from app.aws_setup import StaleReadSuspected
         from app.aws_setup import provision as provision_aws
@@ -192,8 +194,9 @@ def register(app):
 
     @recs.command()
     def recompute():
-        """Recompute and store every reviewer's recommendations now,
-        instead of waiting for the nightly run."""
+        """Recompute and store the recommendations of every reviewer now.
+
+        Do not wait for the nightly run."""
 
         from app.recommendations import recompute_recommendations
 
@@ -202,8 +205,9 @@ def register(app):
 
     @recs.command()
     def streaming():
-        """Recompute and store every eligible user's streaming rail now,
-        instead of waiting for the nightly run."""
+        """Recompute and store the streaming rail of every eligible user now.
+
+        Do not wait for the nightly run."""
 
         from app.streaming_rail import recompute_streaming_rail
 
@@ -212,8 +216,9 @@ def register(app):
 
     @recs.command()
     def leaving():
-        """Fetch and store the leaving-Criterion film set now, instead
-        of waiting for the monthly run."""
+        """Fetch and store the leaving-Criterion film set now.
+
+        Do not wait for the monthly run."""
 
         from app.leaving_criterion import refresh_leaving_criterion
 
@@ -222,8 +227,9 @@ def register(app):
 
     @recs.command("newly-added")
     def newly_added():
-        """Scrape and diff every provider's newly-added feed now,
-        instead of waiting for the nightly run."""
+        """Scrape and compare the newly-added feed of every provider now.
+
+        Do not wait for the nightly run."""
 
         from app.newly_added import refresh_newly_added
 
@@ -232,9 +238,10 @@ def register(app):
 
     @recs.command("catalog")
     def provider_catalogs():
-        """Enumerate subscribed providers' catalogs and process the
-        pending discoveries now, instead of waiting for the nightly
-        run."""
+        """List the catalogs of the subscribed providers and process the
+        pending discoveries now.
+
+        Do not wait for the nightly run."""
 
         from app.provider_catalog import refresh_provider_catalogs
 
@@ -243,9 +250,10 @@ def register(app):
 
     @recs.command()
     def awards():
-        """Refresh every film's Wikidata award records now, instead of
-        waiting for the weekly run — the film-item pass first, then the
-        person-item craft backfill layered on top of it."""
+        """Refresh the Wikidata award records of every film now.
+
+        Do not wait for the weekly run. The film-item pass runs first.
+        Then the person-item craft backfill adds to it."""
 
         from app.awards import refresh_movie_awards, refresh_person_awards
 
@@ -255,10 +263,11 @@ def register(app):
     @recs.command()
     @click.argument("dataset", type=click.Path(exists=True, file_okay=False))
     def copref(dataset):
-        """Rebuild the MovieLens co-preference similarity table from an
-        extracted ml-32m dataset directory. Needs numpy and scipy
-        installed ad hoc — they're build-time tools, not runtime
-        dependencies (see app/copref.py for the dataset source)."""
+        """Rebuild the MovieLens co-preference similarity table.
+
+        The source is an extracted ml-32m dataset directory. This needs
+        numpy and scipy installed ad hoc. They are build-time tools, not
+        runtime dependencies. See app/copref.py for the dataset source."""
 
         from app.copref import build_copref_table
 
@@ -266,14 +275,16 @@ def register(app):
 
     @app.cli.group()
     def alerts():
-        """Manage watchlist availability alerts."""
+        """Manage the watchlist availability alerts."""
         pass
 
     @alerts.command()
     def availability():
-        """Diff watchlisted films' availability against the stored
-        snapshot and send the digests now, instead of waiting for the
-        nightly run. The first run only plants the snapshots."""
+        """Compare the availability of the watchlisted films with the
+        stored snapshot and send the digests now.
+
+        Do not wait for the nightly run. The first run only writes the
+        snapshots."""
 
         from app.availability_alerts import notify_watchlist_availability
 
@@ -287,8 +298,10 @@ def register(app):
 
     @transcodes.command()
     def adopt():
-        """Adopt untracked transcodes: walk TRANSCODES_DIR and create
-        DerivedFile rows for every copy whose source is identifiable."""
+        """Adopt the untracked transcodes.
+
+        Walk TRANSCODES_DIR and create DerivedFile rows for every copy
+        whose source is identifiable."""
 
         from flask import current_app
 
@@ -306,8 +319,10 @@ def register(app):
 
     @frames.command()
     def refresh():
-        """Prune and top up the frame pool now instead of waiting for
-        the nightly run — extractions queue on the transcode lane."""
+        """Prune and fill the frame pool now.
+
+        Do not wait for the nightly run. The extractions queue on the
+        transcode lane."""
 
         from flask import current_app
 
@@ -320,15 +335,17 @@ def register(app):
 
     @app.cli.group()
     def tv():
-        """TV metadata tools."""
+        """Manage the TV metadata."""
         pass
 
     @tv.command()
     @click.argument("series_id", type=int)
     @click.argument("new_title")
     def rename(series_id, new_title):
-        """Rename a TV series on disk and in the database
-        — the Plex-disambiguation fix. S3 keys deliberately stay put."""
+        """Rename a TV series on the disk and in the database.
+
+        This is the Plex-disambiguation fix. The S3 keys deliberately
+        stay the same."""
 
         from flask import current_app
 
@@ -342,16 +359,18 @@ def register(app):
 
     @app.cli.group()
     def catalog():
-        """Manage the film catalog's exclusion list."""
+        """Manage the exclusion list of the film catalog."""
         pass
 
     @catalog.command()
     @click.argument("movie_id", type=int)
     def exclude(movie_id):
-        """Delete a bogus catalog record and bar its TMDB id from ever
-        being auto-created again — for Wikidata junk like an unfinished
-        film carrying a stale TMDB id. Refuses records with files or
-        diary rows: those are real library data, not catalog junk."""
+        """Delete a false catalog record and block its TMDB id from
+        automatic creation in the future.
+
+        Use this for Wikidata junk, such as an unfinished film with a
+        stale TMDB id. This refuses records with files or diary rows.
+        Those are real library data, not catalog junk."""
 
         from app import db
         from app.models import CatalogExclusion, Movie, UserMovieReview
@@ -393,8 +412,10 @@ def register(app):
     @triage.command()
     def backfill():
         """Queue snapshot generation for every existing candidate file
-        that has no aids yet — the serial transcode queue is the
-        throttle, so this is safe to run against a large backlog."""
+        that has no aids yet.
+
+        The serial transcode queue is the throttle. Thus, this is safe
+        to run against a large backlog."""
 
         from app.triage import forced_subtitle_candidates, triage_snapshot_dir
 
@@ -419,8 +440,10 @@ def register(app):
     @triage.command()
     def backfill_audio():
         """Queue lossy-audio comparison clips (#223) for every existing
-        candidate file (#212) that has none yet — same serial-queue
-        throttle as the subtitle backfill."""
+        candidate file (#212) that has none yet.
+
+        This has the same serial-queue throttle as the subtitle
+        backfill."""
 
         from app.triage import audio_comparison_dir, lossy_audio_candidates
 
@@ -454,10 +477,10 @@ def register(app):
     def atmos(file_id):
         """Queue E-AC-3 Atmos twins for TrueHD Atmos files.
 
-        With FILE_ID, queues that one file; without, sweeps the whole
-        library for TrueHD Atmos tracks lacking their twin — the serial
-        transcode queue converts one film at a time, and each film
-        costs roughly a dollar of MediaConvert time.
+        With FILE_ID, this queues that one file. Without it, this sweeps
+        the whole library for TrueHD Atmos tracks that have no twin. The
+        serial transcode queue converts 1 film at a time. Each film costs
+        approximately 1 dollar of MediaConvert time.
         """
 
         from app import db
@@ -498,9 +521,11 @@ def register(app):
         "current weight.",
     )
     def evaluate(weights):
-        """Leave-one-out ranking metrics per user: how highly the films
-        each user demonstrably liked would have been recommended. Use to
-        compare trial feature-class weights against the current ones."""
+        """Show the leave-one-out ranking metrics per user.
+
+        The metrics say how highly Fitzflix would have recommended the
+        films that each user clearly liked. Use this to compare trial
+        feature-class weights with the current weights."""
 
         from app import db
         from app.models import UserMovieReview
@@ -536,7 +561,7 @@ def register(app):
 
     @app.cli.group()
     def smb():
-        """Probe library files for the SMB lost-handle state."""
+        """Probe the library files for the SMB lost-handle state."""
         pass
 
     @smb.command()
@@ -558,8 +583,9 @@ def register(app):
     def probe(file_ids, since, everything):
         """Open and close files to find the ones whose handle the NAS lost.
 
-        Reads still succeed on such a file, so nothing else notices until
-        an upload's final close fails. Costs one open and one close each."""
+        Reads still succeed on such a file. Thus, nothing else sees the
+        problem until the final close of an upload fails. Each file costs
+        1 open and 1 close."""
 
         from datetime import datetime, timedelta, timezone
 
@@ -591,9 +617,9 @@ def register(app):
             return
 
         # A row whose local copy is gone is the normal state for every
-        # superseded edition, so name those separately instead of letting
-        # thousands of them bury the handful that matter. Worth listing
-        # one by one only when the file was asked for by id.
+        # superseded edition. Thus, count those separately. Otherwise,
+        # thousands of them would hide the few that are important. List
+        # them one by one only when the user asked for the file by id.
 
         broken = []
         other = []
@@ -616,8 +642,8 @@ def register(app):
                 other.append(file)
                 click.echo(f"  {result['message']}  {file.file_path}")
 
-        # An unmounted share isn't a probe result at all — every file on
-        # it reports missing at once, which says nothing about handles
+        # An unmounted share is not a probe result at all. Every file on
+        # it reports missing at one time. That says nothing about handles.
 
         for share in sorted(offline_shares):
             click.echo(f"  SHARE NOT MOUNTED  {share} — its files were not probed")
@@ -634,7 +660,7 @@ def register(app):
 
     @smb.command()
     def status():
-        """List the files currently recorded as failing their probe."""
+        """List the files that are recorded as failing their probe now."""
 
         from app.models import File
         from app.smb_probe import failing_state, healed_state
@@ -655,8 +681,8 @@ def register(app):
         if failing:
             click.echo(f"{len(failing)} file(s) failing")
 
-        # Recoveries wait here to be reported: a task's own clean probe
-        # records one, and used to erase the duration instead
+        # Recoveries wait here for a report. The clean probe of a task
+        # records one. Before, it erased the duration instead.
 
         if pending:
             click.echo(
@@ -678,13 +704,14 @@ def register(app):
         help="Actually queue the repairs, instead of only reporting them.",
     )
     def repair(enqueue):
-        """Re-archive the files whose S3 copy is behind the local one.
+        """Archive again the files whose S3 copy is older than the local one.
 
-        A lost re-archive is invisible to everything else — the key is
-        still there and its date is the old upload's — so these files
-        would otherwise keep a pre-edit archive forever. Retrying while
-        the handle is still lost just fails the same way, so each file is
-        probed first and only the readable ones are queued."""
+        A lost archive update is invisible to everything else. The key
+        is still there and its date is that of the old upload. Thus,
+        without this command, these files would keep a pre-edit archive
+        forever. A retry while the handle is still lost fails in the same
+        way. Thus, this probes each file first and queues only the
+        readable ones."""
 
         from flask import current_app
 
@@ -738,12 +765,12 @@ def register(app):
 
     @smb.command(name="history")
     def show_history():
-        """Every recovery ever recorded, with how long each one lasted.
+        """Show every recovery ever recorded, with how long each one lasted.
 
-        recheck reports a recovery once and reaps it, so this is the only
-        place a duration survives. How long the state lasts is the number
-        the whole investigation is after, and one episode never answers
-        it — the answer accumulates here."""
+        recheck reports a recovery 1 time and then removes it. Thus, this
+        is the only place where a duration stays. How long the state
+        lasts is the number that the whole investigation wants. One
+        episode never answers it. The answer accumulates here."""
 
         from statistics import median
 
@@ -764,8 +791,8 @@ def register(app):
                 f"{episode['path']}"
             )
 
-        # Every duration is a floor — first_seen is when something first
-        # asked, and the file was already stuck by then
+        # Every duration is a minimum. first_seen is the time when
+        # something first asked. The file was already stuck at that time.
 
         durations = [
             e["held_for_seconds"] for e in episodes if e.get("held_for_seconds")
@@ -780,12 +807,12 @@ def register(app):
 
     @smb.command()
     def recheck():
-        """Report every recovery, and re-probe the files still failing.
+        """Report every recovery, and probe the files that still fail again.
 
-        Run it on a schedule during an investigation: how long a file
-        stays in the state is the number nothing has ever measured.
-        Recoveries are reported once and then dropped, so run it before
-        you need the numbers, not after."""
+        Run this on a schedule during an investigation. How long a file
+        stays in the state is the number that nothing has measured
+        before. This reports a recovery 1 time and then drops it. Thus,
+        run it before you need the numbers, not after."""
 
         from app.smb_probe import recheck as recheck_state
 
@@ -795,8 +822,8 @@ def register(app):
         for result in healed:
             held = result.get("held_for_seconds")
 
-            # "at least": first_seen is when something first asked, and the
-            # file was already in the state by then
+            # "at least": first_seen is the time when something first
+            # asked. The file was already in the state at that time.
 
             duration = f" after at least {held / 60:.0f} minute(s)" if held else ""
             found_by = result.get("healed_by")

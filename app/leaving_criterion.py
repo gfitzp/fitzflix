@@ -1,22 +1,24 @@
-"""The landing page's "Leaving the Criterion Channel" shelf.
+"""Build the "Leaving the Criterion Channel" shelf of the landing page.
 
 criterionchannel.com/leaving-{month}-{lastday} is the canonical source
-for what departs at month's end — structured HTML with a tooltip per
-film carrying title, director, and year; no feed or API exists (the
-JSON/RSS variants 404, JustWatch has no public leaving API, and TMDB
-doesn't license departure data). Scraping this one official page for
-title extraction is a narrow, deliberate exception to the no-scraping
-rule. A daily task — a no-op while the stored set is still current —
-parses the collection, matches each film to TMDB by title and year,
-embeds the enriched payloads (so the shelf outlives every shorter
-cache), and stores the set with its departure date; the
-landing page ranks it against the viewer's taste profile for Criterion
-subscribers.
+for the films that leave at the end of the month. It is structured
+HTML with a tooltip for each film. The tooltip carries the title, the
+director, and the year. No feed or API exists. The JSON and RSS
+variants return 404. JustWatch has no public leaving API. TMDB does not
+license departure data. Fitzflix scrapes this 1 official page to get
+the titles. This is a narrow and deliberate exception to the
+no-scraping rule. A daily task parses the collection. The task does
+nothing while the stored set is current. The task matches each film to
+TMDB by title and year. It embeds the enriched payloads. Thus, the
+shelf lives longer than each shorter cache. It stores the set with its
+departure date. The landing page ranks the set against the taste
+profile of the viewer for Criterion subscribers.
 
-Shelf semantics: owned films are excluded (no urgency — the shelf is
-about watch-it-before-it-leaves), diary films are excluded unless
-they're on the user's watchlist, and a leaving film on the watchlist
-is the strongest signal of all — watch it now, or buy the disc.
+Shelf rules: The shelf excludes owned films. There is no urgency for
+them. The shelf is about films to watch before they leave. The shelf
+excludes diary films unless they are on the watchlist of the user. A
+leaving film on the watchlist is the strongest signal of all. Watch it
+now, or buy the disc.
 """
 
 import calendar
@@ -39,13 +41,13 @@ from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
 from app.models import tmdb_get
 
-# This process's app instance, resolved lazily so the monthly task can
-# run on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the monthly task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
-# TMDB's provider id for the Criterion Channel — the shelf only renders
-# for users subscribed to it
+# The TMDB provider id for the Criterion Channel. The shelf renders
+# only for users that subscribe to it.
 
 CRITERION_PROVIDER_ID = 258
 
@@ -55,8 +57,8 @@ MATCH_CACHE_SECONDS = 60 * 86400
 MATCH_CANDIDATES = 5
 PAGE_CAP = 10
 
-# One film per tooltip: the title heading, then an optional
-# "Directed by X • YYYY • Country" line
+# There is 1 film for each tooltip: the title heading, then an optional
+# "Directed by X • YYYY • Country" line.
 
 TOOLTIP_TITLE_RE = re.compile(
     r"tooltip-item-title[^>]*>\s*<strong>\s*(.*?)\s*</strong>", re.S
@@ -67,10 +69,12 @@ TOOLTIP_META_RE = re.compile(
 
 
 def leaving_page_candidates(today):
-    """(url, departure date) candidates in likelihood order: this
-    month's page, next month's (the new page can appear before the old
-    departure passes), then last month's (early in a month, before the
-    new page exists)."""
+    """Return the (url, departure date) candidates, most likely first.
+
+    The order is: the page of this month, the page of the next month,
+    then the page of the last month. The new page can appear before the
+    old departure passes. Early in a month, the new page can be absent.
+    """
 
     candidates = []
     for months_ahead in (0, 1, -1):
@@ -92,8 +96,8 @@ def leaving_page_candidates(today):
 
 
 def parse_leaving_page(page_html):
-    """[{title, director, year}] from one page of the leaving
-    collection's tooltip markup; [] when the page has no films."""
+    """Return [{title, director, year}] from 1 page of the tooltip markup
+    of the leaving collection, or [] if the page has no films."""
 
     films = []
     for chunk in page_html.split('class="tooltip background-white"')[1:]:
@@ -115,12 +119,14 @@ def parse_leaving_page(page_html):
 
 
 def fetch_collection_films(url):
-    """Deduped [{title, director, year}] scraped from one VHX
-    collection page (the ?html=1&page=N markup every Criterion Channel
-    collection serves), paginating until an empty page; [] when the
-    page doesn't answer. The generic half of the scraper — the leaving
-    page and the newly-added feed (#246, app.newly_added) both read
-    through it."""
+    """Return [{title, director, year}] scraped from 1 VHX collection
+    page, without duplicates.
+
+    Each Criterion Channel collection serves the ?html=1&page=N markup.
+    This reads the pages until an empty page. It returns [] if the page
+    does not answer. This is the generic half of the scraper. The
+    leaving page and the newly-added feed (#246, app.newly_added) both
+    read through it."""
 
     films = []
     try:
@@ -146,9 +152,11 @@ def fetch_collection_films(url):
 
 
 def fetch_leaving_films():
-    """(departure date, source url, films) scraped from the official
-    leaving page, paginating until an empty page; (None, None, []) when
-    no candidate page answers."""
+    """Return (departure date, source url, films) scraped from the
+    official leaving page.
+
+    This reads the pages until an empty page. It returns (None, None,
+    []) if no candidate page answers."""
 
     for url, departs in leaving_page_candidates(date.today()):
         films = fetch_collection_films(url)
@@ -158,10 +166,12 @@ def fetch_leaving_films():
 
 
 def _normalize(text):
-    """A comparison key for titles and names: accents folded, case
-    and punctuation dropped, apostrophes (straight or curly) removed
-    outright so "Muriel’s Wedding" meets "Muriel's Wedding" and
-    "P. J. Hogan" meets "P.J. Hogan"."""
+    """Return a comparison key for titles and names.
+
+    This folds accents. It removes case and punctuation. It removes
+    apostrophes (straight or curly) fully. Thus, "Muriel’s Wedding"
+    matches "Muriel's Wedding", and "P. J. Hogan" matches "P.J.
+    Hogan"."""
 
     text = re.sub(r"[\'’`]", "", text or "")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
@@ -169,7 +179,7 @@ def _normalize(text):
 
 
 def _tmdb_json(path, params):
-    """One TMDB GET's JSON body, or None on any failure (logged)."""
+    """Return the JSON body of 1 TMDB GET, or None on a failure (logged)."""
 
     try:
         r = tmdb_get(
@@ -185,23 +195,26 @@ def _tmdb_json(path, params):
 
 
 def match_tmdb_id(title, year, director=None):
-    """The TMDB id for a leaving film, by title-and-year search, cached
-    for two months; None when TMDB has no match.
+    """Return the TMDB id for a leaving film, or None if TMDB has no match.
 
-    TMDB's search ranks by popularity, so a generic short-film title
-    like "Here", "Kid", or "Ambition" comes back with a popular
-    feature first — the Aug 2026 set put "Right Here, Right Now" and
-    "The Karate Kid" on the shelf in place of Bas Devos's and Hal
-    Hartley's films. So a scraped director is verified against each
-    candidate's credits, exact-title candidates are tried first, and
-    a film whose director matches nothing TMDB offers stays unmatched
-    (a plain "Also leaving" row) rather than becoming the wrong film.
-    A candidate with no director credited at all passes on an exact
-    title-and-year match — shorts often have no crew on TMDB. Without
-    a scraped director, the exact-title candidate wins, else the
-    first result (the pre-Aug 2026 behaviour). The cache key carries
-    the director, so a director-aware lookup never reads an entry the
-    older title-only matcher wrote.
+    This searches by title and year. It caches the result for 2
+    months.
+
+    The TMDB search ranks by popularity. Thus, a generic short-film
+    title such as "Here", "Kid", or "Ambition" returns a popular feature
+    first. The 2026-08 set put "Right Here, Right Now" and "The Karate
+    Kid" on the shelf in place of the films of Bas Devos and Hal
+    Hartley. Thus, this verifies a scraped director against the credits
+    of each candidate. It tries exact-title candidates first. If the
+    director matches no candidate that TMDB offers, the film stays
+    unmatched (a plain "Also leaving" row). It does not become the
+    wrong film. A candidate with no credited director passes on an
+    exact title-and-year match. Shorts frequently have no crew on TMDB.
+    Without a scraped director, the exact-title candidate wins. If
+    there is none, the first result wins (the behaviour before
+    2026-08). The cache key carries the director. Thus, a
+    director-aware lookup never reads an entry that the older
+    title-only matcher wrote.
     """
 
     slug = re.sub(r"[^a-z0-9]+", "-", f"{title}-{year}-{director or ''}".lower()).strip(
@@ -217,13 +230,15 @@ def match_tmdb_id(title, year, director=None):
     wanted_director = _normalize(director) if director else None
 
     def candidates(params, pages):
-        """Search results worth a look, exact-title matches first, then
-        releases within a year of the scraped date (Criterion and TMDB
-        often disagree by one — festival year versus release year),
-        capped at the handful worth a credits lookup. With a director
-        to verify, only those two kinds are candidates at all: the
-        year-less fallback reads two pages, and a popular stranger
-        shouldn't cost a credits call."""
+        """Return the search results that are worth a look.
+
+        Exact-title matches come first. Then come releases within 1
+        year of the scraped date. Criterion and TMDB frequently differ
+        by 1 year (festival year versus release year). The list is
+        limited to the few that are worth a credits lookup. With a
+        director to verify, only those 2 kinds are candidates. The
+        fallback without a year reads 2 pages. A popular unrelated film
+        must not cost a credits call."""
 
         results = []
         for page in range(1, pages + 1):
@@ -249,9 +264,11 @@ def match_tmdb_id(title, year, director=None):
         return ordered[:MATCH_CANDIDATES]
 
     def directed_by(result):
-        """True when the candidate's credited directors include the
-        scraped one — or when nothing is credited and the title and
-        year agree exactly."""
+        """Return True if the credited directors of the candidate include
+        the scraped director.
+
+        This also returns True if no director is credited and the title
+        and the year agree exactly."""
 
         body = _tmdb_json(f"/movie/{result['id']}/credits", {})
         if body is None:
@@ -271,13 +288,15 @@ def match_tmdb_id(title, year, director=None):
         )
 
     def pick(params):
-        """The chosen candidate id for one search, or None. When no
-        candidate's director corroborates, the one result TMDB knows
-        by exactly this title and year still passes — Criterion and
-        TMDB can credit a film differently (Criterion files "Regarding
-        Soon" under Hal Hartley, its subject; TMDB under Richard
-        Sylvarnes, who shot and cut it) — but only when it's unique,
-        so a same-title stranger from the same year can't slip in."""
+        """Return the chosen candidate id for 1 search, or None.
+
+        If the director of no candidate agrees, the 1 result that TMDB
+        knows by exactly this title and year passes. Criterion and TMDB
+        can credit a film differently. Criterion files "Regarding Soon"
+        under Hal Hartley, its subject. TMDB files it under Richard
+        Sylvarnes, who shot and cut it. This passes only if the result
+        is unique. Thus, an unrelated film with the same title and year
+        cannot get in."""
 
         found = candidates(params, pages=1 if params else 2)
         if wanted_director:
@@ -310,13 +329,16 @@ def match_tmdb_id(title, year, director=None):
 
 
 def refresh_leaving_criterion():
-    """Daily task: scrape the leaving collection, match each film to
-    TMDB, embed the enriched payloads, and store the set with its
-    departure date. A no-op while the stored set's departure is still
-    ahead — the daily cadence exists to retry until Criterion publishes
-    the new month's page, which appears sometime after the old set
-    departs, not on a knowable schedule. The stored set has no TTL —
-    the shelf simply hides once the departure date passes."""
+    """Scrape the leaving collection and store the set with its departure
+    date.
+
+    This is a daily task. It matches each film to TMDB. It embeds the
+    enriched payloads. It does nothing while the departure of the
+    stored set is in the future. The daily cadence exists to retry
+    until Criterion publishes the page of the new month. That page
+    appears at some time after the old set departs. The schedule is
+    not known. The stored set has no TTL. The shelf hides after the
+    departure date passes."""
 
     with app.app_context():
         stored = current_app.redis.get(LEAVING_KEY)
@@ -330,11 +352,11 @@ def refresh_leaving_criterion():
             )
             return True
 
-        # Films the TMDB matcher can't resolve still make the stored
-        # set, carrying just the scraped facts (title, director, year)
-        # — the /leaving page lists them as plain rows so the departure
-        # inventory stays complete; the home shelf skips them (its
-        # cards need posters and taste features)
+        # Films that the TMDB matcher cannot resolve still go into the
+        # stored set. They carry only the scraped facts (title, director,
+        # year). The /leaving page lists them as plain rows. Thus, the
+        # departure inventory stays complete. The home shelf skips them.
+        # Its cards need posters and taste features.
 
         items = []
         for film in films:
@@ -364,9 +386,11 @@ def refresh_leaving_criterion():
 
 
 def user_film_sets(user, tmdb_ids):
-    """(owned, logged, watchlisted, refused) tmdb-id sets for one user
-    over the given films — the exclusion inputs the discovery shelves
-    share (the leaving shelf here, the newly-added shelves in
+    """Return the (owned, logged, watchlisted, refused) tmdb-id sets for 1
+    user over the given films.
+
+    These are the exclusion inputs that the discovery shelves share
+    (the leaving shelf here, the newly-added shelves in
     app.newly_added)."""
 
     owned = {
@@ -401,13 +425,13 @@ def user_film_sets(user, tmdb_ids):
 
 
 def leaving_shelf(user):
-    """The taste-ranked departure shelf for one user, or None.
+    """Return the taste-ranked departure shelf for 1 user, or None.
 
-    Renders only for Criterion subscribers with a stored set that
-    hasn't departed yet. Owned, diary, and watchlisted films all drop
-    out — this is a discovery shelf since Aug 30 2026: a watchlisted
-    departure is the watch-it-now-or-buy-it case, and it leads the
-    landing page's watchlist shelf instead of pinning here.
+    This renders only for Criterion subscribers with a stored set that
+    has not departed yet. Owned, diary, and watchlisted films all drop
+    out. This is a discovery shelf since 2026-08-30. A watchlisted
+    departure is the watch-it-now-or-buy-it case. It leads the
+    watchlist shelf of the landing page. It is not pinned here.
     """
 
     subscribed = {row.provider_id for row in user.streaming_providers}
@@ -462,12 +486,14 @@ def leaving_shelf(user):
 
 
 def leaving_departure(tmdb_id):
-    """The departure date, as "August 31", when the film is in the
-    stored leaving set and that date hasn't passed; None otherwise.
-    Every Criterion Channel availability badge asks this (#45c's
-    popover, the movie page, search results, filmography rows, the
-    watchlist), so the set is parsed once per app context and kept
-    on flask.g — one Redis read per page, not one per film."""
+    """Return the departure date, as "August 31", or None.
+
+    This returns the date if the film is in the stored leaving set and
+    the date has not passed. Each Criterion Channel availability badge
+    asks this (the popover of #45c, the movie page, search results,
+    filmography rows, the watchlist). Thus, this parses the set 1 time
+    for each app context and keeps it on flask.g. That is 1 Redis read
+    for each page, not 1 for each film."""
 
     if tmdb_id is None:
         return None
@@ -490,9 +516,11 @@ def leaving_departure(tmdb_id):
 
 
 def _source_url(stored, departs):
-    """The scraped page's own URL; payloads stored before the source
-    key existed reconstruct it from the departure date (the same shape
-    the candidate list builds)."""
+    """Return the URL of the scraped page.
+
+    Payloads stored before the source key existed build the URL from
+    the departure date. It has the same shape that the candidate list
+    builds."""
 
     return stored.get("source") or (
         "https://www.criterionchannel.com/leaving-"
@@ -501,14 +529,15 @@ def _source_url(stored, departs):
 
 
 def leaving_inventory(user):
-    """The complete departing set for the /leaving page, or None.
+    """Return the complete departing set for the /leaving page, or None.
 
-    Unlike the home shelf, nothing is excluded: owned films stay
-    listed with their library badge (the relaxing case — the disc is
-    on the shelf), seen films stay with their Seen badge, and films
-    the TMDB matcher couldn't resolve trail as plain scraped rows so
-    the inventory is the whole departure set. Watchlisted films lead,
-    then unowned films by taste score, owned films after.
+    Unlike the home shelf, this excludes nothing. Owned films stay
+    listed with their library badge. That is the relaxed case. The disc
+    is on the shelf. Seen films stay with their Seen badge. Films that
+    the TMDB matcher could not resolve come last as plain scraped rows.
+    Thus, the inventory is the full departure set. Watchlisted films
+    come first. Then come unowned films by taste score. Owned films
+    come after.
     """
 
     payload = current_app.redis.get(LEAVING_KEY)

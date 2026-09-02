@@ -1,30 +1,33 @@
 """Per-provider "newly added" feeds and their landing shelves (#246).
 
-The point is catalog discovery: surfacing films the database has never
-heard of that just landed on a service the user already pays for. A
-watchlisted film becoming available is the availability-alert email's
-job (app.availability_alerts), not this shelf's. TMDb's watch-provider
-payload carries no availability dates in either direction (verified
-Aug 2026 — entries are just provider id/name/logo/priority), so "newly
-added" can only come from a provider's own feed, snapshot-diffed.
+The purpose is catalog discovery. This module shows films that the
+database does not know and that recently arrived on a service that the
+user pays for. A watchlisted film that becomes available is the job of
+the availability-alert email (app.availability_alerts). It is not the
+job of this shelf. The TMDb watch-provider payload has no availability
+dates in either direction (verified 2026-08). Each entry has only a
+provider id, name, logo, and priority. Thus, "newly added" can only
+come from the feed of the provider, compared with a snapshot.
 
-The infrastructure is generic over provider id — a Redis store per
-provider (`fitzflix:newly_added:{provider_id}`) whose items carry a
-`first_seen` date stamped by the diff, a shelf per subscribed provider
-with a stored feed, and an "added <date>" availability badge — but
-only one feed exists today: the Criterion Channel's newly-added
-collection, scraped through the same VHX collection reader as the
-leaving page. Enumerating full provider catalogs from TMDb /discover
-is #250's job (it writes this same store shape), aimed at the
-recommendation universe rather than a shelf.
+The infrastructure is generic over the provider id. There is a Redis
+store per provider (`fitzflix:newly_added:{provider_id}`). Each item in
+it has a `first_seen` date that the diff sets. There is a shelf per
+subscribed provider with a stored feed. There is an "added <date>"
+availability badge. But only one feed exists today: the newly-added
+collection of the Criterion Channel. Fitzflix scrapes it through the
+same VHX collection reader as the leaving page. The listing of full
+provider catalogs from TMDb /discover is the job of #250. It writes
+this same store shape. Its target is the recommendation universe, not
+a shelf.
 
-Diff semantics, in the availability-alert snapshot tradition: the
-first run only plants (first_seen stays null, nothing surfaces — what
-was already on the page isn't news); a film seen before keeps its
-first_seen; a film gone from the page drops out of the store. Scraped
-`(title.lower(), year)` is the diff key — slugs aren't stable, and
-matched items get TMDb's title, so each item also records its scraped
-title and year for the next run's diff.
+The diff follows the availability-alert snapshot tradition. The first
+run only plants the store. Then first_seen stays null and nothing
+shows, because a film that was already on the page is not news. A film
+that was seen before keeps its first_seen. A film that is gone from the
+page drops out of the store. The scraped `(title.lower(), year)` is the
+diff key. Slugs are not stable. A matched item gets the TMDb title.
+Thus, each item also records its scraped title and year for the diff
+of the next run.
 """
 
 import json
@@ -46,16 +49,16 @@ from app.models import File, Movie, UserMovieReview, UserWatchlist
 from app.recommendations import score_movie, stored_profile
 from app.streaming_rail import _payload_features, enriched_movie
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus, the
+# nightly task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
-# Every feed a provider offers: url to scrape with
-# fetch_collection_films, label as the shelf header reads it
-# ("Newly added to {label}"). Criterion is the only entry — the
-# machinery downstream is provider-generic, so a second scrapeable
-# collection is one line here
+# Every feed that a provider offers. The url is the page to scrape with
+# fetch_collection_films. The label is the text of the shelf header
+# ("Newly added to {label}"). Criterion is the only entry. The code
+# downstream is generic over providers. Thus, a second collection to
+# scrape is one line here.
 
 FEEDS = {
     CRITERION_PROVIDER_ID: {
@@ -66,17 +69,19 @@ FEEDS = {
 
 NEWLY_ADDED_KEY = "fitzflix:newly_added:{provider_id}"
 
-# How long an arrival stays "new" on the shelf and the badge. The
-# provider's page rotates films off on its own schedule, so this is a
-# cap, not the usual case
+# The number of days that an arrival stays "new" on the shelf and on the
+# badge. The page of the provider removes films on its own schedule.
+# Thus, this is a limit, not the usual case.
 
 RECENT_DAYS = 30
 
 
 def _recent(item, today=None):
-    """True when the item's first_seen date is inside the shelf
-    window. A null first_seen (planted on the feed's first run) is
-    never recent."""
+    """Return True if the first_seen date of the item is inside the shelf
+    window.
+
+    A null first_seen (planted on the first run of the feed) is never
+    recent."""
 
     first_seen = item.get("first_seen")
     if not first_seen:
@@ -86,9 +91,11 @@ def _recent(item, today=None):
 
 
 def refresh_newly_added():
-    """Daily task: scrape each provider's newly-added feed, diff it
-    against the stored snapshot to stamp first-seen dates, and store
-    the set with embedded enriched payloads."""
+    """Refresh the newly-added feed of each provider (daily task).
+
+    This task scrapes the feed. It compares the feed with the stored
+    snapshot to set the first-seen dates. Then it stores the set with the
+    embedded enriched payloads."""
 
     with app.app_context():
         for provider_id, feed in FEEDS.items():
@@ -100,12 +107,12 @@ def refresh_newly_added():
 
 
 def _refresh_feed(provider_id, feed):
-    """Scrape, diff, and store one provider's feed."""
+    """Scrape, diff, and store the feed of one provider."""
 
     films = fetch_collection_films(feed["url"])
     if not films:
-        # Keep the previous snapshot untouched: a scrape outage must
-        # not empty the store and turn tomorrow's whole page "new"
+        # Keep the previous snapshot. A scrape outage must not empty the
+        # store and make the whole page of tomorrow "new".
         current_app.logger.warning(f"Newly-added: no films found at {feed['url']}")
         return
 
@@ -123,9 +130,10 @@ def _refresh_feed(provider_id, feed):
     for film in films:
         prior = previous_items.get((film["title"].lower(), film["year"]))
         if prior is not None and prior.get("tmdb_id"):
-            # A matched film's stored payload rides along unchanged —
-            # only films new to the page (or still unmatched, where
-            # the 60-day match cache absorbs the retry) cost lookups
+            # The stored payload of a matched film goes with it unchanged.
+            # Only a film that is new to the page costs a lookup. A film
+            # that is still unmatched also costs a lookup, but the 60-day
+            # match cache absorbs the retry.
             items.append(prior)
             continue
         if prior is not None:
@@ -167,16 +175,15 @@ def _refresh_feed(provider_id, feed):
 
 
 def newly_added_shelves(user):
-    """[{provider_id, label, source, items}] — one taste-ranked
-    discovery shelf per subscribed provider whose stored feed has
-    recent arrivals; [] without a taste profile.
+    """Return [{provider_id, label, source, items}], one taste-ranked
+    discovery shelf per subscribed provider with recent arrivals.
 
-    Shelf semantics mirror the leaving shelf: owned films drop out
-    (they're not discoveries), and so do refused, logged, and
-    watchlisted films — a watchlisted arrival belongs to the landing
-    page's watchlist shelf (and the alert email is the primary channel
-    for that case anyway; the scrape often knows days before TMDb
-    does).
+    Return [] if the user has no taste profile. The shelf rules are the
+    same as for the leaving shelf. An owned film drops out, because it is
+    not a discovery. A refused, logged, or watchlisted film also drops
+    out. A watchlisted arrival belongs to the watchlist shelf of the
+    landing page. The alert email is the primary channel for that case.
+    The scrape frequently knows some days before TMDb does.
     """
 
     subscribed = {row.provider_id for row in user.streaming_providers}
@@ -243,15 +250,16 @@ def newly_added_shelves(user):
 
 
 def newly_added_inventory(user):
-    """[{provider_id, label, source, films, unmatched}] — every
-    provider's complete recent-arrival set for the /newly-added page.
+    """Return [{provider_id, label, source, films, unmatched}], the
+    complete recent-arrival set of every provider for the /newly-added
+    page.
 
-    Unlike the home shelf, nothing is excluded: owned films stay
-    listed with their library badge, seen films stay with their Seen
-    badge, and films the TMDB matcher couldn't resolve trail as plain
-    scraped rows so the inventory is the whole arrival set.
-    Watchlisted films lead, then unowned films by taste score, owned
-    films after — the leaving inventory's order.
+    Unlike the home shelf, this excludes nothing. An owned film stays in
+    the list with its library badge. A seen film stays with its Seen
+    badge. A film that the TMDB matcher could not resolve comes last as a
+    plain scraped row. Thus, the inventory is the whole arrival set.
+    Watchlisted films come first. Then unowned films come by taste score.
+    Owned films come after. This is the order of the leaving inventory.
     """
 
     profile = stored_profile(current_app.redis, user.id)
@@ -351,12 +359,13 @@ def newly_added_inventory(user):
 
 
 def newly_added_since(tmdb_id, provider_id):
-    """The arrival date, as "August 5", when the film joined the
-    provider's newly-added feed inside the recent window; None
-    otherwise. The availability badges ask this per match, so the
-    stores are parsed once per app context and kept on flask.g — one
-    Redis read per provider per page, in the leaving_departure
-    tradition."""
+    """Return the arrival date, as "August 5", if the film joined the
+    newly-added feed of the provider inside the recent window.
+
+    Return None in all other cases. The availability badges call this
+    function per match. Thus, Fitzflix parses the stores one time per app
+    context and keeps them on flask.g. That is one Redis read per provider
+    per page, in the leaving_departure tradition."""
 
     if tmdb_id is None:
         return None
@@ -365,9 +374,11 @@ def newly_added_since(tmdb_id, provider_id):
 
 
 def newly_added_fold(tmdb_id, provider_ids):
-    """The green poster fold's label ("Added to the Criterion Channel
-    August 1") when the film recently arrived on one of the given
-    subscribed providers' feeds; None otherwise."""
+    """Return the label of the green poster fold ("Added to the Criterion
+    Channel August 1") if the film recently arrived on a feed of one of
+    the given subscribed providers.
+
+    Return None in all other cases."""
 
     if tmdb_id is None:
         return None
@@ -383,16 +394,18 @@ def newly_added_fold(tmdb_id, provider_ids):
 
 
 def poster_fold(user, tmdb_id, movie_id=None):
-    """("leaving" | "new", label) for the one corner fold a film's
-    standalone poster wears for this user, or None. Gallery tiles
-    paint theirs client-side from /movie_states; the movie and log
-    pages' large posters render server-side and ask here instead,
-    with the same rules: red leaving (Criterion subscribers only)
-    outranks green newly-added, and the alert diff's own
-    recently-available record keeps priority for the green label."""
+    """Return ("leaving" | "new", label) for the one corner fold that the
+    standalone poster of a film shows for this user, or None.
 
-    # Imported here: streaming reaches this module lazily from
-    # streaming_matches, so a top-level import would be circular
+    A gallery tile paints its fold client-side from /movie_states. The
+    large posters of the movie page and the log page render server-side.
+    They ask here instead, with the same rules. The red leaving fold
+    (Criterion subscribers only) outranks the green newly-added fold. The
+    recently-available record of the alert diff keeps priority for the
+    green label."""
+
+    # The import is here because streaming reaches this module lazily from
+    # streaming_matches. A top-level import would be circular.
     from app.availability_alerts import NEW_IN_LIBRARY_LABEL, recent_availability
     from app.leaving_criterion import leaving_departure
     from app.streaming import user_provider_ids
@@ -403,9 +416,9 @@ def poster_fold(user, tmdb_id, movie_id=None):
         if entry:
             label = entry.get("label")
 
-    # Ownership gates the folds (Glenn, Aug 27 2026): an owned film's
-    # copy isn't going anywhere, so it never warns of a departure, and
-    # its only green fold is the local file's own recent arrival
+    # Ownership gates the folds (requested by Glenn, 2026-08-27). The copy
+    # of an owned film stays. Thus, the film never warns of a departure.
+    # Its only green fold is the recent arrival of the local file.
 
     if (
         movie_id is not None
@@ -427,9 +440,11 @@ def poster_fold(user, tmdb_id, movie_id=None):
 
 
 def _fold_index():
-    """{(provider_id, tmdb_id): "August 5"} for every recent arrival
-    across the stored feeds, parsed once per app context and kept on
-    flask.g — one Redis read per provider per page, in the
+    """Return {(provider_id, tmdb_id): "August 5"} for every recent arrival
+    across the stored feeds.
+
+    Fitzflix parses the index one time per app context and keeps it on
+    flask.g. That is one Redis read per provider per page, in the
     leaving_departure tradition."""
 
     index = getattr(g, "_newly_added_index", None)

@@ -1,6 +1,8 @@
-"""Poster management (the routes.py split): the per-movie and per-file
-picker pages, custom artwork uploads, TMDB gallery picks, and the
-library-folder copies Plex reads."""
+"""Poster management (split from routes.py).
+
+This module has the per-movie and per-file picker pages, the custom
+artwork uploads, the TMDB gallery picks, and the library-folder copies
+that Plex reads."""
 
 import io
 import json
@@ -23,7 +25,7 @@ from flask import (
 
 import requests
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its real home.
 from flask_login import login_required
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -46,8 +48,8 @@ from app.main.helpers import admin_required
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
     """Validate an uploaded poster, then write the original and its thumbnails.
 
-    Returns the path of the saved original; raises ValueError with a
-    flash-ready message when the upload isn't a usable poster image.
+    Return the path of the saved original. If the upload is not a usable
+    poster image, raise ValueError with a message that is ready to flash.
     """
 
     try:
@@ -89,7 +91,7 @@ def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
 
 
 def replace_library_poster(library_directory, original_file, poster_filename):
-    """Remove existing poster art from a library directory, then copy in the new one."""
+    """Remove the poster art from a library directory, then copy in the new art."""
 
     for name in os.listdir(library_directory):
         if name.lower().startswith(
@@ -104,21 +106,22 @@ def replace_library_poster(library_directory, original_file, poster_filename):
 
 
 def _custom_poster_dir(scope, record_id):
-    """Where a movie's or file's custom poster tree lives.
+    """Return the directory of the custom poster tree of a movie or a file.
 
-    CUSTOM_ARTWORK_DIR is app/static/custom in production, so these files
-    are served by url_for('static', ...) and mirrored to S3 by the nightly
-    backup (which also propagates deletions).
+    In production, CUSTOM_ARTWORK_DIR is app/static/custom. Thus, Fitzflix
+    serves these files with url_for('static', ...). The nightly backup
+    mirrors them to S3. The backup also propagates deletions.
     """
 
     return os.path.join(current_app.config["CUSTOM_ARTWORK_DIR"], scope, str(record_id))
 
 
 def _assign_movie_poster(movie, uploaded_data):
-    """Run a poster image through the custom-poster pipeline for a movie:
-    thumbnails, a copy beside each main-feature file, precedence column.
+    """Run a poster image through the custom-poster pipeline for a movie.
 
-    Returns a message to flash on failure, or None on success.
+    The pipeline makes the thumbnails, a copy beside each main-feature
+    file, and the precedence column. Return a message to flash on
+    failure, or None on success.
     """
 
     file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
@@ -162,8 +165,10 @@ def _assign_movie_poster(movie, uploaded_data):
 
 
 def _assign_file_poster(file, uploaded_data):
-    """The file-scoped twin of _assign_movie_poster: one file's custom
-    poster, replacing the library copy only for a main feature."""
+    """Assign the custom poster of one file (the file-scoped twin of
+    _assign_movie_poster).
+
+    This function replaces the library copy only for a main feature."""
 
     file_ext = os.path.splitext(secure_filename(uploaded_data.filename))[1]
     poster_filename = f"poster{file_ext}"
@@ -200,14 +205,14 @@ def _assign_file_poster(file, uploaded_data):
 
 
 def _remove_movie_poster(movie):
-    """Delete a movie's custom poster: the custom-artwork tree, the copies
-    beside its library files, and the precedence column.
+    """Delete the custom poster of a movie.
 
-    A main-feature file with its own custom poster keeps that art — the
-    file-over-movie precedence means its library copy gets restored from
-    the file-scoped original rather than deleted.
-
-    Returns a message to flash on failure, or None on success.
+    This function deletes the custom-artwork tree, the copies beside the
+    library files of the movie, and the precedence column. A main-feature
+    file with its own custom poster keeps that art. The file has
+    precedence over the movie. Thus, this function restores the library
+    copy from the file-scoped original. It does not delete it. Return a
+    message to flash on failure, or None on success.
     """
 
     poster_filename = movie.custom_poster
@@ -250,10 +255,11 @@ def _remove_movie_poster(movie):
 
 
 def _remove_file_poster(file):
-    """The file-scoped twin of _remove_movie_poster.
+    """Remove the custom poster of one file (the file-scoped twin of
+    _remove_movie_poster).
 
-    When the movie still has its own custom poster, that art is restored
-    to the library directory; otherwise the poster copy is deleted.
+    If the movie still has its own custom poster, this function restores
+    that art to the library directory. If not, it deletes the poster copy.
     """
 
     poster_filename = file.custom_poster
@@ -296,10 +302,10 @@ def _remove_file_poster(file):
 
 
 def _tmdb_poster_gallery(tmdb_id):
-    """The TMDB poster gallery for a movie, cached for a day.
+    """Return the TMDB poster gallery for a movie. Cache it for 1 day.
 
-    Returns the /movie/{id}/images posters list, or None when the gallery
-    is unavailable (no TMDB id, no API key, or the fetch failed).
+    Return the /movie/{id}/images posters list. Return None if the gallery
+    is not available (no TMDB id, no API key, or the fetch failed).
     """
 
     if not tmdb_id:
@@ -326,10 +332,10 @@ def _tmdb_poster_gallery(tmdb_id):
 
 
 def _fetch_tmdb_poster(poster_path):
-    """Download a TMDB poster and wrap it like a form upload, so a picked
-    poster flows through the exact same pipeline as an uploaded one.
+    """Download a TMDB poster and wrap it as a form upload.
 
-    Returns (file_storage, error_message).
+    Thus, a picked poster goes through the same pipeline as an uploaded
+    poster. Return (file_storage, error_message).
     """
 
     if not re.fullmatch(r"/[A-Za-z0-9]+\.(?:jpg|jpeg|png)", poster_path or ""):
@@ -353,12 +359,13 @@ def _fetch_tmdb_poster(poster_path):
 
 def _poster_gallery_context(posters):
     """Split a poster gallery into the languages present and the subset to
-    show for the request's ?language= filter."""
+    show for the ?language= filter of the request."""
 
     languages = sorted({p.get("iso_639_1") or "none" for p in posters or []})
     active = request.args.get("language")
     if active not in languages and active != "all":
-        # Default to English posters when any exist, otherwise show all
+        # Show the English posters by default, if there are some. If not,
+        # show all posters.
         active = "en" if "en" in languages else "all"
     if posters and active != "all":
         shown = [p for p in posters if (p.get("iso_639_1") or "none") == active]
@@ -371,16 +378,18 @@ def _poster_gallery_context(posters):
 @login_required
 @admin_required
 def movie_poster(movie_id):
-    """Poster picker: choose from the TMDB gallery or upload an image.
+    """Show the poster picker: select from the TMDB gallery or upload an
+    image.
 
-    An admin tool, and a library one (#186 follow-up): a record with no
-    local files wears its TMDB poster, so the picker declines it."""
+    This is an admin tool, and a library tool (#186 follow-up). A record
+    with no local files shows its TMDB poster. Thus, the picker declines
+    it."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = f"{movie.tmdb_title if movie.tmdb_title else movie.title} ({movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year})"
     if File.query.filter_by(movie_id=movie.id).first() is None:
         flash(
-            f"'{title}' has no local files, so its poster follows TMDB.",
+            f"'{title}' has no local files. Its poster follows TMDB.",
             "warning",
         )
         return redirect(url_for("main.movie", movie_id=movie.id))
@@ -456,17 +465,18 @@ def movie_poster(movie_id):
 @login_required
 @admin_required
 def file_poster(file_id):
-    """The poster picker's file-scoped twin: one file's custom poster.
+    """Show the poster picker for the custom poster of one file (the
+    file-scoped twin of movie_poster).
 
-    The TMDB gallery appears for movie files; TV files get the upload form
-    only, since TMDB season/episode artwork isn't wired up.
+    The TMDB gallery appears for a movie file. A TV file gets only the
+    upload form, because TMDB season and episode artwork is not connected.
     """
 
     file = File.query.filter_by(id=file_id).first_or_404()
     movie = file.movie
 
-    # A custom poster is written next to the library file, so there must
-    # be a library file to write next to
+    # Fitzflix writes a custom poster next to the library file. Thus,
+    # there must be a library file.
 
     file_exists_locally = os.path.isfile(
         os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)

@@ -1,31 +1,33 @@
-"""Inspection aids for the possibly-forced subtitle triage.
+"""Make the inspection aids for the possibly-forced subtitle triage.
 
-Nearly every candidate track is bitmap-format (VobSub/PGS), so text
-display is off the table; instead each candidate gets a cue timeline
-(first and last cue plus a density strip — sparse clusters read as
-forced-shaped, an even spread as commentary-shaped) and a handful of
-burned-in snapshot frames, the subtitle overlaid on the movie's own
-picture at sampled cue times, which works for bitmap and text tracks
-alike.
+Almost all candidate tracks are in a bitmap format (VobSub/PGS). Thus,
+a text display is not possible. Instead, each candidate gets a cue
+timeline and some snapshot frames. The timeline has the first and the
+last cue, plus a density strip. Sparse clusters look like a forced
+track. An even spread looks like a commentary track. The snapshot
+frames have the subtitle burned into the picture of the movie at
+sampled cue times. This works for bitmap and text tracks.
 
-Generation is proactive: when an import's track scan matches the
-possibly-forced heuristic, a task on the transcode queue probes the
-cue timestamps (one full container read per track — MKV keeps no
-per-track index) and renders the snapshots. The files live outside the
-custom-artwork tree so backups ignore them, and they're deleted the
-moment they stop being useful: when the file is triaged, or when its
-local copy goes away. There is deliberately no orphan sweep.
+Fitzflix makes the aids in advance. When the track scan of an import
+matches the possibly-forced heuristic, a task on the transcode queue
+probes the cue timestamps and renders the snapshots. The probe is 1
+full container read per track. MKV keeps no per-track index. The
+files are outside the custom-artwork tree. Thus, the backups ignore
+them. Fitzflix deletes them when they are no longer useful. That is
+when the file is triaged, or when its local copy is deleted. By
+design, there is no orphan sweep.
 
-The runtime-mismatch triage (#234) lives here too: no aids to
-generate, just the candidates query over what's already stored.
+The runtime-mismatch triage (#234) is also here. It has no aids to
+make. It has only the candidates query over the stored data.
 
-So does the lossy-audio triage (#212): files whose first audio track
-is lossy while a lossless track rides behind. Its inspection aids
-(#223) are a loudness-envelope correlation of the ENTIRE tracks —
-programme audio correlates near 1.0 with itself across codecs, a
-commentary against the programme doesn't — plus listening clips at
-sampled points so the ears can confirm what the number claims before
-the remux acts on it.
+The lossy-audio triage (#212) is also here. Its candidates are the
+files whose first audio track is lossy while a lossless track is
+behind it. Its inspection aids (#223) are a loudness-envelope
+correlation of the ENTIRE tracks, plus listening clips at sampled
+points. Programme audio correlates near 1.0 with itself across the
+codecs. A commentary does not correlate with the programme. With the
+clips, the ears can confirm what the number claims before the remux
+acts on it.
 """
 
 import array
@@ -44,30 +46,32 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import File, FileAudioTrack, FileSubtitleTrack, Movie
 
-# This process's app instance, resolved lazily so the generation task
-# can run on a worker without building a second application
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, the generation task can run on a worker without a second
+# application
 
 app = LocalProxy(get_app)
 
 TIMELINE_BUCKETS = 60
 
-# Snapshot sampling: cue-list quantiles, so the frames spread across
-# wherever the cues actually are rather than across the runtime
+# The snapshot sampling uses the quantiles of the cue list. Thus, the
+# frames spread across the positions of the cues, not across the runtime
 
 SNAPSHOT_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 
 
 def forced_subtitle_candidates(file_id=None):
-    """Subtitle tracks that look forced but aren't flagged, grouped by file.
+    """Return the subtitle tracks that look forced but have no flag, grouped by file.
 
-    A track is suspicious when it's unforced and holds a quarter or less
-    of the elements of the largest same-language track in the same file —
-    the shape of a foreign-parts-only track sitting beside the full
-    subtitles. Only meaningful comparisons count (the full track needs at
-    least 100 elements, the candidate can't be empty). Files marked
-    reviewed are excluded, as are files that already carry a forced track
-    — their forced needs are met, so a small unforced sibling is probably
-    a commentary or variant.
+    A track is suspicious if it is not forced and has 1 quarter or less
+    of the elements of the largest track with the same language in the
+    same file. This is the shape of a foreign-parts-only track next to
+    the full subtitles. Only meaningful comparisons count. The full
+    track needs at least 100 elements. The candidate cannot be empty.
+    This function excludes the files marked reviewed. It also excludes
+    the files that already have a forced track. Their forced needs are
+    met. Thus, a small unforced sibling is probably a commentary or a
+    variant.
     """
 
     ForcedSibling = db.aliased(FileSubtitleTrack)
@@ -118,15 +122,17 @@ def forced_subtitle_candidates(file_id=None):
     return list(grouped.values())
 
 
-# The runtime triage (#234): a file whose estimated duration disagrees
-# hard with its movie's TMDb runtime is usually a title collision at
-# capture time — a mislabelled recording matched faithfully — or a
-# truncated download. The estimate needs no probe: size over the summed
-# track bitrates, all already stored. Thresholds and the short-runtime
-# exclusion come straight from the Aug 2026 survey: raw, the check
-# flagged 16 of 3,790 files, thirteen of them shorts recorded into
-# longer broadcast slots; excluding runtimes of 25 minutes or less left
-# the three genuinely wrong files and nothing else.
+# The runtime triage (#234). A file whose estimated duration differs
+# much from the TMDb runtime of its movie is usually a title collision
+# at capture time. That is a recording with the wrong label, matched
+# correctly. Or it is a truncated download. The estimate needs no
+# probe. It is the size divided by the sum of the track bitrates. All
+# values are already stored. The thresholds and the short-runtime
+# exclusion come directly from the survey of 2026-08. Without the
+# exclusion, the check flagged 16 of 3790 files. 13 of them were shorts
+# recorded into longer broadcast slots. The exclusion of runtimes of
+# 25 minutes or less left the 3 files that were really wrong, and no
+# others.
 
 RUNTIME_RATIO_HIGH = 1.9
 RUNTIME_RATIO_LOW = 0.55
@@ -134,11 +140,13 @@ RUNTIME_EXCLUDE_MAX_MINUTES = 25
 
 
 def runtime_mismatch_candidates():
-    """Main-feature movie files whose bitrate-estimated duration is far
-    off their film's TMDb runtime and that nobody has acknowledged,
-    longest overshoot first. The estimate is approximate — a flagged
-    file wants an ffprobe before anything acts on it — so the ratio
-    does the filtering and the page shows its ingredients."""
+    """Return the main-feature movie files with a large runtime mismatch.
+
+    The duration estimated from the bitrate differs much from the TMDb
+    runtime of the film, and no person acknowledged the file. The
+    largest overshoot is first. The estimate is approximate. Run
+    ffprobe on a flagged file before an action on it. Thus, the ratio
+    does the filtering, and the page shows its inputs."""
 
     audio_sum = (
         db.session.query(
@@ -184,14 +192,17 @@ def runtime_mismatch_candidates():
 
 
 def lossy_audio_candidates(file_id=None):
-    """Files whose first audio track is lossy while a lossless track
-    rides behind (#212), minus the Atmos pipeline's deliberate trio —
-    an E-AC-3 Atmos lead is exactly as wanted — and minus files marked
-    reviewed. Same predicates as the Lossy Files report, plus the
-    reviewed exclusion that makes this the worklist."""
+    """Return the files whose first audio track is lossy with a lossless track behind it (#212).
 
-    # Lazy like the report's copy of this import: atmos resolves the
-    # worker app singleton at module import time
+    This excludes the 3-track set that the Atmos pipeline makes by
+    design. An E-AC-3 Atmos lead is exactly what is wanted. It also
+    excludes the files marked reviewed. The predicates are the same as
+    in the Lossy Files report. The reviewed exclusion makes this the
+    worklist."""
+
+    # This import is lazy, like the copy of this import in the report.
+    # The atmos module resolves the worker app singleton at module import
+    # time
 
     from app.atmos import EAC3_ATMOS_CODEC
 
@@ -236,28 +247,35 @@ def lossy_audio_candidates(file_id=None):
 
 
 def triage_snapshot_dir(file_id):
-    """Where one file's triage aids live, outside the custom-artwork
-    tree so the nightly backup ignores them."""
+    """Return the directory of the triage aids of 1 file.
+
+    It is outside the custom-artwork tree. Thus, the nightly backup
+    ignores the aids."""
 
     return os.path.join(current_app.config["TRIAGE_SNAPSHOT_DIR"], str(int(file_id)))
 
 
 def remove_triage_snapshots(file_id):
-    """Drop a file's triage aids: called when the file is triaged, or
-    when its local copy is deleted or replaced."""
+    """Delete the triage aids of a file.
+
+    The caller calls this when the file is triaged, or when its local
+    copy is deleted or replaced."""
 
     shutil.rmtree(triage_snapshot_dir(file_id), ignore_errors=True)
 
 
 def reset_triage_state(file):
-    """A replaced file's content is new evidence: any earlier reviewed
-    verdict applied to the OLD file, and stale inspection aids picture
-    streams that no longer exist. Everything resets on import so the
-    file re-earns its way off the triage pages (Glenn's rule: a
-    replacement may carry a forced track the original didn't — the
-    A Fish Called Wanda case, where an Aug 12 dismissal silently gated
-    the file re-imported Aug 18 — and a replacement's length is a new
-    length, so the runtime acknowledgement (#234) goes too)."""
+    """Reset the triage state of a replaced file.
+
+    The content of a replaced file is new evidence. An earlier reviewed
+    verdict applied to the OLD file. Stale inspection aids show streams
+    that no longer exist. Thus, all state resets on import, and the
+    file must qualify again to leave the triage pages. Rule from Glenn:
+    a replacement can have a forced track that the original did not
+    have. This was the A Fish Called Wanda case. A dismissal on
+    2026-08-12 silently blocked the file imported again on 2026-08-18.
+    The length of a replacement is a new length. Thus, the runtime
+    acknowledgement (#234) also resets."""
 
     file.subtitle_triage_reviewed = None
     file.runtime_mismatch_reviewed = None
@@ -266,15 +284,16 @@ def reset_triage_state(file):
 
 
 def _hms(seconds):
-    """A H:MM:SS clock string."""
+    """Return a H:MM:SS clock string."""
 
     seconds = int(seconds)
     return f"{seconds // 3600}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
 def _probe_cue_times(file_path, streamorder):
-    """Sorted cue start times for one subtitle stream — the single full
-    container read per track."""
+    """Return the sorted cue start times for 1 subtitle stream.
+
+    This is the single full container read per track."""
 
     try:
         result = subprocess.run(
@@ -308,8 +327,9 @@ def _probe_cue_times(file_path, streamorder):
 
 
 def _probe_duration(file_path):
-    """The container duration in seconds, or None — a header read, not
-    a full scan."""
+    """Return the container duration in seconds, or None.
+
+    This is a header read, not a full scan."""
 
     try:
         result = subprocess.run(
@@ -333,8 +353,10 @@ def _probe_duration(file_path):
 
 
 def _build_timeline(cues, duration):
-    """The stored timeline: cue count, first/last, and density buckets
-    across the runtime."""
+    """Return the stored timeline.
+
+    It has the cue count, the first and the last cue, and the density
+    buckets across the runtime."""
 
     span = duration if duration and duration >= cues[-1] else cues[-1] or 1.0
     buckets = [0] * TIMELINE_BUCKETS
@@ -351,19 +373,22 @@ def _build_timeline(cues, duration):
 
 
 def _render_snapshot(file_path, streamorder, at, out_path):
-    """One burned-in frame: input-seek just ahead of the cue with
-    timestamps preserved, overlay the subtitle stream, trim to the
-    target frame.
+    """Render 1 frame with the subtitle burned in.
 
-    The input seek must land at or before the cue's start so its packet
-    demuxes — a bare direct seek to the target (Glenn's direct-seek sketch)
-    silently drops the subtitle whenever a keyframe falls between the
-    cue and the target, measured live on Speed's trivia track — and
-    -copyts keeps original timestamps so the output trim can name the
-    target absolutely. The filter graph then decodes only the short
-    pre-roll instead of a full second: benchmarked 1.7-7x faster per
-    snapshot with byte-identical output at early, mid, and late cues.
-    Callers pass `at` slightly after the cue start; the pre-roll here
+    This function seeks the input to a point just before the cue and
+    keeps the timestamps. It overlays the subtitle stream. Then it
+    trims the output to the target frame.
+
+    The input seek must arrive at or before the start of the cue. Then
+    its packet demuxes. A direct seek to the target (the direct-seek
+    sketch from Glenn) silently drops the subtitle if a keyframe is
+    between the cue and the target. This was measured live on the
+    trivia track of Speed. -copyts keeps the original timestamps. Thus,
+    the output trim can name the target as an absolute time. The
+    filter graph then decodes only the short pre-roll, not a full
+    second. The benchmark showed 1.7 to 7 times faster per snapshot,
+    with byte-identical output at early, middle, and late cues. The
+    caller passes `at` a little after the cue start. The pre-roll here
     must stay larger than that offset.
     """
 
@@ -399,9 +424,10 @@ def _render_snapshot(file_path, streamorder, at, out_path):
 
 
 def generate_triage_snapshots(file_id):
-    """Task: build the cue timeline and burned-in snapshots for every
-    candidate track of one file. Tracks that already have aids are
-    skipped, so re-runs only fill gaps."""
+    """Build the cue timeline and the snapshots for each candidate track of 1 file.
+
+    This task skips the tracks that already have aids. Thus, a second
+    run only fills the gaps."""
 
     with app.app_context():
         file = db.session.get(File, file_id)
@@ -449,9 +475,11 @@ def generate_triage_snapshots(file_id):
 
 
 def maybe_enqueue_triage_snapshots(file_id):
-    """Called after an import's track scan: when the file matches the
-    possibly-forced heuristic, queue snapshot generation on the
-    transcode queue (mostly idle, and sized for heavy media reads)."""
+    """Queue the snapshot generation if the file matches the possibly-forced heuristic.
+
+    The caller calls this after the track scan of an import. The job
+    goes on the transcode queue. That queue is idle most of the time,
+    and it is sized for heavy media reads."""
 
     if not forced_subtitle_candidates(file_id=file_id):
         return False
@@ -466,9 +494,11 @@ def maybe_enqueue_triage_snapshots(file_id):
 
 
 def triage_presentation(file_id, track_number):
-    """Render-ready aids for one candidate track, or None while they
-    haven't been generated: bucket heights as percentages, clock-string
-    cue bounds, and the snapshot filenames under the static tree."""
+    """Return the render-ready aids for 1 candidate track.
+
+    Return None if the aids do not exist yet. The aids are the bucket
+    heights as percentages, the cue bounds as clock strings, and the
+    snapshot filenames under the static tree."""
 
     out_dir = os.path.join(triage_snapshot_dir(file_id), str(int(track_number)))
     timeline_path = os.path.join(out_dir, "timeline.json")
@@ -497,14 +527,15 @@ def triage_presentation(file_id, track_number):
 
 
 # The lossy-audio comparison (#223). The verdict correlates the ENTIRE
-# tracks: one ffmpeg pass decodes every track of interest to 8 kHz
-# mono (audio-only decode runs ~450x realtime from the SSD, so this
-# rides free inside an import), envelopes are RMS loudness per 50 ms
-# window, and correlation runs across small alignment lags to absorb
-# codec delay. The clips at the sample quantiles exist for LISTENING —
-# their per-position numbers are slices of the same full envelopes,
-# shown so a local divergence (a diverging credits mix, say) is
-# visible next to the clip that plays it.
+# tracks. One ffmpeg pass decodes each track of interest to 8 kHz mono.
+# An audio-only decode runs at approximately 450 times realtime from
+# the SSD. Thus, this costs nothing inside an import. The envelopes are
+# the RMS loudness per 50 ms window. The correlation runs across small
+# alignment lags to absorb the codec delay. The clips at the sample
+# quantiles exist for LISTENING. Their per-position numbers are slices
+# of the same full envelopes. They are shown so a local difference (for
+# example a different credits mix) is visible next to the clip that
+# plays it.
 
 AUDIO_SAMPLE_QUANTILES = (0.08, 0.25, 0.42, 0.58, 0.75, 0.92)
 AUDIO_SAMPLE_SECONDS = 12
@@ -516,22 +547,27 @@ AUDIO_MATCH_THRESHOLD = 0.75
 
 
 def audio_comparison_dir(file_id):
-    """Where one file's lossy-audio comparison lives — a sibling of
-    the numeric per-subtitle-track aid directories."""
+    """Return the directory of the lossy-audio comparison of 1 file.
+
+    It is a sibling of the numeric aid directories of the subtitle
+    tracks."""
 
     return os.path.join(triage_snapshot_dir(file_id), "audio")
 
 
 def remove_audio_comparison(file_id):
-    """Drop a file's audio comparison alone, leaving any pending
-    subtitle aids in place."""
+    """Delete only the audio comparison of a file.
+
+    This keeps the pending subtitle aids."""
 
     shutil.rmtree(audio_comparison_dir(file_id), ignore_errors=True)
 
 
 def _extract_audio_clip(file_path, streamorder, at, out_path):
-    """One listening clip: a single stream decoded from `at`, downmixed
-    to stereo and encoded browser-playable."""
+    """Make 1 listening clip.
+
+    This decodes a single stream from `at`. It downmixes the audio to
+    stereo and encodes it in a format that a browser can play."""
 
     try:
         subprocess.run(
@@ -567,7 +603,7 @@ def _extract_audio_clip(file_path, streamorder, at, out_path):
 
 
 def _pcm_envelope(pcm_path):
-    """RMS loudness per 50 ms window of a raw s16le mono decode."""
+    """Return the RMS loudness per 50 ms window of a raw s16le mono decode."""
 
     with open(pcm_path, "rb") as handle:
         data = handle.read()
@@ -585,9 +621,11 @@ def _pcm_envelope(pcm_path):
 
 
 def _track_envelopes(file_path, streamorders):
-    """Full-track loudness envelopes for several streams, decoded in
-    ONE pass over the container — reading the file is the whole cost
-    when it lives on the NAS, so every track shares the read."""
+    """Return the full-track loudness envelopes for several streams.
+
+    This decodes all streams in ONE pass over the container. When the
+    file is on the NAS, the file read is the whole cost. Thus, all
+    tracks share the read."""
 
     envelopes = {}
     with tempfile.TemporaryDirectory() as scratch:
@@ -628,9 +666,10 @@ def _track_envelopes(file_path, streamorders):
 
 
 def _envelope_correlation(a, b, max_lag=ENVELOPE_MAX_LAG):
-    """Peak Pearson correlation between two loudness envelopes across
-    alignment lags of up to one second, or None when either side is
-    too short or flat to compare."""
+    """Return the peak Pearson correlation between 2 loudness envelopes.
+
+    The peak is across alignment lags of up to 1 second. Return None if
+    one side is too short or too flat for a comparison."""
 
     def pearson(x, y):
         n = len(x)
@@ -657,9 +696,10 @@ def _envelope_correlation(a, b, max_lag=ENVELOPE_MAX_LAG):
 
 
 def generate_audio_comparison(file_id):
-    """Task: correlate the full lossy and lossless tracks of one
-    candidate file and cut its listening clips (#223). A file whose
-    comparison already exists is left alone, so re-runs are free."""
+    """Correlate the full lossy and lossless tracks of 1 candidate file (#223).
+
+    This task also cuts the listening clips. It does not change a file
+    whose comparison already exists. Thus, a second run costs nothing."""
 
     with app.app_context():
         file = db.session.get(File, file_id)
@@ -695,8 +735,8 @@ def generate_audio_comparison(file_id):
             return True
         os.makedirs(out_dir, exist_ok=True)
 
-        # Every verdict comes from the FULL tracks, all decoded in one
-        # pass over the container
+        # Each verdict comes from the FULL tracks. One pass over the
+        # container decodes all of them
 
         envelopes = _track_envelopes(
             file_path,
@@ -704,8 +744,8 @@ def generate_audio_comparison(file_id):
         )
         lead_envelope = envelopes.get(first.streamorder, [])
 
-        # The clips exist for listening; the lossy lead is one half of
-        # every pair, so it's cut once
+        # The clips exist for listening. The lossy lead is one half of
+        # each pair. Thus, Fitzflix cuts it 1 time
 
         lead_clips = {}
         for number, quantile in enumerate(AUDIO_SAMPLE_QUANTILES, 1):
@@ -717,7 +757,7 @@ def generate_audio_comparison(file_id):
                 lead_clips[number] = {"at": at, "name": name}
 
         def local_correlation(other_envelope, at):
-            """The clip window's slice of the full envelopes."""
+            """Return the slice of the full envelopes for the clip window."""
 
             start = int(at * ENVELOPE_WINDOWS_PER_SECOND)
             span = AUDIO_SAMPLE_SECONDS * ENVELOPE_WINDOWS_PER_SECOND
@@ -768,9 +808,10 @@ def generate_audio_comparison(file_id):
 
 
 def maybe_enqueue_audio_comparison(file_id):
-    """Called after an import's track scan: when the file lands on the
-    lossy-audio worklist (#212), queue clip generation on the
-    transcode queue."""
+    """Queue the clip generation if the file is on the lossy-audio worklist (#212).
+
+    The caller calls this after the track scan of an import. The job
+    goes on the transcode queue."""
 
     if not lossy_audio_candidates(file_id=file_id):
         return False
@@ -785,12 +826,13 @@ def maybe_enqueue_audio_comparison(file_id):
 
 
 def lossy_audio_presentation(file_id):
-    """Render-ready comparison for one candidate file, or None while it
-    hasn't been generated: per lossless track, the full-track
-    correlation percentage and its verdict, plus the clip pairs with
-    clock strings and their local percentages. A comparison written
-    before the verdict went full-track falls back to the median of its
-    clip correlations."""
+    """Return the render-ready comparison for 1 candidate file.
+
+    Return None if the comparison does not exist yet. For each lossless
+    track, the result has the full-track correlation percentage and
+    its verdict, plus the clip pairs with clock strings and their local
+    percentages. A comparison written before the verdict became
+    full-track uses the median of its clip correlations instead."""
 
     comparison_path = os.path.join(audio_comparison_dir(file_id), "comparison.json")
     if not os.path.isfile(comparison_path):

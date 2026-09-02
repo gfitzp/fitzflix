@@ -1,25 +1,27 @@
 """Co-preference similarities from MovieLens, for the movie_copref table.
 
-The taste engine's content features can't see tone or quality within a
-genre; thirty-two million MovieLens ratings can. This module builds the
-similarity table those signals live in: adjusted-cosine similarity
-(each rating centered on its rater's global mean) between films, shrunk
-by co-rater count so a handful of shared fans can't fake a strong link.
-MovieLens is the sanctioned source — the Netflix Prize dataset was
-withdrawn in 2010 and carries no external ids, while GroupLens's ML-32M
-is research-licensed and maps straight to TMDB ids via its links.csv.
+The content features of the taste engine cannot see tone or quality
+inside a genre. The 32 million MovieLens ratings can. This module
+builds the similarity table that holds those signals. The similarity
+is the adjusted cosine between 2 films. Each rating is centered on the
+global mean of its rater. The co-rater count shrinks the similarity.
+Thus, a small group of shared fans cannot fake a strong link. MovieLens
+is the approved source. The Netflix Prize dataset was withdrawn in 2010
+and has no external ids. The GroupLens ML-32M dataset has a research
+license and maps directly to TMDB ids through its links.csv.
 
-The build covers the WHOLE MovieLens universe above a ratings floor,
-not just the films Fitzflix currently knows (Glenn's call, Aug 2026):
-each film keeps its strongest neighbors, so any film the library ever
-adds finds its similarities already stored — the dataset itself need
-not be kept. The build is offline and rare: it reruns only when a new
-MovieLens snapshot is adopted, via `flask recs copref --dataset <dir>`
-pointed at an extracted ml-32m directory. numpy and scipy are imported
-inside the build function and are NOT runtime dependencies — the
-engine reads the finished table with plain queries, and the scoring
-stays arithmetic. Dataset download:
-https://files.grouplens.org/datasets/movielens/ (ml-32m.zip;
+The build covers the WHOLE MovieLens universe above a ratings floor. It
+does not cover only the films that Fitzflix knows now (decided by
+Glenn, 2026-08). Each film keeps its strongest neighbors. Thus, each
+film that the library adds later finds its similarities already
+stored. The dataset itself is not necessary after the build. The build
+is offline and rare. It runs again only when Fitzflix adopts a new
+MovieLens snapshot, through `flask recs copref --dataset <dir>` pointed
+at an extracted ml-32m directory. The build function imports numpy and
+scipy inside itself. They are NOT runtime dependencies. The engine
+reads the finished table with plain queries. The scoring stays
+arithmetic. Dataset download:
+https://files.grouplens.org/datasets/movielens/ (ml-32m.zip,
 research/non-commercial license, no redistribution).
 """
 
@@ -32,13 +34,14 @@ from flask import current_app
 from app import db
 from app.models import MovieCopref
 
-# Similarity hygiene: films with fewer than MIN_RATERS raters have
-# nothing reliable to say and stay out entirely (the shrinkage would
-# crush them anyway); pairs sharing fewer than CO_RATER_FLOOR raters
-# drop; sims below MIN_SIMILARITY aren't worth a row. Each film keeps
-# its NEIGHBOR_LIMIT strongest neighbors, with the pair set symmetric —
-# if A keeps B, B also points back at A — so anchor-side lookups see
-# every film that considers the anchor close, and vice versa
+# Similarity hygiene. A film with fewer than MIN_RATERS raters has no
+# reliable signal. It stays out completely (the shrinkage would crush
+# it anyway). Fitzflix drops a pair that shares fewer than
+# CO_RATER_FLOOR raters. A similarity below MIN_SIMILARITY is not worth
+# a row. Each film keeps its NEIGHBOR_LIMIT strongest neighbors. The
+# pair set is symmetric. If A keeps B, then B also points back at A.
+# Thus, a lookup from the anchor side sees each film that considers
+# the anchor close, and the opposite is also true.
 
 MIN_RATERS = 50
 CO_RATER_FLOOR = 10
@@ -53,7 +56,7 @@ INSERT_CHUNK = 10000
 def build_copref_table(dataset_dir):
     """Rebuild movie_copref from an extracted MovieLens dataset.
 
-    Replaces the table wholesale. Returns a summary string.
+    This function replaces the full table. It returns a summary string.
     """
 
     try:
@@ -77,8 +80,9 @@ def build_copref_table(dataset_dir):
             if row["tmdbId"].strip():
                 tmdb_by_ml[int(row["movieId"])] = int(row["tmdbId"])
 
-    # First streaming pass: per-user and per-film tallies, to fix the
-    # eligible film set and each rater's global mean
+    # The first streaming pass counts the ratings per user and per film.
+    # These counts set the eligible film set and the global mean of each
+    # rater.
 
     user_sum = {}
     user_count = {}
@@ -93,9 +97,9 @@ def build_copref_table(dataset_dir):
             user_count[user_id] = user_count.get(user_id, 0) + 1
             film_count[ml_id] = film_count.get(ml_id, 0) + 1
 
-    # links.csv occasionally maps two MovieLens entries to one TMDB id
-    # (splits and re-releases); the first (oldest) entry keeps the tmdb
-    # identity so the pair rows stay unique
+    # links.csv sometimes maps 2 MovieLens entries to 1 TMDB id (splits
+    # and re-releases). The first (oldest) entry keeps the TMDB identity.
+    # Thus, the pair rows stay unique.
 
     seen_tmdb = set()
     ml_ids = []
@@ -110,9 +114,9 @@ def build_copref_table(dataset_dir):
     column_of_ml = {ml: index for index, ml in enumerate(ml_ids)}
     tmdb_of_column = [tmdb_by_ml[ml] for ml in ml_ids]
 
-    # Second pass: the centered rating triplets for eligible films, in
-    # compact arrays (thirty-odd million python list entries would not
-    # be kind to memory)
+    # The second pass collects the centered rating triplets of the
+    # eligible films in compact arrays. More than 30 million Python list
+    # entries would use too much memory.
 
     rows_user = array("i")
     rows_column = array("i")
@@ -147,9 +151,10 @@ def build_copref_table(dataset_dir):
     norms = np.sqrt(np.asarray(matrix.multiply(matrix).sum(axis=0)).ravel())
     norms[norms == 0] = 1.0
 
-    # Blocked similarity: a film count in the tens of thousands makes
-    # the full matrix a memory hazard, so similarities compute in
-    # column blocks and only each row's strongest neighbors survive
+    # Blocked similarity. A film count in the tens of thousands makes
+    # the full matrix a memory hazard. Thus, Fitzflix computes the
+    # similarities in column blocks. Only the strongest neighbors of
+    # each row survive.
 
     pairs = {}
     for start in range(0, len(ml_ids), BLOCK):

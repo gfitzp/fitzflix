@@ -109,7 +109,7 @@ class Utilities(object):
 
     @staticmethod
     def sanitize_string(string):
-        """Given an arbitrary string, clean it of troublesome characters."""
+        """Remove the characters that cause problems from a string."""
 
         # fmt: off
         bad_characters  = ["\\", "/", "<", ">", "?", "!", "*", ":", "|", '"',   "…", "“", "”", "‘", "’"]
@@ -131,10 +131,12 @@ PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
 
 
 def invalidate_people_ranking():
-    """Drop the /people page's cached rankings (Aug 2026): the ranked
-    list of every credited person is a full aggregation over the cast
-    and crew tables, so it's held in Redis and rebuilt only after a
-    credit write — the TMDB apply methods call this."""
+    """Delete the cached rankings of the /people page (2026-08).
+
+    The ranked list of every credited person is a full aggregation over
+    the cast and crew tables. Thus, Redis holds the list, and Fitzflix
+    builds it again only after a credit write. The TMDB apply methods
+    call this function."""
 
     redis = current_app.redis
     keys = [PEOPLE_RANKING_KEY.format(role=role) for role in ("cast", "crew", "all")]
@@ -144,11 +146,11 @@ def invalidate_people_ranking():
 def tmdb_get(url, **kwargs):
     """GET a TMDB API resource through a shared rate limiter.
 
-    TMDB rate-limits at roughly 40-50 requests per second per IP
-    (https://developer.themoviedb.org/docs/rate-limiting). A Redis counter
-    keyed on the current second is shared by every worker and web process,
-    so their combined request rate stays capped at
-    TMDB_REQUESTS_PER_SECOND no matter how many run concurrently.
+    TMDB limits the rate to approximately 40 to 50 requests per second
+    per IP (https://developer.themoviedb.org/docs/rate-limiting). Every
+    worker and web process shares a Redis counter keyed on the current
+    second. Thus, their combined request rate stays at or below
+    TMDB_REQUESTS_PER_SECOND, whatever the number of processes.
     """
 
     limit = current_app.config["TMDB_REQUESTS_PER_SECOND"]
@@ -166,15 +168,15 @@ def tmdb_get(url, **kwargs):
 
 
 def tmdb_objects(entries, owner, what):
-    """Yield the dict entries of a TMDB credits list, logging and
-    skipping anything else.
+    """Yield the dict entries of a TMDB credits list.
 
-    The overnight TV refresh of 2026-08-22 failed on 14 of 25 series
-    because TMDB served a bare list where a cast member's role object
-    belongs — for a few seconds, and clean again by noon. One malformed
-    entry used to abort the whole apply with an AttributeError and no
-    record of the shape; now the entry is logged with its fragment and
-    skipped, so the rest of the payload still lands.
+    This function logs and skips all other entries. The overnight TV
+    refresh of 2026-08-22 failed on 14 of 25 series. TMDB served a bare
+    list where the role object of a cast member belongs. That lasted
+    some seconds, and the data was correct again by noon. Before, one
+    malformed entry stopped the full apply with an AttributeError and
+    no record of the shape. Now Fitzflix logs the entry with its
+    fragment and skips it. Thus, the rest of the payload still arrives.
     """
 
     for entry in entries or []:
@@ -188,19 +190,22 @@ def tmdb_objects(entries, owner, what):
 
 
 class TMDBMixin(object):
-    """TMDB fetch/apply methods shared by the Movie and TVSeries models.
+    """TMDB fetch and apply methods shared by the Movie and TVSeries models.
 
-    Each refresh is split in half: *_fetch does the network work and
-    returns a payload, *_apply writes it to the database — so the
+    Each refresh has 2 halves. *_fetch does the network work and returns
+    a payload. *_apply writes the payload to the database. Thus, the
     two-phase refresh tasks can run the halves on different queues.
     """
 
     def tmdb_movie_fetch(self, tmdb_id=None):
-        """Network half of a TMDB movie refresh: search (when no id is
-        given) and pull the movie details. Writes nothing to the database,
-        so concurrent fetches are safe; returns the details payload for
-        tmdb_movie_apply, or None with no match. Artwork isn't stored —
-        the templates hotlink TMDB's image CDN."""
+        """Do the network half of a TMDB movie refresh.
+
+        This method searches (if no id is given) and gets the movie
+        details. It writes nothing to the database. Thus, concurrent
+        fetches are safe. It returns the details payload for
+        tmdb_movie_apply, or None if there is no match. Fitzflix does not
+        store artwork. The templates link directly to the TMDB image
+        CDN."""
 
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
@@ -208,7 +213,7 @@ class TMDBMixin(object):
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
 
-        # Request only the appended blocks tmdb_movie_apply reads
+        # Request only the appended blocks that tmdb_movie_apply reads.
 
         requested_info = "credits,external_ids,keywords,release_dates"
         current_app.logger.info(f"{self} Getting TMDB data")
@@ -263,27 +268,29 @@ class TMDBMixin(object):
         return tmdb_info or None
 
     def tmdb_movie_apply(self, tmdb_info):
-        """Database half of a TMDB movie refresh: replace this movie's TMDB
-        fields and associations with the fetched payload. No network calls
-        here — artwork is already on disk — so it belongs on the
-        single-worker sql queue, serialized against other database work."""
+        """Do the database half of a TMDB movie refresh.
+
+        This method replaces the TMDB fields and associations of this
+        movie with the fetched payload. It makes no network calls. The
+        artwork is already on disk. Thus, it belongs on the single-worker
+        sql queue, serialized with the other database work."""
 
         if not tmdb_info:
             return self
 
-        # Delete any existing records associated with this movie
+        # Delete the existing records associated with this movie.
 
         tmdb_collections = TMDBMovieCollection.query.all()
         for collection in tmdb_collections:
             if collection in self.collections:
                 self.collections.remove(collection)
 
-        # Cast and crew get the same empty-payload guard as the
-        # association groups below (#252): the bulk delete used to run
-        # before any payload check, so a glitched payload with an
-        # empty or missing credits section permanently wiped a film's
-        # cast — the #251 failure shape, aimed at /people rankings,
-        # cast criteria shelves, and Name That Frame distractors
+        # Cast and crew get the same empty-payload guard as the association
+        # groups below (#252). Before, the bulk delete ran before any
+        # payload check. Thus, a bad payload with an empty or missing
+        # credits section deleted the cast of a film permanently. This is
+        # the #251 failure shape. It hits the /people rankings, the cast
+        # criteria shelves, and the Name That Frame distractors.
 
         incoming_credits = tmdb_info.get("credits") or {}
         if (
@@ -305,15 +312,16 @@ class TMDBMixin(object):
                 f"{self} TMDB payload carries no crew; keeping the stored rows"
             )
 
-        # TMDB can transiently serve a details payload whose genre list
-        # is empty while the rest is intact — the Aug 7-13 2026 bulk
-        # refreshes got such payloads for ~16% of requests, and the
-        # unconditional wipe here then erased 943 films' genres for
-        # good (#251; the Aug 22 credits glitch was the same failure
-        # shape). An empty incoming list never wipes rows the record
-        # already has: they're kept and the anomaly logged, since a
-        # film genuinely losing its every genre or keyword on TMDB is
-        # far rarer than TMDB briefly serving bad data.
+        # TMDB can serve a details payload with an empty genre list for a
+        # short time, while the rest is intact. The bulk refreshes of
+        # 2026-08-07 to 2026-08-13 got such payloads for approximately 16%
+        # of the requests. The unconditional delete here then erased the
+        # genres of 943 films permanently (#251. The credits glitch of
+        # 2026-08-22 had the same failure shape). An empty incoming list
+        # never deletes the rows that the record already has. Fitzflix
+        # keeps the rows and logs the anomaly. A film that really loses
+        # all its genres or keywords on TMDB is much more rare than TMDB
+        # that serves bad data for a short time.
 
         if tmdb_info.get("genres") or self.genres.count() == 0:
             for genre in TMDBGenre.query.all():
@@ -335,9 +343,9 @@ class TMDBMixin(object):
                 f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
             )
 
-        # The remaining association groups carry the same guard (#252);
-        # collections stay unguarded on purpose — belongs_to_collection
-        # is legitimately null for most films
+        # The remaining association groups carry the same guard (#252).
+        # Collections have no guard on purpose. belongs_to_collection is
+        # correctly null for most films.
 
         if (
             tmdb_info.get("production_companies")
@@ -387,17 +395,18 @@ class TMDBMixin(object):
                 f"keeping the stored certifications"
             )
 
-        # Add fresh new data from TMDB
+        # Add the new data from TMDB.
 
         if tmdb_info.get("external_ids"):
             external_ids = tmdb_info.get("external_ids")
             self.imdb_id = external_ids.get("imdb_id")
 
-        # Scalars fall back to their stored value when the KEY is absent
-        # (#252): a full details payload always carries every key (null
-        # where TMDB has nothing), so a missing key means a partial
-        # payload — don't let it null a populated column. A key present
-        # with null still clears, since that's TMDB removing real data.
+        # A scalar keeps its stored value if the KEY is absent (#252). A
+        # full details payload always carries every key (null where TMDB
+        # has nothing). Thus, a missing key means a partial payload. Do
+        # not let it set a populated column to null. A key that is present
+        # with null still clears the column. That is TMDB that removes
+        # real data.
 
         self.tmdb_id = tmdb_info.get("id", self.tmdb_id)
         self.tmdb_adult = tmdb_info.get("adult", self.tmdb_adult)
@@ -428,11 +437,12 @@ class TMDBMixin(object):
         self.tmdb_tagline = tmdb_info.get("tagline", self.tmdb_tagline)
         self.tmdb_title = tmdb_info.get("title", self.tmdb_title)
 
-        # Rename this movie to TMDB's canonical title and year, unless a
-        # different movie record already holds that name: title + year is
-        # unique, so renaming onto it would fail the whole commit. The two
-        # records end up sharing a tmdb_id, so refreshing either movie will
-        # merge them via the existing duplicate-tmdb_id handling.
+        # Rename this movie to the canonical TMDB title and year, unless a
+        # different movie record already holds that name. Title + year is
+        # unique. Thus, a rename onto that name would fail the full commit.
+        # The 2 records then share a tmdb_id. Thus, a refresh of either
+        # movie merges them through the existing duplicate-tmdb_id
+        # handling.
 
         canonical_title = tmdb_info.get("title")
 
@@ -661,20 +671,25 @@ class TMDBMixin(object):
         return self
 
     def tmdb_movie_query(self, tmdb_id=None):
-        """Fetch from TMDB and apply to the database in one step, for
-        callers outside the split refresh pipeline (e.g. review_task
-        creating a movie inline)."""
+        """Fetch from TMDB and apply to the database in 1 step.
+
+        This is for the callers outside the split refresh pipeline (for
+        example, review_task when it creates a movie inline)."""
 
         return self.tmdb_movie_apply(self.tmdb_movie_fetch(tmdb_id))
 
     def tmdb_movie_clear(self):
-        """Detach this film from TMDB: drop the id, every fetched field,
-        and every association tmdb_movie_apply creates, then mark the
-        record ignored so no refresh path guesses a new id from the title.
+        """Detach this film from TMDB.
 
-        For films TMDB has no record of and never will — a home movie, or
-        an id TMDB has since deleted. Title and year are the film's own
-        library identity, not TMDB's, and stay untouched.
+        This method deletes the id, every fetched field, and every
+        association that tmdb_movie_apply creates. Then it marks the
+        record as ignored. Thus, no refresh path guesses a new id from
+        the title.
+
+        This is for the films that TMDB has no record of and never will.
+        Examples are a home movie, or an id that TMDB deleted. The title
+        and the year are the library identity of the film, not the TMDB
+        identity. They stay unchanged.
         """
 
         MovieCast.query.filter_by(movie_id=self.id).delete()
@@ -719,7 +734,7 @@ class TMDBMixin(object):
         return self
 
     def tmdb_tv_fetch(self, tmdb_id=None):
-        """Network half of a TMDB TV refresh; see tmdb_movie_fetch."""
+        """Do the network half of a TMDB TV refresh. See tmdb_movie_fetch."""
 
         tmdb_info = {}
         if not current_app.config["TMDB_API_KEY"]:
@@ -727,10 +742,11 @@ class TMDBMixin(object):
         tmdb_api_key = current_app.config["TMDB_API_KEY"]
         tmdb_api_url = current_app.config["TMDB_API_URL"]
 
-        # Request only the appended blocks tmdb_tv_apply reads (networks,
-        # companies, genres, and seasons arrive in the base payload).
-        # aggregate_credits rather than credits: series-wide cast/crew
-        # with per-role episode counts, not just the latest season's
+        # Request only the appended blocks that tmdb_tv_apply reads.
+        # Networks, companies, genres, and seasons arrive in the base
+        # payload. Use aggregate_credits, not credits. It gives the
+        # series-wide cast and crew with episode counts per role, not only
+        # the cast and crew of the latest season.
 
         requested_info = "aggregate_credits,external_ids,keywords,content_ratings"
         current_app.logger.info(f"{self} Getting TMDB data")
@@ -784,14 +800,14 @@ class TMDBMixin(object):
         return tmdb_info or None
 
     def tmdb_tv_apply(self, tmdb_info):
-        """Database half of a TMDB TV refresh; see tmdb_movie_apply."""
+        """Do the database half of a TMDB TV refresh. See tmdb_movie_apply."""
 
         if not tmdb_info:
             return self
 
-        # Delete any existing records associated with this tv series.
+        # Delete the existing records associated with this TV series.
         # Genres and keywords get the same empty-payload guard as
-        # tmdb_movie_apply (#251) — TV keyword lists ride in "results"
+        # tmdb_movie_apply (#251). The TV keyword lists are in "results".
 
         if tmdb_info.get("genres") or self.genres.count() == 0:
             for genre in TMDBGenre.query.all():
@@ -844,7 +860,7 @@ class TMDBMixin(object):
                 f"{self} TMDB payload carries no seasons; keeping the stored ones"
             )
 
-        # Add fresh new data from TMDB
+        # Add the new data from TMDB.
 
         if tmdb_info.get("external_ids"):
             external_ids = tmdb_info.get("external_ids")
@@ -852,8 +868,8 @@ class TMDBMixin(object):
             self.tvdb_id = external_ids.get("tvdb_id")
 
         self.tmdb_id = tmdb_info.get("id")
-        # Scalars fall back to their stored value when the key is
-        # absent, like the movie side (#252)
+        # A scalar keeps its stored value if the key is absent, the same
+        # as the movie side (#252).
 
         self.tmdb_backdrop_path = tmdb_info.get(
             "backdrop_path", self.tmdb_backdrop_path
@@ -877,9 +893,9 @@ class TMDBMixin(object):
             self.tmdb_number_of_episodes = tmdb_info.get("number_of_episodes")
             self.tmdb_number_of_seasons = tmdb_info.get("number_of_seasons")
 
-        # The US content rating rides the appended content_ratings
-        # block; a payload with no US entry keeps the stored rating,
-        # like the empty-list guards above (#251)
+        # The US content rating is in the appended content_ratings block.
+        # A payload with no US entry keeps the stored rating, the same as
+        # the empty-list guards above (#251).
 
         for country_rating in (tmdb_info.get("content_ratings") or {}).get(
             "results"
@@ -975,10 +991,11 @@ class TMDBMixin(object):
                     s = TMDBSeason(id=season.get("id"))
                     db.session.add(s)
 
-                # Fields are set on every refresh, not just at creation:
-                # the create-only original left episode_count frozen at
-                # whatever the season had when first seen (the TV overhaul's census
-                # found announcement-time counts years stale)
+                # Set the fields on every refresh, not only at creation.
+                # The original create-only code kept episode_count frozen
+                # at the value the season had when first seen. The census
+                # of the TV overhaul found announcement-time counts that
+                # were years old.
 
                 s.air_date = (
                     datetime.strptime(season.get("air_date"), "%Y-%m-%d")
@@ -994,16 +1011,17 @@ class TMDBMixin(object):
                 if self.seasons.filter(TMDBSeason.id == s.id).count() == 0:
                     self.seasons.append(s)
 
-        # Series cast/crew: replace this series' join rows from the
-        # aggregate credits, mirroring the movie apply — delete-then-readd,
-        # gated on the block's presence so a payload without it can't wipe
-        # stored credits. The seen-sets stand in for the movie path's
-        # per-row existence queries: after the bulk delete only payload
-        # duplicates could collide with the unique constraints. Keys are
-        # folded the way utf8mb4_general_ci compares — unaccented,
-        # caseless, trailing-space-blind — because TMDB payloads really
-        # do carry both 'Self - Bee farmer' and 'Self - Bee Farmer' for
-        # one person, distinct to Python but a 1062 duplicate to MySQL.
+        # Series cast and crew. Replace the join rows of this series from
+        # the aggregate credits, the same as the movie apply. Delete, then
+        # add again. The presence of the block gates this. Thus, a payload
+        # without the block cannot delete the stored credits. The seen
+        # sets replace the per-row existence queries of the movie path.
+        # After the bulk delete, only duplicates in the payload can
+        # collide with the unique constraints. The keys are folded the way
+        # utf8mb4_general_ci compares. That is without accents, without
+        # case, and without trailing spaces. TMDB payloads really carry
+        # both 'Self - Bee farmer' and 'Self - Bee Farmer' for one person.
+        # Python sees 2 values. MySQL sees a 1062 duplicate.
 
         def collation_key(*parts):
             return tuple(unidecode(part or "").casefold().strip() for part in parts)
@@ -1011,8 +1029,9 @@ class TMDBMixin(object):
         if tmdb_info.get("aggregate_credits"):
             aggregate = tmdb_info.get("aggregate_credits")
 
-            # Same guard as the movie side (#252): a present section
-            # whose cast or crew list is empty keeps the stored rows
+            # This is the same guard as the movie side (#252). A section
+            # that is present with an empty cast or crew list keeps the
+            # stored rows.
 
             if (
                 aggregate.get("cast")
@@ -1097,7 +1116,7 @@ class TMDBMixin(object):
         return self
 
     def tmdb_tv_clear(self):
-        """Detach this series from TMDB; see tmdb_movie_clear."""
+        """Detach this series from TMDB. See tmdb_movie_clear."""
 
         TVCast.query.filter_by(tv_id=self.id).delete()
         TVCrew.query.filter_by(tv_id=self.id).delete()
@@ -1149,66 +1168,72 @@ class User(UserMixin, db.Model):
     admin = db.Column(db.Boolean, default=False)
     api_key = db.Column(db.String(32))
 
-    # This user's Plex account name, so Plex watches can be attributed to
-    # them personally (unmapped watchers still count toward household
-    # shopping-cart priority)
+    # The Plex account name of this user. Thus, Fitzflix can attribute a
+    # Plex watch to this user. An unmapped watcher still counts toward the
+    # household shopping-cart priority.
 
     plex_username = db.Column(db.String(64), unique=True)
 
-    # Review-export bookkeeping: when the last Letterboxd CSV export ran
-    # and the highest review id it covered, so the default export can emit
-    # only entries added or edited since. New rows are detected by id
-    # because date_watched can be backdated past the last export
+    # Bookkeeping for the review export. This is the time of the last
+    # Letterboxd CSV export and the highest review id that it covered.
+    # Thus, the default export can emit only the entries added or edited
+    # after that. Fitzflix detects new rows by id because date_watched can
+    # be a date before the last export.
 
     date_reviews_exported = db.Column(db.DateTime)
     last_export_review_id = db.Column(db.Integer)
 
-    # The Letterboxd account whose RSS feed syncs into this user's diary;
-    # empty disables the poll for this user
+    # The Letterboxd account whose RSS feed syncs into the diary of this
+    # user. An empty value disables the poll for this user.
 
     letterboxd_username = db.Column(db.String(64))
 
-    # This user's Plex playback device: the Companion address (ip:port)
-    # and machine id of the player their play buttons target. Per-user —
-    # each household member sends films to their own screen; empty hides
-    # the play buttons for this user. Set from the Profile page, which
-    # probes the address and fills the machine id itself
+    # The Plex playback device of this user. This is the Companion address
+    # (ip:port) and the machine id of the player that their play buttons
+    # target. It is per user. Each household member sends films to their
+    # own screen. An empty value hides the play buttons for this user. The
+    # Profile page sets it. The page probes the address and fills the
+    # machine id itself.
 
     plex_player_address = db.Column(db.String(64))
     plex_player_id = db.Column(db.String(64))
 
     @property
     def plex_player_configured(self):
-        """Whether this user has a playback device to send films to."""
+        """Return True if this user has a playback device for films."""
 
         return bool(self.plex_player_address and self.plex_player_id)
 
-    # This user's Infuse target: the Apple TV's Companion-protocol
-    # address (ip:port) and the pyatv credentials from the one-time PIN
-    # pairing on the Profile page (#192). Separate from the Plex player
-    # fields — Infuse is driven over Apple's Companion protocol, not
-    # Plex Companion, and a user may enable either app or both
+    # The Infuse target of this user. This is the Companion-protocol
+    # address of the Apple TV (ip:port) and the pyatv credentials from the
+    # one-time PIN pairing on the Profile page (#192). These fields are
+    # separate from the Plex player fields. Fitzflix drives Infuse over
+    # the Apple Companion protocol, not Plex Companion. A user can enable
+    # one app or both apps.
 
     infuse_player_address = db.Column(db.String(64))
     infuse_player_credentials = db.Column(db.String(512))
 
-    # Which app the plain play buttons target when BOTH are configured:
-    # "plex" or "infuse" (Profile page setting). Ignored while only one
-    # app is configured — that one simply wins
+    # The app that the plain play buttons target when BOTH apps are
+    # configured. The value is "plex" or "infuse" (a Profile page
+    # setting). Fitzflix ignores it while only one app is configured.
+    # Then that app wins.
 
     default_player = db.Column(db.String(8))
 
     @property
     def infuse_player_configured(self):
-        """Whether this user has a paired Apple TV to open Infuse on."""
+        """Return True if this user has a paired Apple TV that can open Infuse."""
 
         return bool(self.infuse_player_address and self.infuse_player_credentials)
 
     @property
     def preferred_player(self):
-        """The app a plain (no-choice) play button targets: "plex" or
-        "infuse" — the configured one, the chosen default when both
-        are, or None with no player at all."""
+        """Return the app that a plain (no-choice) play button targets.
+
+        The value is "plex" or "infuse". It is the configured app. If
+        both apps are configured, it is the default that the user chose.
+        It is None if no player is configured."""
 
         players = [
             player
@@ -1224,11 +1249,11 @@ class User(UserMixin, db.Model):
             return players[0]
         return self.default_player if self.default_player in players else "plex"
 
-    # Watchlist availability alerts (#156/#230): the nightly digest
-    # email is strictly opt-in — it's the only per-user mail besides
-    # password resets — and rentals are a further opt-in on top, since
-    # a rental costs an extra fee and shouldn't read as "available"
-    # unless the user asked for that
+    # Watchlist availability alerts (#156/#230). The nightly digest email
+    # is strictly opt-in. It is the only per-user mail other than the
+    # password resets. Rentals are a second opt-in on top. A rental costs
+    # an extra fee. Thus, it must not read as "available" unless the user
+    # asked for that.
 
     notify_availability = db.Column(
         db.Boolean, nullable=False, default=False, server_default="0"
@@ -1237,8 +1262,8 @@ class User(UserMixin, db.Model):
         db.Boolean, nullable=False, default=False, server_default="0"
     )
 
-    # The streaming services this user subscribes to — availability
-    # displays are customized per user, never site-wide
+    # The streaming services that this user subscribes to. The
+    # availability displays are per user, never site-wide.
 
     streaming_providers = db.relationship(
         "UserStreamingProvider",
@@ -1247,7 +1272,8 @@ class User(UserMixin, db.Model):
         cascade="all,delete,delete-orphan",
     )
 
-    # Films this user wants to watch — the stage before the shopping list
+    # The films that this user wants to watch. This is the stage before
+    # the shopping list.
 
     watchlist = db.relationship(
         "UserWatchlist",
@@ -1265,12 +1291,12 @@ class User(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
-        """True when the password matches the stored hash."""
+        """Return True if the password matches the stored hash."""
 
         return check_password_hash(self.password_hash, password)
 
     def get_reset_password_token(self, expires_in=600):
-        """A signed, short-lived JWT for the password-reset email link."""
+        """Return a signed, short-lived JWT for the password-reset email link."""
 
         return jwt.encode(
             {"reset_password": self.id, "exp": time() + expires_in},
@@ -1280,7 +1306,9 @@ class User(UserMixin, db.Model):
 
     @staticmethod
     def verify_reset_password_token(token):
-        """The User a reset token identifies, or None if invalid or expired."""
+        """Return the User that a reset token identifies, or None.
+
+        The result is None if the token is not valid or has expired."""
 
         try:
             id = jwt.decode(
@@ -1291,10 +1319,10 @@ class User(UserMixin, db.Model):
         return db.session.get(User, id)
 
     def get_queue_details(self):
-        """Running and queued background jobs for the queue page.
+        """Return the running and queued background jobs for the queue page.
 
-        Merges the import, transcode, and file-operation queues into one
-        ordered list with queue positions attached.
+        This method merges the import, transcode, and file-operation
+        queues into one ordered list with queue positions.
         """
 
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
@@ -1308,19 +1336,20 @@ class User(UserMixin, db.Model):
         )
         file_operations_running = file_operations.get_job_ids()
 
-        # The running banners hold their relative order by when each
-        # FILE first began running (Glenn's original banner-ordering ask): a file's
-        # work hops queues as it progresses — localization on import,
-        # the library copy on file-operation — and each hop is a new
-        # job with a new started_at, which used to bounce the banner to
-        # the end of the list. The pipeline trail's first_run anchor
-        # survives the hops; jobs without a trail sort by their own
-        # start, converted to the trail's local wall clock.
+        # The running banners keep their relative order by the time that
+        # each FILE first started to run (the original banner-order
+        # request from Glenn). The work of a file steps between queues as
+        # it progresses. Localization is on import. The library copy is on
+        # file-operation. Each step is a new job with a new started_at.
+        # Before, that moved the banner to the end of the list. The
+        # first_run anchor of the pipeline trail survives the steps. A job
+        # without a trail sorts by its own start, converted to the local
+        # wall clock of the trail.
 
         from app.pipeline import first_enqueued, first_run
 
         def first_run_anchor(job):
-            """The job's stable sort key among the running banners."""
+            """Return the stable sort key of the job among the running banners."""
 
             anchor = first_run(current_app.redis, job)
             if anchor:
@@ -1330,20 +1359,22 @@ class User(UserMixin, db.Model):
             return "9999"
 
         def enqueue_anchor(job):
-            """When the job's FILE first entered the pipeline — the
-            Enqueued column holds still as the work hops queues, each
-            hop a new job with a fresh enqueued_at of its own. Jobs
-            outside the pipeline keep their own enqueue time."""
+            """Return the time that the FILE of the job first entered the pipeline.
+
+            The Enqueued column stays the same as the work steps between
+            queues. Each step is a new job with a new enqueued_at. A job
+            outside the pipeline keeps its own enqueue time."""
 
             return first_enqueued(current_app.redis, job) or job.enqueued_at
 
         def banner_worthy(job):
-            """Whether a running job earns a top-of-page alert. Frame
-            pool work never does (Glenn, Aug 27 2026): a per-round
-            replacement banner disrupts the game and telegraphs that
-            the pool just changed, and even the nightly batch's
-            'Extracting a frame from X' names films about to become
-            answers. They all still list on the queue page."""
+            """Return True if a running job gets an alert at the top of the page.
+
+            Frame pool work never gets one (Glenn, 2026-08-27). A
+            replacement banner per round disrupts the game. It also shows
+            that the pool changed. Even the 'Extracting a frame from X'
+            banner of the nightly batch names films that will become
+            answers. All these jobs still list on the queue page."""
 
             return job is not None and not (job.func_name or "").startswith(
                 "app.frames."
@@ -1409,7 +1440,7 @@ class User(UserMixin, db.Model):
 
         details["running"] = sorted(details["running"], key=lambda d: d["first_run"])
 
-        # Create list of all localizations and transcodes in queue
+        # Make the list of all the localizations and transcodes in the queue.
 
         details["all"] = []
         for job_id in imports_running:
@@ -1496,14 +1527,14 @@ class User(UserMixin, db.Model):
                     }
                 )
 
-        # Deferred retries (a file still copying in, or its title
-        # locked) sit in each queue's ScheduledJobRegistry rather than
-        # the queue itself, so they used to be invisible here and only
-        # showed as amber chips on the File Activity page's in-flight
-        # list. Since the trail chips moved onto the queue rows (Glenn,
-        # Aug 2026) the queue page is the one place to see everything
-        # in flight, so they list too — after the live queue, with no
-        # position, since they aren't in line yet.
+        # A deferred retry (a file that is still copying in, or a locked
+        # title) is in the ScheduledJobRegistry of each queue, not in the
+        # queue itself. Before, these retries were not visible here. They
+        # showed only as amber chips on the in-flight list of the File
+        # Activity page. The trail chips moved onto the queue rows (Glenn,
+        # 2026-08). Now the queue page is the one place that shows all the
+        # work in flight. Thus, the retries list too. They come after the
+        # live queue, with no position, because they are not in line yet.
 
         scheduled = []
         for queue in (
@@ -1550,7 +1581,7 @@ class User(UserMixin, db.Model):
         return details
 
     def get_queue_count(self):
-        """Total queued plus running jobs, for the navbar badge."""
+        """Return the total of queued and running jobs for the navbar badge."""
 
         imports = StartedJobRegistry("fitzflix-import", connection=current_app.redis)
         imports_running = imports.get_job_ids()
@@ -1574,10 +1605,12 @@ class User(UserMixin, db.Model):
 
 
 class UserStreamingProvider(db.Model):
-    """One streaming service on a user's profile, from TMDB's
-    watch-provider registry (the underlying data is JustWatch's). The
-    name and logo are copied at pick time so displays survive registry
-    outages."""
+    """One streaming service on the profile of a user.
+
+    The service comes from the watch-provider registry of TMDB (the
+    source data is from JustWatch). Fitzflix copies the name and the
+    logo when the user picks the service. Thus, the displays survive a
+    registry outage."""
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
@@ -1592,15 +1625,15 @@ class UserStreamingProvider(db.Model):
 
 
 class UserWatchlist(db.Model):
-    """A film the user wants to watch — the funnel stage before the
-    shopping list.
+    """A film that the user wants to watch.
 
-    Adds reuse review-only Movie records, so watchlisted films are
-    enriched and first-class everywhere; watching the film (a manual
-    log, a Plex scrobble, or a Letterboxd import) removes the entry,
-    and graduation to the shopping list then happens organically via
-    the likes and ratings the shopping list already reads. Timestamps
-    are local wall-clock, like the diary's.
+    This is the funnel stage before the shopping list. An add uses the
+    review-only Movie records again. Thus, a watchlisted film is
+    enriched and first-class on every surface. A watch of the film (a
+    manual log, a Plex scrobble, or a Letterboxd import) removes the
+    entry. The film then moves to the shopping list naturally through
+    the likes and ratings that the shopping list already reads. The
+    timestamps are local wall-clock, the same as the diary.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1615,7 +1648,9 @@ class UserWatchlist(db.Model):
 
 
 class UserMovieReview(db.Model):
-    """One viewing: a diary/review row from the movie page, a Letterboxd
+    """One viewing.
+
+    This is a diary or review row from the movie page, a Letterboxd
     import, or a Plex watch.
     """
 
@@ -1623,8 +1658,8 @@ class UserMovieReview(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
 
-    # Rating fields are nullable: a Letterboxd review or like can exist
-    # without a star rating
+    # The rating fields are nullable. A Letterboxd review or like can
+    # exist without a star rating.
 
     rating = db.Column(db.Float)
     modified_rating = db.Column(db.Float)
@@ -1635,26 +1670,26 @@ class UserMovieReview(db.Model):
     date_watched = db.Column(db.DateTime)
     date_reviewed = db.Column(db.DateTime)
 
-    # When the review text was last edited; date_reviewed keeps the
-    # original review date
+    # The time of the last edit of the review text. date_reviewed keeps
+    # the original review date.
 
     date_updated = db.Column(db.DateTime)
 
-    # True for a repeat viewing, False for a first watch, NULL for legacy
-    # rows where nobody knows
+    # True for a repeat viewing. False for a first watch. NULL for a
+    # legacy row where nobody knows.
 
     rewatch = db.Column(db.Boolean)
 
-    # The Letterboxd feed item this row came from or was matched by
-    #: the dedup/edit key, and rows carrying one never re-export
-    # to Letterboxd — they are already there
+    # The Letterboxd feed item that this row came from or matched. This
+    # is the key for duplicate removal and edits. A row with a guid never
+    # exports to Letterboxd again. It is already there.
 
     letterboxd_guid = db.Column(db.String(64), unique=True)
 
-    # Letterboxd's spoiler checkbox, known only for feed-synced rows
-    # (the CSV export has no spoiler column, so imports leave it NULL).
-    # Stored as data for now; whether it affects review display is a
-    # separate, undecided question
+    # The spoiler checkbox of Letterboxd. It is known only for rows synced
+    # from the feed (the CSV export has no spoiler column. Thus, an import
+    # leaves it NULL). For now, Fitzflix stores it as data. If it changes
+    # the review display is a separate, open question.
 
     contains_spoilers = db.Column(db.Boolean)
 
@@ -1663,8 +1698,10 @@ class UserMovieReview(db.Model):
 
 
 class Movie(db.Model, TMDBMixin, Utilities):
-    """A film: local identity, TMDB enrichment, Criterion details, and
-    shopping-cart state.
+    """A film.
+
+    The row holds the local identity, the TMDB enrichment, the Criterion
+    details, and the shopping-cart state.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1688,7 +1725,7 @@ class Movie(db.Model, TMDBMixin, Utilities):
     tmdb_popularity = db.Column(db.Float)
     tmdb_poster_path = db.Column(db.String(64))
     tmdb_release_date = db.Column(db.DateTime)
-    tmdb_revenue = db.Column(db.BigInteger)  # BIGINT, thx Titanic (1996) $2,187,463,944
+    tmdb_revenue = db.Column(db.BigInteger)  # BIGINT. Titanic (1996): $2,187,463,944
     tmdb_runtime = db.Column(db.Integer)
     tmdb_status = db.Column(db.String(32))
     tmdb_tagline = db.Column(db.String(384))
@@ -1698,11 +1735,11 @@ class Movie(db.Model, TMDBMixin, Utilities):
     tmdb_vote_count = db.Column(db.Integer)
     tmdb_data_as_of = db.Column(db.DateTime)
 
-    # "TMDB has no record of this film, and never will" — a home movie, or
-    # an id TMDB has since deleted. Distinct from a plain NULL tmdb_id,
-    # which only means "not matched yet" and invites a title search on the
-    # next refresh; this flag tells every refresh path to leave the record
-    # alone. Cleared by supplying an id by hand.
+    # "TMDB has no record of this film, and never will". Examples are a
+    # home movie, or an id that TMDB deleted. This is different from a
+    # plain NULL tmdb_id. A NULL only means "not matched yet" and starts a
+    # title search on the next refresh. This flag tells every refresh path
+    # not to touch the record. An id supplied by hand clears the flag.
 
     tmdb_ignored = db.Column(
         db.Boolean, nullable=False, default=False, server_default="0"
@@ -1825,9 +1862,9 @@ class TVSeries(db.Model, TMDBMixin):
 
     tmdb_id = db.Column(db.Integer)
     tmdb_backdrop_path = db.Column(db.String(64))
-    # The US content rating (TV-PG, TV-MA, ...) — TV's answer to the
-    # movie side's certifications table; one country only, since
-    # nothing surfaces the others
+    # The US content rating (TV-PG, TV-MA, ...). This is the TV version
+    # of the certifications table on the movie side. It holds one country
+    # only because no surface shows the other countries.
     tmdb_content_rating = db.Column(db.String(32))
     tmdb_first_air_date = db.Column(db.DateTime)
     tmdb_homepage = db.Column(db.String(128))
@@ -1912,8 +1949,10 @@ class TVSeries(db.Model, TMDBMixin):
 
 
 class File(db.Model):
-    """A library media file: location, quality and ranking fields, track
-    metadata relations, and AWS archive state.
+    """A library media file.
+
+    The row holds the location, the quality and ranking fields, the
+    track metadata relations, and the AWS archive state.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1938,9 +1977,9 @@ class File(db.Model):
     codec = db.Column(db.String(64))
     hdr_format = db.Column(db.String(255))
 
-    # The Dolby Vision flavor parsed from hdr_format: "5", "7",
-    # "8.1", "8.4", … — profile 8's suffix is the cross-compatibility
-    # target. Feeds the eventual P7→8.1 conversion targeting
+    # The Dolby Vision variant parsed from hdr_format: "5", "7", "8.1",
+    # "8.4", and so on. The suffix of profile 8 is the cross-compatibility
+    # target. This feeds the future P7 to 8.1 conversion targeting.
 
     dolby_vision_profile = db.Column(db.String(8))
     video_bitrate_kbps = db.Column(db.Integer)
@@ -1952,23 +1991,24 @@ class File(db.Model):
     date_localized = db.Column(db.DateTime, index=True)
     date_transcoded = db.Column(db.DateTime, index=True)
 
-    # When the subtitle triage marked this file's tracks as reviewed
-    # ("nothing forced here"). Lives on the file rather than the track
-    # rows because rescans delete and rebuild those.
+    # The time that the subtitle triage marked the tracks of this file as
+    # reviewed ("nothing forced here"). It is on the file, not on the
+    # track rows, because a rescan deletes and builds those rows again.
 
     subtitle_triage_reviewed = db.Column(db.DateTime)
 
-    # When the runtime triage (#234) accepted this file's length as
-    # known-benign — a full-disc rip, a short recorded into a longer
-    # broadcast slot — so it stops reappearing on the candidates list.
-    # Reset on re-import: a replacement's length is new evidence.
+    # The time that the runtime triage (#234) accepted the length of this
+    # file as known and harmless. Examples are a full-disc rip, or a short
+    # recorded into a longer broadcast slot. Then the file no longer
+    # appears on the candidates list. A new import resets it. The length
+    # of a replacement is new evidence.
 
     runtime_mismatch_reviewed = db.Column(db.DateTime)
 
-    # When the lossy-audio triage (#212) accepted this file's track
-    # layout as-is — the lossless sibling is a commentary or otherwise
-    # different content — so it stops reappearing on the worklist.
-    # Reset on re-import like the other verdicts.
+    # The time that the lossy-audio triage (#212) accepted the track
+    # layout of this file as it is. The lossless sibling is a commentary
+    # or different content. Then the file no longer appears on the
+    # worklist. A new import resets it, the same as the other verdicts.
 
     lossy_audio_reviewed = db.Column(db.DateTime)
     aws_untouched_key = db.Column(db.String(255), index=True)
@@ -1976,10 +2016,10 @@ class File(db.Model):
     aws_untouched_date_uploaded = db.Column(db.DateTime)
     aws_untouched_date_deleted = db.Column(db.DateTime)
 
-    # Set when an archive upload was lost and the S3 object is known to
-    # be older than the local file. Nothing else can tell: the key still
-    # exists and the date is the old upload's, so every existing check
-    # reads the row as consistent. Cleared by a successful upload.
+    # Set when an archive upload was lost and the S3 object is known to be
+    # older than the local file. No other field can tell. The key still
+    # exists and the date is from the old upload. Thus, every existing
+    # check reads the row as consistent. A successful upload clears it.
 
     aws_untouched_stale = db.Column(
         db.Boolean, nullable=False, server_default="0", default=False
@@ -1991,9 +2031,9 @@ class File(db.Model):
         "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
 
-    # Derived copies: the Handbrake transcodes made FROM this
-    # file. Rows cascade away with their source; the physical purge is
-    # the delete sites' job (see app.transcodes)
+    # The derived copies. These are the Handbrake transcodes made FROM
+    # this file. The rows cascade away with their source. The physical
+    # delete is the job of the delete sites (see app.transcodes).
 
     derived_files = db.relationship(
         "DerivedFile",
@@ -2004,10 +2044,10 @@ class File(db.Model):
     )
     custom_poster = db.Column(db.String(64))
 
-    # Keys that aren't mapped columns, but that the import pipeline includes in
-    # the file_details dicts it constructs File objects from; they're kept as
-    # plain attributes because find_better_files() reads them when comparing an
-    # incoming file against the existing library
+    # These keys are not mapped columns. The import pipeline includes them
+    # in the file_details dicts that it makes File objects from. Fitzflix
+    # keeps them as plain attributes because find_better_files() reads
+    # them when it compares an incoming file with the existing library.
 
     IMPORT_EXTRA_KEYS = {
         "title",
@@ -2015,8 +2055,9 @@ class File(db.Model):
         "quality_title",
         "extension",
         "feature_type_name",
-        # The TMDB id a filename's Plex id tag resolved to (#155); read by
-        # finalize_localization to route the metadata fetch
+        # The TMDB id that the Plex id tag of a filename resolved to
+        # (#155). finalize_localization reads it to route the metadata
+        # fetch.
         "tmdb_id",
     }
 
@@ -2024,10 +2065,11 @@ class File(db.Model):
         return f"<File '{self.plex_title}'>"
 
     def __init__(self, **kwargs):
-        # Route mapped columns/relationships through the real SQLAlchemy
-        # constructor so instrumentation and validation apply; allow only the
-        # known import-pipeline extras as plain attributes, and reject anything
-        # else so a typo'd column name fails fast instead of vanishing
+        # Route the mapped columns and relationships through the real
+        # SQLAlchemy constructor. Thus, instrumentation and validation
+        # apply. Allow only the known import-pipeline extras as plain
+        # attributes. Reject all other keys. Thus, a column name with a
+        # typo fails fast and does not disappear.
 
         mapped = set(db.inspect(File).attrs.keys())
         unexpected = set(kwargs) - mapped - self.IMPORT_EXTRA_KEYS
@@ -2042,10 +2084,10 @@ class File(db.Model):
             setattr(self, key, kwargs[key])
 
     def delete_local_file(self, delete_directory_tree=False):
-        """Delete the library copy and any transcoded sibling.
+        """Delete the library copy and the transcoded sibling, if any.
 
-        Missing files aren't an error, and with delete_directory_tree the
-        emptied folders are purged too.
+        A missing file is not an error. With delete_directory_tree, this
+        method also deletes the folders that became empty.
         """
 
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
@@ -2063,7 +2105,7 @@ class File(db.Model):
         else:
             current_app.logger.info(f"Deleted local file '{file_to_delete}'")
 
-        # Delete transcoded file and its directory if they exist
+        # Delete the transcoded file and its directory if they exist.
 
         try:
             os.remove(transcoded_file)
@@ -2075,14 +2117,15 @@ class File(db.Model):
         except OSError:
             pass
 
-        # Triage snapshots are only useful while the local copy exists
+        # The triage snapshots are useful only while the local copy exists.
 
         from app.triage import remove_triage_snapshots
 
         remove_triage_snapshots(self.id)
 
-        # Optionally delete the directory tree, even if the library file itself
-        # was already gone, so deleting a record purges its empty folder too
+        # As an option, delete the directory tree, even if the library file
+        # itself was already gone. Thus, a record delete also removes its
+        # empty folder.
 
         if delete_directory_tree:
             try:
@@ -2099,8 +2142,10 @@ class File(db.Model):
         return self
 
     def file_identifier(self):
-        """The JSON identity used as this file's cross-task lock key:
-        title/year/feature for movies, series/season/episode for TV.
+        """Return the JSON identity that is the cross-task lock key of this file.
+
+        The key is title/year/feature for movies and series/season/episode
+        for TV.
         """
 
         if self.media_library == "Movies":
@@ -2136,56 +2181,57 @@ class File(db.Model):
         return file_identifier
 
     def find_better_files(self):
-        # Dear Future Glenn:
+        # A message to the future Glenn (written by Glenn, 2020-08-02):
         #
-        # This place is a message, and part of a system of messages - pay attention to it!
+        # This place is a message, and part of a system of messages. Give
+        # it your attention.
         #
-        # Much of the logic of this method was written in a sleepless haze, so I'm not
-        # sure it works 100% correctly, but you should also be hesitant to improve it
-        # because it's easy to screw it up or have other unintended effects, especially
-        # when you start poking around with special features, different versions
-        # (e.g. Director's Cut), multi-episode tv show files, etc.
+        # Glenn wrote much of the logic of this method without sleep. Thus,
+        # it is not certain that it works 100% correctly. But be careful
+        # with improvements. It is easy to break this method or to cause
+        # unintended effects. This is especially true for special features,
+        # different versions (for example, the Director's Cut), and
+        # multi-episode TV show files.
         #
-        # It's also difficult because the logic is backwards from what you'd expect:
-        # we're trying to find any files that are better than what we're importing,
-        # and so we want to proceed only if we *don't* find any matches.
+        # The method is also difficult because the logic is the reverse of
+        # what you expect. It looks for the files that are better than the
+        # file that Fitzflix imports. Thus, the import continues only if
+        # the method finds NO matches.
         #
-        # What I WANT to do is:
+        # The intended rules are:
         #
         # Movies:
         #
-        # - If the existing file is a full screen version, always replace it with a
-        #   non-full screen version, even if it means downgrading the quality
+        # - If the existing file is a full screen version, always replace
+        #   it with a non-full screen version, even if the quality is lower.
         #
-        # - If the existing file is a non-full screen version, and the new file is
-        #   full screen, always reject the new full screen file
+        # - If the existing file is a non-full screen version, and the new
+        #   file is full screen, always reject the new full screen file.
         #
-        # - If the existing and new files are both non-full screen versions, replace
-        #   the existing file only if the new one is of same or better quality
+        # - If the existing and the new files are both non-full screen
+        #   versions, replace the existing file only if the new file has the
+        #   same or better quality.
         #
         # TV Shows:
         #
-        # - If the existing file is a full screen version, always replace it with a
-        #   non-full screen version, even if it means downgrading the quality and/or
-        #   losing episodes from a multi-episode file
+        # - If the existing file is a full screen version, always replace
+        #   it with a non-full screen version, even if the quality is lower
+        #   or a multi-episode file loses episodes.
         #
-        # - If the existing file is non-full screen version, and the new file is
-        #   full screen, always reject the new full screen file
+        # - If the existing file is a non-full screen version, and the new
+        #   file is full screen, always reject the new full screen file.
         #
-        # - If the existing and new files are both non-full screen versions, replace
-        #   the existing file only if the new one is of same or better quality, and if
-        #   the new one contains as many or more episodes
+        # - If the existing and the new files are both non-full screen
+        #   versions, replace the existing file only if the new file has the
+        #   same or better quality, and if the new file contains the same
+        #   number of episodes or more.
         #
-        # Just don't ever import full screen versions of movies or tv shows and you
-        # should be ok. Not that you'd even want full screen versions in the first place.
+        # Never import full screen versions of movies or TV shows. Then you
+        # should be safe. You do not want full screen versions anyway.
         #
-        # tl;dr: This place is not a place of honor, etc., etc.
-        #
-        # xoxo,
-        # Past Glenn
-        # 2020-08-02
+        # In short: this place is not a place of honor.
 
-        """Same-title files that outrank this one."""
+        """Return the same-title files that outrank this file."""
 
         better_files = []
 
@@ -2196,10 +2242,11 @@ class File(db.Model):
         current_app.logger.debug(f"Import vars: {vars(self)}")
 
         if self.media_library == "Movies":
-            # If the new file is a full screen version, better quality files that would
-            # prevent this file from importing would be:
+            # If the new file is a full screen version, these better files
+            # prevent the import of this file:
             # - the exact same movie, also full screen, in a better quality
-            # - the exact same movie, NOT full screen, in the same or better quality
+            # - the exact same movie, NOT full screen, in the same or better
+            #   quality
 
             if self.fullscreen == True:
                 better_files = (
@@ -2233,8 +2280,8 @@ class File(db.Model):
                     .all()
                 )
 
-            # Otherwise, if the file is not full screen, better quality files that would
-            # prevent this file from importing would be:
+            # Otherwise, if the file is not full screen, these better files
+            # prevent the import of this file:
             # - the exact same movie, not full screen, in a better quality
 
             else:
@@ -2255,19 +2302,22 @@ class File(db.Model):
                 )
 
         elif self.media_library == "TV Shows":
-            # A TV episode's identity is series + season + episode span —
-            # NEVER the edition: for TV files the edition holds the
-            # filename's episode-title segment, and two releases of
-            # the same episode can title it differently (Glenn's Seeds of
-            # Doom case: a Blu-ray special failed to replace its DVD
-            # predecessor because the discs named the extra differently).
+            # The identity of a TV episode is series + season + episode
+            # span. It is NEVER the edition. For a TV file, the edition
+            # holds the episode-title segment of the filename. Two releases
+            # of the same episode can give it different titles (the Seeds
+            # of Doom case from Glenn: a Blu-ray special did not replace its
+            # DVD predecessor because the discs gave the extra different
+            # names).
             #
-            # If the new file is a full screen version, existing files that
-            # would prevent this file from importing would be:
-            # - same tv episode range, also full screen, in same quality
-            # - wider tv episode range, also full screen, in same or better quality
-            # - same tv episode range, NOT full screen, in same quality
-            # - wider tv episode range, NOT full screen, in same or better quality
+            # If the new file is a full screen version, these existing
+            # files prevent the import of this file:
+            # - same TV episode range, also full screen, in the same quality
+            # - wider TV episode range, also full screen, in the same or
+            #   better quality
+            # - same TV episode range, NOT full screen, in the same quality
+            # - wider TV episode range, NOT full screen, in the same or
+            #   better quality
 
             if self.fullscreen == True:
                 better_files = (
@@ -2305,10 +2355,12 @@ class File(db.Model):
                     .all()
                 )
 
-            # Otherwise, if the file is not full screen, better quality files that would
-            # prevent this file from importing would be:
-            # - same tv show episode range, not full screen, in a better quality
-            # - wider tv show episode range, not full screen, same quality
+            # Otherwise, if the file is not full screen, these better files
+            # prevent the import of this file:
+            # - same TV show episode range, not full screen, in a better
+            #   quality
+            # - wider TV show episode range, not full screen, in the same
+            #   quality
 
             else:
                 better_files = (
@@ -2338,8 +2390,9 @@ class File(db.Model):
         return better_files
 
     def find_worse_files(self):
-        """Same-title files this one outranks — the pruning candidates after
-        an upgrade.
+        """Return the same-title files that this file outranks.
+
+        These are the candidates for removal after an upgrade.
         """
 
         worse_files = []
@@ -2361,11 +2414,11 @@ class File(db.Model):
             )
 
         elif self.media_library == "TV Shows":
-            # Edition deliberately absent: for TV files it
-            # holds the filename's episode-title segment, and two releases
-            # of the same episode can title it differently — the episode
-            # span is the identity, so a retitled upgrade still prunes its
-            # predecessor
+            # The edition is absent on purpose. For a TV file, it holds the
+            # episode-title segment of the filename. Two releases of the
+            # same episode can give it different titles. The episode span
+            # is the identity. Thus, an upgrade with a new title still
+            # removes its predecessor.
 
             worse_files = (
                 File.query.join(RefQuality, (RefQuality.id == File.quality_id))
@@ -2391,19 +2444,21 @@ class File(db.Model):
 
 
 class DerivedFile(db.Model):
-    """A file derived from a library original — today the
-    Handbrake transcodes under TRANSCODES_DIR, eventually the 4K→SDR
-    and Dolby Vision conversions.
+    """A file derived from a library original.
 
-    Deliberately NOT a File row: File.file_path is LIBRARY_DIR-relative
-    and unique, and every ranking, shopping, and import-replace query
-    treats File rows as originals — putting derived copies there would
-    demand a never-forget filter at every one of those sites, and a
-    missed filter aims deletions at the wrong root. Their own table
-    keeps them structurally invisible to all of it, while the
-    source_file_id link gives the movie/file pages and the linked
-    delete everything they need. file_path here is relative to
-    TRANSCODES_DIR."""
+    Today these are the Handbrake transcodes under TRANSCODES_DIR. In
+    the future they include the 4K to SDR and the Dolby Vision
+    conversions.
+
+    This is NOT a File row. That is intentional. File.file_path is
+    relative to LIBRARY_DIR and unique. Every ranking, shopping, and
+    import-replace query treats a File row as an original. Derived
+    copies in that table would need a filter at every one of those
+    sites, with no exception. A missed filter aims a delete at the
+    wrong root. Their own table keeps the derived copies invisible to
+    all of that. The source_file_id link gives the movie and file pages
+    and the linked delete all that they need. file_path here is
+    relative to TRANSCODES_DIR."""
 
     id = db.Column(db.Integer, primary_key=True)
     source_file_id = db.Column(
@@ -2421,13 +2476,13 @@ class DerivedFile(db.Model):
     )
 
     def __repr__(self):
-        """The derived copy's path, marked by kind."""
+        """Return the path of the derived copy, marked by kind."""
 
         return f"<DerivedFile {self.kind} '{self.file_path}'>"
 
 
 class FileAudioTrack(db.Model):
-    """One audio track from a file's MediaInfo scan."""
+    """One audio track from the MediaInfo scan of a file."""
 
     id = db.Column(db.Integer, primary_key=True)
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"))
@@ -2453,7 +2508,7 @@ class FileAudioTrack(db.Model):
 
 
 class FileSubtitleTrack(db.Model):
-    """One subtitle track from a file's MediaInfo scan."""
+    """One subtitle track from the MediaInfo scan of a file."""
 
     id = db.Column(db.Integer, primary_key=True)
     file_id = db.Column(db.Integer, db.ForeignKey("file.id"))
@@ -2473,7 +2528,7 @@ class FileSubtitleTrack(db.Model):
 
 
 class RefFeatureType(db.Model):
-    """Lookup table of special-feature types (Trailers, Featurettes, ...)."""
+    """The lookup table of special-feature types (Trailers, Featurettes, ...)."""
 
     id = db.Column(db.Integer, primary_key=True)
     feature_type = db.Column(db.String(32), nullable=False, unique=True)
@@ -2486,8 +2541,9 @@ class RefFeatureType(db.Model):
 
 
 class RefQuality(db.Model):
-    """Lookup table of quality tiers ordered by preference, including the
-    virtual bottom tier 'Not in library'.
+    """The lookup table of quality tiers, ordered by preference.
+
+    It includes the virtual bottom tier 'Not in library'.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2507,7 +2563,7 @@ class RefQuality(db.Model):
 
 
 class RefTMDBCertification(db.Model, TMDBMixin):
-    """Lookup table of per-country TMDB certifications (G, PG-13, ...)."""
+    """The lookup table of TMDB certifications per country (G, PG-13, ...)."""
 
     id = db.Column(db.Integer, primary_key=True)
     country = db.Column(db.String(8))
@@ -2522,7 +2578,7 @@ class RefTMDBCertification(db.Model, TMDBMixin):
 
 
 class TMDBMovieCollection(db.Model, TMDBMixin):
-    """A TMDB collection a movie belongs to."""
+    """A TMDB collection that a movie belongs to."""
 
     id = db.Column(db.Integer, primary_key=True)
     tmdb_backdrop_path = db.Column(db.String(64))
@@ -2534,7 +2590,7 @@ class TMDBMovieCollection(db.Model, TMDBMixin):
 
 
 class TMDBCredit(db.Model, TMDBMixin):
-    """A person from TMDB credits, shared by the cast and crew join rows."""
+    """A person from the TMDB credits, shared by the cast and crew join rows."""
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128))
@@ -2558,7 +2614,7 @@ class TMDBCredit(db.Model, TMDBMixin):
 
 
 class MovieCast(db.Model):
-    """Join row: a credit's acting role on a movie."""
+    """A join row for the acting role of a credit on a movie."""
 
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
@@ -2573,7 +2629,7 @@ class MovieCast(db.Model):
 
 
 class MovieCrew(db.Model):
-    """Join row: a credit's crew role on a movie."""
+    """A join row for the crew role of a credit on a movie."""
 
     id = db.Column(db.Integer, primary_key=True)
     movie_id = db.Column(db.Integer, db.ForeignKey("movie.id"))
@@ -2592,11 +2648,11 @@ class MovieCrew(db.Model):
 class MovieAward(db.Model):
     """An award win or nomination for a film, read from Wikidata.
 
-    Rows are current-truth: the weekly refresh replaces a film's rows
-    wholesale, so absence means Wikidata lists nothing (or the film has
-    no Wikidata item) — coverage is strong for major ceremonies and
-    patchy for niche festivals, so surfaces must never imply
-    completeness.
+    The rows are the current truth. The weekly refresh replaces all the
+    rows of a film. Thus, an absent row means that Wikidata lists
+    nothing (or the film has no Wikidata item). The coverage is good for
+    major ceremonies and incomplete for niche festivals. Thus, a surface
+    must never show the data as complete.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2618,16 +2674,17 @@ class MovieAward(db.Model):
 
 
 class MovieCopref(db.Model):
-    """Co-preference similarity between two films, from MovieLens.
+    """The co-preference similarity between 2 films, from MovieLens.
 
-    Adjusted-cosine similarity over ML-32M's 32 million ratings, with
-    co-rater shrinkage — "people who loved A disproportionately loved
-    B", the taste signal content features can't see. Keyed by TMDB ids
-    (portable across record merges), positive similarities only, both
-    directions stored so anchor-side lookups are one indexed query.
-    Rebuilt only when a new MovieLens snapshot is adopted, via `flask
-    recs copref` (which needs numpy/scipy installed ad hoc — they are
-    deliberately not runtime dependencies).
+    This is the adjusted-cosine similarity over the 32 million ratings
+    of ML-32M, with co-rater shrinkage. It means "people who loved A
+    loved B more than expected". That is the taste signal that content
+    features cannot see. The key is the TMDB ids (they survive record
+    merges). Only positive similarities are stored. Both directions are
+    stored. Thus, an anchor-side lookup is one indexed query. Fitzflix
+    builds the table again only when it adopts a new MovieLens snapshot,
+    through `flask recs copref`. That command needs numpy and scipy
+    installed ad hoc. They are not runtime dependencies on purpose.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2642,15 +2699,15 @@ class MovieCopref(db.Model):
 
 
 class CatalogExclusion(db.Model):
-    """A TMDB id the catalog loaders must never auto-create again.
+    """A TMDB id that the catalog loaders must never create again.
 
-    Wikidata's Criterion spine set occasionally lists a film that
-    doesn't really exist — an unfinished work carrying a stale TMDB id
-    (Eisenstein's Ivan the Terrible Part III was the first found).
-    Deleting the bogus Movie record isn't enough, since the next full
-    refresh would recreate it; `flask catalog exclude` deletes the
-    record AND stores its id here, and both the catalog-record creation
-    pass and the Criterion catalog page skip excluded ids thereafter.
+    The Criterion spine set on Wikidata sometimes lists a film that does
+    not really exist. An example is an unfinished work with a stale TMDB
+    id (Ivan the Terrible Part III by Eisenstein was the first found).
+    A delete of the incorrect Movie record is not sufficient. The next
+    full refresh would create it again. `flask catalog exclude` deletes
+    the record AND stores its id here. After that, the catalog-record
+    creation pass and the Criterion catalog page skip the excluded ids.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2663,15 +2720,17 @@ class CatalogExclusion(db.Model):
 
 
 class UserMovieStatus(db.Model):
-    """Per-user standing flags on films, one row per (user, film, kind).
+    """The standing flags of a user on films, one row per (user, film, kind).
 
-    Kinds: "unseen" — the rating drive's "haven't seen it", permanently
-    out of the drive (previously a Redis-only set, the one user-authored
-    data a cache flush could lose); "not_interested" — per-user
-    suppression from every recommendation surface, chiefly for unowned
-    films, since the rating ladder's zero stars already covers owned
-    ones with a real diary row. Not-interested feeds the taste profile
-    as a mild negative; either flag clears by deleting its row.
+    The kinds are "unseen" and "not_interested". "unseen" is the "have
+    not seen it" answer of the rating drive. The film is permanently out
+    of the drive. Before, this was a Redis-only set. It was the one
+    user-authored data that a cache flush could lose. "not_interested"
+    removes the film from every recommendation surface for this user.
+    It is mainly for unowned films. The zero stars of the rating ladder
+    already cover the owned films with a real diary row. Not-interested
+    feeds the taste profile as a mild negative. A delete of the row
+    clears the flag.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2691,10 +2750,12 @@ class UserMovieStatus(db.Model):
 
 
 class UserFrameScore(db.Model):
-    """Name That Frame standings, one row per (user, difficulty):
-    the running streak and the personal best — persisted here so a
-    restart, another device, or a new session can't erase a high
-    score the way the original session-cookie streaks could."""
+    """The Name That Frame standings, one row per (user, difficulty).
+
+    The row holds the running streak and the personal best. Fitzflix
+    stores them here. Thus, a restart, a different device, or a new
+    session cannot erase a high score. The original session-cookie
+    streaks could lose it."""
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(
@@ -2704,12 +2765,12 @@ class UserFrameScore(db.Model):
     current_streak = db.Column(db.Integer, nullable=False, default=0)
     best_streak = db.Column(db.Integer, nullable=False, default=0)
     date_best = db.Column(db.DateTime)
-    # Extra Difficult's running total (#202): 3/2/1 points by how
-    # early in the zoom-out the guess landed
+    # The running total of Extra Difficult (#202): 3, 2, or 1 points by
+    # how early in the zoom-out the guess arrived.
     points = db.Column(db.Integer, nullable=False, default=0, server_default="0")
-    # Win rate (Glenn's ask, Aug 27 2026): every dealt frame counts as
-    # seen — skipped and abandoned rounds included — and only a
-    # correct guess counts as won
+    # The win rate (requested by Glenn, 2026-08-27). Every dealt frame
+    # counts as seen. That includes skipped and abandoned rounds. Only a
+    # correct guess counts as won.
     rounds_seen = db.Column(db.Integer, nullable=False, default=0, server_default="0")
     rounds_won = db.Column(db.Integer, nullable=False, default=0, server_default="0")
 
@@ -2720,9 +2781,11 @@ class UserFrameScore(db.Model):
 
 
 class TVCast(db.Model):
-    """Join row: a credit's acting role on a TV series, from TMDB's
-    aggregate credits — one row per distinct character, with the
-    series-wide billing order and how many episodes the role spans."""
+    """A join row for the acting role of a credit on a TV series.
+
+    The data comes from the TMDB aggregate credits. There is one row per
+    distinct character, with the series-wide billing order and the
+    number of episodes of the role."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
@@ -2738,8 +2801,10 @@ class TVCast(db.Model):
 
 
 class TVCrew(db.Model):
-    """Join row: a credit's crew role on a TV series, from TMDB's
-    aggregate credits — one row per distinct job."""
+    """A join row for the crew role of a credit on a TV series.
+
+    The data comes from the TMDB aggregate credits. There is one row per
+    distinct job."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))
@@ -2835,7 +2900,7 @@ class TMDBSeason(db.Model, TMDBMixin):
 
 @login.user_loader
 def load_user(id):
-    """flask-login's user loader."""
+    """Load a user for flask-login."""
 
     return db.session.get(User, int(id))
 
@@ -2855,20 +2920,20 @@ dvr_channel_series = db.Table(
 
 
 class DVRChannel(db.Model):
-    """An admin-defined virtual DVR channel (#182).
+    """A virtual DVR channel that an admin defines (#182).
 
-    A channel's members are its explicit picks (the movie/series
-    relationships) plus whatever matches its rule columns: genres and
-    keywords match either library when the matching include flag is
-    set, network_country applies to series, criterion/leaving restrict
-    the rule-matched film pool to what's streaming on / departing the
-    Criterion Channel, and title_pins pull titles in past every other
-    filter. The comma-separated rule columns follow the free-text
-    convention rather than JSON.
+    The members of a channel are its explicit picks (the movie and
+    series relationships) plus all titles that match its rule columns.
+    Genres and keywords match each library when the related include
+    flag is set. network_country applies to series. criterion and
+    leaving limit the rule-matched film pool to the films that stream
+    on the Criterion Channel, or that leave it. title_pins pull titles
+    in past every other filter. The comma-separated rule columns follow
+    the free-text convention, not JSON.
 
-    The slug is frozen at creation: it is the channel's tvg-id and
-    stream URL, which Plex maps by — renaming a channel must never
-    move its stream.
+    The slug is frozen at creation. It is the tvg-id and the stream URL
+    of the channel. Plex maps by the slug. Thus, a rename of a channel
+    must never move its stream.
     """
 
     id = db.Column(db.Integer, primary_key=True)
@@ -2902,8 +2967,9 @@ class DVRChannel(db.Model):
     )
 
     def rule_list(self, column):
-        """One comma-separated rule column as a clean list of
-        lowercase terms."""
+        """Return one comma-separated rule column as a clean list.
+
+        The terms are lowercase."""
 
         return [
             term.strip().lower()
@@ -2916,7 +2982,7 @@ class DVRChannel(db.Model):
 
 
 def movie_file_rank():
-    """Rank each movie file within its title/feature/edition group by quality."""
+    """Rank each movie file in its title/feature/edition group by quality."""
 
     return (
         db.func.row_number()
@@ -2934,11 +3000,12 @@ def movie_file_rank():
 
 
 def tv_file_rank():
-    """Rank each episode file within its series/season/episode group.
+    """Rank each episode file in its series/season/episode group.
 
-    Edition is deliberately not part of the grouping: for TV files it just
-    carries the optional episode title, so two copies of the same episode
-    compete whether or not their filenames included one.
+    The edition is not part of the group. That is intentional. For a TV
+    file, it only carries the optional episode title. Thus, 2 copies of
+    the same episode compete, with or without a title in their
+    filenames.
     """
 
     return (

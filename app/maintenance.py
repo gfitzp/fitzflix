@@ -1,4 +1,4 @@
-"""Tasks for maintaining the application itself, rather than the video library."""
+"""Run the tasks that maintain the application itself, not the video library."""
 
 import glob
 import gzip
@@ -24,15 +24,17 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.email import task_send_email
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, an import of this module from a process that already has an
+# application does not build a second one.
 
 app = LocalProxy(get_app)
 
-# The worker roster from fitzflix_supervisor.ini: the queues each program
-# listens to, and how many processes it runs (numprocs, default 1). Update
-# when the roster changes there; the expected per-queue counts and the
-# self-healing restart targets are both derived from it
+# This is the worker roster from fitzflix_supervisor.ini. It lists the
+# queues that each program listens to, and how many processes it runs
+# (numprocs, default 1). Update it when the roster changes there. The
+# expected per-queue counts and the self-healing restart targets both
+# come from it.
 
 SUPERVISOR_GROUP = "fitzflix"
 
@@ -62,8 +64,8 @@ for _program, _queues in PROGRAM_QUEUES.items():
             _program, 1
         )
 
-# rq's default worker_ttl; an idle worker whose heartbeat is older than this
-# is a leftover registration, not a live worker
+# This is the default worker_ttl of rq. An idle worker whose heartbeat is
+# older than this is a leftover registration, not a live worker.
 
 WORKER_HEARTBEAT_STALE_SECONDS = 420
 
@@ -74,7 +76,8 @@ ALERTED_KEY_PREFIX = "fitzflix:health:alerted:"
 OBSERVER_KEY_PREFIX = "fitzflix:observer:"
 SCHEDULER_KEY_PREFIX = "rq:cron_scheduler:"
 
-# While a problem persists, re-alert daily rather than every probe
+# While a problem continues, send the alert again daily, not on every
+# probe.
 
 ALERT_REMINDER_SECONDS = 86400
 
@@ -92,18 +95,19 @@ def _human_size(size):
 
 
 def _live_workers(connection):
-    """Discover workers from their heartbeat keys, not rq's registry set.
+    """Find the workers from their heartbeat keys, not from the registry set of rq.
 
-    A worker that misses one heartbeat deadline (e.g. under heavy load) can
-    be swept out of the rq:workers set by rq's registry cleanup and never
-    re-adds itself, while continuing to work and heartbeat its own key. The
-    TTL'd per-worker keys are therefore the ground truth for liveness.
+    A worker that misses 1 heartbeat deadline, for example under heavy
+    load, can be removed from the rq:workers set by the registry cleanup
+    of rq. The worker never adds itself again. But it continues to work
+    and to refresh its own key. Thus, the per-worker keys with a TTL are
+    the true source for liveness.
     """
 
     workers = []
     for key in connection.scan_iter("rq:worker:*"):
-        # A cleanly shut-down worker's key lingers briefly with a death
-        # timestamp; it's not a live worker
+        # The key of a worker that shut down cleanly stays for a short
+        # time with a death timestamp. It is not a live worker.
 
         if connection.hget(key, "death"):
             continue
@@ -117,14 +121,14 @@ def _live_workers(connection):
 
 
 def worker_health(connection):
-    """Summarize rq worker liveness per queue against the expected roster."""
+    """Summarize the rq worker liveness per queue against the expected roster."""
 
     now = datetime.now(timezone.utc)
     queues = {name: {"queue": name, "live": 0, "busy": []} for name in EXPECTED_WORKERS}
     for worker in _live_workers(connection):
-        # A busy worker stops refreshing its heartbeat for the duration of
-        # the job, so only idle workers can be considered stale. rq 2
-        # returns aware datetimes; normalize in case of older stored values
+        # A busy worker does not refresh its heartbeat while the job
+        # runs. Thus, only an idle worker can count as stale. rq 2 returns
+        # aware datetimes. Normalize them for older stored values.
 
         heartbeat = worker.last_heartbeat
         if heartbeat is not None and heartbeat.tzinfo is None:
@@ -147,8 +151,8 @@ def worker_health(connection):
             entry = queues.setdefault(name, {"queue": name, "live": 0, "busy": []})
             entry["live"] += 1
 
-            # Report the running job only under the queue it came from, not
-            # under every queue its worker listens to
+            # Report the running job only under the queue that it came
+            # from, not under every queue that its worker listens to.
 
             if job is not None and job.origin == name:
                 entry["busy"].append(job.description or job.id)
@@ -161,47 +165,49 @@ def worker_health(connection):
     return [queues[name] for name in sorted(queues)]
 
 
-# Where mounted volumes appear. A module constant so tests can stand a
-# fake mount tree somewhere writable
+# This is where the mounted volumes appear. It is a module constant.
+# Thus, the tests can build a fake mount tree in a writable location.
 
 VOLUMES_ROOT = "/Volumes"
 
 
 def mountpoint_ok(path):
-    """Whether a path meets the mountpoint requirement (#227).
+    """Return True if a path meets the mountpoint requirement (#227).
 
     A path under VOLUMES_ROOT must BE a mountpoint. When a share drops,
-    macOS leaves the mountpoint behind as an ordinary directory on the
-    boot disk, so every existence check — statvfs, isdir — succeeds
-    instantly having answered for the boot volume, and calls a dead share
-    alive. ismount compares the path's device against its parent's, which
-    is the question actually being asked, for the cost of one stat.
+    macOS leaves the mountpoint behind as a normal directory on the boot
+    disk. Thus, every existence check (statvfs, isdir) succeeds
+    immediately, because it answered for the boot volume. It calls a
+    dead share alive. ismount compares the device of the path with the
+    device of its parent. That is the real question, for the cost of 1
+    stat.
 
-    Paths outside VOLUMES_ROOT were never expected to be mountpoints and
-    pass unconditionally: staging and the logs live on the boot disk.
+    A path outside VOLUMES_ROOT was never expected to be a mountpoint.
+    It passes unconditionally. The staging directory and the logs are
+    on the boot disk.
     """
 
     return not path.startswith(VOLUMES_ROOT + os.sep) or os.path.ismount(path)
 
 
 def volume_alive(path, timeout=10):
-    """True if the filesystem behind path responds within the timeout.
+    """Return True if the filesystem behind the path responds in the timeout.
 
-    A dead SMB mount can hang stat calls rather than failing them, so the
-    probe runs in a daemon thread and a hang counts as dead.
+    A dead SMB mount can hang stat calls instead of failing them. Thus,
+    the probe runs in a daemon thread. A hang counts as dead.
 
     A path under VOLUMES_ROOT must also BE a mountpoint (#227). statvfs
-    answers for whichever filesystem is behind the path right now, and
-    when a share drops macOS leaves the mountpoint behind as an ordinary
-    directory on the boot disk: statvfs then succeeds instantly, having
-    measured the boot volume, and isdir agrees the directory is there.
-    Caught live Aug 24 2026 with Movies and TV Shows out of the mount
-    table while both read as alive — the Plex refresh would have scanned
-    an empty tree and emptied the trash behind it. ismount compares the
-    path's device against its parent's, so it costs one stat and answers
-    the question actually being asked. It complements the timeout rather
-    than replacing it: a share still mounted but wedged is caught by the
-    watchdog, not by this.
+    answers for the filesystem that is behind the path at that moment.
+    When a share drops, macOS leaves the mountpoint behind as a normal
+    directory on the boot disk. Then statvfs succeeds immediately,
+    because it measured the boot volume. isdir agrees that the directory
+    is there. Seen live on 2026-08-24: Movies and TV Shows were out of
+    the mount table while both read as alive. The Plex refresh would
+    have scanned an empty tree and emptied the trash behind it. ismount
+    compares the device of the path with the device of its parent. Thus,
+    it costs 1 stat and answers the real question. It adds to the
+    timeout. It does not replace it. The watchdog catches a share that
+    is still mounted but wedged. This check does not.
     """
 
     result = {}
@@ -220,7 +226,7 @@ def volume_alive(path, timeout=10):
 
 
 def _monitored_paths(config):
-    """The configured directories whose backing volumes health checks
+    """Return the configured directories whose volumes the health checks
     watch.
     """
 
@@ -238,7 +244,7 @@ def _monitored_paths(config):
 
 
 def missing_volumes(config):
-    """Mountpoints under /Volumes that should be present but aren't responding."""
+    """Return the mountpoints under /Volumes that must be present but do not respond."""
 
     missing = []
     checked = set()
@@ -255,14 +261,14 @@ def missing_volumes(config):
 
 
 def disk_health(config):
-    """Report usage for each distinct volume backing the app's directories."""
+    """Report the usage of each distinct volume behind the directories of the app."""
 
     alert_free_bytes = config["DISK_ALERT_FREE_GB"] * 1024**3
     dead_mounts = missing_volumes(config)
     volumes = {}
     for path in _monitored_paths(config):
-        # A dead network mount can hang stat calls; report it via
-        # missing_volumes rather than risk hanging on a gauge
+        # A dead network mount can hang stat calls. Report it through
+        # missing_volumes. Do not risk a hang on a gauge.
 
         if any(path.startswith(mount) for mount in dead_mounts):
             continue
@@ -272,8 +278,8 @@ def disk_health(config):
         if device in volumes:
             continue
 
-        # Walk up to the mountpoint so the gauge is labeled by volume,
-        # not by whichever configured directory happened to find it first
+        # Walk up to the mountpoint. Then the gauge label is the volume,
+        # not the configured directory that found it first.
 
         mount = path
         while (
@@ -292,8 +298,9 @@ def disk_health(config):
             "color": (
                 "danger" if percent >= 95 else "warning" if percent >= 90 else "success"
             ),
-            # The library volumes are kept nearly full by design, so alert on
-            # the absolute free space imports and transcodes need, not percent
+            # The library volumes are almost full by design. Thus, alert
+            # on the absolute free space that imports and transcodes need,
+            # not on the percentage.
             "ok": usage.free >= alert_free_bytes,
         }
 
@@ -301,7 +308,7 @@ def disk_health(config):
 
 
 def backup_health(config):
-    """Report when the newest database backup was made."""
+    """Report when Fitzflix made the newest database backup."""
 
     backups = glob.glob(os.path.join(config["DB_BACKUP_DIR"], "*.sql.gz"))
     newest = max((os.path.getmtime(path) for path in backups), default=None)
@@ -315,8 +322,9 @@ def backup_health(config):
 def observer_health(connection):
     """Count the processes with a live import-directory observer heartbeat.
 
-    Only the import-program workers watch (supervisor.py scopes the
-    observer to them), so the expected count is that program's numprocs.
+    Only the import-program workers watch. supervisor.py limits the
+    observer to them. Thus, the expected count is the numprocs of that
+    program.
     """
 
     watchers = sum(1 for _ in connection.scan_iter(f"{OBSERVER_KEY_PREFIX}*"))
@@ -325,9 +333,9 @@ def observer_health(connection):
 
 
 def scheduler_health(connection):
-    """Report whether the recurring-jobs process is registered and alive.
+    """Report if the recurring-jobs process is registered and alive.
 
-    rq's CronScheduler heartbeats its hash with a short TTL, so a
+    The CronScheduler of rq refreshes its hash with a short TTL. Thus, a
     live key means a live scheduler.py process.
     """
 
@@ -336,12 +344,12 @@ def scheduler_health(connection):
 
 
 def repair_worker_registry(connection):
-    """Re-list live workers that rq's registry sweep dropped.
+    """List again the live workers that the registry sweep of rq dropped.
 
-    The intact-but-unlisted state: the worker's hash still has its queues
-    field and a live heartbeat, but a momentary key expiry got it removed
-    from the rq:workers set, which workers only join at birth. Adding it
-    back is a pure repair with no restart.
+    This is the intact-but-unlisted state. The hash of the worker still
+    has its queues field and a live heartbeat. But a short key expiry
+    removed it from the rq:workers set. A worker joins that set only at
+    birth. To add it back is a pure repair with no restart.
     """
 
     actions = []
@@ -381,7 +389,7 @@ def _supervisor_status(config):
 
 
 def _run_supervisorctl(config, command, process_name):
-    """Run a supervisorctl command; return (succeeded, output)."""
+    """Run a supervisorctl command and return (succeeded, output)."""
 
     try:
         result = subprocess.run(
@@ -401,19 +409,22 @@ HEALED_KEY_PREFIX = "fitzflix:health:healed:"
 
 
 def heal_worker_processes(connection, config):
-    """Start dead worker processes, and restart amnesiac ones.
+    """Start the dead worker processes, and restart the ones that lost their identity.
 
-    Two failure states, told apart with supervisor's process view:
-    - Not RUNNING: the process died and supervisor gave up (or it was
-      stopped); start it again.
-    - RUNNING but its pid isn't attached to any registered rq worker: the
-      process is alive but its Redis registration lost its identity (a full
-      key expiry wiped the queues field), which no supervisor-level check
-      can see and only a restart (a fresh birth registration) can fix. Only
-      restarted while its queues are idle, so no job is killed mid-run.
+    There are 2 failure states. The process view of supervisor tells
+    them apart:
+    - Not RUNNING: the process died and supervisor gave up, or someone
+      stopped it. Start it again.
+    - RUNNING, but its pid is not attached to a registered rq worker:
+      the process is alive, but its Redis registration lost its
+      identity. A full key expiry deleted the queues field. No
+      supervisor-level check can see this. Only a restart, with a new
+      birth registration, can repair it. This function restarts the
+      process only while its queues are idle. Thus, it kills no job
+      that is in progress.
 
-    Each process is healed at most once per cooldown window, so a genuinely
-    sick worker can't cause a restart loop.
+    This function heals each process at most 1 time per cooldown window.
+    Thus, a worker that is really sick cannot cause a restart loop.
     """
 
     actions = []
@@ -478,26 +489,28 @@ def heal_worker_processes(connection, config):
 
 
 def share_mounted_elsewhere(share, mount):
-    """Other paths where `share` is currently mounted.
+    """Return the other paths where `share` is mounted now.
 
-    When the SMB session dies it takes every share with it and macOS
-    leaves each mount point behind as an ordinary directory. A share that
-    comes back while its stub is still there — Finder, an app touching
-    the path, a person — lands on a suffixed path, /Volumes/TV Shows-1,
-    and the canonical path stays a dead directory on the boot disk.
+    When the SMB session dies, it takes every share with it. macOS
+    leaves each mount point behind as a normal directory. A share that
+    comes back while its stub is still there goes to a path with a
+    suffix, for example /Volumes/TV Shows-1. Finder, an app that touches
+    the path, or a person can bring it back. The canonical path stays a
+    dead directory on the boot disk.
 
-    Remounting cannot free that path while the share is still mounted
-    somewhere else, so the duplicate has to go first (#233). Seen live
-    Aug 25 2026: TV Shows and Transcoded both ran at -1 paths for about
-    25 minutes, and recovery needed the -1 mount unmounted before the
-    remount would land where it was asked to.
+    A remount cannot free that path while the share is still mounted in
+    a different location. Thus, the duplicate must go first (#233). Seen
+    live on 2026-08-25: TV Shows and Transcoded both ran at -1 paths for
+    approximately 25 minutes. The recovery needed the -1 mount unmounted
+    before the remount would go where it was asked to.
 
-    Only network mounts are considered. A local disk that happens to
-    parse out of `mount` is not ours to unmount. SMB devices read
-    `//user@host/Share` with the share name URL-encoded; NFS devices
-    read `host:/export/Share` with it literal (#239 — the session
-    collapse that motivated this was induced while testing NFS, whose
-    duplicates the smb-only match couldn't see).
+    This function examines only the network mounts. A local disk that
+    appears in the output of `mount` is not ours to unmount. An SMB
+    device reads `//user@host/Share`, with the share name URL-encoded.
+    An NFS device reads `host:/export/Share`, with the share name
+    literal (#239). The session collapse that caused this function
+    occurred during an NFS test. The SMB-only match could not see the
+    NFS duplicates.
     """
 
     try:
@@ -507,8 +520,10 @@ def share_mounted_elsewhere(share, mount):
 
     elsewhere = []
     for line in result.stdout.splitlines():
+        # Example line:
         # `//server@host/TV%20Shows on /Volumes/TV Shows-1 (smbfs, ...)`.
-        # rsplit on the options, so a path containing " (" survives
+        # Use rsplit on the options. Then a path that contains " (" stays
+        # intact.
         device, separator, path = line.rsplit(" (", 1)[0].partition(" on ")
         if not separator:
             continue
@@ -525,16 +540,17 @@ def share_mounted_elsewhere(share, mount):
 
 
 def heal_mounts(dead_mounts, connection, config):
-    """Try to remount dead network volumes; return actions taken.
+    """Try to remount the dead network volumes and return the actions taken.
 
-    A half-dead mountpoint is force-unmounted first, then remounted through
-    the user session (osascript's `mount volume` authenticates from the
-    keychain; NFS URLs need no credentials). Each share's remount URL comes
-    from MOUNT_URLS, keyed by mount-point name — per-share URLs rather than
-    a server prefix, because NFS exports live on different volume roots.
-    Alert-only when the map is empty; a dead share missing from a
-    configured map is called out, since a silent skip would hide why it
-    never heals.
+    This function force-unmounts a half-dead mountpoint first. Then it
+    remounts the volume through the user session. The `mount volume`
+    command of osascript authenticates from the keychain. NFS URLs need
+    no credentials. The remount URL of each share comes from
+    MOUNT_URLS, keyed by the mount-point name. These are per-share URLs,
+    not a server prefix, because the NFS exports are on different volume
+    roots. When the map is empty, this function only alerts. It reports
+    a dead share that is absent from a configured map. A silent skip
+    would hide why the share never heals.
     """
 
     actions = []
@@ -556,11 +572,11 @@ def heal_mounts(dead_mounts, connection, config):
             )
             continue
         if os.path.ismount(mount):
-            # Still mounted but dead: unmount it before remounting.
-            # Gated on ismount, not isdir (#227): the leftover-directory
-            # case now reaches here, and there is nothing to unmount
-            # then — while a force-unmount aimed at a path that isn't a
-            # mountpoint is a hazard worth not leaving available
+            # The volume is still mounted but dead. Unmount it before the
+            # remount. The condition is ismount, not isdir (#227). The
+            # leftover-directory case now reaches here. There is nothing
+            # to unmount then. A force-unmount of a path that is not a
+            # mountpoint is a hazard. Do not make it possible.
             try:
                 subprocess.run(
                     ["diskutil", "unmount", "force", mount],
@@ -572,12 +588,13 @@ def heal_mounts(dead_mounts, connection, config):
                 pass
 
         for duplicate in share_mounted_elsewhere(share, mount):
-            # A clean unmount first. The duplicate is usually a perfectly
-            # healthy mount with readers on it — Plex streams from these
-            # shares — and force is a last resort rather than the opener.
-            # But leaving it is worse than interrupting it: every config
-            # path stays aimed at an empty directory on the boot disk,
-            # and TRANSCODES_DIR pointed there fills the boot disk
+            # Try a clean unmount first. The duplicate is usually a
+            # healthy mount with readers on it. Plex streams from these
+            # shares. Thus, force is the last resort, not the first step.
+            # But to keep the duplicate is worse than to interrupt it.
+            # Every config path stays pointed at an empty directory on the
+            # boot disk. A TRANSCODES_DIR that points there fills the boot
+            # disk.
             freed = False
             for command in (
                 ["diskutil", "unmount", duplicate],
@@ -616,8 +633,8 @@ def heal_mounts(dead_mounts, connection, config):
         else:
             reason = result.stderr.strip() or "still dead"
 
-            # Naming where the share actually went turns "still dead"
-            # into something a person can act on without going looking
+            # Name the location where the share went. Then "still dead"
+            # becomes something that a person can act on without a search.
 
             stranded = share_mounted_elsewhere(share, mount)
             if stranded:
@@ -629,7 +646,7 @@ def heal_mounts(dead_mounts, connection, config):
 
 
 def probe_health(connection):
-    """Return the latest external-service probe results written by health_probe."""
+    """Return the latest external-service probe results that health_probe wrote."""
 
     results = []
     for service, raw in sorted(connection.hgetall(PROBES_KEY).items()):
@@ -641,11 +658,12 @@ def probe_health(connection):
 
 
 def system_health(flask_app):
-    """Collect the metrics shown on the admin page's system health card.
+    """Collect the metrics that the system health card of the admin page shows.
 
-    Everything here reads Redis or the local filesystem; the external-service
-    results come from the Redis hash the health_probe task maintains, so
-    rendering the card never makes a network call.
+    Everything here reads Redis or the local filesystem. The
+    external-service results come from the Redis hash that the
+    health_probe task maintains. Thus, the render of the card never makes
+    a network call.
     """
 
     started = time.perf_counter()
@@ -670,11 +688,12 @@ def system_health(flask_app):
 
 
 def rotate_logs():
-    """Archive the current log file and prune archives past the retention window.
+    """Archive the current log file and delete the archives older than the retention window.
 
-    The log file is renamed with a date suffix and gzipped; every process
-    writes through a WatchedFileHandler, so each reopens the fresh log file on
-    its next write. Archives older than LOG_RETENTION_DAYS are deleted.
+    This task renames the log file with a date suffix and compresses it
+    with gzip. Every process writes through a WatchedFileHandler. Thus,
+    each process opens the new log file on its next write. This task
+    deletes the archives older than LOG_RETENTION_DAYS.
     """
 
     with app.app_context():
@@ -686,7 +705,8 @@ def rotate_logs():
             stamp = datetime.now().strftime("%Y-%m-%d")
             archive = f"{log_file}.{stamp}"
             if os.path.exists(archive) or os.path.exists(f"{archive}.gz"):
-                # Already rotated today; timestamp instead of clobbering
+                # The log was already rotated today. Add a timestamp. Do
+                # not overwrite.
                 stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
                 archive = f"{log_file}.{stamp}"
 
@@ -714,13 +734,15 @@ def rotate_logs():
 
 
 def backup_database():
-    """Dump the database to a compressed backup and prune old backups.
+    """Dump the database to a compressed backup and delete the old backups.
 
-    The media files are archived at AWS, but the database — reviews,
-    Criterion details, shopping priorities — exists only here, so it gets a
-    nightly dump with its own retention window. Each dump is also copied to
-    the S3 bucket so a machine failure can't take the database and its
-    backups with it; remote copies are pruned on the same retention window.
+    The media files are archived at AWS. But the database exists only
+    here. It holds the reviews, the Criterion details, and the shopping
+    priorities. Thus, it gets a nightly dump with its own retention
+    window. This task also copies each dump to the S3 bucket. Thus, a
+    machine failure cannot destroy the database and its backups
+    together. The task deletes the remote copies on the same retention
+    window.
     """
 
     with app.app_context():
@@ -732,7 +754,8 @@ def backup_database():
         stamp = datetime.now().strftime("%Y-%m-%d")
         backup_file = os.path.join(backup_dir, f"{url.database}-{stamp}.sql.gz")
         if os.path.exists(backup_file):
-            # Already backed up today; timestamp instead of clobbering
+            # The database was already backed up today. Add a timestamp.
+            # Do not overwrite.
             stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
             backup_file = os.path.join(backup_dir, f"{url.database}-{stamp}.sql.gz")
 
@@ -747,8 +770,8 @@ def backup_database():
             command.append(f"--port={url.port}")
         command.append(url.database)
 
-        # Pass the password through the environment so it doesn't appear in
-        # the process list
+        # Pass the password through the environment. Then it does not
+        # appear in the process list.
 
         env = dict(os.environ)
         if url.password:
@@ -771,21 +794,21 @@ def backup_database():
                     )
 
         except Exception:
-            # Don't leave a partial backup that looks like a good one
+            # Do not leave a partial backup that looks like a good one.
             if os.path.exists(backup_file):
                 os.remove(backup_file)
             raise
 
         size_mb = round(os.path.getsize(backup_file) / 1024 / 1024, 1)
 
-        # Copy the backup to the S3 bucket. The backup prefix sits outside
-        # AWS_UNTOUCHED_PREFIX, so the S3 sync task's pruning of unreferenced
-        # media keys never touches it
+        # Copy the backup to the S3 bucket. The backup prefix is outside
+        # AWS_UNTOUCHED_PREFIX. Thus, the S3 sync task never touches it
+        # when it deletes the unreferenced media keys.
 
         uploaded_key = None
         remote_deleted = []
         if current_app.config["AWS_BUCKET"]:
-            # Imported here because app.videos imports this module
+            # Import here, because app.videos imports this module.
 
             from app.videos import aws_s3_client, get_matching_s3_objects
 
@@ -800,10 +823,10 @@ def backup_database():
                 f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], uploaded_key)}'"
             )
 
-            # Back up the environment file too — it's the one configuration
-            # that exists nowhere else — encrypted with BACKUP_PASSPHRASE.
-            # The passphrase belongs in a password manager: it's the key to
-            # recovering everything else
+            # Back up the environment file too. It is the one configuration
+            # that exists nowhere else. Encrypt it with BACKUP_PASSPHRASE.
+            # Keep the passphrase in a password manager. It is the key
+            # that recovers everything else.
 
             env_file = current_app.config["ENV_FILE"]
             if not current_app.config["BACKUP_PASSPHRASE"]:
@@ -845,10 +868,11 @@ def backup_database():
                     f"Uploaded the encrypted environment file as '{env_key}'"
                 )
 
-            # Mirror the custom posters to S3: user-created artwork that
-            # exists only on this machine. New and changed files upload,
-            # remote copies of deleted files are removed; the prefix sits
-            # outside AWS_BACKUP_PREFIX so retention pruning never touches it
+            # Mirror the custom posters to S3. They are user-created
+            # artwork that exists only on this machine. The task uploads
+            # the new and changed files. It removes the remote copies of
+            # the deleted files. The prefix is outside AWS_BACKUP_PREFIX.
+            # Thus, the retention cleanup never touches it.
 
             posters_dir = current_app.config["CUSTOM_ARTWORK_DIR"]
             posters_prefix = current_app.config["AWS_CUSTOM_POSTERS_PREFIX"]
@@ -891,7 +915,7 @@ def backup_database():
                         f"{posters_uploaded} uploaded, {posters_deleted} removed"
                     )
 
-            # Prune remote backups past the retention window
+            # Delete the remote backups older than the retention window.
 
             remote_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
             for object in get_matching_s3_objects(
@@ -929,15 +953,16 @@ def backup_database():
 
 RESTORE_CHECK_DATABASE = "fitzflix_restore_check"
 
-# Tables whose restored row counts prove the dump holds the real library;
-# a nightly dump may lag live growth slightly, hence the tolerance below
+# The restored row counts of these tables prove that the dump holds the
+# real library. A nightly dump can be slightly behind the live growth.
+# Thus, the tolerance below.
 
 RESTORE_CHECK_TABLES = ("movie", "file", "tv_series", "user", "user_movie_review")
 RESTORE_CHECK_TOLERANCE = 0.9
 
 
 def _newest_backup_key(objects, database):
-    """The most recent database dump among a backup-prefix S3 listing."""
+    """Return the most recent database dump in a backup-prefix S3 listing."""
 
     dumps = [
         object
@@ -951,17 +976,18 @@ def _newest_backup_key(objects, database):
 
 
 def restore_drill():
-    """Prove the offsite database backup actually restores.
+    """Prove that the offsite database backup restores.
 
-    Downloads the newest dump from S3 (deliberately not the local copy —
-    the drill verifies what a disaster recovery would really use), loads it
-    into a scratch database, and compares the restored contents against the
-    live database. The scratch database needs a one-time grant:
+    This task downloads the newest dump from S3. It deliberately does
+    not use the local copy. The drill verifies what a disaster recovery
+    would really use. It loads the dump into a scratch database. It
+    compares the restored contents with the live database. The scratch
+    database needs a one-time grant:
 
         GRANT ALL PRIVILEGES ON `fitzflix_restore_check`.* TO '<user>'@'localhost';
 
-    A failure raises, which lands the job on the failed-tasks page and
-    emails the error.
+    A failure raises. Then the job goes to the failed-tasks page, and
+    Fitzflix emails the error.
     """
 
     with app.app_context():
@@ -969,7 +995,7 @@ def restore_drill():
             current_app.logger.info("AWS is not configured, skipping the restore drill")
             return True
 
-        # Imported here because app.videos imports this module
+        # Import here, because app.videos imports this module.
 
         from app.videos import aws_s3_client, get_matching_s3_objects
 
@@ -1027,7 +1053,7 @@ def restore_drill():
             with gzip.open(download_path, "rb") as f:
                 run_mysql([RESTORE_CHECK_DATABASE], input=f.read())
 
-            # The restored schema must be at a migration state
+            # The restored schema must be at a migration state.
 
             version = db.session.execute(
                 text(
@@ -1041,7 +1067,7 @@ def restore_drill():
                     "alembic_version"
                 )
 
-            # Restored row counts must be close to the live ones
+            # The restored row counts must be close to the live counts.
 
             summary = []
             for table in RESTORE_CHECK_TABLES:
@@ -1085,17 +1111,18 @@ def restore_drill():
 
 ORPHAN_MAX_AGE_DAYS = 7
 
-# macOS scatters its own dot-prefixed metadata (Finder, AppleDouble) through
-# these directories; none of it is a pipeline strand, so it stays untouched
+# macOS puts its own dot-prefixed metadata (Finder, AppleDouble) in these
+# directories. None of it is a pipeline leftover. Thus, it stays as it is.
 
 ORPHAN_IGNORED_NAMES = {".DS_Store", ".localized"}
 ORPHAN_IGNORED_PREFIXES = ("._",)
 
-# What may sit inside a directory that still counts as removable
-# leftovers (Glenn's spec): Synology's @eaDir metadata trees, macOS
-# metadata, and stray image files — a custom poster left behind after
-# its film moved away. The image cap keeps the sweep from ever eating
-# something that looks like a deliberate picture collection
+# These are the contents that a directory can hold and still count as
+# removable leftovers (specified by Glenn): the @eaDir metadata trees of
+# Synology, macOS metadata, and stray image files. An example is a
+# custom poster that stayed after its film moved away. The image cap
+# prevents the sweep from deleting something that looks like a
+# deliberate picture collection.
 
 SYNOLOGY_METADATA_DIRNAME = "@eaDir"
 ORPHAN_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tbn"}
@@ -1103,17 +1130,20 @@ ORPHAN_JUNK_FILE_CAP = 25
 
 
 def _leftover_junk_scan(path, cutoff):
-    """(junk_only, file_count): whether everything under `path` is
-    leftover junk — @eaDir trees, macOS metadata, and at most
-    ORPHAN_JUNK_FILE_CAP aged image files — plus how many non-Synology
-    files that clearing would remove.
+    """Return (junk_only, file_count) for the contents under `path`.
 
-    Anything else, any fresh image (a poster someone just placed), any
-    fresh subdirectory, or an image count past the cap (that's a
-    picture collection, not a leftover) keeps the folder alive.
-    @eaDir subtrees are junk wholesale and their contents are neither
-    aged-checked nor counted — Synology rewrites them on its own
-    schedule, which shouldn't immortalize a dead folder.
+    junk_only is True if everything under `path` is leftover junk: @eaDir
+    trees, macOS metadata, and at most ORPHAN_JUNK_FILE_CAP old image
+    files. file_count is the number of non-Synology files that a
+    clearance would remove.
+
+    Anything else keeps the folder alive. So does a recent image, for
+    example a poster that someone placed a moment ago. So does a recent
+    subdirectory. So does an image count above the cap, because that is
+    a picture collection, not a leftover. An @eaDir subtree is junk as a
+    whole. This function does not check the age of its contents and does
+    not count them. Synology rewrites them on its own schedule. That must
+    not keep a dead folder alive forever.
     """
 
     junk_files = 0
@@ -1151,17 +1181,20 @@ def _leftover_junk_scan(path, cutoff):
 
 
 def clear_leftover_directory(path):
-    """Remove a directory a delete or rename just emptied of media,
-    when its entire remaining contents are leftover junk — the poster
-    art planted beside a film for Plex, OS metadata, @eaDir trees —
-    then climb toward the library root clearing junk-only parents, the
-    way os.removedirs climbs empty ones. Unlike the weekly sweep's
-    directory pass there is no age gate: the caller deleted or moved
-    the folder's media on purpose, so a poster-only husk is already
-    known to be a husk. Anything that isn't junk keeps the folder (and
-    everything above it) alive, the configured roots themselves never
-    fall, and a path outside them entirely is refused. Returns the
-    directories removed, deepest first.
+    """Remove a directory that a delete or a rename emptied of media.
+
+    This function removes the directory only when all its remaining
+    contents are leftover junk. Examples are the poster art placed next
+    to a film for Plex, OS metadata, and @eaDir trees. Then it climbs
+    toward the library root and clears the junk-only parents. This is
+    the same way that os.removedirs climbs the empty parents. Unlike the
+    directory pass of the weekly sweep, there is no age condition. The
+    caller deleted or moved the media of the folder on purpose. Thus, a
+    poster-only shell is already known to be a shell. Anything that is
+    not junk keeps the folder alive, and everything above it. The
+    configured roots themselves never fall. This function refuses a
+    path that is outside the roots. It returns the removed directories,
+    deepest first.
     """
 
     config = current_app.config
@@ -1205,16 +1238,18 @@ def clear_leftover_directory(path):
 
 
 def cleanup_orphaned_files():
-    """Delete the hidden partial files that failed tasks strand, plus a
-    failed restore drill's leftover scratch database.
+    """Delete the hidden partial files that failed tasks left behind.
 
-    Every pipeline stage that moves media writes it under a dot-prefixed
-    name first — localization staging (and its .convert.mkv scratch),
-    cross-volume library copies, AWS downloads into the import directory,
-    reject moves (.partial), and transcode outputs — promoting to the
-    visible name only on success. A hidden file a week old can therefore
-    only be the residue of a failed task. Deletions are age-gated,
-    confined to those directories, and summarized by email.
+    This task also drops the leftover scratch database of a failed
+    restore drill. Every pipeline stage that moves media writes it under
+    a dot-prefixed name first. Examples are the localization staging
+    file (and its .convert.mkv scratch file), cross-volume library
+    copies, AWS downloads into the import directory, reject moves
+    (.partial), and transcode outputs. The stage promotes the file to
+    the visible name only on success. Thus, a hidden file that is 1 week
+    old can only be the residue of a failed task. The deletions have an
+    age condition. They are limited to those directories. The task sends
+    a summary by email.
     """
 
     with app.app_context():
@@ -1234,7 +1269,7 @@ def cleanup_orphaned_files():
             if not os.path.isdir(root):
                 continue
             for dirpath, dirnames, filenames in os.walk(root):
-                # Never descend into hidden directories (Spotlight, trashes)
+                # Never go into hidden directories (Spotlight, trashes).
 
                 dirnames[:] = [d for d in dirnames if not d.startswith(".")]
                 for name in filenames:
@@ -1261,16 +1296,16 @@ def cleanup_orphaned_files():
                     current_app.logger.info(f"'{path}' Deleted orphaned partial file")
                     removed.append(f"{path} ({_human_size(stats.st_size)})")
 
-        # Empty-directory pass: Radarr/Sonarr import
-        # leftovers and hand-emptied folders. A directory falls when
-        # its entire remaining contents are LEFTOVER JUNK — Synology
-        # @eaDir trees, macOS metadata, and a handful of stray image
-        # files (a custom poster whose film moved away) — and nothing
-        # real in it has been touched for the same week the file pass
-        # uses. Anything else keeps the folder alive. The roots
-        # themselves are never candidates, hidden directories are
-        # never entered, and mtimes are captured before any removal so
-        # an aged leftover tree collapses in a single pass.
+        # This is the empty-directory pass. It removes the import
+        # leftovers of Radarr and Sonarr and the folders that a person
+        # emptied. A directory falls when all its remaining contents are
+        # LEFTOVER JUNK: Synology @eaDir trees, macOS metadata, and some
+        # stray image files, such as a custom poster whose film moved
+        # away. Nothing real in it can have changed in the same week that
+        # the file pass uses. Anything else keeps the folder alive. The
+        # roots themselves are never candidates. The pass never enters
+        # hidden directories. It records the mtimes before any removal.
+        # Thus, an old leftover tree collapses in a single pass.
 
         removed_dirs = []
         for root in roots:
@@ -1347,10 +1382,11 @@ def cleanup_orphaned_files():
 
 
 def _drop_leftover_restore_database():
-    """Drop the restore drill's scratch database if a failed drill left it.
+    """Drop the scratch database of the restore drill if a failed drill left it.
 
-    Runs on the same single-worker maintenance queue as restore_drill, so
-    it can never fire while a drill is mid-restore.
+    This runs on the same single-worker maintenance queue as
+    restore_drill. Thus, it can never run while a drill is in the middle
+    of a restore.
     """
 
     url = make_url(current_app.config["SQLALCHEMY_DATABASE_URI"])
@@ -1397,24 +1433,24 @@ def _drop_leftover_restore_database():
 
 
 def _probe_http(url, **kwargs):
-    """Probe an HTTP endpoint, raising on any failure or error status."""
+    """Probe an HTTP endpoint and raise on a failure or an error status."""
 
     r = requests.get(url, timeout=10, **kwargs)
     r.raise_for_status()
 
 
 def smb_handle_sweep():
-    """Ask every library file whether the NAS still holds its handle.
+    """Ask every library file if the NAS still holds its handle.
 
-    The lost-handle state is silent: reads succeed and only close(2)
-    fails, so nothing discovers it until an upload's final close does —
-    hours later, from inside s3transfer, wearing an S3 traceback. Asking
-    outright costs one open and one close per file, about a minute for
-    the whole library, and turns that surprise into a report.
+    The lost-handle state is silent. Reads succeed. Only close(2) fails.
+    Thus, nothing finds the state until the final close of an upload
+    does, hours later, from inside s3transfer, with an S3 traceback. A
+    direct question costs 1 open and 1 close per file, about 1 minute
+    for the whole library. It turns that surprise into a report.
 
-    The recheck runs afterwards so the recoveries this sweep just
-    observed are reported into the history, which is the only place a
-    duration is kept.
+    The recheck runs afterwards. Thus, the recoveries that this sweep
+    saw go into the history. The history is the only place that keeps
+    a duration.
     """
 
     with app.app_context():
@@ -1439,13 +1475,14 @@ def smb_handle_sweep():
         not_local = 0
         offline_shares = set()
 
-        # Each share is health-checked ONCE, through volume_alive's
-        # watchdog, before any of its files is opened (#237): an
-        # unmounted share fails the probes fast, but a WEDGED one —
-        # still in the mount table, hanging syscalls — would stall the
-        # sweep's very next os.open until the job timeout killed it,
-        # losing the rest of the sweep, the recheck, and the history
-        # write while occupying the maintenance queue for the hour
+        # The sweep health-checks each share ONCE, through the watchdog
+        # of volume_alive, before it opens the files of that share
+        # (#237). An unmounted share fails the probes fast. But a WEDGED
+        # share is still in the mount table, and its syscalls hang. It
+        # would stall the next os.open of the sweep until the job timeout
+        # killed it. That would lose the rest of the sweep, the recheck,
+        # and the history write. It would also occupy the maintenance
+        # queue for the hour.
 
         share_alive = {}
 
@@ -1475,16 +1512,17 @@ def smb_handle_sweep():
 
             elif absent(result):
                 # A superseded edition keeps its row and its S3 archive
-                # after the local copy goes; thousands are legitimately
-                # absent and none of them are a finding
+                # after the local copy goes. Thousands are legitimately
+                # absent. None of them is a finding.
 
                 not_local += 1
 
             elif not result["ok"]:
                 unreadable.append(file)
 
-        # An unmounted share makes every file on it look missing at once,
-        # which says nothing about handles and everything about the mount
+        # An unmounted share makes every file on it look missing at one
+        # time. That says nothing about handles. It says everything about
+        # the mount.
 
         for share in sorted(offline_shares):
             current_app.logger.error(
@@ -1525,12 +1563,13 @@ def smb_handle_sweep():
 
 
 def health_probe():
-    """Probe external services, record results, and alert on problems.
+    """Probe the external services, record the results, and alert on problems.
 
-    Probe results land in a Redis hash the admin page reads, so page loads
-    never make external calls themselves. A problem is emailed when it first
-    appears (external services must fail two consecutive probes first), again
-    daily while it persists, and once more when it recovers.
+    The probe results go into a Redis hash that the admin page reads.
+    Thus, a page load never makes an external call itself. Fitzflix
+    emails a problem when it first appears. An external service must
+    fail 2 consecutive probes first. It emails the problem again daily
+    while the problem continues, and 1 more time when it recovers.
     """
 
     with app.app_context():
@@ -1602,9 +1641,9 @@ def health_probe():
             )
         pipe.execute()
 
-        # Gather every current problem into condition -> message. External
-        # services must fail twice in a row, so one flaky request or a service
-        # mid-restart doesn't fire an alert
+        # Collect every current problem as condition -> message. An
+        # external service must fail 2 times in a row. Thus, one flaky
+        # request or a service in a restart does not cause an alert.
 
         issues = {}
         for service, result in results.items():
@@ -1651,9 +1690,10 @@ def health_probe():
                 f"Volume {mount} is not mounted or not responding"
             )
 
-        # Self-healing: re-list registry-swept workers every run, bring dead
-        # or amnesiac worker processes back when a queue is short, and
-        # remount dead network volumes
+        # Self-healing: list the registry-swept workers again on every
+        # run. Bring back the dead worker processes and the ones that lost
+        # their identity when a queue is short. Remount the dead network
+        # volumes.
 
         heal_actions = repair_worker_registry(redis)
         if any(not entry["ok"] for entry in worker_entries):
@@ -1673,9 +1713,9 @@ def health_probe():
         if not scheduler_health(redis)["ok"]:
             issues["scheduler"] = "The rq scheduler is not running"
 
-        # Compare against the problems known from the previous run to find
-        # what's new and what recovered; persisting problems are re-reported
-        # once their daily reminder key expires
+        # Compare with the problems known from the previous run to find
+        # what is new and what recovered. Fitzflix reports a continued
+        # problem again when its daily reminder key expires.
 
         previous = {
             condition.decode(): message.decode()

@@ -1,4 +1,4 @@
-"""Shared plumbing for the Sonarr and Radarr import webhooks."""
+"""Shared functions for the Sonarr and Radarr import webhooks."""
 
 import functools
 import json
@@ -12,12 +12,12 @@ from app.api.auth import authenticate_api_request
 
 
 def import_event_webhook(service):
-    """Wrap a webhook handler with authentication and import-event filtering.
+    """Wrap a webhook handler with authentication and an import-event filter.
 
-    The wrapped handler is called with the request payload only for
-    authenticated "Download" (import/upgrade) events; connection tests and
-    any other event types the webhook is configured to send are acknowledged
-    and ignored.
+    The wrapper calls the handler with the request payload only for an
+    authenticated "Download" (import or upgrade) event. The wrapper
+    acknowledges a connection test and all other event types. Then it
+    ignores them.
     """
 
     def decorator(handler):
@@ -40,21 +40,21 @@ def import_event_webhook(service):
                 response.status_code = 401
                 return response
 
-            # The password field must hold the user's API key
+            # The password field must hold the API key of the user.
 
             if authenticate_api_request() is None:
                 response.status_code = 401
                 return response
 
-            # If the service is just confirming the connection, return a
-            # valid status code
+            # If the service only confirms the connection, return a valid
+            # status code.
 
             response.status_code = 202
             if payload.get("eventType") == "Test":
                 return response
 
-            # Only import events carry the file fields the handlers use;
-            # acknowledge and ignore anything else
+            # Only an import event carries the file fields that the handlers
+            # use. Acknowledge and ignore all other events.
 
             if payload.get("eventType") != "Download":
                 current_app.logger.info(
@@ -72,9 +72,9 @@ def import_event_webhook(service):
 def downgrade_quality_title(original_quality, custom_format_score):
     """Downgrade a Sonarr/Radarr quality title to its web-sourced equivalent.
 
-    If a file isn't specifically known to be from physical media, we don't
-    want to use a physical media quality title, so we instead use the next
-    highest quality; "Remux" also isn't used to indicate a Bluray rip:
+    If Fitzflix does not know that a file came from physical media, it must
+    not use a physical-media quality title. Thus, it uses the next highest
+    quality. "Remux" also does not identify a Bluray rip:
 
         DVD                 -> WEBDL-480p
         Bluray-480p         -> WEBDL-480p
@@ -83,8 +83,8 @@ def downgrade_quality_title(original_quality, custom_format_score):
         Bluray-1080p Remux  -> WEBDL-1080p
         Remux-1080p         -> WEBDL-1080p
 
-    Downloads scoring below the custom-format threshold are labeled WEBRip
-    instead of WEBDL.
+    A download with a score below the custom-format threshold gets the
+    label WEBRip instead of WEBDL.
     """
 
     new_quality = (
@@ -99,10 +99,11 @@ def downgrade_quality_title(original_quality, custom_format_score):
 
 
 def import_source_incomplete(file_path):
-    """Whether a webhook's source file is structurally incomplete —
-    provably truncated per its own container. Only a definite
-    truncation verdict counts: an unprobeable file proceeds normally
-    and the import pipeline's own retries deal with it."""
+    """Return True if the source file of a webhook is incomplete.
+
+    Incomplete means truncated per its own container. Only a definite
+    truncation verdict counts. A file that the probe cannot read continues
+    normally. The retries of the import pipeline then deal with it."""
 
     from app.videos import probe_file_completeness
 
@@ -110,10 +111,12 @@ def import_source_incomplete(file_path):
 
 
 def mark_grab_failed(service, base_url, api_key, download_id):
-    """Find a download's grab in Sonarr/Radarr history and mark it
-    failed — the app then blocklists the release and, per its
-    redownload setting, searches for a replacement. Returns True when
-    the failed-mark was accepted."""
+    """Find the grab of a download in the Sonarr/Radarr history and mark it
+    as failed.
+
+    The app then blocklists the release. If its redownload setting permits,
+    the app searches for a replacement. Return True if the app accepted the
+    failed-mark."""
 
     if not (base_url and api_key and download_id):
         return False
@@ -167,13 +170,14 @@ def mark_grab_failed(service, base_url, api_key, download_id):
 
 
 def reject_incomplete_download(service, payload, file_path, refresh_command):
-    """The webhook's incomplete-file path: a structurally
-    incomplete download never reaches the import pipeline. The grab is
-    marked failed in the sending app — which blocklists the release
-    and searches for a replacement — and only when that mark took does
-    the junk file get deleted (with a rescan command so the app
-    notices); otherwise the file stays put for manual handling. The
-    admin is emailed either way."""
+    """Reject an incomplete download before it reaches the import pipeline.
+
+    This function marks the grab as failed in the app that sent the
+    webhook. That app blocklists the release and searches for a
+    replacement. Only if that mark succeeded does this function delete the
+    incomplete file. It then sends a rescan command. Thus, the app notices
+    the deletion. If the mark did not succeed, the file stays in place for
+    manual handling. This function emails the admin in both cases."""
 
     from app.email import send_email as send_email_async
     from app.models import User
@@ -222,10 +226,11 @@ def reject_incomplete_download(service, payload, file_path, refresh_command):
 
 
 def send_arr_command(service, url, api_key, body):
-    """POST a command to a Sonarr/Radarr API, logging failures without raising.
+    """POST a command to a Sonarr/Radarr API. Log a failure. Do not raise.
 
-    Uses urllib3 rather than requests: the requests version kept crashing
-    with a segmentation fault on this machine, for reasons never determined.
+    This function uses urllib3, not requests. The requests version crashed
+    with a segmentation fault on this machine many times. The cause was
+    never found.
     """
 
     try:
@@ -238,7 +243,8 @@ def send_arr_command(service, url, api_key, body):
                 "Content-Type": "application/json",
             },
             body=json.dumps(body).encode("utf-8"),
-            # Bounded, so a wedged Sonarr/Radarr can't hang a worker
+            # The timeout is bounded. Thus, a stalled Sonarr/Radarr cannot hang
+            # a worker.
             timeout=urllib3.Timeout(connect=5, read=30),
             retries=False,
         )

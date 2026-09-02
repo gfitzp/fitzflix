@@ -1,35 +1,35 @@
-"""Per-file pipeline trails.
+"""Record a pipeline trail for each file.
 
-Every file moving through the import pipeline leaves one ordered trail
-in Redis — Localizing → Moving into the library → Cataloging →
-Archiving to S3, plus remuxes, transcodes, and restores — so the queue
-page can answer "where is my file right now" without reading worker
-logs.
+Each file that moves through the import pipeline leaves 1 ordered trail
+in Redis. The stages are Localizing, Moving into the library,
+Cataloging, and Archiving to S3, plus remuxes, transcodes, and
+restores. Thus, the queue page can answer "where is my file now"
+without the worker logs.
 
-State updates come from JOB LIFECYCLE HOOKS, not from instrumenting
-task bodies: TrackedQueue records "queued"/"scheduled" as jobs are
-enqueued (deferred retries surface as "scheduled"), and PipelineWorker
-records "started"/"done"/"failed" around execution. Which file a job
-belongs to is derived centrally by the STAGES registry from the job's
-function name and arguments — tasks the registry doesn't know are
-simply not trails (SQL refreshes, maintenance sweeps). The one
-sanctioned in-task emitter is record_task_stage, for a phase that has
-no job boundary of its own (localization's copy to the staging
-directory); it still derives the file from the current job through
+The state updates come from JOB LIFECYCLE HOOKS, not from code in the
+task bodies. TrackedQueue records "queued" or "scheduled" when a job is
+enqueued. A deferred retry shows as "scheduled". PipelineWorker records
+"started", "done", or "failed" around the execution. The STAGES
+registry derives the file of a job from the function name and the
+arguments of the job. Tasks that the registry does not know are not
+trails (SQL refreshes, maintenance sweeps). The 1 permitted in-task
+emitter is record_task_stage. It is for a phase that has no job
+boundary of its own (the copy to the staging directory during
+localization). It also derives the file from the current job through
 the registry.
 
-Recording must never break the pipeline: every hook swallows and logs
-its own failures, and a trail is only ever advisory display state —
-seven days of TTL (matching the File Activity page's SQL window, so a
-landed card keeps its chips as long as it stays on the page), newest
-hundred files kept.
+The recording must never break the pipeline. Each hook catches and logs
+its own failures. A trail is only advisory display state. The TTL is 7
+days. This matches the SQL window of the File Activity page. Thus, a
+card that arrived keeps its chips while it stays on the page. Fitzflix
+keeps the newest 100 files.
 
-Trails are keyed by basename, and a file can be RENAMED mid-flight
-(the parse canonicalizes titles against existing series; container
-conversion swaps the extension to .mkv). Localization then calls
-migrate_trail to merge the journey under the new name and leave an
-alias, so one file stays one trail instead of two that fight over the
-same File Activity card.
+Trails are keyed by basename. The pipeline can RENAME a file while it
+is in progress. The parse makes titles canonical against existing
+series. The container conversion changes the extension to .mkv. Then
+the localization calls migrate_trail. That merges the trail under the
+new name and leaves an alias. Thus, 1 file stays 1 trail. It does not
+become 2 trails that fight over the same File Activity card.
 """
 
 import hashlib
@@ -50,13 +50,13 @@ ACTIVE_LIMIT = 100
 
 
 def _basename_from_path(args, kwargs):
-    """The file's basename from a leading path argument."""
+    """Return the basename of the file from a leading path argument."""
 
     return os.path.basename(args[0]) if args else None
 
 
 def _basename_from_details(args, kwargs):
-    """The basename inside a file_details dict (second argument)."""
+    """Return the basename inside a file_details dict (second argument)."""
 
     if len(args) > 1 and isinstance(args[1], dict):
         return args[1].get("basename")
@@ -64,18 +64,18 @@ def _basename_from_details(args, kwargs):
 
 
 def _basename_from_second_arg(args, kwargs):
-    """A literal basename passed second (download_task's signature)."""
+    """Return a literal basename passed second (the download_task signature)."""
 
     return args[1] if len(args) > 1 else None
 
 
 def _basename_from_file_id(args, kwargs):
-    """The File record's basename, looked up by a leading file_id.
+    """Return the basename of the File record found by a leading file_id.
 
-    Enqueue-side hooks already run inside an app context (the test
-    app's included — never trust the get_app() singleton in tests);
-    worker-side hooks run outside one, so fall back to the worker's
-    own app.
+    Enqueue-side hooks already run inside an app context. This includes
+    the context of the test app. Never trust the get_app() singleton in
+    tests. Worker-side hooks run outside an app context. Thus, use the
+    own app of the worker as the fallback.
     """
 
     if not args:
@@ -97,9 +97,10 @@ def _basename_from_file_id(args, kwargs):
         return file.basename if file else None
 
 
-# Every per-file pipeline task, by rq function name: the stage label
-# the trail shows, and how to derive the file's basename from the
-# job's arguments. Anything not listed leaves no trail.
+# Each per-file pipeline task, by rq function name. The value is the
+# stage label that the trail shows, and the function that derives the
+# basename of the file from the arguments of the job. A task that is
+# not listed leaves no trail.
 
 STAGES = {
     "app.videos.localization_task": ("Localizing", _basename_from_path),
@@ -129,7 +130,7 @@ STAGES = {
 
 
 def _stage_for(job):
-    """(basename, stage label) for a pipeline job, or None."""
+    """Return (basename, stage label) for a pipeline job, or None."""
 
     entry = STAGES.get(job.func_name)
     if entry is None:
@@ -142,21 +143,23 @@ def _stage_for(job):
 
 
 def _digest(basename):
-    """The stable Redis key fragment for one file's trail."""
+    """Return the stable Redis key fragment for the trail of 1 file."""
 
     return hashlib.sha1(basename.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def _decode_trail(raw):
-    """The trail list from its stored JSON (or a fresh empty one)."""
+    """Return the trail list from its stored JSON, or a new empty list."""
 
     return json.loads(raw) if raw else []
 
 
 def _resolve_basename(connection, basename):
-    """The basename's current identity, following the rename alias
-    migrate_trail leaves behind — bounded, in case renames ever chain
-    (a canonicalized title later container-converted)."""
+    """Return the current identity of the basename.
+
+    This follows the rename alias that migrate_trail leaves. The number
+    of steps is limited, in case renames chain. For example, a
+    canonical title can get a container conversion later."""
 
     for _ in range(4):
         value = connection.get(ALIAS_KEY.format(digest=_digest(basename)))
@@ -172,17 +175,17 @@ def _resolve_basename(connection, basename):
 def _write_trail_entry(
     connection, basename, stage, status, job_id, before_job=False, sibling=None
 ):
-    """Atomically apply one stage event to the file's trail.
+    """Apply 1 stage event to the trail of the file atomically.
 
-    Two workers touch the same trail at a stage handoff: the move job
-    starts the instant the localization task enqueues it, so the
-    file-operation worker's "started" stamp races the import worker's
-    "done" stamp for the stage before it. A plain read-modify-write
-    lets whichever lands second erase the other's update (the trails revisit froze
-    two files at "Localizing · running" forever), so the write WATCHes
-    the trail key and retries from a fresh read when it changed
-    underneath. Bounded retries: the trail is advisory, never worth
-    stalling a worker over.
+    Two workers touch the same trail at a stage handoff. The move job
+    starts at the instant that the localization task enqueues it. Thus,
+    the "started" stamp of the file-operation worker races the "done"
+    stamp of the import worker for the stage before it. With a plain
+    read-modify-write, the second write erases the update of the first.
+    The trails revisit froze 2 files at "Localizing · running" for
+    ever. Thus, the write WATCHes the trail key. If the key changed, the
+    write reads again and retries. The retries are limited. The trail
+    is advisory. It is never worth a stalled worker.
     """
 
     from redis import WatchError
@@ -199,21 +202,21 @@ def _write_trail_entry(
                 pipe.watch(key)
                 trail = _decode_trail(pipe.hget(key, "trail"))
 
-                # The same job moving through its lifecycle updates its
-                # own entry — queued → started → done is one line, not
-                # three; a re-enqueued retry is a NEW job id, so it
-                # appends a fresh entry and the earlier failure stays
-                # visible. A task-emitted sub-stage shares its job's id
-                # but carries its own stage label, so it is its own line.
+                # A job that moves through its lifecycle updates its own
+                # entry. Thus, queued, started, and done are 1 line, not
+                # 3. A re-enqueued retry is a NEW job id. Thus, it appends
+                # a new entry, and the earlier failure stays visible. A
+                # sub-stage from a task shares the id of its job. It
+                # carries its own stage label. Thus, it is its own line.
 
                 for entry in reversed(trail):
                     if entry.get("job") == job_id and entry.get("stage") == stage:
-                        # A job can land before its own enqueue-side
-                        # stamp is written — the deferred re-archive
-                        # skips a superseded key in milliseconds — and a
-                        # late "queued" would drag the chip back and
-                        # freeze it there. The enqueue side never
-                        # overrules a stamp the worker already made
+                        # A job can complete before its own enqueue-side
+                        # stamp is written. The deferred re-archive skips
+                        # a superseded key in milliseconds. A late
+                        # "queued" would pull the chip back and freeze it
+                        # there. The enqueue side never overrides a stamp
+                        # that the worker already made.
                         if status in ("queued", "scheduled") and entry.get(
                             "status"
                         ) in ("started", "done", "failed"):
@@ -222,19 +225,20 @@ def _write_trail_entry(
                         entry["at"] = now
                         break
                 else:
-                    # A sub-stage reports preparatory work inside its job
-                    # (the staging copy precedes the localizing proper),
-                    # so it slots in AHEAD of the job's own entry — the
-                    # chips then read in pipeline order, not in order of
-                    # first stamp, which the job-level entry always wins
-                    # by existing from enqueue time (Glenn, Aug 2026)
+                    # A sub-stage reports preparatory work inside its job.
+                    # The staging copy comes before the localization
+                    # itself. Thus, the sub-stage goes BEFORE the own
+                    # entry of the job. Then the chips read in pipeline
+                    # order, not in the order of the first stamp. The
+                    # job-level entry always wins that order, because it
+                    # exists from the enqueue time (Glenn, 2026-08).
 
-                    # A waiting stamp landing on an empty or fully
+                    # A waiting stamp that arrives on an empty or fully
                     # settled trail opens a NEW journey through the
                     # pipeline (a re-import, or a later re-archive of a
-                    # landed file) — its enqueue anchor starts over. A
-                    # retry after a failure is the same journey
-                    # continuing, so the anchor holds
+                    # file that arrived). Its enqueue anchor starts again.
+                    # A retry after a failure continues the same journey.
+                    # Thus, the anchor holds.
 
                     if status in ("queued", "scheduled") and not before_job:
                         fresh_journey = not trail or all(
@@ -252,11 +256,12 @@ def _write_trail_entry(
                         {"stage": stage, "status": status, "at": now, "job": job_id},
                     )
 
-                # A sub-stage event may adjust its job's own entry in the
-                # same atomic write, so only one chip reads "running" at a
-                # time (Glenn, Aug 20): the job chip drops to "queued"
-                # while its sub-stage runs and resumes "started" after.
-                # Update-only — a sibling is never created here
+                # A sub-stage event can change the own entry of its job in
+                # the same atomic write. Thus, only 1 chip reads "running"
+                # at a time (Glenn, 2026-08-20). The job chip goes to
+                # "queued" while its sub-stage runs. It returns to
+                # "started" after. This is an update only. This never
+                # creates a sibling.
 
                 if sibling is not None:
                     sibling_stage, sibling_status = sibling
@@ -272,19 +277,21 @@ def _write_trail_entry(
 
                 pipe.multi()
 
-                # The file's FIRST start is the running banners' sort
-                # anchor (Glenn's original banner-ordering ask): it never moves once
-                # set, so a file hopping queues keeps its place
+                # The FIRST start of the file is the sort anchor of the
+                # running banners (the original banner-ordering request
+                # of Glenn). It never moves after it is set. Thus, a file
+                # that steps between queues keeps its place.
 
                 if status == "started":
                     pipe.hsetnx(key, "first_run", now)
 
-                # The file's first ENQUEUE anchors the queue page's
-                # Enqueued column the same way: it holds still as the
-                # work hops queues, each hop a new job with its own
-                # enqueued_at. Stored as naive UTC to match rq's
-                # enqueued_at convention (the trail's other stamps are
-                # local wall clock, for the chips) — see first_enqueued
+                # The first ENQUEUE of the file anchors the Enqueued
+                # column of the queue page in the same way. It stays still
+                # while the work steps between queues. Each step is a new
+                # job with its own enqueued_at. Fitzflix stores it as
+                # naive UTC to match the enqueued_at convention of rq.
+                # The other stamps of the trail are local wall clock, for
+                # the chips. See first_enqueued.
 
                 if status in ("queued", "scheduled"):
                     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -311,20 +318,21 @@ def _write_trail_entry(
 
 
 def migrate_trail(connection, old_basename, new_basename):
-    """Merge a file's trail under its new basename when the pipeline
-    renames it mid-flight — the parse canonicalizing a title against
-    an existing series, or a container conversion swapping the
-    extension to .mkv. Without this the journey splits into two trails
-    that both claim the same File Activity card and overwrite each
-    other's chips (the Futurama S11 imports lost their Moved/Cataloged
-    chips this way, Aug 2026).
+    """Merge the trail of a file under its new basename.
 
-    Localization calls this before enqueueing the move job, so the
-    move's "queued" stamp already lands on the merged trail; an alias
-    redirects the writes that arrive under the old name AFTER the
-    rename (the localization worker's own "done" stamp fires once the
-    task body returns) onto it too. Advisory like every hook: failures
-    are logged and swallowed, bounded retries."""
+    The pipeline can rename a file while it is in progress. The parse
+    makes a title canonical against an existing series. A container
+    conversion changes the extension to .mkv. Without this, the journey
+    splits into 2 trails. Both claim the same File Activity card and
+    overwrite the chips of the other. The Futurama S11 imports lost
+    their Moved and Cataloged chips this way (2026-08).
+
+    Localization calls this before it enqueues the move job. Thus, the
+    "queued" stamp of the move already goes onto the merged trail. An
+    alias redirects the writes that arrive under the old name AFTER the
+    rename onto it too. The own "done" stamp of the localization worker
+    occurs when the task body returns. This is advisory, like each
+    hook. It logs and catches failures. The retries are limited."""
 
     try:
         if not old_basename or not new_basename or old_basename == new_basename:
@@ -346,8 +354,8 @@ def migrate_trail(connection, old_basename, new_basename):
                     old_first = pipe.hget(old_key, "first_run")
                     old_enqueued = pipe.hget(old_key, "first_enqueued")
 
-                    # Nothing recorded under the old name (expired, or
-                    # the hooks never fired): just leave the redirect
+                    # Nothing is recorded under the old name. It expired,
+                    # or the hooks never ran. Only leave the redirect.
 
                     if not old_trail and old_first is None:
                         pipe.multi()
@@ -355,9 +363,9 @@ def migrate_trail(connection, old_basename, new_basename):
                         pipe.execute()
                         return
 
-                    # A re-import within the TTL finds last run's chips
-                    # already under the new name; the current run's
-                    # entries are newer, so they append after
+                    # A re-import within the TTL finds the chips of the
+                    # last run under the new name. The entries of the
+                    # current run are newer. Thus, they go after.
 
                     merged = _decode_trail(pipe.hget(new_key, "trail")) + old_trail
                     del merged[:-40]
@@ -395,9 +403,10 @@ def migrate_trail(connection, old_basename, new_basename):
 
 
 def record_job_event(connection, job, event):
-    """Append (or update in place) one stage entry on the job's file
-    trail. Advisory only — any failure is logged and swallowed, never
-    surfaced to the pipeline itself."""
+    """Append or update 1 stage entry on the file trail of the job.
+
+    This is advisory only. It logs and catches each failure. It never
+    shows a failure to the pipeline."""
 
     try:
         found = _stage_for(job)
@@ -415,17 +424,19 @@ def record_job_event(connection, job, event):
 
 
 def record_task_stage(stage, status):
-    """A named phase INSIDE one pipeline job, reported from the task
-    body — for work that can fail before the job's own stage shows any
-    movement and has no job boundary of its own, like localization's
-    copy to the staging directory. The file is still derived from the
-    current job via the STAGES registry and the entry is keyed by that
-    job's id, so a retry job leaves its own fresh sub-stage line — and
-    it renders AHEAD of the job's own chip, since it reports work that
-    precedes the job's headline stage — which reads "queued" while the
-    sub-stage runs, so only one chip is "running" at a time. Advisory
-    like every hook: failures are swallowed, and outside a worker
-    (direct calls in tests) it is a no-op."""
+    """Record a named phase INSIDE 1 pipeline job from the task body.
+
+    This is for work that can fail before the own stage of the job
+    shows movement, and that has no job boundary of its own. One example
+    is the copy to the staging directory during localization. This
+    derives the file from the current job through the STAGES registry.
+    The entry is keyed by the id of that job. Thus, a retry job leaves
+    its own new sub-stage line. The line renders BEFORE the own chip of
+    the job, because it reports work that comes before the main stage
+    of the job. The job chip reads "queued" while the sub-stage runs.
+    Thus, only 1 chip is "running" at a time. This is advisory, like
+    each hook. It catches failures. Outside a worker (direct calls in
+    tests), it does nothing."""
 
     try:
         from rq import get_current_job
@@ -438,10 +449,11 @@ def record_task_stage(stage, status):
             return
         basename, job_stage = found
 
-        # While the sub-stage runs, the job's own chip yields "running"
-        # to it — the headline phase hasn't begun, so it reads "queued"
-        # until the sub-stage lands, then resumes (the worker's own
-        # done/failed hook still has the last word at job end)
+        # While the sub-stage runs, the own chip of the job gives
+        # "running" to it. The main phase has not started. Thus, the job
+        # chip reads "queued" until the sub-stage completes. Then it
+        # continues. The own done/failed hook of the worker has the last
+        # word at the end of the job.
 
         sibling = (job_stage, "queued" if status == "started" else "started")
         _write_trail_entry(
@@ -463,10 +475,12 @@ def record_task_stage(stage, status):
 
 
 def first_run(connection, job):
-    """When the job's FILE first began running any stage, or None for
-    jobs outside the pipeline (or files with no start recorded yet).
-    The running banners sort by this so a file whose work hops queues
-    — each hop a new job with a new started_at — holds its position."""
+    """Return the time when the FILE of the job first started a stage.
+
+    This returns None for a job outside the pipeline, or for a file
+    with no recorded start. The running banners sort by this. Thus, a
+    file that steps between queues holds its position. Each step is a
+    new job with a new started_at."""
 
     try:
         found = _stage_for(job)
@@ -480,13 +494,16 @@ def first_run(connection, job):
 
 
 def first_enqueued(connection, job):
-    """When the job's FILE first entered the pipeline on its current
-    journey, as an aware-UTC datetime matching rq's own enqueued_at
-    (rq 2 stamps aware datetimes; mixing in a naive one would blow up
-    the queue list's sort) — the queue page's Enqueued column holds
-    this still while the work hops queues. None for jobs outside the
-    pipeline, or files whose trail has no anchor (so callers fall back
-    to the job's own time)."""
+    """Return the time when the FILE of the job first entered the pipeline
+    on its current journey.
+
+    The value is an aware-UTC datetime. It matches the own enqueued_at
+    of rq. rq 2 stamps aware datetimes. A naive datetime in the mix
+    would break the sort of the queue list. The Enqueued column of the
+    queue page holds this still while the work steps between queues.
+    This returns None for a job outside the pipeline, or for a file
+    whose trail has no anchor. Then the caller uses the own time of the
+    job."""
 
     try:
         found = _stage_for(job)
@@ -507,20 +524,22 @@ def first_enqueued(connection, job):
 
 
 def _heal_orphaned_entries(connection, digest, entries):
-    """Drop trail entries stranded by jobs rq no longer knows about.
+    """Remove the trail entries of jobs that rq does not know.
 
-    A queued job cancelled and deleted outside the pipeline leaves its
-    "queued" stamp on the trail forever — nothing will ever advance it,
-    so the queue page shows a phantom job until the whole trail's TTL
-    runs out (the nine cancelled scaffold re-archives of Aug 29 2026,
-    plus the stray tenth found Aug 31). The stamp is only ever written
-    after rq's own job hash exists, so a waiting or running chip whose
-    job hash is gone is genuinely orphaned, not early.
+    A queued job that is cancelled and deleted outside the pipeline
+    leaves its "queued" stamp on the trail for ever. Nothing advances
+    it. Thus, the queue page shows a phantom job until the TTL of the
+    full trail expires. Examples are the 9 cancelled scaffold
+    re-archives of 2026-08-29, and the tenth one found on 2026-08-31.
+    Fitzflix writes the stamp only after the own job hash of rq exists.
+    Thus, a waiting or running chip with no job hash is orphaned. It is
+    not early.
 
-    Prunes those entries — terminal chips (done/failed) are history and
-    always stay. Returns the surviving entries, or None when the whole
-    trail was orphaned and deleted. Advisory like every trail write:
-    any failure returns the entries as they were.
+    This removes those entries. Terminal chips (done, failed) are
+    history and always stay. This returns the entries that remain, or
+    None if the full trail was orphaned and deleted. This is advisory,
+    like each trail write. On a failure, it returns the entries as they
+    were.
     """
 
     from redis import WatchError
@@ -542,10 +561,10 @@ def _heal_orphaned_entries(connection, digest, entries):
             try:
                 pipe.watch(key)
 
-                # Re-read and re-verify under WATCH: a re-enqueue can
-                # reuse a deterministic job id (safe_job_id), and its
-                # hash is created before its trail stamp — checking
-                # again here keeps a just-revived job's chip alive
+                # Read and verify again under WATCH. A re-enqueue can use
+                # a deterministic job id (safe_job_id) again. rq creates
+                # its hash before its trail stamp. The second check here
+                # keeps the chip of a job that was just revived.
 
                 trail = _decode_trail(pipe.hget(key, "trail"))
                 kept = [
@@ -561,9 +580,9 @@ def _heal_orphaned_entries(connection, digest, entries):
                     return kept
                 pipe.multi()
                 if kept:
-                    # hset keeps the key's remaining TTL — healing
-                    # neither extends the trail's life nor bumps its
-                    # recency in the active set
+                    # hset keeps the remaining TTL of the key. The repair
+                    # does not extend the life of the trail. It does not
+                    # increase its recency in the active set.
                     pipe.hset(key, "trail", json.dumps(kept))
                 else:
                     pipe.delete(key)
@@ -584,12 +603,12 @@ def _heal_orphaned_entries(connection, digest, entries):
 
 
 def pipeline_trails(connection, limit=25):
-    """The newest file trails for the queue page, most recent first:
-    [{basename, updated, entries: [{stage, status, at, job}, …]}, …].
+    """Return the newest file trails for the queue page, most recent
+    first: [{basename, updated, entries: [{stage, status, at, job}, ...]}, ...].
 
-    Each entry carries the rq job id it was stamped by, which is how a
-    queue-page row finds its own file's trail: exact, with no
-    basename-versus-description matching to go stale."""
+    Each entry carries the rq job id that stamped it. A queue-page row
+    finds the trail of its own file by this id. The match is exact. No
+    basename-versus-description match can become stale."""
 
     trails = []
     try:
@@ -638,12 +657,14 @@ def pipeline_trails(connection, limit=25):
 
 
 class TrackedQueue(Queue):
-    """An rq Queue that leaves trail entries as jobs are enqueued —
-    "queued" for immediate work, "scheduled" for deferred retries —
-    so a file waiting its turn is already visible on the queue page."""
+    """An rq Queue that leaves trail entries when it enqueues jobs.
+
+    The entry is "queued" for immediate work and "scheduled" for a
+    deferred retry. Thus, a file that waits for its turn is already
+    visible on the queue page."""
 
     def enqueue_job(self, job, pipeline=None, at_front=False, unique=False):
-        """Enqueue and stamp the trail: the job is waiting its turn."""
+        """Enqueue the job and stamp the trail. The job waits for its turn."""
 
         job = super().enqueue_job(
             job, pipeline=pipeline, at_front=at_front, unique=unique
@@ -652,7 +673,7 @@ class TrackedQueue(Queue):
         return job
 
     def schedule_job(self, job, datetime, pipeline=None, unique=False):
-        """Schedule and stamp the trail: a deferred retry is booked."""
+        """Schedule the job and stamp the trail. A deferred retry is booked."""
 
         job = super().schedule_job(job, datetime, pipeline=pipeline, unique=unique)
         record_job_event(self.connection, job, "scheduled")
@@ -660,23 +681,25 @@ class TrackedQueue(Queue):
 
 
 class PipelineWorker(SimpleWorker):
-    """A SimpleWorker that stamps the trail around execution: started
-    when a job is picked up, done or failed when it lands."""
+    """A SimpleWorker that stamps the trail around the execution.
+
+    It stamps started when it picks up a job. It stamps done or failed
+    when the job completes."""
 
     def execute_job(self, job, queue):
-        """Stamp started, then run the job as SimpleWorker does."""
+        """Stamp started. Then run the job as SimpleWorker does."""
 
         record_job_event(self.connection, job, "started")
         return super().execute_job(job, queue)
 
     def handle_job_success(self, job, queue, started_job_registry):
-        """Run rq's success handling, then stamp the trail done."""
+        """Run the success handling of rq. Then stamp the trail done."""
 
         super().handle_job_success(job, queue, started_job_registry)
         record_job_event(self.connection, job, "done")
 
     def handle_job_failure(self, job, queue, started_job_registry=None, exc_string=""):
-        """Run rq's failure handling, then stamp the trail failed."""
+        """Run the failure handling of rq. Then stamp the trail failed."""
 
         super().handle_job_failure(
             job,

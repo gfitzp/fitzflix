@@ -1,19 +1,21 @@
-"""TV series rename: retitle a series on disk and in
-the database — the Plex-disambiguation fix (Batman → Batman (1966)).
+"""Rename a TV series on disk and in the database.
 
-Deliberately does NOT touch S3: a series rename changes display
-naming, not identity, and aws_untouched_key is the authoritative
-pointer to a real archived object. Renaming archived keys would
-force-re-upload every Deep Archive file (rename_untouched_object's
-fallback), and the weekly S3 sync compares stored keys — never key
-against basename — so old keys stay green forever.
+This is the fix for Plex disambiguation (Batman becomes Batman (1966)).
 
-The task is resumable: each file commits after its own disk move, a
-file already at its target is treated as moved, and a record whose
-local file was deliberately deleted (archived-only physical media)
-gets its rows rewritten with no disk op. The weekly sync can't run
-mid-rename — it defers unless every queue is idle, and this task
-occupies one.
+This task does NOT touch S3. This is intentional. A series rename
+changes the display name, not the identity. The aws_untouched_key
+column is the authoritative pointer to a real archived object. A rename
+of the archived keys would force a new upload of every Deep Archive
+file (the fallback of rename_untouched_object). The weekly S3 sync
+compares the stored keys. It never compares a key against a basename.
+Thus, the old keys stay green forever.
+
+The task is resumable. Each file commits after its own disk move. A
+file that is already at its target counts as moved. A record whose
+local file was deleted intentionally (archived-only physical media)
+gets new rows with no disk operation. The weekly sync cannot run during
+a rename. The sync defers unless every queue is idle, and this task
+occupies one queue.
 """
 
 import json
@@ -34,10 +36,12 @@ app = LocalProxy(get_app)
 
 
 def _update_sonarr_path(series, old_folder, new_folder):
-    """Point Sonarr's series (matched by TheTVDB id, its native key) at
-    the renamed folder, so its imports and upgrades keep landing. Uses
-    urllib3 like the arr webhook helpers — requests segfaults on this
-    host for arr calls."""
+    """Point the Sonarr series at the renamed folder.
+
+    Sonarr matches the series by TheTVDB id, its native key. Thus, the
+    Sonarr imports and upgrades continue to arrive in the correct folder.
+    This function uses urllib3, the same as the arr webhook helpers. The
+    requests library segfaults on this host for arr calls."""
 
     base_url = current_app.config.get("SONARR_URL")
     api_key = current_app.config.get("SONARR_API_KEY")
@@ -85,8 +89,10 @@ def _update_sonarr_path(series, old_folder, new_folder):
 
 
 def rename_tv_series_task(series_id, new_title):
-    """Task: rename a TV series' folder, files, and database rows to a
-    new title, then update Sonarr's path and queue a Plex rescan."""
+    """Rename the folder, files, and database rows of a TV series.
+
+    This is a task. After the rename, it updates the Sonarr path and
+    queues a Plex rescan."""
 
     with app.app_context():
         series = db.session.get(TVSeries, series_id)
@@ -141,11 +147,11 @@ def rename_tv_series_task(series_id, new_title):
                 old_dirs.add(os.path.dirname(src))
                 moved += 1
             elif os.path.isfile(dst):
-                # A previous partial run already moved it; finish the row
+                # A previous partial run moved the file. Complete the row.
                 moved += 1
             else:
-                # No local copy — an archived-only record; rows rename,
-                # the S3 key deliberately stays put
+                # There is no local copy. This is an archived-only record.
+                # The rows get the new name. The S3 key stays as it is.
                 db_only += 1
 
             file.dirname = new_dirname
@@ -155,9 +161,10 @@ def rename_tv_series_task(series_id, new_title):
                 file.plex_title = new_prefix + file.plex_title[len(old_prefix) :]
             db.session.commit()
 
-        # Junk-aware, not just rmdir: the old series folder usually
-        # keeps a poster.png (Sonarr's or a hand-placed one) that used
-        # to immortalize the husk until the weekly sweep
+        # This step is aware of junk files. It is not a plain rmdir. The
+        # old series folder usually keeps a poster.png (from Sonarr or
+        # placed by hand). Before, that file kept the empty folder alive
+        # until the weekly sweep.
 
         from app.maintenance import clear_leftover_directory
 

@@ -168,7 +168,7 @@ def test_maintenance_system_and_rejects_require_admin(user_client):
         assert response.headers["Location"].endswith("/index"), path
 
     response = user_client.get("/maintenance", follow_redirects=True)
-    assert "Need to be an admin user to view this page!" in response.get_data(
+    assert "You must be an admin user to view this page." in response.get_data(
         as_text=True
     )
 

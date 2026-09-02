@@ -1,16 +1,18 @@
-"""Plex ↔ Fitzflix watchlist sync: one account-level watchlist,
-kept converged from both ends.
+"""Sync the Plex watchlist and the Fitzflix watchlist in both directions.
 
-Plex watchlists live on the plex.tv ACCOUNT (the discover API), not
-the local server, so the sync pairs the configured PLEX_TOKEN's
-account with the Fitzflix user whose plex_username matches it. Each
-run is a two-way reconcile against the last-synced snapshot: the next
-state is (kept-by-both) ∪ (fresh adds from either side), each side is
-pushed to that state, and the snapshot advances to what both sides
-verifiably hold. The FIRST run has an empty snapshot, which makes the
-same formula a full union — Glenn's chosen bootstrap — with no special
-casing. Films that fail to push stay out of the snapshot, so they
-retry every run instead of ever being mistaken for a removal.
+There is one watchlist at the account level. The sync keeps the two
+ends in agreement.
+
+Plex watchlists live on the plex.tv ACCOUNT (the discover API), not on
+the local server. Thus, the sync pairs the account of the configured
+PLEX_TOKEN with the Fitzflix user whose plex_username matches it. Each
+run is a two-way reconcile against the last-synced snapshot. The next
+state is (kept by both) plus (new adds from each side). The sync pushes
+each side to that state. Then the snapshot advances to the films that
+both sides hold. The FIRST run has an empty snapshot. Thus, the same
+formula gives a full union with no special case. Glenn chose this
+bootstrap. Films that fail to push stay out of the snapshot. Thus, they
+retry on each run. The sync never reads them as a removal.
 """
 
 import json
@@ -31,22 +33,22 @@ MATCHES_URL = "https://metadata.provider.plex.tv/library/metadata/matches"
 ACCOUNT_URL = "https://plex.tv/api/v2/user"
 SNAPSHOT_KEY = "fitzflix:plex:watchlist:synced"
 
-# Films that structurally can't sync (Plex accepted the add but the
-# item never appears — Buried Loot 1935 was the discovery case). They
-# stay on the Fitzflix watchlist, get skipped without churn, and can
-# be retried by deleting the set
+# Films that cannot sync because of their structure. Plex accepted the
+# add, but the item never appears. Buried Loot (1935) was the first
+# case. These films stay on the Fitzflix watchlist. The sync skips them
+# without churn. Delete the set to retry them.
 
 UNSYNCABLE_KEY = "fitzflix:plex:watchlist:unsyncable"
 PAGE_SIZE = 100
 
-# A Plex listing far smaller than the snapshot is an API anomaly, not
-# a mass removal — refuse to propagate deletions from it
+# A Plex listing much smaller than the snapshot is an API anomaly. It
+# is not a mass removal. Do not propagate deletions from it.
 
 ANOMALY_FLOOR = 10
 
 
 def _plex_get(url, params=None):
-    """One authenticated JSON GET against a plex.tv API."""
+    """Do 1 authenticated JSON GET against a plex.tv API."""
 
     r = requests.get(
         url,
@@ -59,7 +61,7 @@ def _plex_get(url, params=None):
 
 
 def _plex_put(path, rating_key):
-    """One watchlist action (addToWatchlist / removeFromWatchlist)."""
+    """Do 1 watchlist action (addToWatchlist or removeFromWatchlist)."""
 
     r = requests.put(
         f"{DISCOVER_URL}/actions/{path}",
@@ -74,18 +76,22 @@ def _plex_put(path, rating_key):
 
 
 def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
-    """{tmdb_id: {title, year, rating_key}} for the account's whole
-    watchlist — paginated (the API silently caps a page at 20), with
-    tmdb ids read from the bulk includeGuids payload. Movies only: the
-    account watchlist also holds TV shows, whose tmdb guids are TMDB
-    TV-series ids, not film ids.
+    """Return {tmdb_id: {title, year, rating_key}} for the full watchlist
+    of the account.
 
-    An item can carry SEVERAL tmdb guids (The Animatrix exposes the
-    compilation plus all nine segments), so each item is represented
-    by the ids Fitzflix already tracks — falling back to ids the
-    snapshot knows, then to the first guid for a genuinely new item —
-    rather than by its whole guid spray, which would otherwise pour
-    phantom segment films into the Fitzflix watchlist."""
+    This reads the pages one by one. The API silently limits a page to
+    20 items. This reads the tmdb ids from the bulk includeGuids
+    payload. This returns movies only. The account watchlist also holds
+    TV shows. The tmdb guids of a TV show are TMDB TV-series ids, not
+    film ids.
+
+    An item can carry SEVERAL tmdb guids. For example, The Animatrix
+    shows the compilation and all 9 segments. Thus, the ids that
+    Fitzflix already tracks represent the item. If there are none, the
+    ids that the snapshot knows represent it. For a new item, the first
+    guid represents it. This does not use the full set of guids. The
+    full set would add phantom segment films to the Fitzflix
+    watchlist."""
 
     fitzflix_ids = set(fitzflix_ids)
     snapshot = set(snapshot)
@@ -103,8 +109,8 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
         container = payload.get("MediaContainer", {})
         page = container.get("Metadata", []) or []
         for item in page:
-            # A show's tmdb guid is a TV-series id — as a film it
-            # becomes a bare Movie row (The Flight Attendant, Severance)
+            # The tmdb guid of a show is a TV-series id. As a film, it
+            # becomes a bare Movie row (The Flight Attendant, Severance).
             if item.get("type") != "movie":
                 continue
             item_ids = [
@@ -132,9 +138,10 @@ def fetch_plex_watchlist(fitzflix_ids=(), snapshot=()):
 
 
 def plex_rating_key(tmdb_id):
-    """The discover ratingKey for a TMDB film, or None: the matches
-    endpoint resolves tmdb://<id> deterministically, and the plex guid's
-    tail is the key."""
+    """Return the discover ratingKey for a TMDB film, or None.
+
+    The matches endpoint resolves tmdb://<id> in a deterministic way.
+    The tail of the plex guid is the key."""
 
     payload = _plex_get(MATCHES_URL, params={"type": 1, "guid": f"tmdb://{tmdb_id}"})
     for item in payload.get("MediaContainer", {}).get("Metadata", []) or []:
@@ -145,9 +152,11 @@ def plex_rating_key(tmdb_id):
 
 
 def _sync_user():
-    """The Fitzflix user whose plex_username matches the token's
-    plex.tv account, or None (logged) — the watchlist is account-level,
-    so only that user's list can meaningfully sync."""
+    """Return the Fitzflix user whose plex_username matches the plex.tv
+    account of the token, or None (logged).
+
+    The watchlist is at the account level. Thus, only the list of that
+    user can sync."""
 
     account = _plex_get(ACCOUNT_URL)
     username = (account.get("username") or "").strip().lower()
@@ -164,10 +173,11 @@ def _sync_user():
 
 
 def sync_plex_watchlist():
-    """Task: reconcile the Plex and Fitzflix watchlists both ways.
+    """Reconcile the Plex and Fitzflix watchlists in both directions.
 
-    Safe to run any time; a failed run leaves the snapshot untouched so
-    nothing is ever mistaken for a removal.
+    This is a task. It is safe to run at any time. A failed run does not
+    change the snapshot. Thus, the sync never reads a failure as a
+    removal.
     """
 
     with app.app_context():
@@ -213,8 +223,9 @@ def sync_plex_watchlist():
         plex_ids = set(plex)
         fitz_ids = set(fitzflix)
 
-        # The reconcile: films both sides kept, plus fresh adds from
-        # either side. First run: empty snapshot, so this is the union
+        # The reconcile: the films that both sides kept, plus the new
+        # adds from each side. On the first run, the snapshot is empty.
+        # Thus, this is the union.
 
         target = (plex_ids & fitz_ids) | (plex_ids - snapshot) | (fitz_ids - snapshot)
 
@@ -222,7 +233,8 @@ def sync_plex_watchlist():
         synced = set(target)
         created_movies = []
 
-        # Fitzflix side: add what Plex has, drop what Plex removed
+        # The Fitzflix side: add the films that Plex has. Remove the
+        # films that Plex removed.
 
         from app.videos import find_or_create_tmdb_movie
 
@@ -251,10 +263,11 @@ def sync_plex_watchlist():
             removed_here += 1
         db.session.commit()
 
-        # Plex side: push fresh Fitzflix adds, drop what Fitzflix
-        # removed. Match failures stay OUT of the snapshot so they
-        # retry next run rather than reading as removals later;
-        # known-unsyncable films are skipped without churn
+        # The Plex side: push the new Fitzflix adds. Remove the films
+        # that Fitzflix removed. Match failures stay OUT of the
+        # snapshot. Thus, they retry on the next run. The sync does not
+        # read them as removals later. The sync skips known unsyncable
+        # films without churn.
 
         attempted = set()
         for tmdb_id in sorted(target - plex_ids):
@@ -285,11 +298,12 @@ def sync_plex_watchlist():
                 )
                 failed += 1
 
-        # Verify the pushes actually landed: Plex answers 200 for adds
-        # it then silently drops (Buried Loot 1935). A phantom add in
-        # the snapshot would read as a Plex-side removal next run and
-        # delete the film from the Fitzflix watchlist — so phantoms
-        # leave the snapshot and join the unsyncable set instead
+        # Make sure that the pushes arrived. Plex answers 200 for some
+        # adds and then silently drops them (Buried Loot, 1935). A
+        # phantom add in the snapshot would read as a Plex-side removal
+        # on the next run. That would delete the film from the Fitzflix
+        # watchlist. Thus, phantoms leave the snapshot and go into the
+        # unsyncable set instead.
 
         if attempted:
             try:
@@ -298,9 +312,9 @@ def sync_plex_watchlist():
                 current_app.logger.warning(traceback.format_exc())
                 landed = None
             if landed is None:
-                # Can't verify: keep the pushes OUT of the snapshot so
-                # they re-verify next run instead of risking the
-                # phantom-removal trap
+                # The sync cannot verify. Keep the pushes OUT of the
+                # snapshot. Thus, the next run verifies them again.
+                # This prevents the phantom-removal trap.
 
                 synced -= attempted
             else:

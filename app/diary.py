@@ -1,17 +1,19 @@
-"""Diary writers (the strangler split from app.videos): every task
-that turns an outside signal into UserMovieReview rows and watchlist
-state.
+"""Write the diary. This module is the strangler split from app.videos.
 
-The Letterboxd account-export importer (merging diary/ratings/reviews/
-likes/watchlist CSVs idempotently), the Plex scrobble/history-poll
-watch recorder, the API review task, and the shared verdict plumbing —
-star_rating_fields and the watchlist/not-interested clearers that a
-new log always runs.
+It holds each task that turns an outside signal into UserMovieReview
+rows and watchlist state. That includes the Letterboxd account-export
+importer. The importer merges the diary, ratings, reviews, likes, and
+watchlist CSV files. A second import of the same export is idempotent.
+The module also holds the Plex watch recorder for the scrobble and the
+history poll, the API review task, and the shared verdict functions.
+Those are star_rating_fields and the watchlist and not-interested
+clearers that a new log always runs.
 
-app.videos re-exports every name here, so stored rq job strings
-("app.videos.letterboxd_import_task") and import sites keep resolving;
-record creation leans on app.videos' TMDB helpers via lazy imports,
-keeping the module import direction one-way.
+app.videos exports each name here again. Thus, the stored rq job
+strings ("app.videos.letterboxd_import_task") and the import sites
+continue to resolve. Record creation uses the TMDB helpers of
+app.videos through lazy imports. Thus, the module import direction
+stays one-way.
 """
 
 import csv
@@ -41,17 +43,20 @@ from app.models import (
 
 
 def clear_watchlist(user_id, movie_id):
-    """Drop a film from a user's watchlist, if present — watching it,
-    however the watch arrives, is what completes a watchlist entry.
-    Callers commit."""
+    """Remove a film from the watchlist of a user, if the film is on it.
+
+    A watch of the film completes the watchlist entry. The source of the
+    watch is not important. The caller must commit the session."""
 
     UserWatchlist.query.filter_by(user_id=int(user_id), movie_id=int(movie_id)).delete()
 
 
 def clear_not_interested(user_id, movie_id):
-    """Drop a film's not-interested flag, if present — a watch, however
-    it arrives, contradicts "never saw it, don't want it".
-    Callers commit."""
+    """Remove the not-interested flag of a film, if the flag is set.
+
+    A watch of the film contradicts "never saw it, do not want it". The
+    source of the watch is not important. The caller must commit the
+    session."""
 
     UserMovieStatus.query.filter_by(
         user_id=int(user_id), movie_id=int(movie_id), kind="not_interested"
@@ -59,7 +64,9 @@ def clear_not_interested(user_id, movie_id):
 
 
 def star_rating_fields(rating):
-    """The UserMovieReview rating columns for a 0-5 star rating (or None)."""
+    """Return the UserMovieReview rating columns for a 0-5 star rating.
+
+    The rating can also be None."""
 
     if rating is None:
         return {
@@ -80,12 +87,12 @@ def star_rating_fields(rating):
 def parse_letterboxd_export(zip_bytes):
     """Parse a Letterboxd account-export zip into one record per film.
 
-    Combines diary.csv (watch dates and per-watch ratings), ratings.csv
-    (each film's current rating), reviews.csv (review text), and
-    likes/films.csv (hearts). Returns a list of films, each with a list of
-    entries mirroring how Letterboxd's own importer treats rows: one entry
-    per watched date, plus a dateless entry for films that were only rated
-    or liked.
+    This combines diary.csv (the watch dates and the per-watch ratings),
+    ratings.csv (the current rating of each film), reviews.csv (the
+    review text), and likes/films.csv (the hearts). It returns a list of
+    films. Each film has a list of entries. The entries follow the rules
+    of the importer of Letterboxd: one entry per watched date, plus an
+    entry without a date for a film that the user only rated or liked.
     """
 
     def rows(zf, name):
@@ -126,16 +133,16 @@ def parse_letterboxd_export(zip_bytes):
             if key:
                 film(key)["liked"] = True
 
-        # watchlist.csv is the CURRENT want-to-watch list, so it wins
-        # over any past watches in the same export
+        # watchlist.csv is the CURRENT want-to-watch list. Thus, it wins
+        # over the past watches in the same export.
 
         for row in rows(zf, "watchlist.csv"):
             key = film_key(row)
             if key:
                 film(key)["watchlist"] = True
 
-        # Diary rows and review rows describe the same watch when they
-        # share a watched date, so entries are keyed by that date
+        # A diary row and a review row with the same watched date describe
+        # the same watch. Thus, the watched date is the key of the entry.
 
         for name in ("diary.csv", "reviews.csv"):
             for row in rows(zf, name):
@@ -160,9 +167,10 @@ def parse_letterboxd_export(zip_bytes):
                 if row.get("Review"):
                     entry["review"] = row["Review"]
 
-                # Stored as stated: Letterboxd knows about viewings that
-                # predate this app, so a blank cell is a first watch, not
-                # an unknown — only rows without the column stay None
+                # Store the value as given. Letterboxd knows the viewings
+                # that came before this app. Thus, a blank cell is a first
+                # watch, not an unknown. Only a row without the column
+                # stays None.
 
                 if "Rewatch" in row:
                     entry["rewatch"] = (row.get("Rewatch") or "").strip() == "Yes"
@@ -188,9 +196,12 @@ def parse_letterboxd_export(zip_bytes):
 
 
 def _normalize_title(title):
-    """Casefold a title and iron out the typography that separates
-    Letterboxd's rendering from TMDB's — en/em dashes vs hyphens, curly
-    vs straight quotes — so equality means the same words."""
+    """Casefold a title and make its punctuation standard.
+
+    Letterboxd and TMDB show the same title with different punctuation.
+    Replace the en dash and the em dash with a hyphen. Replace curly
+    quotes with straight quotes. Then two equal strings have the same
+    words."""
 
     text = (title or "").casefold()
     for dash in ("–", "—", "−"):
@@ -203,15 +214,16 @@ def _normalize_title(title):
 def _pick_tmdb_match(title, year, year_filtered, title_only):
     """Choose the TMDB search result for a Letterboxd film.
 
-    An exact (normalized) title among the year-filtered results wins;
-    otherwise the title-only search's exact match with the nearest year,
-    accepted within two years — or at any distance when it is the only
-    exact match, since TMDB and Letterboxd years can drift far apart
-    (The Men Who Tread on the Tiger's Tail: 1945 vs 1952). Only then
-    the year-filtered head, which matched through an alternative title
-    in the right year (Waking Ned Devine → Waking Ned). Taking that
-    head FIRST is how "300" (2006) once imported as the short film
-    "My Poetic Works 300 Yen".
+    An exact (normalized) title among the year-filtered results wins.
+    If there is none, use the exact match of the title-only search with
+    the nearest year. Accept it if the year is within 2 years. Also
+    accept it at any distance if it is the only exact match, because
+    the TMDB year and the Letterboxd year can differ a lot (The Men Who
+    Tread on the Tiger's Tail: 1945 and 1952). Only then use the first
+    year-filtered result. That result matched through an alternative
+    title in the correct year (Waking Ned Devine to Waking Ned). Do not
+    use that first result FIRST. That is how "300" (2006) one time
+    imported as the short film "My Poetic Works 300 Yen".
     """
 
     wanted = _normalize_title(title)
@@ -236,12 +248,12 @@ def _pick_tmdb_match(title, year, year_filtered, title_only):
 
 
 def letterboxd_import_task(user_id, films):
-    """Network phase of a Letterboxd import: match each film to the library
-    or to TMDB, then hand the resolved list to apply_letterboxd_import on
-    the sql queue.
+    """Run the network phase of a Letterboxd import.
 
-    Runs on the user-request queue since resolving unowned films means
-    TMDB searches; nothing here writes to the database.
+    This matches each film to the library or to TMDB. Then it gives the
+    resolved list to apply_letterboxd_import on the sql queue. This runs
+    on the user-request queue, because unowned films need TMDB searches.
+    Nothing here writes to the database.
     """
 
     with app.app_context():
@@ -264,9 +276,9 @@ def letterboxd_import_task(user_id, films):
                     skipped.append(f"{title} ({year})")
                     continue
 
-                # Search with the year first; the title-only search runs
-                # only when no year-filtered result carries the exact
-                # title, and _pick_tmdb_match arbitrates between the two
+                # Search with the year first. The title-only search runs
+                # only if no year-filtered result has the exact title.
+                # _pick_tmdb_match decides between the two.
 
                 r = tmdb_get(
                     tmdb_api_url + "/search/movie",
@@ -332,14 +344,14 @@ def letterboxd_import_task(user_id, films):
 
 
 def apply_letterboxd_import(user_id, films):
-    """Database phase of a Letterboxd import: create any missing movie
-    records, then insert or update one review row per watch entry.
+    """Run the database phase of a Letterboxd import.
 
-    Mirrors Letterboxd's own importer semantics: an entry updates the
-    existing review with the same film and watched date instead of
-    duplicating it, so re-importing the same export is idempotent. Movies
-    created here are enriched afterwards through the standard TMDB
-    refresh pipeline.
+    This creates the missing movie records. Then it inserts or updates
+    one review row per watch entry. It follows the rules of the importer
+    of Letterboxd. An entry updates the existing review with the same
+    film and watched date. It does not make a duplicate. Thus, a second
+    import of the same export is idempotent. The standard TMDB refresh
+    pipeline enriches the movies that this creates.
     """
 
     with app.app_context():
@@ -354,9 +366,9 @@ def apply_letterboxd_import(user_id, films):
                 elif film.get("tmdb_id") is not None:
                     movie = Movie.query.filter_by(tmdb_id=film["tmdb_id"]).first()
                     if movie is None:
-                        # The canonical name may collide with an existing
-                        # record; reuse it rather than violating the unique
-                        # title + year constraint
+                        # The canonical name can collide with an existing
+                        # record. Then use that record. Do not violate the
+                        # unique title + year constraint.
 
                         movie = Movie.query.filter_by(
                             title=film["canonical_title"],
@@ -394,9 +406,9 @@ def apply_letterboxd_import(user_id, films):
                         else film["rating"]
                     )
 
-                    # Match per calendar day: a Plex-recorded watch carries a
-                    # time of day, and re-importing the same Letterboxd date
-                    # must update that row, not sit beside it
+                    # Match per calendar day. A watch that Plex recorded has
+                    # a time of day. A second import of the same Letterboxd
+                    # date must update that row, not add a row next to it.
 
                     if date_watched is not None:
                         review = UserMovieReview.query.filter(
@@ -434,9 +446,10 @@ def apply_letterboxd_import(user_id, films):
                     review.liked = review.liked or film["liked"]
                     imported += 1
 
-                # A watched import completes any old watchlist entry, but
-                # watchlist.csv reflects Letterboxd's CURRENT list — so it
-                # re-adds afterwards and wins over past watches
+                # A watched import completes an old watchlist entry. But
+                # watchlist.csv shows the CURRENT list of Letterboxd. Thus,
+                # it adds the entry again after that and wins over the past
+                # watches.
 
                 if film["entries"]:
                     clear_watchlist(user_id, movie.id)
@@ -452,9 +465,9 @@ def apply_letterboxd_import(user_id, films):
 
             db.session.commit()
 
-            # Enrich the newly created movies through the standard two-phase
-            # refresh pipeline (TMDB fetch on the request queue, database
-            # apply back on this queue)
+            # Enrich the new movies through the standard two-phase refresh
+            # pipeline. The TMDB fetch runs on the request queue. The
+            # database apply runs back on this queue.
 
             for movie_id in created_movie_ids:
                 movie = Movie.query.filter_by(id=movie_id).first()
@@ -482,25 +495,26 @@ def apply_letterboxd_import(user_id, films):
 
 
 def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
-    """Record one Plex movie watch, from either the webhook or the poller.
+    """Record one Plex movie watch, from the webhook or from the poller.
 
-    Every watch bumps the movie's household shopping-cart priority.
-    When the Plex account
-    maps to a Fitzflix user via User.plex_username, the watch also lands
-    in their diary as an unrated review row keyed on user/movie/date —
-    with rewatch computed from whether any earlier row exists.
+    Each watch increases the household shopping-cart priority of the
+    movie. The Plex account can map to a Fitzflix user through
+    User.plex_username. Then the watch also goes into the diary of that
+    user as an unrated review row. The key of the row is the user, the
+    movie, and the date. The rewatch flag is True if an earlier row
+    exists.
 
-    A Redis marker keyed on account/movie/date makes the two sources
-    idempotent: whichever records the watch first wins, and repeats of the
-    same film on the same day don't double-count.
+    A Redis marker with the key account, movie, and date makes the two
+    sources idempotent. The source that records the watch first wins. A
+    repeat of the same film on the same day does not count two times.
     """
 
     with app.app_context():
         try:
-            # Full timestamp in local wall-clock time, like every other
-            # diary writer: the calendar day used for dedup and display
-            # must be the household's day, not UTC's (a 9 PM watch is not
-            # tomorrow's viewing)
+            # This is the full timestamp in local wall-clock time, as in
+            # each other diary writer. The calendar day for dedup and
+            # display must be the day of the household, not the UTC day.
+            # A watch at 9 PM is not a viewing of tomorrow.
 
             watched_at = (
                 datetime.fromisoformat(viewed_at).astimezone().replace(tzinfo=None)
@@ -532,9 +546,10 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
                 user = User.query.filter_by(plex_username=plex_username).first()
 
             if user is not None:
-                # The watch completes any watchlist entry — and clears a
-                # not-interested flag, which a real watch contradicts —
-                # with one diary row per calendar day, whatever the times
+                # The watch completes a watchlist entry. It also clears a
+                # not-interested flag, because a real watch contradicts
+                # that flag. There is one diary row per calendar day. The
+                # times are not important.
 
                 clear_watchlist(user.id, movie.id)
                 clear_not_interested(user.id, movie.id)
@@ -579,8 +594,9 @@ def apply_plex_watch(tmdb_id, plex_username, viewed_at, source):
 
 
 def _plex_tmdb_id(entry, headers):
-    """Resolve a Plex history entry to a TMDB id via its metadata Guid
-    list, cached in Redis since rating keys are stable."""
+    """Resolve a Plex history entry to a TMDB id through its Guid list.
+
+    Redis caches the result, because the rating keys are stable."""
 
     rating_key = entry.get("ratingKey")
     if not rating_key:
@@ -588,7 +604,7 @@ def _plex_tmdb_id(entry, headers):
     cache_key = f"fitzflix:plex:tmdb:{rating_key}"
     cached = current_app.redis.get(cache_key)
     if cached is not None:
-        # An empty value means known-unresolvable (no TMDB guid)
+        # An empty value means that the entry cannot resolve (no TMDB guid).
         return int(cached) if cached else None
 
     tmdb_id = None
@@ -607,12 +623,12 @@ def _plex_tmdb_id(entry, headers):
                 tmdb_id = int(match.group(1))
                 break
         if tmdb_id is None and items:
-            # Legacy metadata agent: the guid is a single string
+            # With the legacy metadata agent, the guid is one string.
             match = re.search(r"themoviedb://(\d+)", items[0].get("guid") or "")
             if match:
                 tmdb_id = int(match.group(1))
     except Exception:
-        # Don't cache transient failures
+        # Do not cache a transient failure.
         current_app.logger.warning(traceback.format_exc())
         return None
 
@@ -621,13 +637,13 @@ def _plex_tmdb_id(entry, headers):
 
 
 def plex_history_poll():
-    """Poll Plex's watch history for movie scrobbles past the stored cursor.
+    """Poll the watch history of Plex for movie scrobbles after the cursor.
 
-    The self-healing backstop to the real-time webhook: anything Plex
-    scrobbled while Fitzflix was down is picked up here, and the shared
-    dedup marker in apply_plex_watch keeps the two sources from
-    double-counting. The first run only plants the cursor, so history
-    predating the feature isn't ingested.
+    This is the self-healing backstop of the real-time webhook. This
+    collects each watch that Plex scrobbled while Fitzflix was down. The
+    shared dedup marker in apply_plex_watch prevents a double count from
+    the two sources. The first run only plants the cursor. Thus, this
+    does not ingest the history from before the feature.
     """
 
     with app.app_context():
@@ -662,8 +678,9 @@ def plex_history_poll():
             current_app.logger.error(traceback.format_exc())
             return False
 
-        # Server-account id -> Plex username, for watcher attribution; a
-        # failure here still counts watches toward household priority
+        # This maps a server-account id to a Plex username for the watcher
+        # attribution. After a failure here, the watches still count
+        # toward the household priority.
 
         accounts = {}
         try:
@@ -684,8 +701,8 @@ def plex_history_poll():
             if entry.get("type") != "movie" or viewed_at <= cursor:
                 continue
 
-            # Live TV airings type as movies too (#182): a
-            # virtual-channel play is never a diary watch
+            # A live TV airing also has the type movie (#182). A
+            # virtual-channel play is never a diary watch.
 
             if entry.get("live"):
                 continue
@@ -722,9 +739,9 @@ def review_task(user_id, title, rating):
 
     with app.app_context():
         try:
-            # A title alone can be ambiguous, since the Netflix export has no
-            # year; if multiple movies share this title, fall through to TMDB,
-            # which resolves the year, rather than guessing with .first()
+            # A title alone can be ambiguous, because the Netflix export has
+            # no year. If more than 1 movie has this title, continue to TMDB.
+            # TMDB resolves the year. Do not guess with .first().
 
             movie_matches = Movie.query.filter_by(title=title).all()
 
@@ -762,9 +779,9 @@ def review_task(user_id, title, rating):
                     if tmdb_id and title == first_result.get("title"):
                         current_app.logger.info(f"'{title}' Getting details from TMDB")
 
-                        # Only the canonical title and release date are read
-                        # here — the movie's full enrichment happens in
-                        # tmdb_movie_query below
+                        # This reads only the canonical title and the release
+                        # date. tmdb_movie_query below does the full
+                        # enrichment of the movie.
 
                         r = tmdb_get(
                             tmdb_api_url + "/movie/" + str(tmdb_id),
@@ -783,9 +800,9 @@ def review_task(user_id, title, rating):
                             tmdb_year = tmdb_release_date.year
 
                         if tmdb_title and tmdb_year:
-                            # A movie with the canonical title may already
-                            # exist; attach the review to it instead of
-                            # violating the unique title + year constraint
+                            # A movie with the canonical title can already
+                            # exist. Then attach the review to that movie. Do
+                            # not violate the unique title + year constraint.
 
                             movie = Movie.query.filter_by(
                                 title=tmdb_title, year=tmdb_year
@@ -796,10 +813,10 @@ def review_task(user_id, title, rating):
                                 db.session.add(movie)
 
                                 try:
-                                    # Establish a savepoint with db.session.begin_nested(),
-                                    # so if any of the queries to get show metadata fail,
-                                    # we can just roll back those changes to the savepoint
-                                    # and still commit the movie and its review.
+                                    # Make a savepoint with begin_nested(). If a
+                                    # metadata query fails, roll back to the
+                                    # savepoint. Then commit the movie and its
+                                    # review.
 
                                     db.session.begin_nested()
                                     movie.tmdb_movie_query()
@@ -840,7 +857,8 @@ def review_task(user_id, title, rating):
             return True
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, a process that already has an application can import this module
+# and not build a second application.
 
 app = LocalProxy(get_app)

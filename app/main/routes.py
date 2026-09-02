@@ -6,7 +6,7 @@ from flask import (
     send_from_directory,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its real module.
 
 from app.main import bp
 
@@ -14,7 +14,7 @@ from app.main import bp
 @bp.route("/apple-touch-icon-precomposed.png")
 @bp.route("/apple-touch-icon.png")
 def androidPng():
-    """Serve the touch icon at the fixed paths Apple devices request."""
+    """Serve the touch icon at the fixed paths that Apple devices request."""
 
     return send_from_directory(
         os.path.join(current_app.root_path, "static"),
@@ -36,11 +36,12 @@ def favicon():
 
 @bp.route("/sw.js")
 def service_worker():
-    # Served from the root (rather than /static/) so the service worker's
-    # scope covers the whole application
+    # Fitzflix serves this file from the root, not from /static/. Thus, the
+    # scope of the service worker covers the whole application.
 
-    """Serve the PWA service worker from the site root, so its scope
-    covers the whole application.
+    """Serve the PWA service worker from the site root.
+
+    Thus, the scope of the service worker covers the whole application.
     """
 
     return send_from_directory(

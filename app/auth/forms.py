@@ -5,7 +5,7 @@ from app.models import User
 
 
 class LoginForm(FlaskForm):
-    """Sign in."""
+    """Sign in a user."""
 
     email = StringField("Email", validators=[DataRequired()])
     password = PasswordField("Password", validators=[DataRequired()])
@@ -14,7 +14,9 @@ class LoginForm(FlaskForm):
 
 
 class RegistrationForm(FlaskForm):
-    """Create an account (open only until registration is disabled)."""
+    """Create an account.
+
+    This form is open only until registration is disabled."""
 
     email = StringField("Email", validators=[DataRequired(), Email()])
     password = PasswordField("Password", validators=[DataRequired()])
@@ -24,7 +26,7 @@ class RegistrationForm(FlaskForm):
     submit = SubmitField("Register")
 
     def validate_email(self, email):
-        """Reject an address that's already registered."""
+        """Reject an email address that is already registered."""
 
         user = User.query.filter_by(email=email.data).first()
         if user is not None:

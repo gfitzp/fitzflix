@@ -1,30 +1,33 @@
-"""Film awards from Wikidata.
+"""Get the film awards from Wikidata.
 
-Award wins (P166) and nominations (P1411) for the library's films,
-matched through the IMDb (P345) or TMDB (P4947) ids Fitzflix already
-stores — Wikidata carries both. Wikidata is the sanctioned source:
-TMDB has no awards API, IMDb's is paid-license only. Access follows
-Wikidata's guidelines like the Criterion spine lookup does: a
-descriptive User-Agent with a contact address, batched VALUES queries
-a few hundred ids at a time, and a pause between requests. Coverage
-is strong for major ceremonies (Oscars, BAFTA, Cannes, Golden Globes,
-Césars) and patchy for niche festivals, so surfaces display what
-exists without implying completeness. Reading Wikidata is sanctioned;
-writing to it was declined.
+This module gets the award wins (P166) and the nominations (P1411) for
+the films in the library. It matches the films through the IMDb id
+(P345) or the TMDB id (P4947) that Fitzflix already stores. Wikidata
+has both ids. Wikidata is the approved source. TMDB has no awards API.
+The IMDb API needs a paid license. Access follows the guidelines of
+Wikidata, as the Criterion spine lookup does. This module sends a
+descriptive User-Agent with a contact address. It batches the VALUES
+queries some hundreds of ids at a time. It pauses between requests.
+Coverage is strong for the major ceremonies (Oscars, BAFTA, Cannes,
+Golden Globes, Césars). Coverage is thin for the small festivals.
+Thus, the pages show the awards that exist and do not claim that the
+list is complete. Reads of Wikidata are approved. Writes to Wikidata
+were declined.
 
-Two passes fill the movie_award table. The film pass reads award
-statements off film items, but Wikidata records craft categories
-(Best Director, Best Actor, Best Cinematography…) on PERSON items
-with a "for work" (P1686) qualifier naming the film — On the
-Waterfront's item knows Best Picture while Kazan's item holds the
-Best Director win — so a second pass finds every award statement
-whose for-work qualifier names a library film, whoever's item holds
-it, and attributes it to the film. Querying from the film side
-matters: the qualifier lookup anchored on a bound film resolves a
-200-film batch in under a second, where sweeping the library's
-61,000 credited people timed WDQS out on every batch. Person awards
-without a for-work qualifier (career honors, knighthoods) never
-match.
+Two passes fill the movie_award table. The film pass reads the award
+statements from the film items. But Wikidata records the craft
+categories (Best Director, Best Actor, Best Cinematography, and more)
+on PERSON items. Those statements have a "for work" (P1686) qualifier
+that names the film. For example, the item of On the Waterfront knows
+the Best Picture win. The item of Kazan holds the Best Director win.
+Thus, a second pass finds each award statement whose for-work
+qualifier names a library film. The item that holds the statement is
+not important. The second pass attributes the award to the film. The
+query must start from the film side. The qualifier lookup that starts
+from a bound film resolves a batch of 200 films in less than 1 second.
+A sweep of the 61,000 credited people of the library made WDQS time
+out on each batch. A person award without a for-work qualifier (a
+career honor, a knighthood) never matches.
 """
 
 import time
@@ -38,27 +41,30 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import Movie, MovieAward
 
-# This process's app instance, resolved lazily so importing this module
-# from a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, a process that already has an application can import this module
+# and not build a second application.
 
 app = LocalProxy(get_app)
 
-# VALUES batches keep each request modest; the pause between requests
-# keeps the crawl polite (the whole library refreshes in ~20 requests)
+# The VALUES batches keep each request small. The pause between requests
+# keeps the crawl polite. The whole library refreshes in about 20
+# requests.
 
 AWARDS_BATCH_SIZE = 200
 AWARDS_BATCH_PAUSE_SECONDS = 1.0
 
-# WDQS allows a client 30 error queries per minute before throttling
-# escalates toward a ban: failed batches wait longer than good ones,
-# and a run of consecutive failures means the service itself is having
-# a bad day — stop and let the weekly cadence self-heal
+# WDQS permits a client 30 error queries per minute. After that, the
+# throttle escalates toward a ban. Thus, a failed batch waits longer
+# than a good batch. A run of consecutive failures means that the
+# service itself has a problem. Then stop, and let the weekly run
+# repair the data.
 
 AWARDS_ERROR_PAUSE_SECONDS = 10.0
 AWARDS_MAX_CONSECUTIVE_FAILURES = 5
 
-# One query shape serves both id systems: {id_prop} is the Wikidata
-# property the external ids match against (P345 = IMDb, P4947 = TMDB)
+# One query shape serves the two id systems. {id_prop} is the Wikidata
+# property that the external ids match (P345 = IMDb, P4947 = TMDB).
 
 AWARDS_QUERY = """
 SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
@@ -72,10 +78,11 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
 }}
 """
 
-# The craft pass anchors on the FILM and walks backwards into any
-# award statement whose "for work" qualifier names it — the holder's
-# item (usually a person's) never needs naming, so the query stays
-# selective enough for WDQS's 60-second limit
+# The craft pass starts from the FILM. It walks backwards into each
+# award statement whose "for work" qualifier names the film. The query
+# never names the item that holds the statement (usually a person).
+# Thus, the query stays selective enough for the 60-second limit of
+# WDQS.
 
 CRAFT_AWARDS_QUERY = """
 SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
@@ -94,9 +101,10 @@ SELECT ?ext ?award ?awardLabel ?kind (YEAR(?when) AS ?year) WHERE {{
 def _wikidata_sparql(query):
     """Run one SPARQL query against Wikidata, per its access guidelines.
 
-    A 429 means WDQS throttled this client; its Retry-After header is
-    honored (one retry, capped) before the error propagates to the
-    batch loop's own failure handling.
+    A 429 response means that WDQS throttled this client. This function
+    obeys the Retry-After header of the response, with 1 retry and a
+    cap on the delay. Then the error propagates to the failure handling
+    of the batch loop.
     """
 
     from app.videos import wikidata_retry_after_seconds
@@ -126,10 +134,11 @@ def _wikidata_sparql(query):
 
 
 def _parse_award(binding):
-    """One binding as (award_id, name, win, year), or None if unusable.
+    """Return one binding as (award_id, name, win, year), or None.
 
-    A label service miss echoes the QID back as the label; a bare QID
-    badge tells the user nothing, so those rows drop.
+    Return None if the binding is not usable. When the label service
+    has no label, it echoes the QID back as the label. A bare QID badge
+    tells the user nothing. Thus, this function drops those rows.
     """
 
     award_uri = binding.get("award", {}).get("value", "")
@@ -146,12 +155,13 @@ def _parse_award(binding):
 
 
 def _award_rows(bindings, movie_ids_by_ext):
-    """SPARQL bindings as {movie_id: {(award_id, name, win, year), ...}}.
+    """Return the bindings as {movie_id: {(award_id, name, win, year)}}.
 
-    Deduplicated with a set per film: Wikidata sometimes carries the
-    same award statement more than once (with and without a date
-    qualifier on re-imports), and the unique constraint treats NULL
-    years as distinct, so the dedupe has to happen here.
+    A set per film removes the duplicates. Wikidata sometimes has the
+    same award statement more than one time. For example, a re-import
+    can add the statement with and without a date qualifier. The unique
+    constraint treats NULL years as distinct. Thus, this function must
+    remove the duplicates.
     """
 
     rows = {}
@@ -168,11 +178,12 @@ def _award_rows(bindings, movie_ids_by_ext):
 
 
 def _replace_awards(batch_movie_ids, rows):
-    """Replace the batch's stored awards with the fresh rows.
+    """Replace the stored awards of the batch with the new rows.
 
-    Every film in the batch is cleared, not just films with results:
-    an empty result means Wikidata lists nothing for it now, and stale
-    rows would linger forever otherwise (current-truth semantics).
+    This clears each film in the batch, not only the films with results.
+    An empty result means that Wikidata lists nothing for the film now.
+    If this did not clear the film, stale rows would stay forever. The
+    table shows the current truth.
     """
 
     MovieAward.query.filter(MovieAward.movie_id.in_(batch_movie_ids)).delete(
@@ -193,16 +204,17 @@ def _replace_awards(batch_movie_ids, rows):
 
 
 def _merge_person_awards(rows):
-    """Insert person-derived rows a film doesn't already carry.
+    """Insert the person-derived rows that a film does not have yet.
 
-    Unlike the film pass this MERGES: the same ceremony event can
-    legitimately appear on both items (a film's own item sometimes
-    lists its Best Director win too), so a row is skipped when the
-    film already has that award with the same win/nomination kind and
-    a matching year — where a missing year on either side counts as a
-    match, since a film item lacking the date qualifier still means
-    the same event. A win still lands when only the nomination is on
-    record: winning is new information. Returns (films, inserted).
+    This MERGES, unlike the film pass. The same ceremony event can
+    correctly appear on the two items. For example, the item of a film
+    sometimes lists its Best Director win too. Thus, this skips a row
+    if the film already has that award with the same kind (win or
+    nomination) and a matching year. A missing year on one side counts
+    as a match, because a film item without the date qualifier still
+    means the same event. A win goes in if only the nomination is on
+    record, because the win is new information. Return (films,
+    inserted).
     """
 
     existing = {}
@@ -236,15 +248,16 @@ def _merge_person_awards(rows):
 
 
 def refresh_person_awards():
-    """Backfill for-work craft awards, in the film pass's own batches.
+    """Backfill the for-work craft awards, in the batches of the film pass.
 
-    The same IMDb-first/TMDB-fallback id maps as refresh_movie_awards,
-    but the query walks from each film into award statements that name
-    it as their "for work" — the craft categories person items hold.
-    Runs AFTER refresh_movie_awards in the weekly task: the film pass
-    replaces rows wholesale, so the craft rows are rebuilt on top of
-    each fresh baseline (and the merge dedupes against it). Standalone
-    runs are idempotent — already-stored rows just skip.
+    This uses the same id maps as refresh_movie_awards: IMDb first, then
+    TMDB as the fallback. But the query walks from each film into the
+    award statements that name the film as their "for work". These are
+    the craft categories that the person items hold. The weekly task
+    runs this AFTER refresh_movie_awards. The film pass replaces all the
+    rows. Thus, this pass rebuilds the craft rows on top of each new
+    baseline, and the merge removes the duplicates. A standalone run is
+    idempotent. It skips the rows that are already stored.
     """
 
     if not current_app.config["WIKIDATA_SPARQL_URL"]:
@@ -312,11 +325,11 @@ def refresh_person_awards():
 
 
 def refresh_movie_awards():
-    """Refresh every film's award rows from Wikidata, in polite batches.
+    """Refresh the award rows of each film from Wikidata, in polite batches.
 
-    Films with an IMDb id match through P345; the remainder fall back
-    to their TMDB id through P4947. A failed batch logs and moves on —
-    the weekly cadence self-heals partial refreshes.
+    A film with an IMDb id matches through P345. The other films match
+    through their TMDB id and P4947. A failed batch logs a warning, and
+    the loop continues. The weekly run repairs a partial refresh.
     """
 
     if not current_app.config["WIKIDATA_SPARQL_URL"]:
@@ -376,10 +389,10 @@ def refresh_movie_awards():
 
 
 def refresh_awards():
-    """Weekly task wrapper: both award passes inside an app context.
+    """Run the two award passes inside an app context, as the weekly task.
 
-    Order matters — the film pass wipes and rebuilds each film's rows,
-    the person pass then layers the craft categories back on top.
+    The order is important. The film pass deletes and rebuilds the rows
+    of each film. Then the person pass adds the craft categories on top.
     """
 
     with app.app_context():

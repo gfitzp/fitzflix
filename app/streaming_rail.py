@@ -1,20 +1,22 @@
-"""The landing page's "Streaming on your services" rail.
+"""The "Streaming on your services" rail of the landing page.
 
-Candidates come from TMDB's discover endpoint — shared per-provider
-pools (popular, acclaimed, and newly streaming sorts) plus taste-shaped
-queries built from each user's stored profile — so discover acts as a
-candidate generator, never as display truth: its provider and
-monetization filters demonstrably cross-contaminate, so every film that
-might be shown is verified against the per-title watch-provider cache
-first. Survivors are enriched with full credits so crew features score
-too, and each recommendation carries its provenance (which named query
-produced it) alongside its top contributing features.
+The candidates come from the discover endpoint of TMDB. There are
+shared per-provider pools (popular, acclaimed, and newly streaming
+sorts). There are also taste-shaped queries built from the stored
+profile of each user. Thus, discover is a candidate generator, never
+the display truth. Its provider filters and monetization filters
+demonstrably contaminate each other. Thus, Fitzflix first verifies
+each film that it can show against the per-title watch-provider cache.
+The survivors are enriched with full credits. Then the crew features
+score too. Each recommendation carries its provenance (the named query
+that produced it) and its top contributing features.
 
-Films already in the library or in the user's diary are excluded — the
-rail recommends what to watch on services already paid for, never what
-to buy (that preference is physical media). The discover data and the
-availability data are JustWatch's via TMDB, so the rail carries the
-mandatory attribution wherever it renders.
+Films already in the library or in the diary of the user are excluded.
+The rail recommends what to watch on the services that the user
+already pays for. It never recommends what to buy (that preference is
+physical media). The discover data and the availability data come from
+JustWatch through TMDB. Thus, the rail shows the mandatory attribution
+wherever it renders.
 """
 
 import json
@@ -42,8 +44,8 @@ from app.streaming import (
 )
 from app.models import tmdb_get
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the nightly task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
@@ -54,9 +56,9 @@ ENRICHED_KEY = "fitzflix:tmdb:movie:{tmdb_id}:enriched"
 ENRICHED_CACHE_SECONDS = 7 * 86400
 
 # Shared per-provider pool queries: (provenance tag, sort_by, vote floor).
-# The acclaimed variant needs a real vote floor or obscure 10.0-rated
-# shovelware tops the list; every query also carries the base hygiene
-# floor and include_adult=false
+# The acclaimed variant needs a real vote floor. If not, obscure
+# 10.0-rated shovelware tops the list. Each query also carries the base
+# hygiene floor and include_adult=false.
 
 POOL_SORTS = (
     ("popular", "popularity.desc", 50),
@@ -65,17 +67,18 @@ POOL_SORTS = (
 )
 POOL_PAGES = 3
 
-# Per-user taste-shaped queries drawn from the profile
+# Per-user taste-shaped queries that come from the profile
 
 TASTE_GENRE_PAGES = 2
 TASTE_PEOPLE_LIMIT = 3
 NEGATIVE_GENRE_THRESHOLD = -0.08
 
-# How deep the rail digs: coarse-ranked candidates verified against the
-# per-title availability cache, then enriched with credits. The depth
-# feeds the landing page's runtime filter — a tight minute limit thins
-# the rail, so it stores well past the dozen displayed (enrichment is
-# week-cached, so the extra depth costs one first-night burst)
+# How deep the rail digs. Fitzflix verifies the coarse-ranked candidates
+# against the per-title availability cache. Then it enriches them with
+# credits. The depth feeds the runtime filter of the landing page. A
+# tight minute limit thins the rail. Thus, the rail stores many more
+# films than the 12 that it displays. The enrichment is cached for 1
+# week. Thus, the extra depth costs 1 burst on the first night.
 
 VERIFY_DEPTH = 100
 ENRICH_DEPTH = 50
@@ -83,8 +86,9 @@ STORED_RAIL_ITEMS = 50
 
 
 def _discover(params):
-    """One discover page's results, [] on failure (the rail just gets
-    shallower)."""
+    """Return the results of one discover page, or [] on failure.
+
+    On failure, the rail only becomes less deep."""
 
     try:
         r = tmdb_get(
@@ -100,8 +104,10 @@ def _discover(params):
 
 
 def _base_params(provider_ids):
-    """The hygiene every rail query carries: US flatrate on the given
-    providers, no adult titles, and a vote floor against shovelware."""
+    """Return the hygiene that each rail query carries.
+
+    That is US flatrate on the given providers, no adult titles, and a
+    vote floor against shovelware."""
 
     return {
         "watch_region": "US",
@@ -113,8 +119,9 @@ def _base_params(provider_ids):
 
 
 def _merge(pool, items, source):
-    """Fold discover items into the candidate pool, accumulating each
-    film's provenance tags."""
+    """Fold the discover items into the candidate pool.
+
+    This function accumulates the provenance tags of each film."""
 
     for item in items:
         tmdb_id = item.get("id")
@@ -126,9 +133,11 @@ def _merge(pool, items, source):
 
 
 def provider_pool(provider_id, provider_name):
-    """The shared candidate pool for one provider — popular, acclaimed,
-    and newly streaming pages — cached for a day so on-demand rail
-    computes don't refetch what the nightly run already pulled."""
+    """Return the shared candidate pool for one provider.
+
+    The pool holds the popular, acclaimed, and newly streaming pages.
+    Fitzflix caches it for 1 day. Thus, an on-demand rail compute does
+    not fetch again what the nightly run already pulled."""
 
     cache_key = POOL_KEY.format(provider_id=int(provider_id))
     cached = current_app.redis.get(cache_key)
@@ -155,10 +164,11 @@ def provider_pool(provider_id, provider_name):
 
 
 def _taste_queries(profile, provider_ids):
-    """(provenance tag, extra params, pages) tuples shaped by the user's
-    profile: their top genres, their favorite decade, and their
-    highest-affinity people — the queries that yield the crispest
-    explanations."""
+    """Return (provenance tag, extra params, pages) tuples shaped by the profile.
+
+    The queries use the top genres of the user, the favorite decade,
+    and the people with the highest affinity. These queries give the
+    clearest explanations."""
 
     affinities = profile.get("affinities", {})
 
@@ -234,9 +244,11 @@ def _taste_queries(profile, provider_ids):
 
 
 def _excluded_tmdb_ids(user_id):
-    """TMDB ids the rail must never recommend: films with a local
-    main-feature file, films already in this user's diary (owned or
-    review-only records alike), and films they've waved off."""
+    """Return the TMDB ids that the rail must never recommend.
+
+    These are the films with a local main-feature file, the films
+    already in the diary of this user (owned records and review-only
+    records), and the films that the user dismissed."""
 
     owned = db.session.query(Movie.tmdb_id).filter(
         Movie.tmdb_id.isnot(None),
@@ -263,10 +275,11 @@ def _excluded_tmdb_ids(user_id):
 
 
 def _discover_features(item):
-    """Coarse feature tuples straight off a discover payload item —
-    genre ids, decade, language — for pre-verification ranking. Labels
-    aren't needed at this stage; the display pass rescores enriched
-    payloads."""
+    """Return coarse feature tuples directly from a discover payload item.
+
+    The tuples hold the genre ids, the decade, and the language. They
+    serve the ranking before verification. Labels are not necessary at
+    this stage. The display pass scores the enriched payloads again."""
 
     features = []
     for genre_id in item.get("genre_ids") or []:
@@ -284,9 +297,11 @@ def _discover_features(item):
 
 
 def enriched_movie(tmdb_id):
-    """The trimmed movie payload the rail scores and displays — genres,
-    keywords, top cast, role-mapped crew, runtime — cached for a week
-    (credits and runtimes are stable)."""
+    """Return the trimmed movie payload that the rail scores and displays.
+
+    It holds the genres, keywords, top cast, role-mapped crew, and
+    runtime. Fitzflix caches it for 1 week (credits and runtimes are
+    stable)."""
 
     cache_key = ENRICHED_KEY.format(tmdb_id=int(tmdb_id))
     cached = current_app.redis.get(cache_key)
@@ -307,11 +322,11 @@ def enriched_movie(tmdb_id):
         payload = r.json() or {}
     except HTTPError as error:
         if error.response is not None and error.response.status_code == 404:
-            # TMDB deletes films whose credit rows linger on person
-            # pages, so a filmography can keep offering an id the movie
-            # endpoint no longer answers. Cache the miss as a null
-            # payload — readers treat it as "nothing here" — so each
-            # render doesn't re-ask.
+            # TMDB deletes films, but their credit rows stay on person
+            # pages. Thus, a filmography can continue to offer an id that
+            # the movie endpoint no longer answers. Cache the miss as a
+            # null payload. The readers treat it as "nothing here". Thus,
+            # each render does not ask again.
             current_app.logger.info(f"TMDB movie {int(tmdb_id)} is gone (404)")
             current_app.redis.set(
                 cache_key, json.dumps(None), ex=ENRICHED_CACHE_SECONDS
@@ -358,9 +373,11 @@ def enriched_movie(tmdb_id):
 
 
 def _payload_features(payload):
-    """Full feature tuples from an enriched payload, in the exact key
-    space the taste profile uses — so library films and streaming
-    candidates score on the same affinities, crew roles included."""
+    """Return the full feature tuples from an enriched payload.
+
+    The tuples use the exact key space of the taste profile. Thus, the
+    library films and the streaming candidates score on the same
+    affinities, crew roles included."""
 
     features = []
     for genre in payload.get("genres") or []:
@@ -396,13 +413,13 @@ def _payload_features(payload):
 
 
 def compute_user_rail(user):
-    """The ranked streaming rail for one user, or None when they lack a
-    taste profile or provider picks.
+    """Return the ranked streaming rail for one user, or None.
 
-    Pipeline: shared provider pools + taste-shaped queries -> coarse
-    affinity ranking -> per-title availability verification (discover
-    lies; the watch-provider cache doesn't) -> credits enrichment and
-    full-feature rescoring of the survivors.
+    The result is None when the user has no taste profile or no
+    provider picks. Pipeline: shared provider pools + taste-shaped
+    queries -> coarse affinity ranking -> per-title availability
+    verification (discover lies, the watch-provider cache does not) ->
+    credits enrichment and full-feature rescoring of the survivors.
     """
 
     profile = stored_profile(current_app.redis, user.id)
@@ -438,8 +455,9 @@ def compute_user_rail(user):
         ranked.append((score, popularity, tmdb_id, entry))
     ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
 
-    # Verification: only films genuinely streaming on this user's
-    # services survive (day-cached per title, shared with page views)
+    # Verification. Only the films that really stream on the services
+    # of this user survive. The availability is cached per title and
+    # shared with the page views.
 
     candidates = ranked[:VERIFY_DEPTH]
     availability, _ = batch_title_availability(
@@ -455,13 +473,13 @@ def compute_user_rail(user):
         if len(verified) == ENRICH_DEPTH:
             break
 
-    # Enrichment: full credits so crew affinities score, then the final
-    # ranking with human-readable explanations
+    # Enrichment. The full credits let the crew affinities score. Then
+    # the final ranking gets human-readable explanations.
 
     flask_app = current_app._get_current_object()
 
     def enrich(tmdb_id):
-        """One enriched payload under its own app context."""
+        """Return one enriched payload under its own app context."""
 
         with flask_app.app_context():
             return tmdb_id, enriched_movie(tmdb_id)
@@ -501,16 +519,17 @@ def compute_user_rail(user):
 
 
 def ensure_rail_records(items):
-    """A real movie record for every rail film, so the shared score
-    source can estimate them like any owned or listed title.
+    """Make sure that each rail film has a real movie record.
 
-    Rail films found on TMDB alone have no record for /movie_states to
-    map their tile through, which left their ladders blank while films
-    with records showed estimates. Each gets a review-only record here —
-    through the same shared creation door the review and watchlist
-    surfaces walk — and anything never stamped by the standard TMDB
-    refresh gets one enqueued, after which the resolver scores it on
-    the first tile view and the nightly recompute folds it in."""
+    Then the shared score source can estimate them like any owned or
+    listed title. A rail film found only on TMDB had no record that
+    /movie_states could map its tile through. Thus, its ladder stayed
+    blank while the films with records showed estimates. Each film gets
+    a review-only record here. It goes through the same shared creation
+    door that the review and watchlist surfaces use. A film that the
+    standard TMDB refresh never stamped gets a refresh enqueued. After
+    that, the resolver scores it on the first tile view, and the
+    nightly recompute includes it."""
 
     from app.tmdb_refresh import find_or_create_tmdb_movie
 
@@ -533,8 +552,10 @@ def ensure_rail_records(items):
 
 
 def recompute_streaming_rail():
-    """Nightly task: rebuild the streaming rail for every user with a
-    taste profile and provider picks, into Redis for the landing page."""
+    """Rebuild the streaming rail for each user with a profile (nightly task).
+
+    The user must have a taste profile and provider picks. Fitzflix
+    stores the rail in Redis for the landing page."""
 
     with app.app_context():
         computed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -559,7 +580,7 @@ def recompute_streaming_rail():
 
 
 def stored_rail(redis, user_id):
-    """The nightly recompute's stored rail for a user, or None."""
+    """Return the stored rail of the nightly recompute for a user, or None."""
 
     payload = redis.get(RAIL_KEY.format(user_id=int(user_id)))
     return json.loads(payload) if payload else None

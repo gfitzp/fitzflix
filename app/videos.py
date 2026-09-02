@@ -1,16 +1,16 @@
-"""The shared task plumbing — and the compatibility shim.
+"""The shared task plumbing and the compatibility shim.
 
-What physically remains here: the cross-cutting machinery every
-pipeline module leans on — file-copy with progress and transient-error
-retries, the title lock acquire-or-defer dance, subprocess supervision,
-and the dead-volume probe.
+This module keeps the machinery that every pipeline module uses. That
+is the file copy with progress and retries after transient errors, the
+acquire-or-defer sequence for the title lock, the subprocess
+supervision, and the dead-volume probe.
 
-Everything else re-exports from the modules the strangler split carved
-out (aws_storage, criterion_catalog, diary, tracks, importing,
-tmdb_refresh): rq job names are strings stored in Redis, cron tables,
-and the pipeline trail registry, so "app.videos.X" must keep resolving
-forever. New code should import from the real homes; the shim exists
-for the strings and the history.
+All the other names are re-exports from the modules that the strangler
+split created (aws_storage, criterion_catalog, diary, tracks,
+importing, tmdb_refresh). The rq job names are strings stored in Redis,
+in cron tables, and in the pipeline trail registry. Thus,
+"app.videos.X" must resolve forever. New code must import from the
+real homes. The shim exists for the strings and the history.
 """
 
 import errno
@@ -27,9 +27,9 @@ from werkzeug.local import LocalProxy
 from app import get_app, safe_job_id
 from app.maintenance import VOLUMES_ROOT, volume_alive
 
-# The AWS storage layer moved to app.aws_storage; these re-exports
-# keep every stored rq job string and import site resolving through
-# app.videos, and keep this module's own callers working unchanged
+# The AWS storage layer moved to app.aws_storage. These re-exports keep
+# every stored rq job string and import site resolving through
+# app.videos. The callers of this module continue to work unchanged.
 
 from app.aws_storage import (
     EIGHT_MEGABYTES,
@@ -54,8 +54,8 @@ from app.aws_storage import (
     upload_task,
 )
 
-# The Criterion spine catalog moved to app.criterion_catalog and the
-# diary writers to app.diary; same re-export contract as above
+# The Criterion spine catalog moved to app.criterion_catalog. The diary
+# writers moved to app.diary. The re-export contract is the same as above.
 
 from app.criterion_catalog import (
     CRITERION_CACHE_KEY,
@@ -132,9 +132,9 @@ from app.tracks import (
     watch_mkvmerge_progress,
 )
 
-# __all__ marks the re-exports as deliberately public: rq job strings
-# and import sites resolve them through app.videos (it also tells
-# pyflakes they're used)
+# __all__ marks the re-exports as public on purpose. The rq job strings
+# and the import sites resolve them through app.videos. It also tells
+# pyflakes that they are used.
 
 __all__ = [
     "EIGHT_MEGABYTES",
@@ -224,10 +224,10 @@ __all__ = [
 ]
 
 
-# OSError numbers that signal a dropped or flaky network mount rather than a
-# problem with the file itself — e.g. macOS smbfs revokes a copy's open file
-# handles with EBADF when the SMB session they belong to resets mid-operation.
-# These deserve a retry, never an immediate reject
+# These OSError numbers show a dropped or unstable network mount, not a
+# problem with the file itself. For example, macOS smbfs revokes the open
+# file handles of a copy with EBADF when their SMB session resets during
+# the operation. These errors get a retry, never an immediate reject.
 
 TRANSIENT_COPY_ERRNOS = {
     errno.EBADF,
@@ -243,7 +243,7 @@ MAX_TRANSIENT_RETRIES = 3
 
 
 def copy_with_progress(src, dst, job, name, activity="Copying to library"):
-    """Copy a file in chunks, reporting progress like the external tools do."""
+    """Copy a file in chunks and report the progress like the external tools."""
 
     total = os.path.getsize(src)
     copied = 0
@@ -270,12 +270,12 @@ def copy_with_progress(src, dst, job, name, activity="Copying to library"):
             pass
         raise
 
-    # Every byte has been read and written by now, so a source that fails
-    # its own close has nothing left to tell us about the copy. An SMB
-    # server that has lost its handle for a file answers close() with EBADF
-    # every time while still serving reads perfectly, and throwing away a
-    # byte-complete copy over it just repeats the whole transfer for as
-    # long as the share stays in that state
+    # At this point, the copy has read and written every byte. Thus, a
+    # source that fails its own close() tells nothing more about the copy.
+    # An SMB server that lost its handle for a file answers close() with
+    # EBADF every time. At the same time, it serves reads correctly. If
+    # Fitzflix discards a byte-complete copy for that error, it repeats the
+    # full transfer while the share stays in that state.
 
     try:
         fsrc.close()
@@ -289,11 +289,11 @@ def copy_with_progress(src, dst, job, name, activity="Copying to library"):
 
 
 def _rename_with_retries(src, dst, attempts=5, delay=5):
-    """Rename with retries.
+    """Rename a file with retries.
 
-    A busy SMB volume can briefly return spurious errors — including ENOENT
-    for names that exist — so transient failures get another try before the
-    error is allowed to propagate.
+    A busy SMB volume can return false errors for a short time. This
+    includes ENOENT for names that exist. Thus, a transient failure gets a
+    new try before the error propagates.
     """
 
     for attempt in range(1, attempts + 1):
@@ -311,7 +311,7 @@ def _rename_with_retries(src, dst, attempts=5, delay=5):
 
 
 def _dead_volumes(paths):
-    """The /Volumes mount roots among paths that aren't responding."""
+    """Return the /Volumes mount roots in paths that do not respond."""
 
     mounts = set()
     for path in paths:
@@ -333,9 +333,10 @@ def acquire_lock_or_defer(
 ):
     """Take the redlock for a title, or schedule the task to retry later.
 
-    Returns the lock on success, or None after scheduling the retry.
-    The retry lands in the queue's native ScheduledJobRegistry;
-    scheduler.py's mover enqueues it when due.
+    This function returns the lock on success. It returns None after it
+    schedules the retry. The retry goes into the native
+    ScheduledJobRegistry of the queue. The mover in scheduler.py enqueues
+    the retry when it is due.
     """
 
     lock = current_app.lock_manager.lock(resource, ttl_ms)
@@ -349,9 +350,10 @@ def acquire_lock_or_defer(
         f"returning to queue after {sleep_duration} minutes"
     )
 
-    # The deterministic id makes repeat deferrals replace the pending retry
-    # instead of stacking new ones; the day-long result ttl keeps a finished
-    # retry's record alive long enough for any retry it scheduled itself
+    # The deterministic id makes a repeat deferral replace the pending
+    # retry. It does not add a new one. The result ttl of 1 day keeps the
+    # record of a finished retry alive. Thus, a retry that it scheduled
+    # itself can still find that record.
 
     queue.enqueue_in(
         timedelta(minutes=sleep_duration),
@@ -367,11 +369,12 @@ def acquire_lock_or_defer(
 
 
 def wait_for_subprocess(process, ok_returncodes=(0,)):
-    """Wait for an external tool to finish, and raise if it exited with an error.
+    """Wait for an external tool to stop, and raise if it exited with an error.
 
-    Accepts either a subprocess.Popen or a subprocess.CompletedProcess. The
-    mkvtoolnix tools (mkvmerge, mkvpropedit) exit with 1 for warnings and 2 for
-    errors, so callers for those tools should pass ok_returncodes=(0, 1).
+    This function accepts a subprocess.Popen or a subprocess.CompletedProcess.
+    The mkvtoolnix tools (mkvmerge, mkvpropedit) exit with 1 for warnings and
+    with 2 for errors. Thus, the callers for those tools must pass
+    ok_returncodes=(0, 1).
     """
 
     if hasattr(process, "wait"):
@@ -380,7 +383,8 @@ def wait_for_subprocess(process, ok_returncodes=(0,)):
         raise subprocess.CalledProcessError(process.returncode, process.args)
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# The app instance of this process. Fitzflix resolves it lazily. Thus, a
+# process that already has an application can import this module without
+# a second application.
 
 app = LocalProxy(get_app)

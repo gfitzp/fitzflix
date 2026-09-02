@@ -1,17 +1,18 @@
-"""Content-based film recommendations.
+"""Make content-based film recommendations.
 
-The engine builds a per-user taste profile from that user's own diary
-rows — likes and chosen watches weigh above star ratings, and the
-household shopping-cart priority is never consulted, because it mixes
-in watchers who aren't Fitzflix users — then scores every film that
-has a local full-feature file against the profile. Results land in
-Redis on a nightly recompute; every recommendation carries its top
-contributing features so the landing page can say why it was picked.
+The engine builds a taste profile for each user from the own diary rows
+of that user. Likes and chosen watches weigh more than star ratings.
+The engine never reads the household shopping-cart priority. That
+priority includes watchers that are not Fitzflix users. Then the
+engine scores each film that has a local full-feature file against the
+profile. A nightly recompute writes the results to Redis. Each
+recommendation carries its top contributing features. Thus, the
+landing page can say why the engine picked it.
 
-There is no collaborative filtering (two users) and no ML dependency:
-a profile is a dictionary of per-feature affinities built from
-centered ratings with Bayesian shrinkage toward zero, and scoring is
-a weighted sum of soft per-class averages.
+There is no collaborative filtering (there are 2 users) and no ML
+dependency. A profile is a dictionary of per-feature affinities. The
+engine builds it from centered ratings with Bayesian shrinkage toward
+zero. The score is a weighted sum of soft per-class averages.
 """
 
 import bisect
@@ -41,14 +42,15 @@ from app.models import (
     movie_keywords,
 )
 
-# This process's app instance, resolved lazily so importing this module
-# from a process that already has an application doesn't build a second one
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# a process that already has an application does not build a second
+# one when it imports this module.
 
 app = LocalProxy(get_app)
 
 
-# How strongly each feature class steers scoring; `flask recs evaluate`
-# reports how alternates fare before these are changed
+# The strength of each feature class in the score. Run `flask recs
+# evaluate` to measure alternatives before you change these.
 
 FEATURE_CLASS_WEIGHTS = {
     "genre": 1.0,
@@ -63,9 +65,9 @@ FEATURE_CLASS_WEIGHTS = {
     "language": 0.4,
 }
 
-# Crew roles are separate feature classes — a lumped "crew" class would
-# let role signals dilute each other. Labels double as the explanation
-# text ("shot by Roger Deakins")
+# Each crew role is a separate feature class. In a combined "crew"
+# class, the role signals would dilute each other. The labels are also
+# the explanation text ("shot by Roger Deakins").
 
 CREW_ROLE_JOBS = {
     "director": (("Director",), "directed by {name}"),
@@ -78,9 +80,10 @@ CREW_ROLE_JOBS = {
     "editor": (("Editor",), "edited by {name}"),
 }
 
-# Bayesian shrinkage per class: affinity = sum(weights) / (count + k),
-# so a feature seen once can't dominate one the user has rated often.
-# Sparse classes (people) get lighter shrinkage than broad ones
+# Bayesian shrinkage for each class: affinity = sum(weights) / (count +
+# k). Thus, a feature seen 1 time cannot dominate a feature that the
+# user rated many times. Sparse classes (people) get lighter shrinkage
+# than broad classes.
 
 FEATURE_CLASS_SHRINKAGE = {
     "genre": 5.0,
@@ -95,14 +98,14 @@ FEATURE_CLASS_SHRINKAGE = {
     "language": 5.0,
 }
 
-# Cast rows that count as "starring" for taste purposes
+# The cast rows that count as "starring" for the taste profile.
 
 TOP_BILLING_CUTOFF = 8
 
-# Diary-row sentiment: a like outranks any centered star rating, a bare
-# watch is a mild positive (the user chose it), rewatches add a little
-# more, and ratings center on the user's own mean so an average score
-# contributes nothing
+# The sentiment of a diary row. A like outranks each centered star
+# rating. A bare watch is a mild positive (the user chose it). A rewatch
+# adds a small amount more. Ratings center on the own mean of the user.
+# Thus, an average score contributes nothing.
 
 LIKE_WEIGHT = 1.0
 BARE_WATCH_WEIGHT = 0.3
@@ -110,59 +113,63 @@ REWATCH_WEIGHT = 0.25
 REWATCH_CAP = 2
 RATING_SPREAD = 2.5
 
-# A watchlist add is interest, not approval: weaker than choosing to
-# watch, but a real signal about taste
+# A watchlist add is interest, not approval. It is weaker than a choice
+# to watch, but it is a real signal about taste.
 
 WATCHLIST_WEIGHT = 0.2
 
-# "Not interested" is the watchlist's mirror: a mild negative for a
-# film the user waved off without watching — never stacked on a real
-# diary verdict, which already carries the sentiment (#45b)
+# "Not interested" is the mirror of the watchlist. It is a mild
+# negative for a film that the user refused without a watch. It never
+# adds to a real diary verdict. The verdict already carries the
+# sentiment (#45b).
 
 NOT_INTERESTED_WEIGHT = -0.3
 
-# Redis keys written by the nightly recompute
+# The Redis keys that the nightly recompute writes.
 
 RECS_KEY = "fitzflix:recs:{user_id}"
 PROFILE_KEY = "fitzflix:recs:profile:{user_id}"
 
-# The complete score map: every scoreable unlogged film's full-
-# recipe engine score, so any surface can show an estimated rating
-# with one Redis read — the ranking above keeps only the positive cut
+# The complete score map: the full-recipe engine score of each
+# scoreable unlogged film. Thus, each surface can show an estimated
+# rating with 1 Redis read. The ranking above keeps only the positive
+# cut.
 
 SCORES_KEY = "fitzflix:recs:scores:{user_id}"
 
-# Films scored live between recomputes — records created after the
-# last nightly run — patch into the map through this overlay hash, so
-# every surface reads one number per film no matter which computed it.
-# The nightly rebuild covers those films properly and drops the
-# overlay; the TTL is garbage collection for a recompute that stops
-# running, since a lost patch just gets recomputed on demand.
+# Films scored live between recomputes (records created after the last
+# nightly run) patch into the map through this overlay hash. Thus, each
+# surface reads 1 number for each film. The source of the number is not
+# important. The nightly rebuild covers those films fully and deletes
+# the overlay. The TTL is garbage collection for a recompute that stops.
+# Fitzflix recomputes a lost patch on demand.
 
 PATCH_SCORES_KEY = "fitzflix:recs:scores:patch:{user_id}"
 PATCH_SCORES_TTL = 60 * 60 * 48
 
-# The shared source's TMDB-keyed lane: scores for films with no local
-# record at all, computed from their cached enriched payloads (the
-# award prior excepted — award rows are local) and held in their own
-# overlay. Nothing ever lands in the database for these films; the
-# nightly recompute drops the overlay so estimates re-derive against
-# the fresh profile, with the TTL as garbage collection.
+# The TMDB-keyed lane of the shared source: scores for films with no
+# local record. Fitzflix computes them from their cached enriched
+# payloads and holds them in their own overlay. The award prior is the
+# exception. Award rows are local. Nothing goes into the database for
+# these films. The nightly recompute deletes the overlay. Thus, the
+# estimates derive again from the new profile. The TTL is garbage
+# collection.
 
 TMDB_PATCH_SCORES_KEY = "fitzflix:recs:scores:tmdb:{user_id}"
 
-# Deep enough that the landing page's no-repeat partition (12 films a
-# day, one per quality tier) cycles the whole set roughly monthly —
-# the library pool measured 2,800+ positive-scoring films, so depth
-# costs nothing but Redis bytes
+# This depth lets the no-repeat partition of the landing page (12
+# films a day, 1 for each quality tier) cycle the full set about each
+# month. The library pool measured more than 2,800 positive-scoring
+# films. Thus, the depth costs only Redis bytes.
 
 STORED_RECOMMENDATIONS = 400
 
-# "Might interest you" markers: how many films a filmography page marks
-# at most, the absolute floor a film must clear, and the percentile of
-# the user's own candidate library that sets the real bar — a saturated
-# profile scores almost every film highly on raw affinity, so the badge
-# means "notably above your typical film", not "matches a liked genre"
+# The "Might interest you" markers: the maximum number of films that a
+# filmography page marks, the absolute minimum that a film must pass,
+# and the percentile of the own candidate library of the user that sets
+# the real bar. A saturated profile scores almost each film highly on
+# raw affinity. Thus, the badge means "much above your typical film",
+# not "matches a liked genre".
 
 MARKER_LIMIT = 5
 MARKER_THRESHOLD = 0.05
@@ -170,9 +177,11 @@ MARKER_BASELINE_PERCENTILE = 0.9
 
 
 def marker_bar(profile):
-    """The coarse score a film must beat to earn a marker: the stored
-    baseline percentile of the user's own candidate library, floored at
-    the absolute threshold (new or sparse profiles fall back there)."""
+    """Return the coarse score that a film must pass to get a marker.
+
+    This is the stored baseline percentile of the own candidate library
+    of the user. The minimum is the absolute threshold. A new or sparse
+    profile uses that threshold."""
 
     if not profile:
         return MARKER_THRESHOLD
@@ -180,12 +189,14 @@ def marker_bar(profile):
 
 
 def collect_features(movie_ids):
-    """(class, key, label) feature tuples per movie id, bulk-queried so
-    profile builds and scoring runs never walk per-movie relationships.
+    """Return the (class, key, label) feature tuples for each movie id.
 
-    Keys are stable and portable: genre/actor/director keys embed TMDB
-    ids, so the filmography markers can score cached TMDB payloads
-    against the same profile.
+    This queries in bulk. Thus, profile builds and score runs never walk
+    the relationships of each movie.
+
+    The keys are stable and portable. Genre, actor, and director keys
+    embed TMDB ids. Thus, the filmography markers can score cached TMDB
+    payloads against the same profile.
     """
 
     features = {movie_id: [] for movie_id in movie_ids}
@@ -242,8 +253,8 @@ def collect_features(movie_ids):
     ):
         features[movie_id].append(("actor", f"actor:{credit_id}", name))
 
-    # An actor can appear twice on one film under different characters;
-    # a feature counts once per film
+    # An actor can appear 2 times on 1 film as different characters. A
+    # feature counts 1 time for each film.
 
     for movie_id, rows in features.items():
         seen = set()
@@ -258,12 +269,14 @@ def collect_features(movie_ids):
 
 
 def latest_ratings(user_id):
-    """Each film's current star rating: the one carried by its most
-    recent diary row — reviews before bare watches, newest first, id
-    breaking ties, the same row the movie page's star widget shows —
-    so a re-rate supersedes the old verdict instead of competing with
-    it (Glenn's rule, Aug 2026). Films whose latest row is unrated
-    map to None."""
+    """Return the current star rating of each film.
+
+    This is the rating of the most recent diary row. Reviews come
+    before bare watches, newest first. The id breaks ties. This is the
+    same row that the star widget of the movie page shows. Thus, a new
+    rating replaces the old verdict. It does not compete with it (the
+    rule of Glenn, 2026-08). A film whose latest row is unrated maps to
+    None."""
 
     rows = (
         db.session.query(
@@ -287,9 +300,11 @@ def latest_ratings(user_id):
 
 
 def user_movie_weights(user_id):
-    """Per-movie sentiment weights from the user's own diary rows —
-    never the household shopping-cart priority — plus a mild interest
-    weight for unwatched films on their watchlist."""
+    """Return the sentiment weight of each movie.
+
+    The weights come from the own diary rows of the user. They never
+    come from the household shopping-cart priority. Unwatched films on
+    the watchlist of the user get a mild interest weight."""
 
     rows = (
         db.session.query(
@@ -312,10 +327,10 @@ def user_movie_weights(user_id):
         weight = 0.0
         rating = current.get(movie_id)
         if rating is None and liked:
-            # A liked-only viewing — Letterboxd allows a heart with no
-            # stars — counts as a 3-star verdict for the profile
-            # (Glenn's rule, Aug 2026); the interface shows it unrated
-            # so the user can still supply real stars later
+            # A liked-only viewing counts as a 3-star verdict for the
+            # profile (the rule of Glenn, 2026-08). Letterboxd permits a
+            # heart with no stars. The interface shows the viewing as
+            # unrated. Thus, the user can supply real stars later.
             rating = 3.0
         if rating is not None:
             centered = (rating - mean_rating) / RATING_SPREAD
@@ -345,8 +360,11 @@ def user_movie_weights(user_id):
 
 
 def build_profile(weights, features_by_movie):
-    """The taste profile: per-feature affinities shrunk toward zero, from
-    {movie_id: weight} and that user's movies' features."""
+    """Return the taste profile.
+
+    The profile holds the affinity of each feature, shrunk toward zero.
+    The inputs are {movie_id: weight} and the features of the movies of
+    that user."""
 
     sums, counts, labels, classes = {}, {}, {}, {}
     for movie_id, weight in weights.items():
@@ -369,12 +387,12 @@ def build_profile(weights, features_by_movie):
 
 
 def score_movie(features, profile, class_weights=None):
-    """(score, contributions) for one film against a profile.
+    """Return (score, contributions) for 1 film against a profile.
 
-    Matched features are soft-averaged within their class so a film
-    with thirty keywords can't outrank one with three good ones, then
-    classes combine by weight. Contributions come back sorted for the
-    landing page's "because" display.
+    The matched features get a soft average within their class. Thus, a
+    film with 30 keywords cannot outrank a film with 3 good keywords.
+    Then the classes combine by weight. The contributions come back
+    sorted for the "because" display of the landing page.
     """
 
     class_weights = class_weights or FEATURE_CLASS_WEIGHTS
@@ -400,11 +418,12 @@ def score_movie(features, profile, class_weights=None):
     return score, contributions
 
 
-# The award prior: a capped quality bump from Wikidata wins and
-# nominations, added AFTER a film already scores positive on taste —
-# awards alone can't recommend a taste-mismatched film, and the cap
-# keeps a festival darling's hundred citations from drowning the
-# taste signal (top library scores run ~2-3)
+# The award prior: a limited quality increase from Wikidata wins and
+# nominations. Fitzflix adds it only AFTER a film scores positive on
+# taste. Awards alone cannot recommend a film that does not match the
+# taste. The limit prevents the 100 citations of a festival favorite
+# from drowning the taste signal. The top library scores are about 2
+# to 3.
 
 AWARD_WIN_WEIGHT = 0.1
 AWARD_NOMINATION_WEIGHT = 0.025
@@ -412,7 +431,8 @@ AWARD_PRIOR_CAP = 0.3
 
 
 def movie_award_counts():
-    """(wins, nominations) tallies per movie id, for the quality prior."""
+    """Return the (wins, nominations) counts for each movie id, for the
+    quality prior."""
 
     counts = {}
     for movie_id, win, tally in db.session.query(
@@ -428,7 +448,8 @@ def movie_award_counts():
 
 
 def award_prior(wins, nominations):
-    """The capped score bump a film's award record earns."""
+    """Return the limited score increase that the award record of a film
+    gets."""
 
     return min(
         wins * AWARD_WIN_WEIGHT + nominations * AWARD_NOMINATION_WEIGHT,
@@ -437,29 +458,31 @@ def award_prior(wins, nominations):
 
 
 def award_label(wins, nominations):
-    """The because-chip text for an awarded film."""
+    """Return the because-chip text for an awarded film."""
 
     if wins:
         return f"won {wins} award{'s' if wins != 1 else ''}"
     return "award-nominated"
 
 
-# The co-preference term: what content features can't see, thirty-two
-# million MovieLens ratings can. A candidate's value is the weighted
-# average of the user's own sentiment over its K most-similar diary
-# films ("people who loved what you loved also loved this"), so the
-# term ranges with the diary weights themselves. The weight was chosen
-# by leave-one-out bake-off (Aug 2026): 2.0 sits on a flat optimum that
-# cut mean percentile from 0.324 to 0.266 and more than doubled hit@10;
-# the laurel person-prior alternative measured flat and was rejected
+# The co-preference term. Content features cannot see some signals.
+# The 32 million MovieLens ratings can. The value of a candidate is the
+# weighted average of the own sentiment of the user over its K most
+# similar diary films ("people who loved what you loved also loved
+# this"). Thus, the term has the same range as the diary weights. A
+# leave-one-out comparison chose the weight (2026-08). The value 2.0
+# sits on a flat optimum. It cut the mean percentile from 0.324 to
+# 0.266. It more than doubled hit@10. The laurel person-prior
+# alternative measured flat. It was rejected.
 
 COPREF_WEIGHT = 2.0
 COPREF_NEIGHBORS = 20
 
 
 def copref_anchor_sims(anchor_tmdb_ids):
-    """{anchor tmdb: {other tmdb: similarity}} for the given anchors,
-    from the movie_copref table (empty when the table's never built)."""
+    """Return {anchor tmdb: {other tmdb: similarity}} for the given
+    anchors from the movie_copref table. It is empty if the table was
+    never built."""
 
     anchors = [int(t) for t in anchor_tmdb_ids if t]
     if not anchors:
@@ -473,11 +496,12 @@ def copref_anchor_sims(anchor_tmdb_ids):
 
 
 def copref_entries(weights_by_tmdb, sims_by_anchor):
-    """Per-film neighbor lists for co-preference scoring.
+    """Return the neighbor list of each film for the co-preference score.
 
-    {film tmdb: [(similarity, anchor tmdb, anchor weight), ...]} sorted
-    most-similar first — the input to _copref_value, built once per
-    compute or evaluation and cheap to re-rank per fold.
+    The shape is {film tmdb: [(similarity, anchor tmdb, anchor weight),
+    ...]}, most similar first. This is the input to _copref_value.
+    Fitzflix builds it 1 time for each compute or evaluation. A new rank
+    for each fold is cheap.
     """
 
     buckets = {}
@@ -493,8 +517,8 @@ def copref_entries(weights_by_tmdb, sims_by_anchor):
 
 
 def _copref_value(entries, excluded=None):
-    """One film's co-preference term from its sorted neighbor list,
-    optionally excluding an anchor (leave-one-out purity)."""
+    """Return the co-preference term of 1 film from its sorted neighbor
+    list. An optional anchor is excluded (leave-one-out purity)."""
 
     numerator = 0.0
     denominator = 0.0
@@ -512,16 +536,17 @@ def _copref_value(entries, excluded=None):
     return COPREF_WEIGHT * numerator / denominator
 
 
-# A chip only when co-preference DOMINATES the pick (the term meets the
-# whole taste score): typical terms run ~2 across most of the library,
-# so an absolute floor alone would chip everything into noise
+# A chip appears only if the co-preference DOMINATES the pick (the term
+# equals or exceeds the full taste score). Typical terms are about 2
+# across most of the library. Thus, an absolute minimum alone would put
+# a chip on each film and make noise.
 
 COPREF_CHIP_THRESHOLD = 0.5
 
 
 def _copref_top_anchor(entries):
-    """The anchor doing the most lifting inside the top-K window — the
-    film named by the "liked by people who liked …" chip — or None."""
+    """Return the anchor with the largest effect in the top-K window, or
+    None. The "liked by people who liked ..." chip names this film."""
 
     best = None
     best_value = 0.0
@@ -537,11 +562,12 @@ def _copref_top_anchor(entries):
     return best
 
 
-# Estimated ratings (#45a): quantile-match a candidate's engine score
-# onto the user's own star distribution. The curve comes from
-# leave-one-out scores of the user's rated films — each scored against
-# a profile built without it, so a film can't flatter its own estimate
-# — and needs enough rated films to mean anything
+# Estimated ratings (#45a): a quantile match of the engine score of a
+# candidate onto the own star distribution of the user. The curve comes
+# from the leave-one-out scores of the rated films of the user. Each
+# film scores against a profile built without it. Thus, a film cannot
+# improve its own estimate. The curve needs a sufficient number of
+# rated films to have a meaning.
 
 CALIBRATION_MIN_RATED = 20
 
@@ -549,13 +575,14 @@ CALIBRATION_MIN_RATED = 20
 def build_calibration(
     user_id, weights, features, entries_by_tmdb, tmdb_of, award_counts
 ):
-    """The score→stars calibration curve for one user, or None.
+    """Return the score-to-stars calibration curve for 1 user, or None.
 
-    {"scores": [...], "stars": [...]}, each sorted ascending: a
-    candidate score's fractional position among the LOO scores reads
-    out at the same position in the sorted ratings. Scores follow the
-    stored-recommendation recipe exactly (taste + co-preference, award
-    prior when taste is positive) so stored scores translate directly.
+    The shape is {"scores": [...], "stars": [...]}. Each list is sorted
+    in ascending order. The fractional position of a candidate score in
+    the LOO scores reads out at the same position in the sorted ratings.
+    The scores follow the stored-recommendation recipe exactly (taste
+    plus co-preference, plus the award prior if the taste is positive).
+    Thus, the stored scores translate directly.
     """
 
     ratings = {
@@ -587,10 +614,12 @@ def build_calibration(
 
 
 def estimated_rating(profile, score):
-    """The user's likely star rating for a film scoring `score`, from
-    the profile's stored calibration curve — full precision so the
-    widget can fill partial stars (submitted ratings stay whole; only
-    estimates are fractional), or None when no curve is stored."""
+    """Return the probable star rating of the user for a film with the
+    score `score`, or None if no curve is stored.
+
+    The rating comes from the stored calibration curve of the profile.
+    It has full precision. Thus, the widget can fill partial stars.
+    Submitted ratings stay whole. Only estimates are fractional."""
 
     calibration = (profile or {}).get("calibration") or {}
     scores = calibration.get("scores") or []
@@ -608,11 +637,14 @@ def estimated_rating(profile, score):
 
 
 def _tmdb_copref(user_id, tmdb_id):
-    """Co-preference for one film from its own side of the pair table:
-    its stored neighbors intersected with the user's weighted films —
-    the same entries compute_user_recommendations builds anchor-side,
-    without fetching every anchor's full neighbor list. TMDB-keyed
-    throughout, so record-less films carry the signal too."""
+    """Return the co-preference for 1 film from its own side of the pair
+    table.
+
+    This intersects the stored neighbors of the film with the weighted
+    films of the user. These are the same entries that
+    compute_user_recommendations builds on the anchor side. This does
+    not fetch the full neighbor list of each anchor. All keys are TMDB
+    ids. Thus, films without a record carry the signal too."""
 
     if not tmdb_id:
         return 0.0
@@ -641,13 +673,16 @@ def _tmdb_copref(user_id, tmdb_id):
 
 
 def single_movie_score(user_id, movie, profile):
-    """The stored-recommendation recipe scored live for one film —
-    taste plus co-preference plus the award prior — so films outside
-    the stored ranking (unowned records, sub-cut candidates, taste
-    mismatches) can still carry an estimated rating. None until the
-    film's TMDB data has landed: a record mid-refresh has only its
-    decade to score with, which would read as a taste mismatch and
-    estimate misleadingly low."""
+    """Return the live score of 1 film with the stored-recommendation
+    recipe.
+
+    The recipe is taste plus co-preference plus the award prior. Thus,
+    a film outside the stored ranking (an unowned record, a candidate
+    below the cut, a taste mismatch) can carry an estimated rating.
+    This returns None until the TMDB data of the film arrives. A record
+    in the middle of a refresh has only its decade for the score. That
+    would read as a taste mismatch and give an incorrect low
+    estimate."""
 
     if not profile or movie.tmdb_data_as_of is None:
         return None
@@ -670,8 +705,8 @@ def single_movie_score(user_id, movie, profile):
 
 
 def not_interested_movie_ids(user_id):
-    """Movie ids the user has waved off — excluded from every
-    recommendation surface."""
+    """Return the movie ids that the user refused. Each recommendation
+    surface excludes them."""
 
     return {
         movie_id
@@ -683,9 +718,11 @@ def not_interested_movie_ids(user_id):
 
 
 def local_candidates(user_id):
-    """Movie ids with a local full-feature file, minus films the user
-    has already logged or waved off: the landing page only recommends
-    what's on the shelf, unseen, and unrefused."""
+    """Return the movie ids with a local full-feature file, without the
+    films that the user logged or refused.
+
+    The landing page recommends only films that are on the shelf,
+    unseen, and not refused."""
 
     seen = db.session.query(UserMovieReview.movie_id).filter(
         UserMovieReview.user_id == int(user_id),
@@ -707,9 +744,11 @@ def local_candidates(user_id):
 
 
 def scoreable_records(user_id):
-    """File-less movie records with refreshed TMDB data the user hasn't
-    logged or waved off — catalog and watchlist records whose pages can
-    show an estimated rating from the nightly score map."""
+    """Return the movie records without files that have refreshed TMDB
+    data and that the user did not log or refuse.
+
+    These are catalog and watchlist records. Their pages can show an
+    estimated rating from the nightly score map."""
 
     seen = db.session.query(UserMovieReview.movie_id).filter(
         UserMovieReview.user_id == int(user_id),
@@ -731,13 +770,13 @@ def scoreable_records(user_id):
 
 
 def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
-    """(profile, ranked recommendations, score map) for one user, or
+    """Return (profile, ranked recommendations, score map) for 1 user, or
     (None, [], {}) for a user with no diary rows.
 
-    The score map covers every scoreable unlogged film — owned
-    candidates AND file-less records with TMDB data — with the full
-    recipe, before the ranking's positives-only cut, so estimated
-    ratings can render anywhere."""
+    The score map covers each scoreable unlogged film with the full
+    recipe. This includes owned candidates AND records without files
+    that have TMDB data. The map comes before the positives-only cut of
+    the ranking. Thus, estimated ratings can render on each surface."""
 
     weights = user_movie_weights(user_id)
     if not weights:
@@ -749,13 +788,13 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     features = collect_features(list(set(scoreable) | set(weights)))
     profile = build_profile(weights, features)
 
-    # The stored cut must survive the render-time exclusions: the
-    # landing page pulls watchlisted films out of the discovery pool
-    # onto the top watchlist shelf, and the watchlist is deliberately
-    # uncapped (Glenn once queued 500 films on Netflix) — so the cut
-    # deepens by the watchlisted candidates, keeping at least `limit`
-    # films for discovery and the rail's no-repeat cycle at a month or
-    # longer
+    # The stored cut must survive the render-time exclusions. The
+    # landing page moves watchlisted films out of the discovery pool
+    # onto the top watchlist shelf. The watchlist has no limit by
+    # design. Glenn queued 500 films on Netflix 1 time. Thus, the cut
+    # grows by the number of watchlisted candidates. That keeps at
+    # least `limit` films for discovery. The no-repeat cycle of the rail
+    # stays at 1 month or longer.
 
     watchlisted = {
         movie_id
@@ -765,10 +804,11 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     }
     depth = limit + len(watchlisted & set(candidates))
 
-    # The marker bar rides along with the profile: the baseline
-    # percentile of coarse scores across this user's own candidates. A
-    # saturated profile rates almost everything highly, so "might
-    # interest you" only means anything relative to that baseline
+    # The marker bar goes with the profile. It is the baseline
+    # percentile of the coarse scores across the own candidates of this
+    # user. A saturated profile rates almost each film highly. Thus,
+    # "might interest you" has a meaning only relative to that
+    # baseline.
 
     baseline = []
     for movie_id in candidates:
@@ -785,9 +825,10 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         index = min(len(baseline) - 1, int(len(baseline) * MARKER_BASELINE_PERCENTILE))
         profile["marker_bar"] = round(baseline[index], 4)
 
-    # Co-preference: anchors are the user's own weighted films, matched
-    # into the similarity table by TMDB id; candidates collect their
-    # top-neighbor term the same way the evaluation measures it
+    # Co-preference: the anchors are the own weighted films of the user.
+    # They match into the similarity table by TMDB id. The candidates
+    # collect their top-neighbor term in the same way that the
+    # evaluation measures it.
 
     tmdb_of = dict(
         db.session.query(Movie.id, Movie.tmdb_id)
@@ -813,9 +854,10 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
 
     award_counts = movie_award_counts()
 
-    # The estimated-rating curve rides along in the stored profile,
-    # built from the same weights, similarities, and prior rules the
-    # ranking below uses — stored scores translate straight to stars
+    # The estimated-rating curve goes with the stored profile. It comes
+    # from the same weights, similarities, and prior rules that the
+    # ranking below uses. Thus, the stored scores translate directly to
+    # stars.
 
     profile["calibration"] = build_calibration(
         user_id, weights, features, entries_by_tmdb, tmdb_of, award_counts
@@ -832,8 +874,8 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
         entries = entries_by_tmdb.get(tmdb_of.get(movie_id), [])
         copref = _copref_value(entries)
         total = score + copref
-        # The award prior keeps its original taste gate: awards only
-        # decorate films the profile itself already scores positive
+        # The award prior keeps its original taste gate. Awards only
+        # decorate films that the profile itself already scores positive.
         wins, nominations = award_counts.get(movie_id, (0, 0))
         prior = award_prior(wins, nominations)
         if score > 0:
@@ -858,13 +900,14 @@ def compute_user_recommendations(user_id, limit=STORED_RECOMMENDATIONS):
     return profile, ranked[:depth], scores_map
 
 
-# The "Watch it again" shelf: owned films the user liked whose last
-# watch is long past — the complement of the engine, whose candidates
-# deliberately exclude logged films. Sentiment reuses the diary
-# weights; staleness adds a bonus on top, saturating at the horizon.
-# Date-less rows (drive ratings, pre-Fitzflix watches) count as the
-# oldest. The 2-year bar was measured before choosing: 475 of Glenn's
-# 556 liked owned films sit beyond it — plenty for a 12-card rotation
+# The "Watch it again" shelf: owned films that the user liked and that
+# the user last watched a long time ago. This is the complement of the
+# engine. The candidates of the engine exclude logged films by design.
+# The sentiment uses the diary weights again. The staleness adds a
+# bonus on top. The bonus saturates at the horizon. Rows without a date
+# (drive ratings, watches before Fitzflix) count as the oldest. Glenn
+# measured the 2-year bar before he chose it. 475 of his 556 liked
+# owned films are beyond it. That is sufficient for a 12-card rotation.
 
 REWATCH_STALENESS_YEARS = 2
 REWATCH_STALENESS_WEIGHT = 0.5
@@ -872,10 +915,12 @@ REWATCH_STALENESS_HORIZON_YEARS = 10
 
 
 def watch_again_shelf(user_id, today=None):
-    """Ranked rewatch candidates for one user: owned films they liked
-    (the liked flag, or a rating above their own mean) whose last
-    watch — if any is recorded — is at least the staleness bar ago.
-    Best-loved-and-longest-unseen first."""
+    """Return the ranked rewatch candidates for 1 user.
+
+    These are owned films that the user liked (the liked flag, or a
+    rating above the own mean of the user). The last recorded watch, if
+    there is one, is at least the staleness bar in the past. The most
+    liked and longest unseen films come first."""
 
     today = today or datetime.now()
     rows = (
@@ -930,22 +975,23 @@ def watch_again_shelf(user_id, today=None):
 
 
 def rotate_partition(items, count, day_index):
-    """A no-repeat daily walk through a ranked list.
+    """Return a daily walk through a ranked list, with no repeats.
 
-    The ranking splits into `count` contiguous quality tiers and each
-    day shows one film from each tier, indexed by a continuous day
-    counter — so every film appears exactly once per cycle (cycle
-    length = tier size, about len/count days), every day mixes all
-    quality tiers, and the whole set refreshes before anything
-    repeats. Deterministic per day; short lists pass through whole.
+    The ranking splits into `count` contiguous quality tiers. Each day
+    shows 1 film from each tier. A continuous day counter is the index.
+    Thus, each film appears exactly 1 time for each cycle. The cycle
+    length is the tier size, about len/count days. Each day mixes all
+    quality tiers. The full set refreshes before a film repeats. The
+    result is deterministic for each day. A short list passes through
+    whole.
     """
 
     if len(items) <= count:
         return list(items)
     picks = []
     for tier in range(count):
-        # Balanced boundaries: tier sizes differ by at most one and no
-        # tier is ever empty, so short lists still fill every slot
+        # Balanced boundaries: the tier sizes differ by 1 at most. No
+        # tier is empty. Thus, a short list still fills each slot.
         tier_items = items[
             tier * len(items) // count : (tier + 1) * len(items) // count
         ]
@@ -954,13 +1000,15 @@ def rotate_partition(items, count, day_index):
 
 
 def rotate_daily(items, count, seed, decay=0.93):
-    """A day-varying selection of `count` items from a ranked list.
+    """Return a selection of `count` items from a ranked list that
+    changes each day.
 
-    Weighted sampling without replacement, geometrically favoring the
-    top of the ranking so quality holds while the middle rotates; the
-    seed should embed the user and the calendar day, keeping the page
-    stable across reloads but fresh across days. The selection comes
-    back in original rank order. Deterministic for a given seed.
+    This is weighted sampling without replacement. It favors the top of
+    the ranking geometrically. Thus, the quality holds while the middle
+    rotates. The seed must embed the user and the calendar day. Then
+    the page is stable across reloads but new across days. The
+    selection comes back in the original rank order. The result is
+    deterministic for a given seed.
     """
 
     if len(items) <= count:
@@ -977,16 +1025,17 @@ def rotate_daily(items, count, seed, decay=0.93):
 
 
 def shuffle_daily(items, seed):
-    """A deterministic day-seeded shuffle of a shelf's picked cards.
+    """Return a deterministic day-seeded shuffle of the picked cards of a
+    shelf.
 
-    The pickers hand back quality-ordered rows — watchlist pins first,
-    then the ranking's tiers best-first — which made slot position a
-    quality signal: the first cards were always the amber block and the
-    top tier (Glenn: mix them). Shuffling with a user+day seed varies
-    the arrangement daily while reloads stay stable; the amber badge
-    marks the watchlist cards wherever they land. The leaving shelf
-    deliberately opts out — its watchlist-first order is urgency, not
-    discovery.
+    The pickers return rows in quality order. Watchlist pins come first.
+    Then come the tiers of the ranking, best first. That made the slot
+    position a quality signal. The first cards were always the amber
+    block and the top tier. Glenn asked to mix them. A shuffle with a
+    user-and-day seed changes the arrangement daily. Reloads stay
+    stable. The amber badge marks the watchlist cards in each position.
+    The leaving shelf does not use this by design. Its watchlist-first
+    order is urgency, not discovery.
     """
 
     rng = random.Random(seed)
@@ -995,29 +1044,30 @@ def shuffle_daily(items, seed):
     return shuffled
 
 
-# The day's frozen shelves (#204): a shelf must show the same films in
-# the same slots all day — the pickers are day-deterministic, but their
-# INPUTS move during the day (a logged film shrinks the ranked list and
-# every tier boundary with it), which is what kept reshuffling the
-# cards. Keys are per user, per shelf, per calendar day; they expire on
-# their own, so tomorrow's first render starts fresh from live state.
+# The frozen shelves of the day (#204). A shelf must show the same
+# films in the same slots all day. The pickers are deterministic for
+# each day. But their INPUTS move during the day. A logged film makes
+# the ranked list smaller and moves each tier boundary. That caused the
+# cards to shuffle again. The keys are for each user, each shelf, and
+# each calendar day. They expire on their own. Thus, the first render
+# of the next day starts new from the live state.
 
 SHELF_SNAPSHOT_KEY = "fitzflix:shelf:{shelf}:{user_id}:{day}"
 SHELF_SNAPSHOT_TTL = 2 * 86400
 
 
 def frozen_shelf(redis_client, user_id, shelf, eligible_ids, pick, day=None):
-    """The day's stable ordered card ids for one shelf.
+    """Return the stable ordered card ids of the day for 1 shelf.
 
     The first render of the day calls pick() for the baseline and
-    snapshots it; later renders replay the snapshot in slot order. A
-    card that stopped being eligible — watched, waved off, acquired —
-    is replaced IN ITS SLOT by the first id from eligible_ids not
-    already showing, and every other card keeps its position (Glenn's
-    rule: it's fine to replace a watched film during the day, never to
-    move the rest). eligible_ids carries every id still showable right
-    now, in replacement-priority order; a slot with no replacement
-    left simply closes up.
+    stores a snapshot. Later renders replay the snapshot in slot order.
+    A card can stop being eligible (watched, refused, acquired). Then
+    the first id from eligible_ids that does not show yet replaces it
+    IN ITS SLOT. Each other card keeps its position. The rule of Glenn:
+    a replacement of a watched film during the day is fine, but the
+    rest must never move. eligible_ids carries each id that can show
+    now, in replacement-priority order. A slot with no remaining
+    replacement closes.
     """
 
     day = day or date.today().isoformat()
@@ -1068,37 +1118,39 @@ def daily_shelf(
     count=12,
     freeze=True,
 ):
-    """One landing shelf's cards for the day, from the shared recipe
-    (Glenn, Aug 30 2026): with the watchlist promoted to its own top
-    shelf, every shelf below it is purely a discovery surface, and
-    they all pick the same way instead of each managing its own pin
-    lane.
+    """Return the cards of the day for 1 landing shelf from the shared
+    recipe (Glenn, 2026-08-30).
 
-    `rows` is the shelf's candidate list, best-first by the shelf's
-    own taste ranking, with watchlisted films already excluded at the
-    source. `urgent` rows — the watchlist shelf's leaving-soon films —
-    always show first, in the order given, and never shuffle: there,
-    position IS the urgency signal. The remaining slots walk
-    rotate_partition's quality tiers, so every day mixes the whole
-    quality range and nothing repeats until the pool cycles, then
-    shuffle_daily scatters them into day-stable random slots.
+    The watchlist has its own top shelf. Thus, each shelf below it is
+    only a discovery surface. All of them pick in the same way. No shelf
+    manages its own pin lane.
 
-    `key` extracts a row's page-wide card id (a tmdb id where one
-    exists, so the same film can be recognized across shelves) and
-    `shown` is the page's cross-shelf claim set, mutated here: one
-    render never shows a film twice, which means the caller must pick
-    its shelves in a day-stable order — replayed snapshots claim their
-    films exactly as the first render of the day did. With `freeze`
-    the day's first render snapshots the result and later renders
-    replay it slot-for-slot via frozen_shelf; the ?minutes= view
-    passes freeze=False and picks live over the rows that fit, a
-    transient planning lens rather than the shelf (#204).
+    `rows` is the candidate list of the shelf, best first by the own
+    taste ranking of the shelf. The source already excludes watchlisted
+    films. `urgent` rows are the leaving-soon films of the watchlist
+    shelf. They always show first, in the given order. They never
+    shuffle. There, the position IS the urgency signal. The remaining
+    slots walk the quality tiers of rotate_partition. Thus, each day
+    mixes the full quality range. Nothing repeats until the pool cycles.
+    Then shuffle_daily puts them into day-stable random slots.
+
+    `key` extracts the page-wide card id of a row. This is a tmdb id if
+    one exists. Thus, the page can recognize the same film across
+    shelves. `shown` is the cross-shelf claim set of the page. This
+    function changes it. One render never shows a film 2 times. Thus,
+    the caller must pick its shelves in a day-stable order. A replayed
+    snapshot claims its films exactly as the first render of the day
+    did. With `freeze`, the first render of the day stores a snapshot
+    of the result. Later renders replay it slot for slot through
+    frozen_shelf. The ?minutes= view passes freeze=False. It picks live
+    over the rows that fit. It is a transient planning view, not the
+    shelf (#204).
     """
 
     day = day or date.today()
 
     def pick():
-        """The day's baseline card ids for this shelf."""
+        """Return the baseline card ids of the day for this shelf."""
 
         lead = [row for row in urgent if key(row) not in shown][:count]
         pool = [row for row in rows if key(row) not in shown]
@@ -1113,8 +1165,9 @@ def daily_shelf(
             user_id,
             day=day.isoformat(),
             shelf=shelf,
-            # Replacement priority mirrors the pick: urgent rows, then
-            # the ranking — and never a film another shelf is showing
+            # The replacement priority is the same as the pick: urgent
+            # rows, then the ranking. It never includes a film that a
+            # different shelf shows.
             eligible_ids=[
                 row_key
                 for row_key in [key(row) for row in urgent] + [key(row) for row in rows]
@@ -1129,19 +1182,20 @@ def daily_shelf(
 
 
 def stored_recommendations(redis, user_id):
-    """The nightly recompute's stored payload for a user, or None."""
+    """Return the stored payload of the nightly recompute for a user, or None."""
 
     payload = redis.get(RECS_KEY.format(user_id=int(user_id)))
     return json.loads(payload) if payload else None
 
 
 def stored_scores(redis, user_id):
-    """The score map — {movie_id: full-recipe score} over every
-    scoreable unlogged film — or {} before the first compute. The
-    nightly base merges with the live-scored patch overlay, base
-    winning: a film in both was rescored overnight from fresher
-    inputs. JSON keys come back as strings, so they're re-inted
-    here."""
+    """Return the score map, or {} before the first compute.
+
+    The map is {movie_id: full-recipe score} over each scoreable
+    unlogged film. The nightly base merges with the live-scored patch
+    overlay. The base wins. A film in both got a new score overnight
+    from newer inputs. JSON keys come back as strings. Thus, this
+    converts them to int again."""
 
     scores = {}
     for movie_id, score in redis.hgetall(
@@ -1156,14 +1210,15 @@ def stored_scores(redis, user_id):
 
 
 def resolved_score(redis, user_id, movie, profile, scores=None):
-    """The film's engine score from the one shared source: the stored
-    map when it covers the film, otherwise the same recipe run live —
-    with the result patched back into the map, so the next surface to
-    ask (a tile batch, the movie page, the rate drive) reads the
-    identical number instead of recomputing its own. None for films
-    that can't be scored yet (no profile, or TMDB data still landing).
-    Batch callers pass their already-fetched `scores` map to skip the
-    per-film Redis read."""
+    """Return the engine score of the film from the 1 shared source.
+
+    If the stored map covers the film, this returns the stored score.
+    If not, this runs the same recipe live. It patches the result back
+    into the map. Thus, the next surface that asks (a tile batch, the
+    movie page, the rate drive) reads the identical number. It does not
+    recompute its own. This returns None for a film that cannot get a
+    score yet (no profile, or TMDB data not arrived). A batch caller
+    passes its `scores` map to skip the Redis read for each film."""
 
     if scores is None:
         scores = stored_scores(redis, user_id)
@@ -1179,18 +1234,19 @@ def resolved_score(redis, user_id, movie, profile, scores=None):
 
 
 def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
-    """The shared source's TMDB-keyed lane: the score for a film that
-    may not exist locally at all.
+    """Return the score for a film through the TMDB-keyed lane of the
+    shared source. The film can be absent from the local database.
 
-    A film with a local record answers through the movie-id lane —
-    the full recipe against the stored map. A record-less film scores
-    from its cached enriched TMDB payload in the same portable feature
-    key space (plus tmdb-keyed co-preference; the award prior needs
-    local rows, so it sits out), held in a TMDB-keyed overlay so every
-    surface reads one number without the database growing. The moment
-    the film gains a record — a watchlist add, a log, an import — the
-    movie-id lane takes over. None when the film can't be scored: no
-    profile, or TMDB unreachable with nothing cached."""
+    A film with a local record answers through the movie-id lane. That
+    is the full recipe against the stored map. A film without a record
+    scores from its cached enriched TMDB payload in the same portable
+    feature key space. It adds the tmdb-keyed co-preference. The award
+    prior needs local rows. Thus, it is absent. A TMDB-keyed overlay
+    holds the score. Thus, each surface reads 1 number, and the
+    database does not grow. When the film gets a record (a watchlist
+    add, a log, an import), the movie-id lane takes over. This returns
+    None if the film cannot get a score: no profile, or TMDB not
+    reachable with nothing cached."""
 
     movie = Movie.query.filter_by(tmdb_id=int(tmdb_id)).first()
     if movie is not None:
@@ -1203,7 +1259,7 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
         return float(cached)
 
     # streaming_rail owns the enriched-payload cache and its feature
-    # extraction; imported lazily since it imports this module
+    # extraction. This imports it lazily because it imports this module.
 
     from app.streaming_rail import _payload_features, enriched_movie
 
@@ -1218,19 +1274,20 @@ def resolved_tmdb_score(redis, user_id, tmdb_id, profile, scores=None):
 
 
 def stored_profile(redis, user_id):
-    """The nightly recompute's stored taste profile for a user, or None."""
+    """Return the stored taste profile of the nightly recompute for a user, or None."""
 
     payload = redis.get(PROFILE_KEY.format(user_id=int(user_id)))
     return json.loads(payload) if payload else None
 
 
 def recommended_movie_ids(redis, user_id):
-    """The movie ids in the user's stored library recommendations.
+    """Return the movie ids in the stored library recommendations of the
+    user.
 
-    Membership means the nightly recompute ranked the film among the
-    user's top candidates — the same set that feeds the landing page's
-    library rail — so other surfaces can badge owned films as "might
-    interest you" without rescoring anything.
+    A film in the set is one that the nightly recompute ranked among
+    the top candidates of the user. This is the same set that feeds the
+    library rail of the landing page. Thus, other surfaces can badge
+    owned films as "might interest you" without a new score.
     """
 
     stored = stored_recommendations(redis, user_id)
@@ -1238,10 +1295,12 @@ def recommended_movie_ids(redis, user_id):
 
 
 def coarse_interest_score(profile, genre_ids, year, person_affinity=0.0):
-    """The might-interest markers' coarse score, computable from any
-    payload that carries genre ids and a year: matched genre affinities
-    soft-averaged, the release decade, and an optional affinity for a
-    person the film features. No TMDB calls, nothing stored."""
+    """Return the coarse score for the might-interest markers.
+
+    This can compute from each payload that carries genre ids and a
+    year. It uses the soft average of the matched genre affinities, the
+    release decade, and an optional affinity for a person in the film.
+    This makes no TMDB calls. It stores nothing."""
 
     affinities = profile.get("affinities", {}) if profile else {}
     score = person_affinity * FEATURE_CLASS_WEIGHTS["actor"]
@@ -1267,13 +1326,13 @@ def coarse_interest_score(profile, genre_ids, year, person_affinity=0.0):
 
 
 def credit_interest_markers(profile, credit_id, filmography_rows):
-    """The tmdb ids on a filmography page worth a "might interest you"
-    marker.
+    """Return the tmdb ids on a filmography page that get a "might
+    interest you" marker.
 
-    Scores only films without a local record (owned films get the full
-    engine), using nothing beyond the cached credits payload: genre
-    ids, release decade, and the user's affinity for this person —
-    capped at the strongest few per career page.
+    This scores only films without a local record. Owned films get the
+    full engine. This uses only the cached credits payload: the genre
+    ids, the release decade, and the affinity of the user for this
+    person. The limit is the strongest few for each career page.
     """
 
     if not profile:
@@ -1300,9 +1359,11 @@ def credit_interest_markers(profile, credit_id, filmography_rows):
 
 
 def recompute_recommendations():
-    """Nightly task: rebuild every reviewer's taste profile and ranked
-    recommendations into Redis for the landing page and the filmography
-    markers."""
+    """Rebuild the taste profile and the ranked recommendations of each
+    reviewer into Redis.
+
+    This is a nightly task. The landing page and the filmography
+    markers read the results."""
 
     with app.app_context():
         computed_at = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -1323,11 +1384,11 @@ def recompute_recommendations():
                 RECS_KEY.format(user_id=user_id),
                 json.dumps({"computed_at": computed_at, "items": ranked}),
             )
-            # The fresh map supersedes any live-scored patches — drop
-            # both overlays in the same pipeline so no read sees the
-            # new base with old patches still layered under it, and
-            # tmdb-lane scores re-derive against the fresh profile
-            # (their cached payloads make that cheap)
+            # The new map replaces each live-scored patch. Delete both
+            # overlays in the same pipeline. Thus, no read sees the new
+            # base with old patches under it. The tmdb-lane scores derive
+            # again from the new profile. Their cached payloads make that
+            # cheap.
             pipeline = current_app.redis.pipeline()
             pipeline.set(SCORES_KEY.format(user_id=user_id), json.dumps(scores))
             pipeline.delete(PATCH_SCORES_KEY.format(user_id=user_id))
@@ -1341,13 +1402,14 @@ def recompute_recommendations():
 
 
 def evaluate_user(user_id, class_weights=None, positive_threshold=0.5):
-    """Leave-one-out ranking metrics for one user under the given (or
-    current) class weights.
+    """Return the leave-one-out ranking metrics for 1 user under the
+    given (or current) class weights.
 
-    Each film the user clearly liked is removed from the profile in
-    turn and ranked against every local candidate plus itself; a good
-    weighting ranks the held-out film near the top. Returns None for a
-    user without enough positive films to measure.
+    This removes each film that the user clearly liked from the
+    profile, 1 at a time. It ranks the film against each local
+    candidate plus itself. A good weighting ranks the held-out film
+    near the top. This returns None for a user without a sufficient
+    number of positive films.
     """
 
     weights = user_movie_weights(user_id)
@@ -1360,9 +1422,9 @@ def evaluate_user(user_id, class_weights=None, positive_threshold=0.5):
     candidates = local_candidates(user_id)
     features = collect_features(list(set(candidates) | set(weights)))
 
-    # The shipped co-preference term rides in the evaluation too,
-    # leave-one-out pure: each fold's held-out film is dropped from
-    # every neighbor list it anchors
+    # The shipped co-preference term goes into the evaluation too. It is
+    # leave-one-out pure. The held-out film of each fold is removed from
+    # each neighbor list that it anchors.
 
     tmdb_of = dict(
         db.session.query(Movie.id, Movie.tmdb_id)

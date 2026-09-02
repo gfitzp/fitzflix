@@ -7,7 +7,7 @@ from app import mail
 
 
 def send_async_email(app, msg):
-    """Function to send email asynchronously using an application thread."""
+    """Send an email asynchronously in an application thread."""
 
     with app.app_context():
         mail.send(msg)
@@ -26,7 +26,7 @@ def build_message(subject, sender, recipients, text_body, html_body, attachments
 
 
 def send_email(subject, sender, recipients, text_body, html_body, attachments=None):
-    """Send an email from a request without blocking on the mail server."""
+    """Send an email from a request. Do not wait for the mail server."""
 
     msg = build_message(subject, sender, recipients, text_body, html_body, attachments)
     Thread(

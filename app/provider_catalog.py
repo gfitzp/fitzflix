@@ -1,37 +1,43 @@
-"""Provider-catalog discovery for the recommendation universe (#250).
+"""Discover films for the recommendation universe from the provider catalogs (#250).
 
-The engine can only recommend films it has records for; subscribed
-streaming services are a discovery source it never saw. A nightly task
-enumerates each subscribed provider's catalog through TMDB's discover
-endpoint (popularity-ordered, page-capped — Apple's storefront alone
-lists ~38k films, so big catalogs are deliberately truncated to their
-popular slice), diffs the ids against a cumulative ever-seen set per
-provider (so the popularity boundary's churn can't re-flag films; the
-first run only plants), and queues genuinely new ids for processing.
+The engine can recommend only the films that have records. The
+subscribed streaming services are a discovery source that the engine
+never saw. A nightly task enumerates the catalog of each subscribed
+provider through the discover endpoint of TMDB. The result is in
+popularity order, with a page cap. The Apple storefront alone lists
+approximately 38000 films. Thus, the task cuts the big catalogs to
+their popular slice by design. The task compares the ids with a
+cumulative set of all ids seen for each provider. Thus, changes at the
+popularity boundary cannot flag a film a second time. The first run
+only plants the set. The task queues the ids that are really new for
+processing.
 
-Flat-rate streaming only, no rentals (Glenn, Aug 27 2026): rental
-and purchase storefronts on the subscription list (they exist to
-light the rent badges) are never enumerated, the discover queries ask
-for flatrate monetization alone, and the per-title verification
-accepts only the streaming buckets. Each run processes a bounded
-batch from the pending queue. Discover's provider and monetization
-filters demonstrably cross-contaminate (the streaming rail learned
-this first), so every candidate is verified against the per-title
-watch-provider cache before anything else — a film must actually
-stream on a service some user subscribes to. Survivors are enriched and scored against every
-stored taste profile, and a film whose best estimated rating clears
-the bar becomes a file-less movie record through the same
-find_or_create_tmdb_movie door the review and Criterion-catalog paths
-use, with the standard TMDB refresh enqueued behind it.
+Flat-rate streaming only, no rentals (Glenn, 2026-08-27): the task
+never enumerates the rental and purchase storefronts on the
+subscription list. Those rows exist to show the rent badges. The
+discover queries ask only for flatrate monetization. The per-title
+verification accepts only the streaming buckets. Each run processes a
+batch of limited size from the pending queue. The provider and
+monetization filters of discover contaminate each other. The
+streaming rail found this first. Thus, the task verifies each
+candidate against the per-title watch-provider cache before all other
+steps. A film must really stream on a service that some user
+subscribes to. The task enriches the films that pass and scores them
+against each stored taste profile. If the best estimated rating of a
+film is above the bar, the film becomes a movie record without a
+file. The record goes through the same find_or_create_tmdb_movie
+function that the review and Criterion-catalog paths use. The task
+enqueues the standard TMDB refresh after it.
 
-From there the existing machinery does the rest, unmodified: the
-refresh stamps tmdb_data_as_of, which makes the record scoreable; the
-1:45 recompute scores it for every user; the availability cache
-(fetched here at verification, refreshed nightly) makes it eligible;
-and the Recommendations page's shelves suggest it wherever its
-features fit. Films that fail verification or score below the bar are
-dropped for good — profiles drift, but re-evaluating every reject
-forever would grow without bound.
+From there, the existing machinery does the rest, without changes.
+The refresh sets tmdb_data_as_of. This makes the record scoreable.
+The 01:45 recompute scores it for each user. The availability cache
+makes it eligible. This task fetches the cache at verification, and
+the nightly refresh updates it. The shelves of the Recommendations
+page suggest the film where its features fit. Films that fail the
+verification, or that score below the bar, are removed permanently.
+Profiles change over time. But a second evaluation of each rejected
+film, for ever, would grow without limit.
 """
 
 import traceback
@@ -45,40 +51,42 @@ from app.recommendations import estimated_rating, score_movie, stored_profile
 from app.streaming import batch_title_availability, streaming_matches
 from app.streaming_rail import _payload_features, enriched_movie
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, the nightly task can run on a worker without a second application
 
 app = LocalProxy(get_app)
 
 SEEN_KEY = "fitzflix:catalog:seen:{provider_id}"
 PENDING_KEY = "fitzflix:catalog:pending"
 
-# How deep one provider's enumeration digs: 200 pages is the whole
-# catalog for every current subscription except Apple's storefront,
-# whose popular slice is plenty. The vote floor trims shovelware and
-# keeps the page counts honest; niche new arrivals below it reach the
-# engine anyway once anyone logs or watchlists them, and Criterion's
-# own scrape (#246) stays the fresh path for that shelf
+# This is the depth of the enumeration of 1 provider. 200 pages is the
+# full catalog for each current subscription, except the Apple
+# storefront. The popular slice of that storefront is sufficient. The
+# vote floor removes the low-quality films and keeps the page counts
+# correct. A niche new film below the floor reaches the engine when a
+# user logs it or puts it on a watchlist. The Criterion scrape (#246)
+# stays the fresh path for that shelf
 
 PAGE_CAP = 200
 VOTE_FLOOR = 20
 
-# Rental/purchase storefronts: TMDb providers that sell or rent
-# rather than stream on a subscription — Apple TV, Google Play,
-# Fandango at Home, Amazon Video, Microsoft Store, YouTube. A
-# subscription row for one exists to light the rent badges, so their
-# catalogs are never enumerated here (Glenn, Aug 27 2026: flat-rate
-# services only, no rentals); the per-title verification would reject
-# their films anyway, but skipping them saves the enumeration and the
-# pending-queue churn
+# These are the rental and purchase storefronts. They are TMDb providers
+# that sell or rent films. They do not stream on a subscription. They
+# are Apple TV, Google Play, Fandango at Home, Amazon Video, Microsoft
+# Store, and YouTube. A subscription row for one of them exists to show
+# the rent badges. Thus, this task never enumerates their catalogs
+# (Glenn, 2026-08-27: flat-rate services only, no rentals). The
+# per-title verification would reject their films in all cases. But to
+# skip them saves the enumeration and the churn of the pending queue
 
 STOREFRONT_PROVIDER_IDS = frozenset({2, 3, 7, 10, 68, 192})
 
-# Per-run bounds: candidates processed (availability + enrichment are
-# one request each, so this caps the burst), records created (which
-# also caps how fast the nightly refresh and recompute loads grow),
-# and the estimated-stars bar a film must clear for some user before
-# it earns a record
+# These are the limits per run. The first is the number of candidates
+# processed. The availability and the enrichment are 1 request each.
+# Thus, this limit caps the burst. The second is the number of records
+# created. This also caps the growth of the nightly refresh and
+# recompute loads. The third is the estimated-stars bar. A film must be
+# above the bar for some user before it gets a record
 
 PROCESS_CAP = 200
 CREATE_CAP = 50
@@ -86,10 +94,13 @@ MIN_ESTIMATE = 3.0
 
 
 def _catalog_ids(provider_id):
-    """The provider's streamable catalog as popularity-ordered tmdb
-    ids, paginating discover up to PAGE_CAP; whatever was gathered
-    before a failure (the diff against ever-seen makes a short read
-    safe — it just discovers less tonight)."""
+    """Return the streamable catalog of the provider as tmdb ids.
+
+    The ids are in popularity order. This function reads the discover
+    pages up to PAGE_CAP. After a failure, it returns the ids that it
+    collected before the failure. The comparison with the set of all
+    ids seen makes a short read safe. The run only discovers less
+    tonight."""
 
     ids = []
     page = 1
@@ -121,9 +132,11 @@ def _catalog_ids(provider_id):
 
 
 def refresh_provider_catalogs():
-    """Nightly task: enumerate every subscribed provider's catalog,
-    queue the ids never seen before, and process a bounded batch of
-    the pending queue into movie records."""
+    """Enumerate the catalog of each subscribed provider each night.
+
+    This task queues the ids that it never saw before. Then it
+    processes a batch of limited size from the pending queue into movie
+    records."""
 
     with app.app_context():
         if not current_app.config["TMDB_API_KEY"]:
@@ -153,8 +166,8 @@ def refresh_provider_catalogs():
             fresh = sorted({tmdb_id for tmdb_id in ids if tmdb_id not in seen})
             if fresh:
                 redis.sadd(seen_key, *fresh)
-                # The first enumeration only plants: what was already
-                # in the catalog isn't a discovery
+                # The first enumeration only plants the set. A film that
+                # was already in the catalog is not a discovery
                 if planted:
                     redis.sadd(PENDING_KEY, *fresh)
                     discovered += len(fresh)
@@ -174,11 +187,13 @@ def refresh_provider_catalogs():
 
 
 def _process_pending(subscribed):
-    """Verify, score, and (capped) turn one batch of pending ids into
-    movie records; the number of records created."""
+    """Verify and score 1 batch of pending ids and make movie records.
 
-    # TMDB record plumbing stays in app.videos; lazy so the module
-    # import direction stays one-way
+    The number of records is capped. This function returns the number
+    of records created."""
+
+    # The TMDB record code stays in app.videos. The import is lazy. Thus,
+    # the module import direction stays one-way
 
     from app.videos import find_or_create_tmdb_movie
 
@@ -199,10 +214,10 @@ def _process_pending(subscribed):
         if tmdb_id not in existing and tmdb_id not in excluded
     ]
 
-    # Discover said these films stream on a subscribed provider; the
-    # per-title payload is the truth. The fetch primes the same cache
-    # the shelves' eligibility check reads, so a created record is
-    # answerable immediately
+    # Discover said that these films stream on a subscribed provider. The
+    # per-title payload is the truth. The fetch fills the same cache that
+    # the eligibility check of the shelves reads. Thus, a created record
+    # is answerable immediately
 
     availability, _ = batch_title_availability(candidates)
     streamable = [
@@ -223,8 +238,8 @@ def _process_pending(subscribed):
     created = 0
     for tmdb_id in streamable:
         if created >= CREATE_CAP:
-            # The cap protects the refresh queue and the nightly
-            # loads; verified films past it wait for the next run
+            # The cap protects the refresh queue and the nightly loads.
+            # The verified films above the cap wait for the next run
             redis.sadd(PENDING_KEY, tmdb_id)
             continue
         payload = enriched_movie(tmdb_id)

@@ -402,7 +402,7 @@ def test_seen_films_cannot_be_flagged_and_hide_the_x(app, admin_client):
         follow_redirects=True,
     )
     page = response.get_data(as_text=True)
-    assert "the lowest rating" in page
+    assert "The lowest rating" in page
     with app.app_context():
         assert (
             UserMovieStatus.query.filter_by(

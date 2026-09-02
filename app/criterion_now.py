@@ -1,22 +1,24 @@
-"""The landing page's "On Criterion24/7 now" card.
+"""The "On Criterion24/7 now" card of the landing page.
 
-whatsonnow.criterionchannel.com is the Channel's own public now-playing
-page for its 24/7 feed: the current film's title, a More link to the
-film's info page, and a server-rendered countdown to the next film
-(complete with a literal </snap> typo, so parsing stays lenient). A
-poller scrapes it, follows the More link for the "Directed by X • YYYY
-• Country" and "Starring …" lines, matches the film to TMDB by title
-and year for a directly-linked poster, and stores the lot in Redis.
+whatsonnow.criterionchannel.com is the public now-playing page of the
+Channel for its 24/7 feed. It shows the title of the current film, a
+More link to the info page of the film, and a server-rendered countdown
+to the next film. The countdown has a literal </snap> typo. Thus, the
+parser stays lenient. A poller scrapes the page. It follows the More
+link for the "Directed by X • YYYY • Country" and "Starring …" lines.
+It matches the film to TMDB by title and year for a direct poster link.
+Then it stores all of this in Redis.
 
-The poller is self-scheduling: each run re-enqueues itself for just
-after the countdown expires, under a deterministic job id so chains
-never pile up (an unreadable countdown falls back to trying again in
-thirty minutes). A half-hourly cron heartbeat checks the chain's
-pulse and polls ONLY when the chain has died — while a poll is booked
-for the current film's end, the heartbeat does nothing, so the
-showing film is never rescanned on the cron cadence (Glenn's report,
-Aug 2026). The card renders for Criterion subscribers and hides
-itself once the stored film goes stale.
+The poller schedules itself. Each run enqueues itself again for a time
+just after the countdown expires. It uses a deterministic job id. Thus,
+the chains never accumulate. If the countdown is unreadable, the poller
+tries again in 30 minutes. A cron heartbeat runs every 30 minutes. It
+checks that the chain is alive. It polls ONLY if the chain is dead.
+While a poll is booked for the end of the current film, the heartbeat
+does nothing. Thus, Fitzflix never scans the film that is on again on
+the cron cadence (reported by Glenn, 2026-08). The card renders for
+Criterion subscribers. The card hides itself when the stored film is
+stale.
 """
 
 import html
@@ -42,9 +44,10 @@ WATCH_LIVE_URL = "https://www.criterionchannel.com/events/criterion-24-7"
 NOW_KEY = "fitzflix:criterion:now"
 POLL_JOB_ID = "fitzflix-criterion-now-poll"
 
-# How long past the expected end the card keeps showing the film — the
-# next poll normally lands right at the end, so a long overrun means
-# the poller is broken and the card should hide rather than lie
+# The time after the expected end. The card continues to show the film
+# during this time. The next poll normally arrives exactly at the end.
+# Thus, a long overrun means that the poller is broken. Then the card
+# must hide and not show incorrect data.
 
 STALE_GRACE = timedelta(minutes=15)
 
@@ -54,8 +57,8 @@ MORE_RE = re.compile(
     r'class="[^"]*whatson__channel-link--more'
 )
 
-# The countdown's closing tag is literally </snap> today; capture up to
-# any tag and read the units out of the text
+# The closing tag of the countdown is literally </snap> today. Capture
+# up to any tag and read the units out of the text.
 
 COUNTDOWN_RE = re.compile(
     r"Next film starts in:.*?whatson__eyebrow--bold[^>]*>\s*([^<]*)", re.S
@@ -69,11 +72,12 @@ INFO_STARRING_RE = re.compile(r"Starring\s+(?P<starring>[^<\r\n]+)")
 
 
 def _clean_text(text, collapse=True):
-    """Unescape, then flatten non-breaking spaces to plain ones. The
-    Channel's pages carry them raw (\xa0), as &nbsp;, and occasionally
-    double-escaped (&amp;nbsp;) — that last form unescapes to the
-    literal text "&nbsp;", which would otherwise be captured into a
-    displayed value like "&nbsp;Hong Kong"."""
+    """Unescape the text, then replace non-breaking spaces with plain spaces.
+
+    The pages of the Channel carry them raw (\xa0), as &nbsp;, and
+    sometimes double-escaped (&amp;nbsp;). The last form unescapes to
+    the literal text "&nbsp;". Without this step, that text goes into a
+    displayed value such as "&nbsp;Hong Kong"."""
 
     text = html.unescape(text).replace("\xa0", " ").replace("&nbsp;", " ")
     text = re.sub(r" {2,}", " ", text)
@@ -81,10 +85,11 @@ def _clean_text(text, collapse=True):
 
 
 def parse_whatson_page(page_html):
-    """(title, more_url, minutes-until-next) from the now-playing page;
-    (None, None, None) when the title can't be found. A countdown that
-    doesn't parse comes back None — the poller falls back to a short
-    retry rather than trusting a guess."""
+    """Return (title, more_url, minutes-until-next) from the now-playing page.
+
+    The result is (None, None, None) if the title is not found. A
+    countdown that does not parse comes back as None. Then the poller
+    does a short retry. It does not trust a guess."""
 
     title_match = TITLE_RE.search(page_html)
     if not title_match:
@@ -108,10 +113,11 @@ def parse_whatson_page(page_html):
 
 
 def parse_film_info(page_html):
-    """{director, year, country, starring} from a criterionchannel.com
-    film page — the same "Directed by X • YYYY • Country" line the
-    leaving tooltips carry, plus the Starring line; values None when
-    absent."""
+    """Return {director, year, country, starring} from a film page.
+
+    The page is on criterionchannel.com. This is the same "Directed by X
+    • YYYY • Country" line that the leaving tooltips carry, plus the
+    Starring line. A value is None if it is absent."""
 
     text = _clean_text(page_html, collapse=False)
     info = {"director": None, "year": None, "country": None, "starring": None}
@@ -127,11 +133,12 @@ def parse_film_info(page_html):
 
 
 def _person_matches(scraped, credited_name):
-    """True when a scraped name plausibly names the same person as one
-    TMDB credit. Containment must run both ways — TMDB often carries a
-    fuller romanization ('Mabel Cheung Yuen-Ting') than the Channel's
-    'Mabel Cheung' — and two shared name tokens also count, which
-    covers reversed name order and hyphen differences."""
+    """Return True if a scraped name can name the same person as a TMDB credit.
+
+    The containment test must run in both directions. TMDB frequently
+    carries a longer romanization ('Mabel Cheung Yuen-Ting') than the
+    Channel ('Mabel Cheung'). Two shared name tokens also count. That
+    covers a reversed name order and hyphen differences."""
 
     scraped = scraped.lower()
     name = credited_name.lower()
@@ -145,17 +152,17 @@ def _person_matches(scraped, credited_name):
 
 
 def matched_film(title, info):
-    """(tmdb_id, poster_path) for the airing film, or (None, None).
+    """Return (tmdb_id, poster_path) for the film that is on, or (None, None).
 
-    Title-and-year search, then the match is verified against TMDB's
-    credited directors when both sides know one — a wrong search hit
-    must degrade to a plain card, never dress the wrong film's poster
-    over the right title. Without a director on both sides, the
-    Channel's Starring line stands in: at least one scraped name must
-    appear among TMDB's top billing. The director stays the sole
-    verifier when it is available — the enriched cast stops at
-    TOP_BILLING_CUTOFF, so a cast miss alone must never veto a film
-    whose director agrees."""
+    This function searches by title and year. Then it verifies the match
+    against the credited directors on TMDB, if both sides know one. A
+    wrong search hit must degrade to a plain card. It must never show
+    the poster of the wrong film over the correct title. If a director
+    is not known on both sides, the Starring line of the Channel is the
+    verifier. Then a minimum of 1 scraped name must appear in the top
+    billing on TMDB. The director is the only verifier if it is
+    available. The enriched cast stops at TOP_BILLING_CUTOFF. Thus, a
+    cast miss alone must never veto a film whose director agrees."""
 
     if not info["year"]:
         return None, None
@@ -201,8 +208,10 @@ def matched_film(title, info):
 
 
 def poll_criterion_now():
-    """Task: scrape the now-playing page, enrich and store the current
-    film, and re-schedule for just after it ends."""
+    """Scrape the now-playing page, store the current film, and schedule again.
+
+    This is a task. It enriches the current film. It schedules itself
+    again for a time just after the film ends."""
 
     with app.app_context():
         next_poll_minutes = 30
@@ -226,9 +235,9 @@ def poll_criterion_now():
                     except Exception:
                         current_app.logger.warning(traceback.format_exc())
 
-                # A year is enough to try TMDB; the poster comes as a
-                # direct TMDB link on a verified match, and the card
-                # renders plain otherwise — never a loud guess
+                # A year is sufficient to try TMDB. The poster comes as a
+                # direct TMDB link on a verified match. Otherwise the card
+                # renders plain. It never shows a guess.
 
                 tmdb_id, poster_path = matched_film(title, info)
 
@@ -272,10 +281,10 @@ def poll_criterion_now():
         except Exception:
             current_app.logger.warning(traceback.format_exc())
 
-        # Always re-schedule — a broken run heals itself on the next
-        # attempt. Just past the countdown, clamped sane; the
-        # deterministic job id keeps the chain single-file even when
-        # the cron heartbeat also fires
+        # Always schedule again. A broken run repairs itself on the next
+        # attempt. The time is just after the countdown, clamped to a safe
+        # range. The deterministic job id keeps the chain to 1 job, even
+        # when the cron heartbeat also runs.
 
         delay = timedelta(minutes=max(1, min(next_poll_minutes, 240)), seconds=90)
         current_app.maintenance_queue.enqueue_in(
@@ -290,20 +299,21 @@ def poll_criterion_now():
 
 
 def heartbeat_criterion_now():
-    """Task: revive the self-scheduling poller if its chain has died.
+    """Start the self-scheduling poller again if its chain is dead.
 
-    The half-hourly cron lands here, never on the poller itself: while
-    a poll is booked for the current film's end (or queued, or
-    running), the heartbeat does nothing. Only a missing chain gets a
-    fresh poll — so the currently-showing film is rescanned when it
-    ends, not every thirty minutes.
+    This is a task. The cron that runs every 30 minutes arrives here,
+    never at the poller itself. While a poll is booked for the end of
+    the current film (or queued, or running), the heartbeat does
+    nothing. Only a missing chain gets a new poll. Thus, Fitzflix scans
+    the film that is on again when it ends, not every 30 minutes.
 
-    Aliveness reads the QUEUE REGISTRIES, never the job hash's status:
-    the poll re-enqueues itself under its own executing job id, and
-    when that run completes RQ writes "finished" over the hash —
-    clobbering the "scheduled" the re-enqueue just wrote. The
-    scheduled-registry entry is the truth (the live drill caught the
-    hash lying "finished" on a healthy chain, Aug 2026)."""
+    The aliveness check reads the QUEUE REGISTRIES, never the status in
+    the job hash. The poll enqueues itself again under its own job id
+    while that job runs. When that run completes, RQ writes "finished"
+    over the hash. That overwrites the "scheduled" that the enqueue just
+    wrote. The entry in the scheduled registry is the truth (the live
+    drill found the hash with an incorrect "finished" on a healthy
+    chain, 2026-08)."""
 
     with app.app_context():
         queue = current_app.maintenance_queue
@@ -321,10 +331,11 @@ def heartbeat_criterion_now():
 
 
 def is_criterion_subscriber(user):
-    """True when the user lists the Criterion Channel among their
-    streaming services — the gate for the card and for the home page's
-    live-refresh container, which must render even while no
-    film is showing so a card can appear when the poller stores one."""
+    """Return True if the Criterion Channel is in the streaming services of the user.
+
+    This is the gate for the card and for the live-refresh container of
+    the home page. The container must render even while no film is on.
+    Then a card can appear when the poller stores one."""
 
     return CRITERION_PROVIDER_ID in {
         row.provider_id for row in user.streaming_providers
@@ -332,8 +343,10 @@ def is_criterion_subscriber(user):
 
 
 def criterion_now_card(user):
-    """The now-playing card for one user, or None: Criterion
-    subscribers only, and only while the stored film is fresh."""
+    """Return the now-playing card for one user, or None.
+
+    Only Criterion subscribers get a card, and only while the stored
+    film is fresh."""
 
     if not is_criterion_subscriber(user):
         return None
@@ -354,15 +367,15 @@ def criterion_now_card(user):
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
 
-    # How far into the film we are: derived STATELESSLY as the
-    # predicted end minus the TMDB runtime, so it's right even when
-    # the heartbeat revived a dead chain mid-film and nobody saw the
-    # start. Unknown runtime (or an unmatched film) shows nothing —
-    # never a guess. "About", because Criterion pads between films.
-    # Bounded by the runtime: past the predicted end (the card lingers
-    # through STALE_GRACE) the film is over, and "About 110 minutes
-    # in" on a 101-minute film would be the guess this line refuses
-    # to make.
+    # The elapsed time of the film. Fitzflix derives it WITHOUT STATE as
+    # the predicted end minus the TMDB runtime. Thus, it is correct even
+    # when the heartbeat started a dead chain again during the film and
+    # nobody saw the start. An unknown runtime (or an unmatched film)
+    # shows nothing. It never shows a guess. The line says "About"
+    # because Criterion adds padding between films. The runtime bounds
+    # the value. After the predicted end (the card stays through
+    # STALE_GRACE) the film is over. "About 110 minutes in" on a
+    # 101-minute film would be the guess that this line refuses to make.
 
     minutes_in = None
     runtime = (payload or {}).get("runtime")
@@ -385,9 +398,9 @@ def criterion_now_card(user):
         "watch_url": WATCH_LIVE_URL,
         "next_at": next_at,
         "minutes_in": minutes_in,
-        # The home page's live refresh compares this fingerprint
-        # between fetches: a changed film swaps the whole card, an
-        # unchanged one repaints only the status line
+        # The live refresh of the home page compares this fingerprint
+        # between fetches. A changed film replaces the full card. An
+        # unchanged film repaints only the status line.
         "signature": f"{stored.get('title')}|{tmdb_id}|{stored.get('ends_at')}",
         "overview": (payload or {}).get("overview"),
         "ladder": _ladder_state_for(user, tmdb_id, payload),
@@ -396,10 +409,11 @@ def criterion_now_card(user):
 
 
 def _credited_people(payload):
-    """{directors, cast} as [{id, name}] from an enriched payload —
-    credit ids are TMDB person ids, so the card's names can link to
-    filmography pages; empty lists on an unmatched film leave the
-    scraped text lines to render plain."""
+    """Return {directors, cast} as [{id, name}] from an enriched payload.
+
+    The credit ids are TMDB person ids. Thus, the names on the card can
+    link to filmography pages. An unmatched film gets empty lists. Then
+    the scraped text lines render plain."""
 
     if not payload:
         return {"directors": [], "cast": []}
@@ -418,12 +432,15 @@ def _credited_people(payload):
 
 
 def _ladder_state_for(user, tmdb_id, payload):
-    """The card's star-row state: the user's own rating for the airing
-    film when they have one, the engine's estimated rating otherwise —
-    scored from the enriched payload when the film has no local record,
-    the same recipe the movie page uses when it does."""
+    """Return the star-row state of the card.
 
-    # Routes imports this module at startup, so its helpers load lazily
+    The state holds the rating of the user for the film that is on, if
+    the user has one. Otherwise it holds the estimated rating from the
+    engine. If the film has no local record, the score comes from the
+    enriched payload. If the film has a local record, the score uses the
+    same recipe as the movie page."""
+
+    # Routes imports this module at startup. Thus, its helpers load lazily.
 
     from app.main.helpers import _latest_review_row, library_upgradable
     from app.models import Movie, UserMovieStatus, UserWatchlist
@@ -440,10 +457,10 @@ def _ladder_state_for(user, tmdb_id, payload):
         "has_review": False,
         "flagged": False,
         "estimated": None,
-        # The card's watchlist toggle reads its face from here
+        # The watchlist toggle of the card reads its state from here.
         "on_watchlist": False,
-        # In-library badge (#160): None = not owned, else the amber/green
-        # upgradable verdict the movie page's badge wears
+        # The In-library badge (#160). None = not owned. Otherwise it is
+        # the amber or green upgradable verdict that the movie page shows.
         "upgradable": None,
     }
     if not tmdb_id:
@@ -475,9 +492,9 @@ def _ladder_state_for(user, tmdb_id, payload):
             if score is not None:
                 state["estimated"] = estimated_rating(profile, score)
     elif profile and payload:
-        # The shared source's tmdb lane — the enriched payload is
-        # already cached, so this adds no fetch, and the overlay keeps
-        # the number identical to every other surface's
+        # This is the tmdb lane of the shared source. The enriched payload
+        # is already in the cache. Thus, this adds no fetch. The overlay
+        # keeps the number identical to every other surface.
         score = resolved_tmdb_score(current_app.redis, user.id, tmdb_id, profile)
         if score is not None:
             state["estimated"] = estimated_rating(profile, score)

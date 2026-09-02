@@ -2,7 +2,7 @@ import sys
 
 from redis import Redis
 
-# Libraries to preload
+# The libraries to preload
 
 from app import db, get_app, videos
 from app.pipeline import PipelineWorker
@@ -10,18 +10,18 @@ from config import Config
 
 qs = sys.argv[1:] or ["default"]
 
-# Build the worker's app at startup rather than at first task. Only the
-# import-program workers (their primary queue is first on the command line)
-# watch the import directory; the other programs that merely drain the
-# import queue don't need their own filesystem observer.
+# Build the app of the worker at startup, not at the first task. Only the
+# import-program workers watch the import directory. Their primary queue
+# is first on the command line. The other programs only drain the import
+# queue. Thus, they do not need their own filesystem observer.
 
 get_app(watch_import_dir=qs[0] == "fitzflix-import")
 
 db.configure_mappers()
 
-# rq 2 removed the Connection context manager, so the worker takes its
-# connection explicitly. PipelineWorker is a SimpleWorker that also
-# stamps per-file trail entries around execution.
+# rq 2 removed the Connection context manager. Thus, the worker receives
+# its connection explicitly. PipelineWorker is a SimpleWorker that also
+# writes the per-file trail entries before and after each job.
 
 w = PipelineWorker(qs, connection=Redis.from_url(Config.REDIS_URL))
 w.work()

@@ -1,28 +1,34 @@
-"""Review text carries Letterboxd's inline-markup subset, stored
-verbatim (guid-less rows round-trip back to Letterboxd via CSV export,
-so import must never rewrite authored text). Display is where markup
-becomes formatting: review_html escapes everything, then re-enables
-exactly the allowed tags — attribute-less, so nothing inside a tag is
-ever parsed, which is what makes the allow-list safe against injection.
+"""Store and render the inline-markup subset of Letterboxd in review text.
+
+Fitzflix stores the review text as it is. The rows without a guid go
+back to Letterboxd through the CSV export. Thus, the import must never
+rewrite the text of the author. The markup becomes formatting only at
+display time. review_html escapes all characters. Then it enables only
+the allowed tags. The tags have no attributes. Thus, Fitzflix never
+parses the content of a tag. This makes the allow-list safe against
+injection.
 """
 
 import re
 
 from markupsafe import Markup, escape
 
-# The attribute-less inline subset Letterboxd itself allows in reviews.
-# <a> is deliberately absent: href handling would mean parsing
-# attributes, and a link in a review degrades to visible-but-inert
-# text rather than opening an injection surface.
+# This is the inline subset without attributes that Letterboxd allows in
+# reviews. <a> is absent by design. To handle href, Fitzflix would have
+# to parse attributes. Thus, a link in a review becomes visible text
+# that does nothing. It does not open an injection surface.
 
 ALLOWED_REVIEW_TAGS = ("blockquote", "b", "i", "em", "strong")
 
 
 def review_html(text):
-    """Render stored review text for display: allowed tags become real
-    markup, every other character stays escaped, unclosed tags are
-    closed so stray markup can't bleed styling into the page, and
-    newlines become <br> (paragraph breaks otherwise collapse in HTML).
+    """Render the stored review text for display.
+
+    The allowed tags become real markup. All other characters stay
+    escaped. This function closes the tags that are not closed. Thus,
+    stray markup cannot apply its style to the rest of the page. Each
+    newline becomes <br>. Without this, HTML collapses the paragraph
+    breaks.
     """
 
     escaped = str(escape(text or ""))
@@ -44,7 +50,7 @@ def review_html(text):
                 open_stack.remove(name)
                 pieces.append(f"</{name}>")
             else:
-                # A closer with no matching opener stays visible text
+                # A closing tag with no opening tag stays visible text
                 pieces.append(match.group(0))
     pieces.append(escaped[pos:])
     pieces += [f"</{name}>" for name in reversed(open_stack)]
@@ -52,10 +58,12 @@ def review_html(text):
 
 
 def strip_disallowed_tags(html_text):
-    """Reduce feed HTML to the storable subset: allowed tags survive
-    normalized to their bare attribute-less form (matching what an
-    author types on Letterboxd, and so what its CSV export holds);
-    every other tag is dropped, keeping its inner text."""
+    """Reduce the feed HTML to the subset that Fitzflix can store.
+
+    The allowed tags stay, in their bare form without attributes. This
+    is the form that an author types on Letterboxd. Thus, it is also the
+    form that the CSV export holds. This function removes all other
+    tags. It keeps their inner text."""
 
     def keep_or_drop(match):
         closing, name = match.group(1), match.group(2).lower()

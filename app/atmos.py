@@ -1,20 +1,22 @@
-"""TrueHD Atmos → E-AC-3 Atmos supplement pipeline (#55b).
+"""Add an E-AC-3 Atmos twin to each TrueHD Atmos track (#55b).
 
-Apple TV clients can't passthrough lossless TrueHD, so a disc's Atmos
-mix plays without its spatial layer. Each TrueHD Atmos track therefore
-earns an E-AC-3 JOC (DD+ Atmos) twin that Infuse passes through with
-Atmos intact. ffmpeg has no JOC encoder, so the twin comes from AWS
-MediaConvert: mkvextract pulls the TrueHD bitstream, truehdd decodes
-it to a DAMF Atmos master, MediaConvert encodes EAC3_ATMOS 9.1.6 at
-the encoder's 1024k ceiling, and mkvmerge inserts the .ec3 ahead of
-the FLAC twin so the trio reads [E-AC-3 Atmos, FLAC, TrueHD Atmos].
+Apple TV clients cannot pass through lossless TrueHD. Thus, the Atmos
+mix of a disc plays without its spatial layer. Thus, each TrueHD Atmos
+track gets an E-AC-3 JOC (DD+ Atmos) twin. Infuse passes the twin
+through with Atmos intact. ffmpeg has no JOC encoder. Thus, the twin
+comes from AWS MediaConvert. mkvextract pulls the TrueHD bitstream.
+truehdd decodes it to a DAMF Atmos master. MediaConvert encodes
+EAC3_ATMOS 9.1.6 at the 1024k limit of the encoder. mkvmerge inserts
+the .ec3 before the FLAC twin. Thus, the 3 tracks read [E-AC-3 Atmos,
+FLAC, TrueHD Atmos].
 
-Validated end-to-end on Ghost in the Shell (1995): all 15 dynamic
-objects + LFE bed intact, exact duration match. MediaConvert bills by
-the minute (about $0.85 per feature film) and the pass is idempotent —
-a file whose twins exist plans nothing — so re-imports never pay
-twice. DAMF intermediates run ~8 GB per film and are cleaned from both
-staging and S3 whether the job succeeds or fails.
+Fitzflix validated the full pipeline on Ghost in the Shell (1995). All
+15 dynamic objects and the LFE bed were intact. The duration matched
+exactly. MediaConvert bills by the minute (about $0.85 for each feature
+film). The pass is idempotent. A file that has its twins plans nothing.
+Thus, a re-import never pays 2 times. DAMF intermediate files are about
+8 GB for each film. The pipeline removes them from staging and from S3
+if the job succeeds or fails.
 """
 
 import glob
@@ -39,25 +41,27 @@ from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
 
-# MediaInfo commercial names, as stored in file_audio_track.codec
+# The MediaInfo commercial names, as stored in file_audio_track.codec.
 
 TRUEHD_ATMOS_CODEC = "Dolby TrueHD with Dolby Atmos"
 EAC3_ATMOS_CODEC = "Dolby Digital Plus with Dolby Atmos"
 
 MEDIACONVERT_POLL_SECONDS = 20
-MEDIACONVERT_POLL_LIMIT = 1080  # six hours
+MEDIACONVERT_POLL_LIMIT = 1080  # 6 hours
 
-# Local scratch requirement: the extracted TrueHD bitstream plus its
-# decoded DAMF master, with headroom
+# The local scratch requirement: the extracted TrueHD bitstream plus
+# its decoded DAMF master, with headroom.
 
 WORKSPACE_HEADROOM_BYTES = 16 * 1024**3
 
 
 def atmos_supplement_candidates(audio_tracks):
-    """Indices of TrueHD Atmos tracks still lacking an E-AC-3 Atmos
-    twin, matched count-wise per language like the FLAC presence rule —
-    so already-supplemented files (and S3 re-downloads of them) plan
-    nothing and the pass is idempotent."""
+    """Return the indices of the TrueHD Atmos tracks that have no E-AC-3
+    Atmos twin.
+
+    This matches by count for each language, like the FLAC presence
+    rule. Thus, a file that already has its twins (or an S3 re-download
+    of it) plans nothing. The pass is idempotent."""
 
     twins = {}
     for track in audio_tracks:
@@ -77,9 +81,12 @@ def atmos_supplement_candidates(audio_tracks):
 
 
 def insertion_point(audio_tracks, source_index):
-    """The audio-list position a source's E-AC-3 twin lands at: ahead
-    of the FLAC twin when one directly precedes the source (the rip
-    profile's pair shape), otherwise directly ahead of the source."""
+    """Return the audio-list position where the E-AC-3 twin of a source
+    goes.
+
+    If a FLAC twin directly precedes the source, the position is before
+    the FLAC twin. That is the pair shape of the rip profile. If not,
+    the position is directly before the source."""
 
     if source_index > 0:
         previous = audio_tracks[source_index - 1]
@@ -91,8 +98,10 @@ def insertion_point(audio_tracks, source_index):
 
 
 def mediaconvert_job_settings(input_uri, destination_uri, bitrate):
-    """The validated MediaConvert job shape: one DAMF Atmos master in,
-    one raw .ec3 out, coded 9.1.6."""
+    """Return the validated MediaConvert job shape.
+
+    The input is 1 DAMF Atmos master. The output is 1 raw .ec3, coded
+    9.1.6."""
 
     return {
         "Inputs": [
@@ -140,16 +149,16 @@ def build_remux_command(
     text_orders,
     inserts,
 ):
-    """The mkvmerge command inserting .ec3 twins into a file.
+    """Return the mkvmerge command that inserts .ec3 twins into a file.
 
     `inserts` is [(audio position, ec3 path, language)], sorted by
-    position ascending — position indexes the ORIGINAL audio list, and
-    each insert lands AT that position, shifting the rest right. The
-    ec3 files are inputs 0..n-1 and the source file is input n, with
-    --track-order spelling out the complete final arrangement so
-    nothing depends on mkvmerge's own ordering rules. Twins carry no
-    default flag; the mkvpropedit pass that follows the remux owns the
-    default-track convention.
+    position in ascending order. The position indexes the ORIGINAL
+    audio list. Each insert goes AT that position. The rest move to the
+    right. The ec3 files are inputs 0..n-1. The source file is input n.
+    The --track-order option gives the complete final arrangement.
+    Thus, nothing depends on the ordering rules of mkvmerge. The twins
+    carry no default flag. The mkvpropedit pass after the remux applies
+    the default-track convention.
     """
 
     source_file_index = len(inserts)
@@ -181,7 +190,7 @@ def build_remux_command(
 
 
 def mediaconvert_client():
-    """A MediaConvert client on the app's AWS credentials."""
+    """Return a MediaConvert client that uses the AWS credentials of the app."""
 
     return boto3.client(
         "mediaconvert",
@@ -193,10 +202,12 @@ def mediaconvert_client():
 
 
 def _set_stage(job, basename, description, progress=-1):
-    """Announce a pipeline stage on the job card: description and
-    progress always move together, so a new stage can never sit under
-    the previous stage's stale percentage (-1 renders the indeterminate
-    bar until the stage reports real numbers)."""
+    """Show a pipeline stage on the job card.
+
+    The description and the progress always change together. Thus, a
+    new stage never shows the old percentage of the previous stage. A
+    progress of -1 shows the indeterminate bar until the stage reports
+    real numbers."""
 
     if job:
         job.meta["description"] = f"'{basename}' — {description}"
@@ -205,9 +216,10 @@ def _set_stage(job, basename, description, progress=-1):
 
 
 class _UploadProgress:
-    """Aggregate byte progress for a multi-file S3 upload, surfaced on
-    the job card as whole percents. boto3 fires the callback from its
-    transfer threads, so the tally takes a lock."""
+    """Sum the byte progress of a multi-file S3 upload.
+
+    The job card shows the progress as whole percents. boto3 calls the
+    callback from its transfer threads. Thus, the count takes a lock."""
 
     def __init__(self, job, total_bytes):
         self.job = job
@@ -227,9 +239,11 @@ class _UploadProgress:
 
 
 def _run_step(command, job, basename, description, ok_returncodes=(0,)):
-    """Run one pipeline subprocess, streaming its output to the log and
-    relaying any percentage it prints to the job card (mkvextract's
-    "Progress: N%" lines, for one)."""
+    """Run 1 pipeline subprocess.
+
+    This streams the output of the subprocess to the log. It sends each
+    percentage that the subprocess prints to the job card. One example
+    is the "Progress: N%" lines of mkvextract."""
 
     from app.videos import wait_for_subprocess
 
@@ -259,7 +273,7 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
 
 
 def _wait_for_mediaconvert(client, mc_job_id, job, basename):
-    """Poll a MediaConvert job to a terminal state; raise on failure."""
+    """Poll a MediaConvert job until it stops. Raise an error on a failure."""
 
     for _ in range(MEDIACONVERT_POLL_LIMIT):
         mc_job = client.get_job(Id=mc_job_id)["Job"]
@@ -283,7 +297,7 @@ def _wait_for_mediaconvert(client, mc_job_id, job, basename):
 
 
 def _cleanup_s3_prefix(s3_client, bucket, prefix):
-    """Best-effort removal of the pipeline's S3 scratch objects."""
+    """Try to remove the S3 scratch objects of the pipeline."""
 
     try:
         listed = s3_client.list_objects_v2(Bucket=bucket, Prefix=f"{prefix}/")
@@ -298,10 +312,13 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
 
 
 def maybe_enqueue_atmos_supplement(file_id):
-    """Called after an import's track scan: when the file carries a
-    TrueHD Atmos track without its E-AC-3 Atmos twin, queue the
-    supplement on the transcode queue — serial, so a batch of imports
-    converts one film at a time and MediaConvert spend stays visible."""
+    """Queue the supplement if the file needs an E-AC-3 Atmos twin.
+
+    The import calls this after its track scan. If the file carries a
+    TrueHD Atmos track without its E-AC-3 Atmos twin, this queues the
+    supplement on the transcode queue. That queue is serial. Thus, a
+    batch of imports converts 1 film at a time. The MediaConvert cost
+    stays visible."""
 
     rows = (
         FileAudioTrack.query.filter_by(file_id=int(file_id))
@@ -331,7 +348,7 @@ def maybe_enqueue_atmos_supplement(file_id):
 
 
 def atmos_supplement_task(file_id):
-    """Supplement a file's TrueHD Atmos tracks with E-AC-3 Atmos twins."""
+    """Add E-AC-3 Atmos twins to the TrueHD Atmos tracks of a file."""
 
     from app.videos import acquire_lock_or_defer
 
@@ -340,8 +357,8 @@ def atmos_supplement_task(file_id):
         if file is None:
             return True
 
-        # Serialize with other tasks that rewrite this title's files or
-        # track records
+        # Serialize with the other tasks that rewrite the files or the
+        # track records of this title.
 
         lock = acquire_lock_or_defer(
             file.file_identifier(),
@@ -363,13 +380,15 @@ def atmos_supplement_task(file_id):
 
 
 def _atmos_supplement_unlocked(file_id):
-    """The supplement pipeline; the caller must hold the title's lock.
+    """Run the supplement pipeline. The caller must hold the lock of the
+    title.
 
-    The library share carries exactly two sequential transfers: one
-    copy of the source into local staging at the start, one copy of the
-    verified result back at the end. Everything between — extraction,
-    decode, remux, flag edits, verification parses, and the untouched-
-    archive upload — runs against the staging SSD.
+    The library share carries exactly 2 sequential transfers. The first
+    is 1 copy of the source into local staging at the start. The second
+    is 1 copy of the verified result back at the end. All steps between
+    them run on the staging SSD. These are the extraction, the decode,
+    the remux, the flag edits, the verification parses, and the
+    untouched-archive upload.
     """
 
     from app.videos import (
@@ -394,8 +413,9 @@ def _atmos_supplement_unlocked(file_id):
             current_app.logger.warning(f"'{basename}' No local copy, cannot supplement")
             return False
 
-        # A cheap stored-row precheck before committing to a full-size
-        # staging copy; the copy is re-inspected as the real authority
+        # A cheap check of the stored rows before the full-size staging
+        # copy. The pipeline inspects the copy again as the real
+        # authority.
 
         stored_rows = (
             FileAudioTrack.query.filter_by(file_id=file.id)
@@ -417,9 +437,10 @@ def _atmos_supplement_unlocked(file_id):
         except OSError:
             staging_free = 0
 
-        # The workspace briefly holds the staged source AND the remuxed
-        # output (each ≈ the source's size); the headroom covers the
-        # extracted bitstream, DAMF master, and .ec3 phases
+        # The workspace holds the staged source AND the remuxed output
+        # for a short time. Each is about the size of the source. The
+        # headroom covers the extracted bitstream, the DAMF master, and
+        # the .ec3 phases.
 
         needed = 2 * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
         if staging_free < needed:
@@ -438,7 +459,7 @@ def _atmos_supplement_unlocked(file_id):
         try:
             os.makedirs(workspace, exist_ok=True)
 
-            # The one read of the source the library share carries
+            # The 1 read of the source that the library share carries.
 
             staging_source = os.path.join(workspace, basename)
             copy_with_progress(
@@ -458,7 +479,7 @@ def _atmos_supplement_unlocked(file_id):
                 streamorder = source.get("streamorder")
 
                 # Extract the TrueHD bitstream and decode it to a DAMF
-                # Atmos master (truehdd; ffmpeg can't produce one)
+                # Atmos master with truehdd. ffmpeg cannot produce one.
 
                 thd_path = os.path.join(workspace, f"track{streamorder}.thd")
                 _run_step(
@@ -493,7 +514,7 @@ def _atmos_supplement_unlocked(file_id):
                     )
                 os.remove(thd_path)
 
-                # Ship the master to S3 scratch and encode it
+                # Upload the master to the S3 scratch area and encode it.
 
                 _set_stage(job, basename, "Uploading Atmos master to S3", progress=0)
                 upload_progress = _UploadProgress(
@@ -564,8 +585,9 @@ def _atmos_supplement_unlocked(file_id):
                     )
                 )
 
-            # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD] —
-            # reading the staged source and writing beside it, all local
+            # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD].
+            # This reads the staged source and writes next to it. All of
+            # this is local.
 
             inserts.sort(key=lambda insert: insert[0])
             media_info = MediaInfo.parse(staging_source)
@@ -606,9 +628,9 @@ def _atmos_supplement_unlocked(file_id):
 
             remove_empty_subtitle_tracks(staging_output)
 
-            # The first audio track takes the default flag and every
-            # other one is cleared — the library convention, applied
-            # while the file is still on local disk
+            # The first audio track gets the default flag. Each other
+            # track has the flag cleared. This is the library convention.
+            # The pipeline applies it while the file is on the local disk.
 
             total_audio = len(audio_orders) + len(inserts)
             flag_args = []
@@ -629,9 +651,9 @@ def _atmos_supplement_unlocked(file_id):
                 ok_returncodes=(0, 1),
             )
 
-            # Never replace the library copy with a mux that didn't
-            # deliver: the output must carry every expected twin and
-            # all of the original lossless tracks
+            # Never replace the library copy with a mux that failed. The
+            # output must carry each expected twin and all of the
+            # original lossless tracks.
 
             new_audio_tracks = get_audio_tracks_from_file(staging_output)
             new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
@@ -652,18 +674,18 @@ def _atmos_supplement_unlocked(file_id):
                     f"E-AC-3 Atmos twins; library copy left untouched"
                 )
 
-            # The staged source has served its purpose; the verified
-            # output takes over its name so the untouched-archive upload
-            # derives the same S3 key the library file would
+            # The staged source is not necessary now. The verified output
+            # takes its name. Thus, the untouched-archive upload gets the
+            # same S3 key that the library file would get.
 
             os.remove(staging_source)
             final_staging = staging_source
             os.rename(staging_output, final_staging)
 
-            # The one write the library share carries: the verified
-            # result crosses as a hidden dotfile, then renames into
-            # place; a failed copy is removed so nothing partial ever
-            # sits beside the real file
+            # The 1 write that the library share carries. The verified
+            # result crosses as a hidden dotfile. Then the pipeline
+            # renames it into place. The pipeline removes a failed copy.
+            # Thus, no partial file sits next to the real file.
 
             hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
             try:
@@ -682,7 +704,7 @@ def _atmos_supplement_unlocked(file_id):
                     pass
                 raise
 
-            # Rebuild the track records now that the file changed
+            # Rebuild the track records because the file changed.
 
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
@@ -700,9 +722,9 @@ def _atmos_supplement_unlocked(file_id):
                 track["track"] = i + 1
                 db.session.add(FileSubtitleTrack(**track))
 
-            # Read from the staging copy, which is byte-identical to
-            # the file just renamed into the library, so the share
-            # isn't touched again
+            # Read from the staging copy. It is byte-identical to the
+            # file that was renamed into the library. Thus, the share is
+            # not touched again.
 
             record_filesize(file, os.path.getsize(final_staging))
             file.date_updated = datetime.now(timezone.utc)
@@ -715,19 +737,20 @@ def _atmos_supplement_unlocked(file_id):
         else:
             db.session.commit()
 
-            # The film gained a track under a path Plex already knows,
-            # so nothing prompts it to look again until its next scan:
-            # ask for the analysis now instead (#194)
+            # The film gained a track under a path that Plex already
+            # knows. Thus, nothing tells Plex to look again until its next
+            # scan. Ask for the analysis now instead (#194).
 
             enqueue_plex_analyze(file_path)
 
-            # The supplemented file replaces the untouched S3 archive
-            # (Glenn's call: it's a strict superset of the rip, and
-            # re-downloads must never pay for a second MediaConvert run)
-            # — uploaded from the staging copy so the library share
-            # isn't read again. Mirrors the mkvpropedit path's posture:
-            # the library replacement above is already committed, so an
-            # upload failure fails the job and the S3 sync task heals it
+            # The supplemented file replaces the untouched S3 archive.
+            # Glenn decided this. The file is a strict superset of the
+            # rip. A re-download must never pay for a second MediaConvert
+            # run. The pipeline uploads from the staging copy. Thus, the
+            # library share is not read again. This is the same as the
+            # mkvpropedit path. The library replacement above is already
+            # committed. Thus, an upload failure fails the job, and the
+            # S3 sync task repairs it.
 
             if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
                 try:

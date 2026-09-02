@@ -1,5 +1,7 @@
-"""The shopping lists (the routes.py split): upgrade-worthy movies and
-TV seasons, with exclusions and store links."""
+"""Show the shopping lists. This module is the split from routes.py.
+
+The lists show the movies and the TV seasons that are worth an upgrade,
+with exclusions and store links."""
 
 import re
 
@@ -13,7 +15,7 @@ from flask import (
     request,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its real module.
 from flask_login import current_user, login_required
 
 from app import db
@@ -41,11 +43,12 @@ from app.streaming import (
 )
 from app.main import bp
 
-# The watchlist view's scarcity order (#247, Glenn's ranking): a film
-# nobody's services carry can only be watched by buying it, so it
-# outranks one that's rentable, which outranks one already streaming.
-# A film's group is its WORST case across everyone watching it — if
-# it's unavailable to one watcher, unavailable wins.
+# This is the scarcity order of the watchlist view (#247, the ranking
+# of Glenn). A film that no service of a watcher has can only be
+# watched after a purchase. Thus, it outranks a rentable film. A
+# rentable film outranks a film that is already streaming. The group
+# of a film is its WORST case across each person who watches for it.
+# If it is unavailable to 1 watcher, unavailable wins.
 
 WATCHLIST_SCARCITY = {"streaming": 1, "rent": 2, "unavailable": 3}
 
@@ -57,20 +60,24 @@ WATCHLIST_GROUPS = (
 
 
 def _watcher_name(user):
-    """A short display handle for a watcher — there's no name column,
-    so the Plex username or the email's mailbox part stands in."""
+    """Return a short display handle for a watcher.
+
+    There is no name column. Thus, the Plex username or the mailbox
+    part of the email address replaces it."""
 
     return user.plex_username or user.email.split("@")[0]
 
 
 def watchlist_shopping_groups():
-    """The shopping list's watchlist view (#247): every film on ANY
-    user's watchlist with no local copy and no shopping-list
-    exclusion, grouped hardest-to-watch first. Availability answers
-    from the cache the nightly refresh keeps full (fetch_limit=0);
-    a film with no cached payload — or no TMDB id at all — counts
-    as unavailable, since nothing says otherwise. Within a group:
-    the most-watched films first, then title."""
+    """Return the watchlist view of the shopping list (#247).
+
+    This includes each film on the watchlist of ANY user with no local
+    copy and no shopping-list exclusion. The groups show the hardest
+    to watch first. The availability comes from the cache that the
+    nightly refresh keeps full (fetch_limit=0). A film with no cached
+    payload, or with no TMDB id, counts as unavailable, because
+    nothing says otherwise. In a group, the most-watched films come
+    first, then the title order."""
 
     watch_rows = (
         db.session.query(UserWatchlist.movie_id, User)
@@ -166,14 +173,14 @@ def watchlist_shopping_groups():
 @bp.route("/shopping-list/movie", methods=["GET", "POST"])
 @login_required
 def movie_shopping():
-    """Show instructions on how to improve the quality of each movie in the library.
+    """Show how to improve the quality of each movie in the library.
 
     Possible user queries:
-    - q          : filter the movie list for only the films that contain this substring
-    - min_quality: show all movies where the best quality is at least this good
-                   (defaults to "Unknown")
-    - max_quality: show all movies where the best quality is *below* this threshold
-                   (defaults to "Bluray-2160p Remux")
+    - q          : show only the films that contain this substring
+    - min_quality: show the movies whose best quality is at least this
+                   good (default "Unknown")
+    - max_quality: show the movies whose best quality is *below* this
+                   limit (default "Bluray-2160p Remux")
     """
 
     page = request.args.get("page", 1, type=int)
@@ -189,12 +196,12 @@ def movie_shopping():
         type=str,
     )
 
-    # The page heading is derived from the active filters (below, once the
-    # quality bounds are normalized) rather than read from a ?title= query
-    # parameter — the old approach let any crafted URL put arbitrary text
-    # in the heading
+    # The page heading comes from the active filters (below, after the
+    # quality bounds are normalized). It does not come from a ?title=
+    # query parameter. With the old approach, a crafted URL could put
+    # any text in the heading.
 
-    # Form to filter the shopping list by Criterion release or quality
+    # This form filters the shopping list by Criterion release or quality.
 
     filter_form = MovieShoppingFilterForm()
     if library == "criterion":
@@ -215,7 +222,7 @@ def movie_shopping():
     else:
         filter_form.media.default = "all"
 
-    # Create the list of qualities for the dropdown filter
+    # Make the list of qualities for the dropdown filter.
 
     qualities = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
@@ -225,9 +232,9 @@ def movie_shopping():
     filter_form.min_quality.choices = [(str(id), title) for (id, title) in qualities]
     filter_form.max_quality.choices = [(str(id), title) for (id, title) in qualities]
 
-    # If the min_quality ID doesn't exist in our RefQuality table, default
-    # to "Not in library" — the virtual bottom of the scale, so the default view
-    # includes liked-but-unowned films
+    # If the min_quality ID does not exist in the RefQuality table, use
+    # "Not in library". That is the virtual bottom of the scale. Thus, the
+    # default view includes the liked films that the user does not own.
 
     if not RefQuality.query.filter_by(id=int(min_quality)).first():
         min_quality = int(
@@ -236,7 +243,8 @@ def movie_shopping():
             .scalar()
         )
 
-    # If the max_quality ID doesn't exist in our RefQuality table, default to "Bluray-1080p"
+    # If the max_quality ID does not exist in the RefQuality table, use
+    # "Bluray-1080p".
 
     if not RefQuality.query.filter_by(id=int(max_quality)).first():
         max_quality = int(
@@ -246,7 +254,7 @@ def movie_shopping():
             .scalar()
         )
 
-    # Find the preference associated with the quality ID, and set as the dropdown default
+    # Find the preference of the quality ID. Set it as the dropdown default.
 
     min_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(min_quality)).scalar()
@@ -256,8 +264,8 @@ def movie_shopping():
     )
 
     # If the minimum quality outranks the maximum, collapse the range to
-    # just the minimum. Compared by preference — quality ids don't
-    # reliably follow quality order
+    # the minimum only. Compare by preference. The quality ids do not
+    # always follow the quality order.
 
     if min_preference > max_preference:
         max_quality = int(min_quality)
@@ -266,8 +274,8 @@ def movie_shopping():
     filter_form.min_quality.default = min_quality
     filter_form.max_quality.default = max_quality
 
-    # Derive the heading from the filter state; the search branches below
-    # override it with their own more specific titles
+    # Derive the heading from the filter state. The search branches below
+    # replace it with their own, more specific, titles.
 
     if library == "criterion":
         title = "Criterion Collection movies to upgrade"
@@ -297,7 +305,8 @@ def movie_shopping():
         .scalar()
     )
     if min_quality_title == max_quality_title:
-        # Equal titles mean equal preferences, so testing one bound suffices
+        # Equal titles mean equal preferences. Thus, a test of 1 bound is
+        # sufficient.
         if min_preference == not_in_library_quality:
             title = f"{title} that have been liked but aren't in the library"
         else:
@@ -309,7 +318,7 @@ def movie_shopping():
     elif min_preference > bottom_quality:
         title = f"{title} ({min_quality_title} quality and above)"
 
-    # Form to filter the shopping list by a particular substring
+    # This form filters the shopping list by a substring.
 
     library_search_form = LibrarySearchForm()
     if filter_form.validate_on_submit():
@@ -324,9 +333,9 @@ def movie_shopping():
             )
         )
 
-    # Apply the changes to the filter form
-    # (not sure why this has to go at this point in the code, but putting it elsewhere
-    #  didn't work **shrug emoji**)
+    # Apply the changes to the filter form. The reason that this must be
+    # at this point in the code is not known. Other positions did not
+    # work.
 
     filter_form.process()
 
@@ -345,7 +354,7 @@ def movie_shopping():
             )
         )
 
-    # Subquery to get the best movie titles
+    # This subquery gets the best movie titles.
 
     ranked_files = (
         db.session.query(
@@ -361,7 +370,7 @@ def movie_shopping():
         .subquery()
     )
 
-    # Subquery to get only physical-media movies
+    # This subquery gets only the physical-media movies.
 
     physical_media = (
         db.session.query(Movie.id)
@@ -372,12 +381,12 @@ def movie_shopping():
         .subquery()
     )
 
-    # Subquery to get the current user's average ratings for each movie.
-    # The math on modified_rating, whole_stars, and half_stars mirrors what
-    # is done when creating a review, computed here over the *average*. The
-    # page no longer draws these columns — each row carries the live star
-    # ladder, painted from /movie_states with the latest verdict — but they
-    # still ride the row tuple the template unpacks.
+    # This subquery gets the average rating of the current user for each
+    # movie. The math on modified_rating, whole_stars, and half_stars is
+    # the same as at review creation. Here it applies to the *average*.
+    # The page no longer draws these columns. Each row has the live star
+    # ladder, painted from /movie_states with the latest verdict. But the
+    # columns still go with the row tuple that the template unpacks.
 
     rating = (
         db.session.query(
@@ -406,7 +415,7 @@ def movie_shopping():
         .subquery()
     )
 
-    # Subqueries to get the preference associated with different quality thresholds
+    # These subqueries get the preference of each quality limit.
 
     dvd_quality = (
         db.session.query(RefQuality.preference)
@@ -428,7 +437,7 @@ def movie_shopping():
 
     CriterionQuality = db.aliased(RefQuality)
 
-    # These CASE expressions are shared by every shopping query variant
+    # Each shopping query variant shares these CASE expressions.
 
     shopping_instruction_case = db.case(
         (Movie.shopping_list_exclude == True, "Already owned"),
@@ -491,8 +500,8 @@ def movie_shopping():
             ),
             "Buy Criterion edition on DVD",
         ),
-        # A liked movie with no files (possible since the Letterboxd
-        # import) is wanted but entirely unowned
+        # A liked movie with no files is possible after the Letterboxd
+        # import. The user wants it but does not own it in any form.
         (File.id == None, "Buy on Blu-Ray"),
         (File.fullscreen == True, "Buy any non-fullscreen release"),
         (
@@ -564,7 +573,7 @@ def movie_shopping():
 
     quality_order_case = db.case(
         (Movie.criterion_disc_owned == True, 99),
-        # Nothing owned at all sorts ahead of even the worst owned quality
+        # A film with no owned copy sorts before the worst owned quality.
         (
             db.and_(
                 File.id == None,
@@ -639,19 +648,20 @@ def movie_shopping():
         else_=(0),
     )
 
-    # Movies with a liked review but no files (possible since the
-    # Letterboxd import) belong on the shopping list too: they're wanted
-    # films not owned in any form. Selecting File and RefQuality through
-    # always-false outer joins yields NULL columns for them, so these rows
-    # take the same shape as owned titles and can be UNIONed in below.
+    # A movie with a liked review but no files is possible after the
+    # Letterboxd import. It belongs on the shopping list too. The user
+    # wants it but does not own it in any form. A select of File and
+    # RefQuality through always-false outer joins gives NULL columns for
+    # these movies. Thus, these rows have the same shape as the owned
+    # titles, and the UNION below can include them.
 
     liked_movie_ids = db.session.query(UserMovieReview.movie_id).filter(
         UserMovieReview.user_id == int(current_user.id),
         UserMovieReview.liked == True,
     )
 
-    # TV episode files carry a NULL movie_id, and a single NULL in a NOT IN
-    # subquery makes the predicate false for every row — filter them out
+    # A TV episode file has a NULL movie_id. One NULL in a NOT IN subquery
+    # makes the predicate false for each row. Thus, filter them out.
 
     owned_movie_ids = db.session.query(File.movie_id).filter(
         File.feature_type_id == None, File.movie_id != None
@@ -770,8 +780,9 @@ def movie_shopping():
                 db.or_(Movie.title.ilike(f"%{q}%"), Movie.tmdb_title.ilike(f"%{q}%"))
             )
 
-            # Films with no local copy count as the virtual bottom quality, so they
-            # only appear when the range's minimum reaches down to "Not in library"
+            # A film with no local copy counts as the virtual bottom
+            # quality. Thus, it appears only if the minimum of the range
+            # reaches down to "Not in library".
 
             candidates = (
                 owned_matches.union_all(liked_matches)
@@ -787,11 +798,11 @@ def movie_shopping():
             ).paginate(page=page, per_page=100, error_out=False)
 
     elif library == "watchlist":
-        # The watchlist view (#247): cross-user and availability-
-        # ranked, so it's built in Python from the availability cache
-        # rather than in the quality-driven SQL below. Unpaginated on
-        # purpose, like the watchlist page itself — the group
-        # structure is the navigation
+        # This is the watchlist view (#247). It is cross-user and ranked
+        # by availability. Thus, Python builds it from the availability
+        # cache, not the quality-driven SQL below. It has no pagination
+        # on purpose, as the watchlist page itself. The group structure
+        # is the navigation.
 
         title = "Watchlisted movies to buy"
         watchlist_groups = watchlist_shopping_groups()
@@ -920,8 +931,9 @@ def movie_shopping():
                 criterion_release != True,
             ),
         )
-        # Films with no local copy count as the virtual bottom quality, so they only
-        # appear when the range's minimum reaches down to "Not in library"
+        # A film with no local copy counts as the virtual bottom quality.
+        # Thus, it appears only if the minimum of the range reaches down to
+        # "Not in library".
 
         candidates = (
             owned_titles.union_all(liked_titles)
@@ -1030,14 +1042,14 @@ def movie_shopping():
 @bp.route("/shopping-list/tv", methods=["GET", "POST"])
 @login_required
 def tv_shopping():
-    """Show instructions on how to improve the quality of each TV show season.
+    """Show how to improve the quality of each TV show season.
 
     Possible user queries:
-    - q          : filter the list for only the tv series that contain this substring
-    - min_quality: show all seasons where the worst quality is at least this good
-                   (defaults to "Unknown")
-    - max_quality: show all seasons where the worst quality is *below* this threshold
-                   (defaults to "Bluray-1080p")
+    - q          : show only the TV series that contain this substring
+    - min_quality: show the seasons whose worst quality is at least this
+                   good (default "Unknown")
+    - max_quality: show the seasons whose worst quality is *below* this
+                   limit (default "Bluray-1080p")
     """
 
     q = request.args.get("q", None, type=str)
@@ -1050,14 +1062,14 @@ def tv_shopping():
         type=str,
     )
 
-    # Form to filter the shopping list by quality
+    # This form filters the shopping list by quality.
 
     filter_form = TVShoppingFilterForm()
 
-    # Create the list of qualities for the dropdown filter
+    # Make the list of qualities for the dropdown filter.
 
-    # "Not in library" is the movie shopping list's virtual quality; TV has no
-    # unowned rows, so it stays out of this dropdown
+    # "Not in library" is the virtual quality of the movie shopping list.
+    # TV has no unowned rows. Thus, it stays out of this dropdown.
 
     qualities = (
         db.session.query(RefQuality.id, RefQuality.quality_title)
@@ -1067,7 +1079,8 @@ def tv_shopping():
     )
     filter_form.quality.choices = [(str(id), title) for (id, title) in qualities]
 
-    # If the min_quality ID doesn't exist in our RefQuality table, default to "Unknown"
+    # If the min_quality ID does not exist in the RefQuality table, use
+    # "Unknown".
 
     if not RefQuality.query.filter_by(id=int(min_quality)).first():
         min_quality = int(
@@ -1076,7 +1089,8 @@ def tv_shopping():
             .scalar()
         )
 
-    # If the max_quality ID doesn't exist in our RefQuality table, default to "Bluray-1080p"
+    # If the max_quality ID does not exist in the RefQuality table, use
+    # "Bluray-1080p".
 
     if not RefQuality.query.filter_by(id=int(max_quality)).first():
         max_quality = int(
@@ -1086,7 +1100,7 @@ def tv_shopping():
             .scalar()
         )
 
-    # Find the preference associated with the quality ID, and set as the dropdown default
+    # Find the preference of the quality ID. Set it as the dropdown default.
 
     min_preference = (
         db.session.query(RefQuality.preference).filter_by(id=int(min_quality)).scalar()
@@ -1096,8 +1110,8 @@ def tv_shopping():
     )
 
     # If the minimum quality outranks the maximum, collapse the range to
-    # the maximum. Compared by preference — quality ids don't reliably
-    # follow quality order
+    # the maximum only. Compare by preference. The quality ids do not
+    # always follow the quality order.
 
     if min_preference > max_preference:
         min_quality = int(max_quality)
@@ -1105,7 +1119,7 @@ def tv_shopping():
 
     filter_form.quality.default = max_quality
 
-    # Form to filter the shopping list by a particular substring
+    # This form filters the shopping list by a substring.
 
     library_search_form = LibrarySearchForm()
     if filter_form.validate_on_submit():
@@ -1113,9 +1127,9 @@ def tv_shopping():
             url_for("main.tv_shopping", max_quality=filter_form.quality.data, q=q)
         )
 
-    # Apply the changes to the filter form
-    # (not sure why this has to go at this point in the code, but putting it elsewhere
-    #  didn't work **shrug emoji**)
+    # Apply the changes to the filter form. The reason that this must be
+    # at this point in the code is not known. Other positions did not
+    # work.
 
     filter_form.process()
 
@@ -1131,7 +1145,7 @@ def tv_shopping():
             )
         )
 
-    # Subqueries to get the preference associated with different quality thresholds
+    # These subqueries get the preference of each quality limit.
 
     dvd_quality = (
         db.session.query(RefQuality.preference)
@@ -1145,7 +1159,7 @@ def tv_shopping():
         .scalar()
     )
 
-    # Subquery to get the worst quality for each tv show season
+    # This subquery gets the worst quality of each TV show season.
 
     subquery = (
         db.session.query(
@@ -1159,8 +1173,8 @@ def tv_shopping():
         .subquery()
     )
 
-    # Run the season aggregate once for the whole library and bucket the rows
-    # by series, rather than re-running the subquery once per series
+    # Run the season aggregate 1 time for the whole library. Then group
+    # the rows by series. Do not run the subquery 1 time per series.
 
     season_rows = (
         db.session.query(
@@ -1219,9 +1233,9 @@ def tv_shopping():
     for series in t:
         seasons = seasons_by_series.get(series.id, [])
 
-        # Don't show any tv series where there aren't any seasons
-        # (Needed because of the quality filter, otherwise we may show a tv series that
-        #  doesn't have any seasons that reach the quality filter threshold.)
+        # Do not show a TV series that has no seasons. This is necessary
+        # because of the quality filter. Without it, the page could show
+        # a TV series with no season that reaches the quality limit.
 
         if len(seasons) == 0:
             continue

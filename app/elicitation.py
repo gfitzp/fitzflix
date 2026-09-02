@@ -1,11 +1,12 @@
-"""The "since you liked…" strip: taste-scored suggestions after a
-positive rating.
+"""Build the "since you liked" strip of taste-scored suggestions.
 
-What's left of the old /rate elicitation drive (retired for the
-Recommendations page, #235): the session's last-response marker and
-the enjoyment picks it unlocks on the just-rated film's movie page —
-unseen candidates sharing features with the anchor, ranked by the
-taste profile's score plus a class-weighted adjacency bonus.
+The strip appears after a positive rating. This module is the part of
+the old /rate elicitation drive that remains. The Recommendations page
+replaced the drive (#235). The module keeps the last-response marker of
+the session. A positive rating unlocks the enjoyment picks on the movie
+page of the rated film. The picks are unseen candidates that share
+features with the anchor film. Fitzflix ranks them by the score of the
+taste profile plus a class-weighted adjacency bonus.
 """
 
 import json
@@ -26,33 +27,37 @@ from app.recommendations import (
 
 LAST_KEY = "fitzflix:elicit:last:{user_id}"
 
-# The last response unlocks the strip for an hour — long enough for
-# a session, short enough that tomorrow starts fresh
+# The last response unlocks the strip for 1 hour. This is long enough
+# for a session. It is short enough that the next day starts with no
+# strip.
 
 LAST_TTL_SECONDS = 3600
 
-# The retired drive's "No Opinion" marks still exclude their films
-# while fresh, and wear off after this many years — the user may have
-# seen the film (or remembered a verdict) since. Only "unseen"
-# expires; "not interested" is permanent.
+# The "No Opinion" marks of the retired drive continue to exclude
+# their films while the marks are recent. The marks expire after this
+# number of years. The user can have seen the film in that time, or can
+# remember a verdict. Only the "unseen" mark expires. The "not
+# interested" mark is permanent.
 
 UNSEEN_RESURFACE_YEARS = 2
 
-# How strongly a positive rating's adjacency pulls similar films
-# forward in the suggestion strip
+# This weight sets how strongly the adjacency to a positively rated
+# film moves similar films forward in the suggestion strip.
 
 ADJACENCY_WEIGHT = 2.0
 
-# After a positive rating, up to this many taste-scored suggestions
-# appear ("since you liked X…")
+# After a positive rating, Fitzflix shows up to this number of
+# taste-scored suggestions ("since you liked X").
 
 SUGGESTION_COUNT = 3
 
 
 def set_last_response(redis, user_id, movie_id, action, positive=False):
-    """Remember the session's last response: action is one of rated /
-    watchlist / not_interested, and a positive rating also unlocks the
-    suggestion strip on that film's movie page."""
+    """Store the last response of the session.
+
+    The action is one of: rated, watchlist, not_interested. A positive
+    rating also unlocks the suggestion strip on the movie page of that
+    film."""
 
     redis.set(
         LAST_KEY.format(user_id=int(user_id)),
@@ -64,18 +69,20 @@ def set_last_response(redis, user_id, movie_id, action, positive=False):
 
 
 def last_response(redis, user_id):
-    """The session's last response, or None."""
+    """Return the last response of the session, or None."""
 
     payload = redis.get(LAST_KEY.format(user_id=int(user_id)))
     return json.loads(payload) if payload else None
 
 
 def elicitation_candidates(user_id):
-    """Movie ids the suggestion strip may offer: local full-feature
-    films the user hasn't logged, minus watchlisted films (declared
-    unseen-but-wanted) and films marked "No Opinion" within the
-    resurface bar (older marks expire) — not-interested films are
-    already out of local_candidates."""
+    """Return the movie ids that the suggestion strip can offer.
+
+    These are the local films with full features that the user has not
+    logged. This function removes the watchlisted films, because the
+    user declared them unseen but wanted. It also removes the films
+    with a recent "No Opinion" mark. Older marks expire. The films
+    marked not interested are already absent from local_candidates."""
 
     watchlisted = {
         movie_id
@@ -99,7 +106,7 @@ def elicitation_candidates(user_id):
 
 
 def adjacency_scores(candidates, features, anchor_features):
-    """movie_id -> feature overlap with the anchor film, class-weighted."""
+    """Return movie_id -> class-weighted feature overlap with the anchor film."""
 
     anchor_keys = {key for _, key, _ in anchor_features}
     scores = {}
@@ -113,14 +120,14 @@ def adjacency_scores(candidates, features, anchor_features):
 
 
 def suggestions_after_rating(user_id, exclude=(), count=SUGGESTION_COUNT):
-    """(anchor movie id, suggested movie ids) after a positive rating,
-    or (None, []).
+    """Return (anchor movie id, suggested movie ids) after a positive rating.
 
-    Enjoyment picks, not elicitation picks: unseen candidates that
-    actually share features with the just-rated film, ranked by the
-    taste profile's own score plus the adjacency bonus — the fresh
-    rating's signal rides in through the adjacency term while the
-    stored profile catches up in the background.
+    Return (None, []) if there is no positive rating. These are enjoyment
+    picks, not elicitation picks. They are unseen candidates that share
+    features with the rated film. Fitzflix ranks them by the score of the
+    taste profile plus the adjacency bonus. The signal of the new rating
+    comes in through the adjacency term. The stored profile catches up
+    in the background.
     """
 
     redis = current_app.redis

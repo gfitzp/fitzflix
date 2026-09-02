@@ -10,11 +10,11 @@ load_dotenv(os.path.join(basedir, ".env"))
 def _mount_urls(raw):
     """Parse a comma-separated list of share URLs into {share name: URL}.
 
-    A share's name is its URL's basename, URL-decoded — the name macOS
-    gives its mount point under /Volumes. Each share carries its own full
-    URL rather than sharing a server prefix because NFS exports don't
-    share one: the same server exports /volume2/Movies and
-    /volume3/TV Shows, which no single prefix can address.
+    The name of a share is the URL-decoded basename of its URL. This is
+    the name that macOS gives its mount point under /Volumes. Each share
+    has its own full URL. The shares do not share a server prefix, because
+    NFS exports do not have one. The same server exports /volume2/Movies
+    and /volume3/TV Shows. No single prefix can address both.
     """
 
     urls = {}
@@ -25,8 +25,9 @@ def _mount_urls(raw):
     return urls
 
 
-# Skip system proxy detection: on macOS it loads an Objective-C framework,
-# which aborts the process when it happens inside a forked gunicorn worker
+# Do not run the system proxy detection. On macOS it loads an Objective-C
+# framework. That load aborts the process if it occurs inside a forked
+# gunicorn worker.
 
 os.environ.setdefault("no_proxy", "*")
 
@@ -51,8 +52,8 @@ class Config(object):
     SERVER_NAME                         = os.environ.get("SERVER_NAME") or None
     APPLICATION_ROOT                    = os.environ.get("APPLICATION_ROOT") or "/"
 
-    # When the site is served over https, refuse to send session cookies over
-    # plain http (e.g. direct LAN requests to the gunicorn port)
+    # If the site is served over https, do not send session cookies over
+    # plain http (for example, direct LAN requests to the gunicorn port).
 
     SESSION_COOKIE_SECURE               = PREFERRED_URL_SCHEME == "https"
     REMEMBER_COOKIE_SECURE              = PREFERRED_URL_SCHEME == "https"
@@ -74,18 +75,19 @@ class Config(object):
     REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(MEDIA_LOCATION, "rejects")
     TRANSCODES_DIR                      = os.environ.get("TRANSCODES_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
-    # Local scratch space: localization copies each source here and does its
-    # processing against local disk, so sustained tool I/O never runs over SMB
+    # Local scratch space. Localization copies each source here and does its
+    # processing on the local disk. Thus, sustained tool I/O never runs over
+    # SMB.
     STAGING_DIR                         = os.environ.get("STAGING_DIR") or os.path.join(MEDIA_LOCATION, "staging")
 
     LIBRARY_DIR                         = os.environ.get("LIBRARY_DIR") or os.path.join(MEDIA_LOCATION, "library")
     MOVIE_LIBRARY                       = os.environ.get("MOVIE_LIBRARY") or os.path.join(LIBRARY_DIR, "Movies")
     TV_LIBRARY                          = os.environ.get("TV_LIBRARY") or os.path.join(LIBRARY_DIR, "TV Shows")
 
-    # Mount URLs for the network shares, comma-separated (e.g.
-    # smb://user@nas.local/Movies,nfs://nas.local/volume2/Movies), for
-    # remounting dead network volumes; a dead share with no URL here
-    # alerts but isn't self-healed
+    # Mount URLs for the network shares, comma-separated (for example,
+    # smb://user@nas.local/Movies,nfs://nas.local/volume2/Movies). Fitzflix
+    # uses them to remount a dead network volume. A dead share with no URL
+    # here causes an alert. Fitzflix does not heal it.
     MOUNT_URLS                          = _mount_urls(os.environ.get("MOUNT_URLS"))
 
     # Application locations
@@ -140,37 +142,37 @@ class Config(object):
     ENV_FILE                            = os.environ.get("ENV_FILE") or os.path.join(basedir, ".env")
     CUSTOM_ARTWORK_DIR                  = os.environ.get("CUSTOM_ARTWORK_DIR") or os.path.join(basedir, "app", "static", "custom")
 
-    # Subtitle-triage inspection aids: static-served but outside the
-    # custom-artwork tree, so backups ignore them
+    # Subtitle-triage inspection aids. Fitzflix serves them as static files.
+    # They are outside the custom-artwork tree. Thus, backups ignore them.
 
     TRIAGE_SNAPSHOT_DIR                 = os.environ.get("TRIAGE_SNAPSHOT_DIR") or os.path.join(basedir, "app", "static", "triage")
 
-    # Name That Frame: the nightly pre-extracted frame pool —
-    # served through an authenticated route, never the public static
-    # path, since a frame's filename must not hint at its answer
+    # Name That Frame: the nightly pre-extracted frame pool. Fitzflix serves
+    # it through an authenticated route, never through the public static
+    # path, because the filename of a frame must not show its answer.
 
     FRAME_POOL_DIR                      = os.environ.get("FRAME_POOL_DIR") or os.path.join(basedir, "app", "frame_pool")
     FRAME_POOL_SIZE                     = int(os.environ.get("FRAME_POOL_SIZE") or 600)
     FRAME_POOL_ROTATE                   = int(os.environ.get("FRAME_POOL_ROTATE") or 60)
 
-    # Easy mode deals only films the player has rated, so the nightly
-    # refresh guarantees each reviewer at least this many pooled frames
-    # from their own diary (capped by how many rated films they have)
+    # Easy mode deals only films that the player has rated. Thus, the
+    # nightly refresh gives each reviewer at least this many pooled frames
+    # from their own diary (limited by the number of their rated films).
 
     FRAME_POOL_MIN_RATED                = int(os.environ.get("FRAME_POOL_MIN_RATED") or 200)
 
-    # AWS Glacier restore cost estimation, in USD: a per-object retrieval
+    # AWS Glacier restore cost estimate, in USD: a per-object retrieval
     # request fee, a per-GB retrieval fee, and the per-GB transfer-out fee.
-    # Adjust to match the current AWS rate card if prices change
+    # If the prices change, adjust these to the current AWS rate card.
     AWS_RESTORE_PER_1K_REQUEST_COST      = float(os.environ.get("AWS_RESTORE_PER_1K_REQUEST_COST") or 0.10)
     AWS_RESTORE_PER_1K_REQUEST_BULK_COST = float(os.environ.get("AWS_RESTORE_PER_1K_REQUEST_BULK_COST") or 0.025)
     AWS_RESTORE_PER_GB_COST              = float(os.environ.get("AWS_RESTORE_PER_GB_COST") or 0.02)
     AWS_RESTORE_PER_GB_BULK_COST         = float(os.environ.get("AWS_RESTORE_PER_GB_BULK_COST") or 0.0025)
     AWS_DOWNLOAD_PER_GB_COST             = float(os.environ.get("AWS_DOWNLOAD_PER_GB_COST") or 0.09)
 
-    # Health monitoring: alert when a volume's free space falls below this,
-    # rather than on percent used, since the NAS library volumes are kept
-    # nearly full by design
+    # Health monitoring. Alert when the free space of a volume falls below
+    # this value, not on the percent used, because the NAS library volumes
+    # are almost full by design.
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
@@ -183,18 +185,19 @@ class Config(object):
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None
     SONARR_URL                          = os.environ.get("SONARR_URL") or None
 
-    # Plex configuration: URL + token enable the watch-history poller, the
-    # webhook token gates the /api/plex/webhook endpoint
+    # Plex configuration. The URL and the token enable the watch-history
+    # poller. The webhook token gates the /api/plex/webhook endpoint.
     PLEX_URL                            = os.environ.get("PLEX_URL") or None
     PLEX_TOKEN                          = os.environ.get("PLEX_TOKEN") or None
     PLEX_WEBHOOK_TOKEN                  = os.environ.get("PLEX_WEBHOOK_TOKEN") or None
 
-    # Virtual DVR channels (#182): the token gates the M3U/XMLTV/stream
-    # endpoints (unset = feature off, every route 404s); Plex tunes the
-    # playlist as an M3U tuner. Channel count and size bound the
-    # nightly lineup build's ffprobe work. DVR_TUNER_URL is the
-    # Fitzflix origin AS PLEX REACHES IT — loopback when Plex runs on
-    # the same machine, so tuning never routes through the public host
+    # Virtual DVR channels (#182). The token gates the M3U/XMLTV/stream
+    # endpoints. If the token is not set, the feature is off and every route
+    # returns 404. Plex tunes the playlist as an M3U tuner. The channel count
+    # and the channel size limit the ffprobe work of the nightly lineup
+    # build. DVR_TUNER_URL is the Fitzflix origin AS PLEX REACHES IT. Use
+    # loopback if Plex runs on the same machine. Then tuning never goes
+    # through the public host.
     DVR_TOKEN                           = os.environ.get("DVR_TOKEN") or None
     DVR_TUNER_URL                       = os.environ.get("DVR_TUNER_URL") or "http://127.0.0.1:8000"
     DVR_GENRE_CHANNELS                  = int(os.environ.get("DVR_GENRE_CHANNELS") or 6)
@@ -203,12 +206,12 @@ class Config(object):
     DVR_CHANNEL_EPISODES                = int(os.environ.get("DVR_CHANNEL_EPISODES") or 60)
     DVR_VIDEO_BITRATE_KBPS              = int(os.environ.get("DVR_VIDEO_BITRATE_KBPS") or 8000)
 
-    # Remote playback via Plex Companion: the server address AS THE
-    # PLAYERS REACH IT — an https URI resolvable from the players'
-    # networks (not PLEX_URL, which is loopback). Which player to
-    # command is per-user (User.plex_player_address / _id, set on the
-    # Profile page); GDM discovery can't cross the DMZ VLAN, so
-    # players are addressed directly, never discovered
+    # Remote playback through Plex Companion. This is the server address AS
+    # THE PLAYERS REACH IT: an https URI that resolves from the networks of
+    # the players. It is not PLEX_URL. PLEX_URL is loopback. The player to
+    # command is per user (User.plex_player_address and _id, set on the
+    # Profile page). GDM discovery cannot cross the DMZ VLAN. Thus, Fitzflix
+    # addresses the players directly. It never discovers them.
     PLEX_PLAYER_SERVER_URI              = os.environ.get("PLEX_PLAYER_SERVER_URI") or None
 
     # Radarr configuration
@@ -220,30 +223,32 @@ class Config(object):
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"
 
-    # Combined ceiling for all TMDB API requests across every worker
-    # process; TMDB rate-limits at roughly 40-50 requests per second per
-    # IP, so stay well below that
+    # The combined limit for all TMDB API requests across every worker
+    # process. TMDB rate-limits at approximately 40-50 requests per second
+    # per IP. Stay well below that rate.
     TMDB_REQUESTS_PER_SECOND            = int(os.environ.get("TMDB_REQUESTS_PER_SECOND") or 10)
 
-    # Poster and cast artwork is hotlinked straight from TMDB's image CDN
+    # Fitzflix hotlinks poster and cast artwork directly from the TMDB
+    # image CDN.
     TMDB_IMAGE_URL                      = os.environ.get("TMDB_IMAGE_URL") or "https://image.tmdb.org/t/p"
 
     WIKIDATA_SPARQL_URL                 = os.environ.get("WIKIDATA_SPARQL_URL") or "https://query.wikidata.org/sparql"
 
-    # Task timeouts; if specifying in the .env file, set as number of seconds
-    # Note: LOCALIZATION_TASK_TIMEOUT also sets the title-lock TTL protecting
-    # the whole localization -> move -> finalize chain, including queue waits
+    # Task timeouts. In the .env file, set them as a number of seconds.
+    # Note: LOCALIZATION_TASK_TIMEOUT also sets the title-lock TTL. That
+    # lock protects the whole localization -> move -> finalize chain,
+    # including the queue waits.
     LOCALIZATION_TASK_TIMEOUT           = int(os.environ.get("LOCALIZATION_TASK_TIMEOUT") or ONE_DAY)
     SQL_TASK_TIMEOUT                    = int(os.environ.get("SQL_TASK_TIMEOUT") or TEN_MINUTES)
     UPLOAD_TASK_TIMEOUT                 = int(os.environ.get("UPLOAD_TASK_TIMEOUT") or SIX_HOURS)
     TRANSCODE_TASK_TIMEOUT              = int(os.environ.get("TRANSCODE_TASK_TIMEOUT") or TWO_DAYS)
     MKVPROPEDIT_TASK_TIMEOUT            = int(os.environ.get("MKVPROPEDIT_TASK_TIMEOUT") or SIX_HOURS)
-    # Library copies are LAN-bound (minutes, not hours), and small file-queue
-    # jobs like S3 deletes need only a wedge-detector
+    # A library copy runs on the LAN (minutes, not hours). A small file-queue
+    # job, for example an S3 delete, needs only a stall detector.
     MOVE_TASK_TIMEOUT                   = int(os.environ.get("MOVE_TASK_TIMEOUT") or TWO_HOURS)
     FILE_TASK_TIMEOUT                   = int(os.environ.get("FILE_TASK_TIMEOUT") or TEN_MINUTES)
 
     # File upload settings
-    MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # ten megabytes
+    MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # 10 megabytes
 
     # fmt: on

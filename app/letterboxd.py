@@ -1,13 +1,14 @@
-"""Letterboxd RSS sync: each user's public feed polls into their
-diary, hands-free.
+"""Sync the Letterboxd RSS feed of each user into the diary, with no manual step.
 
-The feed is Letterboxd's advertised account surface (their real API is
-invite-gated): the latest ~50 diary/review items, each carrying a TMDB
-id, the watched date, the rewatch flag, the like, the half-star rating
-when one was given, and the review text. Ingest is a merge, never a
-blind append — the centerpiece rule is that a feed item COMPLETES the
-bare row a Plex scrobble already wrote for the same film on the same
-(±1) day, so one viewing stays one row as each system reports in.
+The feed is the public account surface of Letterboxd. The real API of
+Letterboxd requires an invitation. The feed has the latest
+approximately 50 diary and review items. Each item has a TMDB id, the
+watched date, the rewatch flag, the like, the half-star rating if the
+user gave one, and the review text. Ingest is a merge, never a blind
+append. The central rule is this: a feed item COMPLETES the bare row
+that a Plex scrobble already wrote for the same film on the same day
+(plus or minus 1 day). Thus, one viewing stays one row when each
+system reports it.
 """
 
 import html
@@ -30,7 +31,7 @@ app = LocalProxy(get_app)
 
 FEED_URL = "https://letterboxd.com/{username}/rss/"
 
-# Letterboxd rejects clientless user agents
+# Letterboxd rejects a request that has no client user agent.
 
 FEED_HEADERS = {"User-Agent": "Mozilla/5.0 (Fitzflix diary sync)"}
 
@@ -39,12 +40,13 @@ NAMESPACES = {
     "tmdb": "https://themoviedb.org",
 }
 
-# A plain watch's description is boilerplate, not a review
+# The description of a plain watch is boilerplate, not a review.
 
 BOILERPLATE_RE = re.compile(r"^\s*(Watched|Rewatched) on \w+ \w+ \d{1,2}, \d{4}\.?\s*$")
 
-# The spoiler checkbox rendered as an injected paragraph — metadata,
-# not authored text (the CSV export's review text never contains it)
+# Letterboxd renders the spoiler checkbox as an injected paragraph. It
+# is metadata, not authored text. The review text of the CSV export
+# never contains it.
 
 SPOILER_RE = re.compile(
     r"^\s*(<em>)?\s*This review may contain spoilers\.?\s*(</em>)?\s*$"
@@ -52,13 +54,13 @@ SPOILER_RE = re.compile(
 
 
 def parse_letterboxd_feed(xml_text):
-    """The feed's diary entries as plain dicts, oldest first.
+    """Return the diary entries of the feed as plain dicts, oldest first.
 
-    Only letterboxd-watch and letterboxd-review items count (lists and
-    anything else are skipped), and only when they carry a TMDB id —
-    without one there is nothing safe to match. Review text is the
-    description's paragraphs minus the poster image and the "Watched
-    on …" boilerplate.
+    Only the letterboxd-watch and letterboxd-review items count. This
+    function skips lists and all other items. It also skips items that
+    have no TMDB id, because there is no safe match without one. The
+    review text is the paragraphs of the description without the poster
+    image and without the "Watched on" boilerplate.
     """
 
     root = ET.fromstring(xml_text)
@@ -83,8 +85,9 @@ def parse_letterboxd_feed(xml_text):
         rewatch = item.findtext("letterboxd:rewatch", namespaces=NAMESPACES)
         liked = item.findtext("letterboxd:memberLike", namespaces=NAMESPACES)
 
-        # Local wall clock, matching every other date_reviewed writer —
-        # naive UTC here pushes an evening log onto the next calendar day
+        # Use the local wall clock, the same as every other writer of
+        # date_reviewed. Naive UTC here moves an evening log to the next
+        # calendar day.
 
         logged_at = None
         pub_date = item.findtext("pubDate")
@@ -97,7 +100,7 @@ def parse_letterboxd_feed(xml_text):
                 pass
 
         # The description holds HTML: a poster <p><img/></p>, then the
-        # review's paragraphs (or the watch boilerplate)
+        # paragraphs of the review, or the watch boilerplate.
 
         text_paragraphs = []
         contains_spoilers = False
@@ -107,12 +110,12 @@ def parse_letterboxd_feed(xml_text):
         ):
             if "<img" in paragraph.lower():
                 continue
-            # Letterboxd's inline-markup subset (<i>, <b>, …) survives —
-            # it's part of the authored text, and matches what the CSV
-            # import stores — while every other tag is dropped. The
-            # description ships inside CDATA, so its entities (&quot;,
-            # &#039;, …) reach us literally — unescape after the tag
-            # pass so an unescaped &lt; can't read as markup
+            # The inline-markup subset of Letterboxd (<i>, <b>, and so on)
+            # stays. It is part of the authored text. It matches what the
+            # CSV import stores. This removes every other tag. The
+            # description comes inside CDATA. Thus, its entities (&quot;,
+            # &#039;, and so on) arrive literally. Unescape after the tag
+            # pass. Then an unescaped &lt; cannot read as markup.
 
             cleaned = html.unescape(strip_disallowed_tags(paragraph)).strip()
             if not cleaned or BOILERPLATE_RE.match(cleaned):
@@ -142,14 +145,15 @@ def parse_letterboxd_feed(xml_text):
             }
         )
 
-    # Chronological ingest keeps rewatch computation and merges sane
+    # Chronological ingest keeps the rewatch computation and the merges
+    # correct.
 
     entries.reverse()
     return entries
 
 
 def fetch_letterboxd_feed(username):
-    """The user's raw feed XML, or None when it can't be fetched."""
+    """Return the raw feed XML of the user, or None if the fetch fails."""
 
     try:
         r = requests.get(
@@ -165,14 +169,16 @@ def fetch_letterboxd_feed(username):
 
 
 def _find_merge_target(user_id, movie_id, watched_date):
-    """The guid-less diary row a feed item should claim (the feed sync's merge
-    rule, two tiers). First: a row for the same film on the SAME
-    calendar day, whatever it holds — the CSV-imported twin of this
-    very entry, which must be adopted rather than duplicated (the
-    importer matches per film and day for the same reason). Second: a
-    BARE row (no rating, no text) within a day either way — the Plex
-    scrobble whose clock straddled Letterboxd's calendar date near
-    midnight. Date-less items only match date-less rows."""
+    """Return the diary row without a guid that a feed item must claim.
+
+    This is the merge rule of the feed sync. It has 2 tiers. First: a
+    row for the same film on the SAME calendar day, with any content.
+    This is the CSV-imported twin of this entry. The sync must adopt it,
+    not duplicate it. The importer matches per film and day for the
+    same reason. Second: a BARE row (no rating, no text) within 1 day in
+    either direction. This is the Plex scrobble whose clock crossed the
+    Letterboxd calendar date near midnight. An item without a date
+    matches only a row without a date."""
 
     base = UserMovieReview.query.filter_by(
         user_id=user_id, movie_id=movie_id, letterboxd_guid=None
@@ -196,10 +202,12 @@ def _find_merge_target(user_id, movie_id, watched_date):
 
 
 def _apply_entry_fields(row, entry):
-    """Write a feed entry's verdict onto a row. Liked is stored VERBATIM
-    (Glenn's rule: a Letterboxd like is its own signal — a sub-3-star
-    guilty pleasure keeps its heart), and the feed's rewatch flag is
-    authoritative when present."""
+    """Write the verdict of a feed entry onto a row.
+
+    Fitzflix stores liked VERBATIM. This is the rule of Glenn: a
+    Letterboxd like is its own signal. A guilty pleasure below 3 stars
+    keeps its heart. The rewatch flag of the feed is authoritative when
+    it is present."""
 
     from app.videos import star_rating_fields
 
@@ -214,12 +222,12 @@ def _apply_entry_fields(row, entry):
         if getattr(row, field) != value:
             setattr(row, field, value)
             changed = True
-    # Letterboxd is authoritative for the diary's calendar date. A
-    # midnight-stamped row carries no clock knowledge, so when its date
-    # disagrees with the feed (the UTC-era day drift, or a date edited
-    # on Letterboxd) it follows the feed; a row with a real clock time
-    # (a Plex scrobble) keeps its timestamp across the near-midnight
-    # straddle instead
+    # Letterboxd is authoritative for the calendar date of the diary. A
+    # row with a midnight stamp has no clock knowledge. Thus, when its
+    # date is different from the feed, it follows the feed. Examples are
+    # the day drift of the UTC era, or a date edited on Letterboxd. A
+    # row with a real clock time (a Plex scrobble) keeps its timestamp
+    # when the times cross midnight.
 
     if entry["watched_date"] is not None:
         if row.date_watched is None:
@@ -238,8 +246,9 @@ def _apply_entry_fields(row, entry):
 
 
 def sync_letterboxd_feeds():
-    """Task: poll every configured user's feed and merge it into their
-    diary. Safe to run any time; every path is idempotent."""
+    """Poll the feed of every configured user and merge it into the diary.
+
+    This task is safe to run at any time. Every path is idempotent."""
 
     with app.app_context():
         for user in User.query.filter(
@@ -269,8 +278,8 @@ def sync_letterboxd_feeds():
                     completed += 1
             db.session.commit()
 
-            # Enrich any movie records the feed created, through the
-            # standard two-phase refresh pipeline
+            # Enrich the movie records that the feed created, through the
+            # standard two-phase refresh pipeline.
 
             for movie_id, tmdb_id in created_movies:
                 current_app.request_queue.enqueue(
@@ -298,9 +307,11 @@ def sync_letterboxd_feeds():
 
 
 def _ingest_entry(user_id, entry, created_movies):
-    """Merge one feed entry into the diary: skip an unchanged known
-    guid, edit a changed one, complete a matching bare watch, or add a
-    fresh row. Returns what happened, for the sync log line."""
+    """Merge one feed entry into the diary.
+
+    Skip a known guid that has not changed. Edit a known guid that
+    changed. Complete a matching bare watch. Or add a new row. Return
+    what occurred, for the sync log line."""
 
     from app.videos import (
         clear_not_interested,

@@ -1,17 +1,17 @@
-"""Track surgery (the strangler split from app.videos): everything
-that reads or rewrites the streams inside a media file.
+"""Read and rewrite the streams inside a media file (the split from app.videos).
 
-MediaInfo scanning and the stored track metadata (including Dolby
-Vision profile parsing), the mkvpropedit flag editor and the
-mkvmerge remuxer with their lock-holding task wrappers, subtitle
-inspection (possibly-forced flagging, empty-track dropping), and the
-lossless-audio supplement planner and remuxers.
+This module has the MediaInfo scan and the stored track metadata
+(this includes the Dolby Vision profile parse), the mkvpropedit flag
+editor, the mkvmerge remuxer with their task wrappers that hold the
+locks, the subtitle inspection (possibly-forced flags, removal of
+empty tracks), and the planner and remuxers for the lossless-audio
+supplements.
 
-app.videos re-exports every name here, so stored rq job strings
-("app.videos.mkvmerge_task") and import sites keep resolving; the
-shared lock/subprocess/copy plumbing stays in app.videos and is
-imported lazily inside functions, keeping the module import direction
-one-way.
+app.videos exports each name here again. Thus, the stored rq job
+strings ("app.videos.mkvmerge_task") and the import sites continue to
+resolve. The shared lock, subprocess, and copy code stays in
+app.videos. The functions here import it lazily. Thus, the module
+import direction stays one-way.
 """
 
 import json
@@ -39,7 +39,7 @@ from app.smb_probe import library_path, probe_and_record
 
 
 def watch_mkvmerge_progress(process, job, name, activity):
-    """Stream a process's output, logging its progress and updating job meta."""
+    """Stream the output of a process. Log its progress and update the job meta."""
 
     previous_percent = None
     for line in process.stdout:
@@ -57,14 +57,15 @@ def watch_mkvmerge_progress(process, job, name, activity):
 
 
 def parse_dolby_vision_profile(hdr_format):
-    """The Dolby Vision flavor ("5", "7", "8.1", …) from MediaInfo's
-    combined HDR-format string, or None when the video isn't DV.
+    """Return the Dolby Vision variant ("5", "7", "8.1", ...) from the HDR-format string.
 
-    The profile number rides in the codec-profile token (dvhe.08.06 →
-    profile 8; dvhe and dvh1 are HEVC, dvav/dva1 AVC, dav1 AV1). For
-    profile 8 the meaningful flavor is the cross-compatibility target,
-    which MediaInfo reports as compatibility text in the same string:
-    HDR10-compatible is 8.1, HLG 8.4, plain-SDR 8.2.
+    The string is the combined HDR-format string of MediaInfo. Return
+    None if the video is not DV. The profile number is in the
+    codec-profile token (dvhe.08.06 is profile 8). dvhe and dvh1 are
+    HEVC, dvav and dva1 are AVC, and dav1 is AV1. For profile 8, the
+    meaningful variant is the cross-compatibility target. MediaInfo
+    reports it as compatibility text in the same string. HDR10 is 8.1,
+    HLG is 8.4, and plain SDR is 8.2.
     """
 
     if not hdr_format or "dolby vision" not in hdr_format.lower():
@@ -86,11 +87,11 @@ def parse_dolby_vision_profile(hdr_format):
 
 
 def _extract_media_details(file_path):
-    """Parse a file and return the media details its database records need.
+    """Parse a file and return the media details that its database records need.
 
-    Everything here is plain data — video track fields, audio and subtitle
-    track dicts, and the file size — so the sql-queue tasks that write the
-    records never have to open the file themselves.
+    All data here is plain data: the video track fields, the audio and
+    subtitle track dicts, and the file size. Thus, the sql-queue tasks
+    that write the records never open the file.
     """
 
     media_info = MediaInfo.parse(file_path)
@@ -114,8 +115,9 @@ def _extract_media_details(file_path):
             video["video_bitrate_kbps"] = track.bit_rate / 1000
             break
 
-    # HDR fields are always present — None when absent — so a rescan
-    # of a replaced file CLEARS stale values instead of keeping them
+    # The HDR fields are always present. They are None when absent.
+    # Thus, a new scan of a replaced file CLEARS the stale values. It
+    # does not keep them
 
     video["hdr_format"] = None
     for track in media_info.tracks:
@@ -134,9 +136,9 @@ def _extract_media_details(file_path):
 
 
 def extract_track_metadata(file_path):
-    """Drop empty subtitle tracks and report a library file's media details.
+    """Remove the empty subtitle tracks and return the media details of a library file.
 
-    The file half of a track rescan; the returned details feed
+    This is the file half of a track scan. The returned details go to
     save_track_metadata on the sql queue.
     """
 
@@ -150,7 +152,7 @@ def extract_track_metadata(file_path):
 
 
 def track_metadata_scan_library():
-    """Add all files in the library to the metadata scan queue."""
+    """Add all the files in the library to the metadata scan queue."""
 
     with app.app_context():
         try:
@@ -172,12 +174,12 @@ def track_metadata_scan_library():
 
 
 def track_metadata_scan_task(file_id):
-    """Scan a file's track metadata from the file-operation queue.
+    """Scan the track metadata of a file from the file-operation queue.
 
-    The file half runs here — dropping empty subtitle tracks and parsing —
-    and the extracted details are handed to save_track_metadata on the sql
-    queue, with the title lock passing along. Retries later if the title
-    is locked by another task.
+    The file half runs here. It removes the empty subtitle tracks and
+    parses the file. The extracted details go to save_track_metadata
+    on the sql queue, together with the title lock. If a different
+    task holds the title lock, this task tries again later.
     """
 
     with app.app_context():
@@ -233,30 +235,31 @@ def track_metadata_scan_task(file_id):
 
 
 def record_filesize(file, size_bytes):
-    """Store a file's size on its record.
+    """Store the size of a file on its record.
 
-    Every task that rewrites a library file owes its row this: the
-    supplement and remux paths change the file's size on disk, and a
-    row left holding the old one misreports the library and disagrees
-    with the archived copy's size.
+    Each task that rewrites a library file must call this for its row.
+    The supplement and remux paths change the size of the file on
+    disk. A row with the old size reports the library incorrectly and
+    does not agree with the size of the archived copy.
 
-    One line, but a named one — it's the call the in-place rewrite
-    contract is asserted against, and the single place a size is
-    written. The MB and GB columns it used to keep in step were dropped:
-    four write sites had to remember three fields, three of them with
-    their own copy of the arithmetic, and nothing ever read the derived
-    two except one line of one template. Sizes are formatted where
-    they're displayed now.
+    This is 1 line, but it has a name. The tests of the in-place
+    rewrite contract assert against this call. It is the single place
+    that writes a size. The MB and GB columns that it kept in step
+    were removed. Four write sites had to remember 3 fields. Three of
+    them had their own copy of the arithmetic. Only 1 line of 1
+    template read the 2 derived columns. Fitzflix now formats the
+    sizes where it shows them.
     """
 
     file.filesize_bytes = size_bytes
 
 
 def save_track_metadata(file_id, details, lock=None):
-    """Write extracted track metadata to the database.
+    """Write the extracted track metadata to the database.
 
-    The sql half of a track rescan: everything here is session work fed by
-    the details dict. Releases the passed title lock when done.
+    This is the sql half of a track scan. All work here is session
+    work from the details dict. This function releases the given title
+    lock when it is done.
     """
 
     with app.app_context():
@@ -265,13 +268,13 @@ def save_track_metadata(file_id, details, lock=None):
             if file is None:
                 return False
 
-            # Clear metadata for existing File record
+            # Clear the metadata of the existing File record
 
             file.date_updated = datetime.now(timezone.utc)
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
-            # Set file video track info
+            # Set the video track info of the file
 
             for field, value in details["video"].items():
                 setattr(file, field, value)
@@ -279,7 +282,7 @@ def save_track_metadata(file_id, details, lock=None):
             record_filesize(file, details["filesize_bytes"])
             current_app.logger.info(f"{file} {file.filesize_bytes} bytes")
 
-            # Set file audio track info
+            # Set the audio track info of the file
 
             for i, track in enumerate(details["audio_tracks"]):
                 track["file_id"] = file.id
@@ -289,7 +292,7 @@ def save_track_metadata(file_id, details, lock=None):
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
-            # Set file subtitle track info
+            # Set the subtitle track info of the file
 
             for i, track in enumerate(details["subtitle_tracks"]):
                 track["file_id"] = file.id
@@ -317,10 +320,11 @@ def save_track_metadata(file_id, details, lock=None):
 
 
 def track_metadata_scan(file_id):
-    """Rescan a file's metadata on demand.
+    """Scan the metadata of a file again on demand.
 
-    Returns False without scanning when another task holds this title's lock
-    (e.g. a remux, property edit, or transcode in progress).
+    If a different task holds the lock of this title (for example, a
+    remux, a property edit, or a transcode in progress), this function
+    returns False without a scan.
     """
 
     file = File.query.filter_by(id=file_id).first()
@@ -345,10 +349,11 @@ def track_metadata_scan(file_id):
     return save_track_metadata(file_id, details, lock=lock)
 
 
-# The languages a track can be set to. Read out of mkvtoolnix's own
-# table so the file page can never offer a code the edit would reject,
-# and keyed by the ISO 639-2 codes — that's what the track records
-# store. The other columns become aliases rather than choices
+# These are the languages that a track can have. Fitzflix reads them
+# from the table of mkvtoolnix. Thus, the file page can never offer a
+# code that the edit would reject. The keys are the ISO 639-2 codes.
+# The track records store those codes. The other columns become
+# aliases, not choices
 
 FALLBACK_LANGUAGES = (
     ("eng", "English"),
@@ -356,12 +361,12 @@ FALLBACK_LANGUAGES = (
     ("zxx", "No linguistic content"),
 )
 
-# The twenty languages ISO 639-2 gives two codes: a bibliographic one,
-# which is the only one mkvtoolnix lists, and a terminological one,
-# which is what MediaInfo reports for some files ("deu" not "ger",
-# "fra" not "fre"). The same language either way, so the terminological
-# spellings have to resolve to the codes the table knows rather than be
-# refused as unrecognized
+# ISO 639-2 gives 20 languages 2 codes. The bibliographic code is the
+# only one that mkvtoolnix lists. The terminological code is what
+# MediaInfo reports for some files ("deu" not "ger", "fra" not "fre").
+# Both codes are the same language. Thus, the terminological spellings
+# must resolve to the codes that the table knows. Fitzflix must not
+# refuse them as unknown
 
 ISO_639_2_TERMINOLOGIC = {
     "bod": "tib",
@@ -389,11 +394,11 @@ ISO_639_2_TERMINOLOGIC = {
 
 @lru_cache(maxsize=1)
 def _language_table():
-    """mkvtoolnix's language table as (name, 639-3, 639-2, 639-1) rows.
+    """Return the language table of mkvtoolnix as (name, 639-3, 639-2, 639-1) rows.
 
-    Cached for the life of the process: the table belongs to the
-    installed mkvtoolnix, not to any one file. Empty when it can't be
-    read, which the callers fall back from.
+    The cache lasts for the life of the process. The table belongs to
+    the installed mkvtoolnix, not to 1 file. The result is empty if
+    Fitzflix cannot read the table. The callers then use a fallback.
     """
 
     try:
@@ -410,9 +415,10 @@ def _language_table():
 
     rows = []
     for line in listing.splitlines():
-        # "English language name | ISO 639-3 | ISO 639-2 | ISO 639-1";
-        # the header and rule rows fail the 3-character check, as do the
-        # 639-3-only languages that have no code the records can hold
+        # The format is "English language name | ISO 639-3 | ISO 639-2 |
+        # ISO 639-1". The header and rule rows fail the 3-character check.
+        # The 639-3-only languages also fail it. They have no code that
+        # the records can hold
 
         columns = [column.strip() for column in line.split("|")]
         if len(columns) < 4 or len(columns[2]) != 3:
@@ -425,12 +431,12 @@ def _language_table():
 
 @lru_cache(maxsize=1)
 def iso_639_2_languages():
-    """Every (code, name) pair a track can be set to, sorted by name."""
+    """Return each (code, name) pair that a track can have, sorted by name."""
 
     rows = _language_table()
     if not rows:
-        # Without the table the page can still offer the three codes
-        # this exists to correct between
+        # Without the table, the page can still offer the 3 codes that
+        # this feature exists to correct between
 
         return FALLBACK_LANGUAGES
 
@@ -444,10 +450,11 @@ def iso_639_2_languages():
 
 @lru_cache(maxsize=1)
 def _language_aliases():
-    """Everything that names a language, lowercased, to its 639-2 code.
+    """Map each name of a language, in lowercase, to its 639-2 code.
 
-    The name, every code column the table carries, and the ISO 639-2/T
-    spellings it doesn't — see ISO_639_2_TERMINOLOGIC.
+    The names are the language name, each code column in the table,
+    and the ISO 639-2/T spellings that are not in the table. See
+    ISO_639_2_TERMINOLOGIC.
     """
 
     aliases = {}
@@ -470,10 +477,10 @@ def _language_aliases():
 
 @lru_cache(maxsize=1)
 def language_names():
-    """Every code a track record might hold, mapped to its display name.
+    """Map each code that a track record can hold to its display name.
 
-    Keyed by alias rather than only by the canonical code, so a track
-    stored as "deu" still shows as German.
+    The keys are the aliases, not only the canonical codes. Thus, a
+    track stored as "deu" still shows as German.
     """
 
     names = dict(iso_639_2_languages())
@@ -484,38 +491,40 @@ def language_names():
     }
 
 
-# Rebuilt on the hour rather than per render; a language new to the
-# library shows up in the dropdowns within that
+# Fitzflix builds this again each hour, not on each render. A language
+# that is new to the library appears in the dropdowns in that time
 
 LANGUAGE_CHOICES_KEY = "fitzflix:language-choices"
 LANGUAGE_CHOICES_SECONDS = 3600
 
 
 def library_language_choices():
-    """The languages worth offering on the File page, as (code, name).
+    """Return the languages to offer on the File page, as (code, name).
 
-    Every ISO 639-2 language that also carries a 639-1 code — 183 of the
-    table's 1,006, and effectively the set with real publishing presence
-    — plus anything this collection already uses that falls outside it.
+    The result has each ISO 639-2 language that also has a 639-1 code.
+    That is 183 of the 1006 languages in the table. In practice, it is
+    the set with a real publishing presence. The result also has each
+    language that this collection uses outside that set.
 
-    The whole table is about 54 KB of options per track, and a select
-    repeats its options for every track, so the 21-track Doctor Who disc
-    would carry a megabyte of them. The 639-1 set is 8 KB per track and
-    still covers any film that could plausibly be bought; what it leaves
-    out is the long tail of dead languages and collective buckets
-    (Akkadian, "Algonquian languages") no audio track is ever in.
+    The whole table is approximately 54 KB of options per track. A
+    select repeats its options for each track. Thus, the Doctor Who
+    disc with 21 tracks would have 1 MB of options. The 639-1 set is
+    8 KB per track. It still covers each film that a person could
+    buy. It leaves out the long tail of dead languages and collective
+    groups (Akkadian, "Algonquian languages"). No audio track is in
+    those languages.
 
-    The collection's own languages are unioned in regardless, so a track
-    can never hold a language the dropdown can't show — und and zxx have
-    no 639-1 code and would otherwise be missing — and the list still
-    grows on its own as films in new languages arrive.
+    The languages of the collection are always in the result. Thus, a
+    track can never hold a language that the dropdown cannot show. und
+    and zxx have no 639-1 code and would be missing without this. The
+    list also grows when films in new languages arrive.
     """
 
     from app.models import FileAudioTrack, FileSubtitleTrack, Movie
 
-    # Three DISTINCTs over the track tables is ~40 ms, which is too much
-    # to spend on every File page render for an answer that changes only
-    # when a new language enters the library
+    # Three DISTINCT queries over the track tables take approximately
+    # 40 ms. That is too much for each File page render. The answer
+    # changes only when a new language enters the library
 
     cached = current_app.redis.get(LANGUAGE_CHOICES_KEY)
     if cached:
@@ -556,13 +565,13 @@ def library_language_choices():
 
 
 def resolve_language_code(value):
-    """The ISO 639-2 code for whatever was typed in a language box.
+    """Return the ISO 639-2 code for the text typed in a language box.
 
-    The boxes hold language names, but a bare code in any of the three
-    standards works too, as does the "German (ger)" pairing — someone
-    typing what they know shouldn't have to guess which spelling the
-    table wants. Returns None when nothing matches, which the caller
-    reports rather than guessing at.
+    The boxes hold language names. A bare code in one of the 3
+    standards also works. The "German (ger)" pair also works. A person
+    who types what they know must not have to guess the spelling that
+    the table wants. Return None if nothing matches. The caller reports
+    that. It does not guess.
     """
 
     value = (value or "").strip().lower()
@@ -588,15 +597,15 @@ def mkvpropedit_task(
     track_languages=None,
     transient_retries=0,
 ):
-    """Update a file's MKV properties.
+    """Update the MKV properties of a file.
 
-    `track_languages` maps a track to the ISO 639-2 code it should be
-    given, keyed the way mkvpropedit names tracks ({"a1": "eng"});
-    None (or an empty mapping) leaves every language alone.
+    `track_languages` maps a track to the ISO 639-2 code to set. The
+    keys are the track names of mkvpropedit ({"a1": "eng"}). None (or
+    an empty mapping) changes no language.
     """
 
-    # Shared lock/retry/copy plumbing stays in app.videos; lazy so the
-    # module import direction stays one-way
+    # The shared lock, retry, and copy code stays in app.videos. The import
+    # is lazy. Thus, the module import direction stays one-way
 
     from app.videos import (
         MAX_TRANSIENT_RETRIES,
@@ -607,8 +616,8 @@ def mkvpropedit_task(
     with app.app_context():
         file = File.query.filter_by(id=file_id).first()
 
-        # Serialize with other tasks that rewrite this title's files or
-        # track records
+        # Serialize with the other tasks that rewrite the files or the
+        # track records of this title
 
         lock = acquire_lock_or_defer(
             file.file_identifier(),
@@ -630,9 +639,9 @@ def mkvpropedit_task(
         if not lock:
             return True
 
-        # Bulk writing over SMB is what puts files into the lost-handle
-        # state, so ask this one directly on the way out rather than
-        # letting a later upload's close discover it
+        # Bulk writes over SMB put the files into the lost-handle state.
+        # Thus, probe this file directly at the end. Do not let the close
+        # of a later upload find the problem
 
         probed_path = library_path(file)
 
@@ -651,10 +660,11 @@ def mkvpropedit_task(
                 and transient_retries < MAX_TRANSIENT_RETRIES
                 and not getattr(e, "retry_unsafe", False)
             ):
-                # A flaky mount interrupted the edit before the file was
-                # restructured, so the same track arguments are still valid:
-                # retry once the mount settles. The finally releases the
-                # lock, and the retry takes it again like any fresh run
+                # An unstable mount interrupted the edit before the file
+                # was restructured. Thus, the same track arguments are
+                # still valid. Try again after the mount is stable. The
+                # finally block releases the lock. The retry takes the
+                # lock again, like a new run
 
                 current_app.logger.warning(
                     f"'{file.basename}' MKV property edit failed with a "
@@ -694,14 +704,15 @@ def mkvpropedit_unlocked(
     forced_subtitle_tracks,
     track_languages=None,
 ):
-    """Update a file's MKV properties; the caller must hold the title's lock."""
+    """Update the MKV properties of a file. The caller must hold the lock of the title."""
 
     from app.videos import wait_for_subprocess
 
     with app.app_context():
-        # Once the reorder remux is renamed into place the file's track
-        # numbering has changed, so retrying with the caller's original
-        # track arguments would flag the wrong tracks
+        # After the reorder remux is renamed into place, the track
+        # numbering of the file is different. Thus, a retry with the
+        # original track arguments of the caller would flag the wrong
+        # tracks
 
         reordered = False
 
@@ -739,9 +750,10 @@ def mkvpropedit_unlocked(
                 f"{file.basename} selected track_languages: {track_languages} {type(track_languages)}"
             )
 
-            # The web form sends track ids as strings; mkvmerge_task sends ints,
-            # and None means the file has no audio tracks to set a default on.
-            # Normalize once so every comparison below compares like with like.
+            # The web form sends the track ids as strings. mkvmerge_task
+            # sends ints. None means that the file has no audio tracks for a
+            # default. Normalize them 1 time. Thus, each comparison below
+            # compares the same types.
 
             if default_audio_track is not None:
                 default_audio_track = str(default_audio_track)
@@ -789,10 +801,10 @@ def mkvpropedit_unlocked(
                             f"--edit track:s{track_id} --set flag-forced=0"
                         )
 
-            # Language corrections stand on their own: a file whose
-            # default flags are already right still needs the edit applied,
-            # so they're collected outside the flag loops above.
-            # mkvpropedit carries the change into LanguageIETF for us
+            # The language corrections are independent. A file whose default
+            # flags are already correct still needs the edit. Thus, Fitzflix
+            # collects them outside the flag loops above. mkvpropedit also
+            # applies the change to LanguageIETF
 
             for track_type, tracks in (("a", audio_tracks), ("s", subtitle_tracks)):
                 for track_id, track in enumerate(tracks, 1):
@@ -813,8 +825,8 @@ def mkvpropedit_unlocked(
                 f"{file.basename} language_arguments: {language_arguments}"
             )
 
-            # subprocess expects an array of arguments,
-            # so we need to split the arguments on spaces
+            # subprocess expects an array of arguments. Thus, split the
+            # arguments on the spaces
             localization_arguments = []
             for arg in audio_track_arguments:
                 localization_arguments.extend(arg.split())
@@ -848,8 +860,9 @@ def mkvpropedit_unlocked(
 
                 wait_for_subprocess(mkvpropedit_task, ok_returncodes=(0, 1))
 
-                # If the default audio track isn't the first track, create a new file with the
-                # default audio track prioritized so Plex selects it first
+                # If the default audio track is not the first track, make a
+                # new file with the default audio track first. Then Plex
+                # selects it first
 
                 if default_audio_track is not None and default_audio_track != "1":
                     new_track_order = []
@@ -933,16 +946,16 @@ def mkvpropedit_unlocked(
                     os.rename(hidden_output_file, file_path)
                     reordered = True
 
-            # Remove any subtitle tracks that have zero elements
+            # Remove the subtitle tracks that have zero elements
 
             remove_empty_subtitle_tracks(file_path)
 
-            # Rebuild the audio and subtitle track info now that we've made modifications
+            # Build the audio and subtitle track info again after the changes
 
             output_audio_tracks = get_audio_tracks_from_file(file_path)
             output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
-            # Set file audio track info
+            # Set the audio track info of the file
 
             for i, track in enumerate(output_audio_tracks):
                 track["file_id"] = file.id
@@ -952,7 +965,7 @@ def mkvpropedit_unlocked(
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
-            # Set file subtitle track info
+            # Set the subtitle track info of the file
 
             flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
@@ -970,8 +983,9 @@ def mkvpropedit_unlocked(
             file.date_updated = datetime.now(timezone.utc)
 
         except OSError as e:
-            # Tell the caller whether retrying with the same arguments is
-            # still safe; logging (or a quiet transient defer) is its job
+            # Tell the caller if a retry with the same arguments is still
+            # safe. The log entry (or a quiet transient defer) is the job of
+            # the caller
 
             e.retry_unsafe = reordered
             db.session.rollback()
@@ -985,9 +999,9 @@ def mkvpropedit_unlocked(
         else:
             db.session.commit()
 
-            # The file on disk changed: default flags, and after a
-            # reorder its whole track layout — re-read by Plex now
-            # rather than whenever its own scan next comes round
+            # The file on disk changed. The default flags changed. After a
+            # reorder, the whole track layout changed. Plex reads it again
+            # now, not at its next scan
 
             enqueue_plex_analyze(file_path)
 
@@ -1006,17 +1020,17 @@ def mkvpropedit_unlocked(
                 file.aws_untouched_stale = False
 
             except OSError as e:
-                # The edit itself already succeeded and committed, so a
-                # whole-task retry could re-edit a restructured file; only
-                # the re-upload was lost.
+                # The edit already succeeded and committed. Thus, a retry
+                # of the whole task could edit a restructured file again.
+                # Only the second upload was lost.
                 #
-                # Nothing else can find that loss on its own. The S3 key
-                # still exists and carries the previous upload's date, so
-                # the sync task reads the row as consistent — and then
-                # backfills the recorded size from the stale object, which
-                # makes the row consistent with the wrong copy. Left alone
-                # the archive stays a pre-edit file forever, so say so
-                # explicitly and let the repair queue deal with it.
+                # No other process can find that loss. The S3 key still
+                # exists. It has the date of the previous upload. Thus,
+                # the sync task reads the row as consistent. Then it fills
+                # the recorded size from the stale object. This makes the
+                # row consistent with the wrong copy. Without a repair,
+                # the archive stays a pre-edit file for ever. Thus, record
+                # the problem explicitly. The repair queue handles it.
 
                 e.retry_unsafe = True
                 current_app.logger.error(traceback.format_exc())
@@ -1036,15 +1050,15 @@ def mkvpropedit_unlocked(
 
 
 def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
-    """Remux a MKV file."""
+    """Remux an MKV file."""
 
     from app.videos import acquire_lock_or_defer
 
     with app.app_context():
         file = File.query.filter_by(id=file_id).first()
 
-        # Serialize with other tasks that rewrite this title's files or
-        # track records
+        # Serialize with the other tasks that rewrite the files or the
+        # track records of this title
 
         lock = acquire_lock_or_defer(
             file.file_identifier(),
@@ -1066,7 +1080,7 @@ def mkvmerge_task(file_id, audio_tracks, subtitle_tracks):
 
 
 def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
-    """Remux a MKV file; the caller must hold the title's lock."""
+    """Remux an MKV file. The caller must hold the lock of the title."""
 
     from app.videos import wait_for_subprocess
 
@@ -1160,16 +1174,16 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
             os.rename(hidden_output_file, file_path)
 
-            # Remove any subtitle tracks that have zero elements
+            # Remove the subtitle tracks that have zero elements
 
             remove_empty_subtitle_tracks(file_path)
 
-            # Rebuild the audio and subtitle track info now that we've made modifications
+            # Build the audio and subtitle track info again after the changes
 
             output_audio_tracks = get_audio_tracks_from_file(file_path)
             output_subtitle_tracks = get_subtitle_tracks_from_file(file_path)
 
-            # Set file audio track info
+            # Set the audio track info of the file
 
             for i, track in enumerate(output_audio_tracks):
                 track["file_id"] = file.id
@@ -1179,7 +1193,7 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
                 current_app.logger.info(f"{file} Adding audio track {audio_track}")
                 db.session.add(audio_track)
 
-            # Set file subtitle track info
+            # Set the subtitle track info of the file
 
             flag_possibly_forced_subtitles(file, output_subtitle_tracks)
 
@@ -1200,9 +1214,10 @@ def mkvmerge_unlocked(file_id, audio_tracks, subtitle_tracks):
 
         else:
             db.session.commit()
-            # This task already holds the title's lock, so call the unlocked
-            # variant directly instead of deadlocking against ourselves.
-            # OSErrors from it leave logging to the caller, so log here
+            # This task already holds the lock of the title. Thus, call the
+            # unlocked variant directly. A call to the locked variant would
+            # deadlock against this task. An OSError from the unlocked
+            # variant leaves the log entry to the caller. Thus, log it here
 
             try:
                 mkvpropedit_unlocked(file.id, 1, None, None)
@@ -1253,8 +1268,9 @@ def get_audio_tracks_from_file(file_path):
                 else None
             )
 
-            # Change track channel layout to include LFE track if present;
-            # leave as None if MediaInfo didn't report a usable channel count
+            # Change the channel layout of the track to include the LFE
+            # channel if present. Keep None if MediaInfo did not report a
+            # usable channel count
             if audio_track["channels"] and "LFE" in track.to_data().get(
                 "channel_layout", ""
             ):
@@ -1327,11 +1343,12 @@ def get_subtitle_tracks_from_file(file_path):
                 subtitle_track["language_name"] = "Not applicable"
 
             elif len(language) <= 3:
-                # The 3-character language code is usually in the 4th position in the
-                # other_language variable, but sometimes the other_language variable only
-                # has 3 elements. If other_language doesn't have a 4th element, default
-                # to "Undetermined" / "und", check to see if any values are 3 characters
-                # long, and use it if it exists.
+                # The 3-character language code is usually in the 4th
+                # position of the other_language variable. But sometimes the
+                # other_language variable has only 3 elements. If
+                # other_language has no 4th element, set the default to
+                # "Undetermined" / "und". Then look for a value that is 3
+                # characters long. Use that value if it exists.
 
                 subtitle_track["language"] = "und"
                 subtitle_track["language_name"] = "Undetermined"
@@ -1370,11 +1387,12 @@ def get_subtitle_tracks_from_file(file_path):
 
 
 def flag_possibly_forced_subtitles(file, subtitle_tracks):
-    """Speculate which subtitle tracks might actually be forced subtitle tracks.
+    """Find the subtitle tracks that can be forced subtitle tracks.
 
-    If a track has elements, but no more than 1/3 the elements of the first
-    subtitle track, and it isn't already marked as forced, mark its forced flag
-    as unknown (None) and report that the file may have a forced subtitle track.
+    A track qualifies if it has elements, but not more than 1/3 of the
+    elements of the first subtitle track, and it is not marked as
+    forced. This function sets the forced flag of that track to unknown
+    (None). It reports that the file can have a forced subtitle track.
     """
 
     possibly_forced_subtitle = False
@@ -1402,13 +1420,14 @@ def flag_possibly_forced_subtitles(file, subtitle_tracks):
 
 
 def remove_empty_subtitle_tracks(file_path):
-    """Remux a Matroska file in place to drop subtitle tracks with zero elements.
+    """Remux a Matroska file in place to remove the subtitle tracks with zero elements.
 
-    Only tracks whose statistics tags explicitly report zero elements are
-    removed; a track with no statistics at all is left alone, since we can't
-    tell whether it's actually empty.
+    This function removes only the tracks whose statistics tags report
+    zero elements. It does not change a track with no statistics.
+    Fitzflix cannot know if that track is empty.
 
-    Returns True if the file was rewritten, False if there was nothing to remove.
+    Return True if the function rewrote the file. Return False if there
+    was nothing to remove.
     """
 
     from app.videos import wait_for_subprocess
@@ -1426,8 +1445,8 @@ def remove_empty_subtitle_tracks(file_path):
         streamorder = track.to_data().get("streamorder")
         elements = track.to_data().get("count_of_elements")
 
-        # Tracks are selected by their mkvmerge track id (the stream order),
-        # so we can't safely remux if any id is unknown
+        # The mkvmerge track id (the stream order) selects the tracks.
+        # Thus, a remux is not safe if an id is unknown
 
         if not str(streamorder).isdigit():
             current_app.logger.warning(
@@ -1486,26 +1505,27 @@ def remove_empty_subtitle_tracks(file_path):
 
 
 def plan_audio_supplements(audio_tracks):
-    """The output audio-track order for the supplement pass, as
-    (action, source index) pairs — action "flac" converts that source
-    track, "copy" carries it through.
+    """Return the output audio-track order for the supplement pass.
 
-    Every lossless track that isn't already FLAC or PCM gets a FLAC
-    twin placed immediately before it, mirroring the MakeMKV "FLAC
-    Plus Original Audio" rip profile; the original is always kept.
-    A FLAC counts as an existing twin ONLY when it sits immediately
-    before a lossless track in the same language — the exact shape
-    the rip profile produces. A FLAC anywhere else could be anything
-    (a commentary, say), so it is never counted as a twin, never
-    moved, and never given the default slot (Glenn's rule); its
-    neighbor earns a freshly converted twin instead. Channel counts
-    deliberately do NOT have to match: MediaInfo labels DTS-ES Matrix
-    sources "6.0" while their discrete content — and therefore any
-    lossless FLAC decode of them — is 5.1 (the LOTR discs), so a
-    channel-strict match would call correct twins imperfect and stack
-    redundant ones. Files already in the twinned shape plan as pure
-    copies, keeping the pass idempotent across disc rips and S3
-    re-downloads.
+    The result is a list of (action, source index) pairs. The action
+    "flac" converts that source track. The action "copy" keeps it.
+
+    Each lossless track that is not already FLAC or PCM gets a FLAC
+    twin immediately before it. This mirrors the MakeMKV rip profile
+    "FLAC Plus Original Audio". The original always stays. A FLAC
+    counts as an existing twin ONLY if it is immediately before a
+    lossless track in the same language. That is the exact shape that
+    the rip profile makes. A FLAC in a different position can be
+    anything (for example, a commentary). Thus, it never counts as a
+    twin. Fitzflix never moves it, and never gives it the default slot
+    (rule from Glenn). Its neighbor gets a new converted twin instead.
+    By design, the channel counts do NOT have to match. MediaInfo
+    labels the DTS-ES Matrix sources "6.0". But their discrete
+    content, and thus each lossless FLAC decode of them, is 5.1 (the
+    LOTR discs). A strict channel match would call the correct twins
+    imperfect and add redundant twins. Files that already have the
+    twin shape plan as pure copies. Thus, the pass is idempotent
+    across disc rips and S3 downloads.
     """
 
     plan = []
@@ -1527,14 +1547,14 @@ def plan_audio_supplements(audio_tracks):
 
 
 def build_supplement_args(plan):
-    """The ffmpeg audio arguments realizing a supplement plan.
+    """Return the ffmpeg audio arguments for a supplement plan.
 
-    Codec and disposition options are numbered by OUTPUT position —
-    a source track mapped twice (converted twin + original) shifts
-    every later output index, so the input index only ever appears in
-    the -map selector. The first output track is the default and all
-    others are cleared, matching the rip profile's convention that
-    the natively playable track leads.
+    The codec and disposition options are numbered by OUTPUT position.
+    A source track mapped 2 times (converted twin plus original) moves
+    each later output index. Thus, the input index appears only in the
+    -map selector. The first output track is the default. All other
+    tracks are cleared. This matches the convention of the rip profile
+    that the natively playable track leads.
     """
 
     args = []
@@ -1558,15 +1578,15 @@ def build_supplement_args(plan):
 
 
 def supplement_lossless_tracks(file_path, file_id=None):
-    """Give every lossless non-FLAC/PCM audio track a FLAC twin placed
-    just before it, keeping the original.
+    """Give each lossless non-FLAC/PCM audio track a FLAC twin before it.
 
-    The twin plays natively on Apple TV clients while the lossless
-    original stays for direct play and future passthrough. Files whose
-    twins already exist — MakeMKV rips made with the "FLAC Plus
-    Original Audio" profile, or re-downloads of already-supplemented
-    uploads — plan as pure copies and pass through untouched, so the
-    pass is safe to repeat.
+    The original stays. The twin plays natively on Apple TV clients.
+    The lossless original stays for direct play and future
+    passthrough. Some files already have their twins. These are MakeMKV
+    rips made with the "FLAC Plus Original Audio" profile, or downloads
+    of uploads that already had supplements. These files plan as pure
+    copies, and the pass does not change them. Thus, the pass is safe
+    to repeat.
     """
 
     from app.videos import wait_for_subprocess
@@ -1688,17 +1708,19 @@ def supplement_lossless_tracks(file_path, file_id=None):
 
 
 def remux_audio_plan_task(file_id, plan):
-    """Task: rebuild one LIBRARY file's audio to an explicit supplement
-    plan — (action, source index) pairs in plan_audio_supplements'
-    format, except hand-built, so a track can be replaced or dropped
-    (what the automatic planner never does). Born for the DTS-ES discs' imperfect
-    DTS-ES twins: [["flac", 1], ["copy", 1], ["copy", 2]] decodes the
-    MA into a fresh 6.0 twin and drops the old 5.1 one.
+    """Rebuild the audio of 1 LIBRARY file to an explicit supplement plan.
 
-    Copy-first, the atmos task's posture throughout: one staging copy
-    in, remux + verification on local disk, the verified result
-    replaces the library copy, the track rows rebuild, and the
-    untouched archive is force-replaced.
+    The plan has (action, source index) pairs in the format of
+    plan_audio_supplements. But the plan is built by hand. Thus, a
+    track can be replaced or removed. The automatic planner never does
+    that. This task was made for the imperfect DTS-ES twins of the
+    DTS-ES discs. [["flac", 1], ["copy", 1], ["copy", 2]] decodes the
+    MA into a new 6.0 twin and removes the old 5.1 twin.
+
+    The task copies first, like the atmos task. One staging copy comes
+    in. The remux and the verification run on the local disk. The
+    verified result replaces the library copy. The track rows are
+    built again. The untouched archive is replaced by force.
     """
 
     from app.videos import acquire_lock_or_defer
@@ -1728,7 +1750,7 @@ def remux_audio_plan_task(file_id, plan):
 
 
 def _remux_audio_plan_unlocked(file_id, plan):
-    """The remux pipeline; the caller must hold the title's lock."""
+    """Run the remux pipeline. The caller must hold the lock of the title."""
 
     from app.videos import copy_with_progress
 
@@ -1793,9 +1815,9 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     f"'{basename}' ffmpeg failed: {result.stderr[-500:]}"
                 )
 
-            # Never replace the library copy with a remux that didn't
-            # deliver: track count and per-position codecs must match
-            # the plan, and the duration must survive
+            # Never replace the library copy with a remux that failed. The
+            # track count and the codec at each position must match the
+            # plan. The duration must stay the same
 
             new_audio_tracks = get_audio_tracks_from_file(staging_output)
             new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
@@ -1827,11 +1849,11 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     f"vs {file_duration}"
                 )
 
-            # The output already carries the clean basename (unlike the
-            # atmos task, whose OUTPUT was the dotfile) — so the upload
-            # derives the right S3 key from staging_output itself; the
-            # first run renamed output onto the .src- name and uploaded
-            # 40GB under 'untouched/src-…' (the Fellowship incident)
+            # The output already has the clean basename. In the atmos task,
+            # the OUTPUT was the dotfile. Thus, the upload derives the
+            # correct S3 key from staging_output. The first run renamed the
+            # output to the .src- name and uploaded 40 GB under
+            # 'untouched/src-…' (the Fellowship incident)
 
             os.remove(staging_source)
             final_staging = staging_output
@@ -1842,7 +1864,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
             )
             os.replace(hidden_library, file_path)
 
-            # Rebuild the track records now that the file changed
+            # Build the track records again because the file changed
 
             FileAudioTrack.query.filter_by(file_id=file.id).delete()
             FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
@@ -1859,8 +1881,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
             file.date_updated = datetime.now(timezone.utc)
             db.session.commit()
 
-            # A rebuilt audio layout, re-read now rather than at
-            # Plex's own pace
+            # The audio layout is new. Plex reads it again now, not at its
+            # own pace
 
             enqueue_plex_analyze(file_path)
 
@@ -1891,7 +1913,8 @@ def _remux_audio_plan_unlocked(file_id, plan):
                     pass
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, an import of this module from a process that already has an
+# application does not build a second one
 
 app = LocalProxy(get_app)

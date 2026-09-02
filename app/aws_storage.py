@@ -1,15 +1,16 @@
-"""The AWS storage layer (the first strangler slice out of videos.py).
+"""Talk to AWS storage. This is the first strangler slice out of videos.py.
 
-Everything that talks to S3 and SQS: the untouched-original archive
-uploads, restores and downloads, the weekly storage audit, the SQS
-restore-notification poller, and the key plumbing (etags, key
-sanitizing, the untouched-key handoff guard).
+This module holds each function that talks to S3 and SQS: the
+untouched-original archive uploads, the restores and the downloads,
+the weekly storage audit, the SQS restore-notification poller, and the
+key functions (etags, key sanitizing, the untouched-key handoff guard).
 
-rq job names are strings and live in Redis, so app.videos RE-EXPORTS
-every name here — enqueue sites and stored jobs keep saying
-"app.videos.upload_task" and keep resolving. Names still living in
-app.videos are imported lazily inside functions, never at module
-level, so the import direction stays videos → aws_storage.
+The rq job names are strings that live in Redis. Thus, app.videos
+EXPORTS each name here again. The enqueue sites and the stored jobs
+continue to say "app.videos.upload_task", and they continue to
+resolve. The names that still live in app.videos are imported lazily
+inside functions, never at module level. Thus, the import direction
+stays videos to aws_storage.
 """
 
 import csv
@@ -77,7 +78,7 @@ def aws_sqs_client():
 
 
 def delete_sqs_message(sqs_client, receipt_handle, note="message"):
-    """Delete a message from the SQS queue; returns False when deletion fails."""
+    """Delete a message from the SQS queue. Return False if the delete fails."""
 
     try:
         response = sqs_client.delete_message(
@@ -97,7 +98,7 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
 
 
 class UploadProgressPercentage(object):
-    """Return the upload progress as a callback when uploading a file to AWS S3."""
+    """Report the upload progress as a callback during an upload to AWS S3."""
 
     def __init__(self, file_path):
         self._file_path = file_path
@@ -111,13 +112,13 @@ class UploadProgressPercentage(object):
         with self._lock:
             self._seen_so_far += bytes_amount
 
-            # Report a zero-byte file as already complete rather than divide by zero
+            # Report a zero-byte file as complete. Do not divide by zero.
 
             percent = int((self._seen_so_far / self._size) * 100) if self._size else 100
 
-            # Transfer callbacks fire far more often than tool output lines,
-            # so both the log line and the job-meta write wait for the
-            # percentage to actually change
+            # The transfer callback runs much more frequently than the tool
+            # writes an output line. Thus, the log line and the job-meta
+            # write occur only when the percentage changes.
 
             if percent == self._previous_percent:
                 return
@@ -135,7 +136,7 @@ class UploadProgressPercentage(object):
 
 
 class DownloadProgressPercentage(object):
-    """Return the download progress as a callback when downloading a file from AWS S3."""
+    """Report the download progress as a callback during a download from S3."""
 
     def __init__(self, client, bucket, key, basename):
         self._file_path = basename
@@ -150,13 +151,13 @@ class DownloadProgressPercentage(object):
         with self._lock:
             self._seen_so_far += bytes_amount
 
-            # Report a zero-byte object as already complete rather than divide by zero
+            # Report a zero-byte object as complete. Do not divide by zero.
 
             percent = int((self._seen_so_far / self._size) * 100) if self._size else 100
 
-            # Transfer callbacks fire far more often than tool output lines,
-            # so both the log line and the job-meta write wait for the
-            # percentage to actually change
+            # The transfer callback runs much more frequently than the tool
+            # writes an output line. Thus, the log line and the job-meta
+            # write occur only when the percentage changes.
 
             if percent == self._previous_percent:
                 return
@@ -174,13 +175,13 @@ class DownloadProgressPercentage(object):
 
 
 def sync_aws_s3_storage_task():
-    """Add files to AWS, and remove files that aren't in the library."""
+    """Add the files to AWS, and remove the files that are not in the library."""
 
     with app.app_context():
-        # Only sync when every queue is idle: a file that's mid-import,
-        # mid-upload, or still waiting on database writes can exist at AWS
-        # without its final database record, and the prune below would see it
-        # as an extra file and delete it
+        # Sync only when each queue is idle. A file can be in an import, in
+        # an upload, or in a wait for database writes. Then it can exist at
+        # AWS without its final database record. The prune below would see
+        # it as an extra file and delete it.
 
         job = get_current_job()
         busy = []
@@ -190,15 +191,15 @@ def sync_aws_s3_storage_task():
             ("fitzflix-file-operation", current_app.file_queue),
             ("fitzflix-sql", current_app.sql_queue),
             ("fitzflix-user-request", current_app.request_queue),
-            # The maintenance queue runs the hourly import sweep, which can
-            # feed new files into the import pipeline mid-sync
+            # The maintenance queue runs the hourly import sweep. That sweep
+            # can feed new files into the import pipeline during the sync.
             ("fitzflix-maintenance", current_app.maintenance_queue),
         ):
             started = StartedJobRegistry(
                 queue_name, connection=current_app.redis
             ).get_job_ids()
 
-            # This task itself is in the user-request started registry
+            # This task itself is in the started registry of user-request.
 
             if job:
                 started = [job_id for job_id in started if job_id != job.id]
@@ -226,8 +227,8 @@ def sync_aws_s3_storage_task():
         try:
             job = get_current_job()
 
-            # Map each remote key to its object size, so file records can be
-            # backfilled with the exact size that AWS bills for restores
+            # Map each remote key to its object size. Thus, the file records
+            # can get the exact size that AWS bills for a restore.
 
             s3_objects = {
                 object["Key"]: object["Size"]
@@ -290,16 +291,16 @@ def sync_aws_s3_storage_task():
                     current_app.config["LIBRARY_DIR"], file.file_path
                 )
 
-                # If the file...
+                # The next branches test the state of the file.
 
-                # ...is not in S3 but exists in the filesystem...
+                # The file is not in S3 but exists in the filesystem.
                 if (
                     file.aws_untouched_key not in s3_keys
                     or file.aws_untouched_date_uploaded == None
                     or file.aws_untouched_stale
                 ) and os.path.isfile(file_path):
 
-                    # ...then queue for upload to S3
+                    # Queue the file for an upload to S3.
 
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' Queuing for upload to AWS"
@@ -316,17 +317,17 @@ def sync_aws_s3_storage_task():
                         description=f"'{file.basename}'",
                     )
 
-                # ...exists in s3...
+                # The file exists in S3.
                 elif file.aws_untouched_key in s3_keys:
 
-                    # ...then add it to the inventory...
+                    # Add the file to the inventory.
 
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' Exists in AWS S3; rank {rank}"
                     )
 
-                    # Record the object's actual size if we don't have it yet
-                    # or if it has changed since it was recorded
+                    # Record the real size of the object if the record does
+                    # not have it, or if the size changed after the record.
 
                     remote_size = s3_objects[file.aws_untouched_key]
                     if file.aws_untouched_filesize_bytes != remote_size:
@@ -337,7 +338,8 @@ def sync_aws_s3_storage_task():
                             [current_app.config["AWS_BUCKET"], file.aws_untouched_key]
                         )
 
-                        # ...and queue for restore if it doesn't exist locally
+                        # Queue the file for a restore if it does not exist
+                        # locally.
 
                         if not os.path.isfile(file_path):
                             current_app.logger.info(
@@ -345,28 +347,27 @@ def sync_aws_s3_storage_task():
                             )
                             aws_restore(file.aws_untouched_key, tier="Bulk")
 
-                # ...is not in S3 and does not exist in the filesystem...
+                # The file is not in S3 and does not exist in the filesystem.
                 elif file.aws_untouched_key not in s3_keys and not os.path.isfile(
                     file_path
                 ):
 
-                    # ...then flag as orphaned file
+                    # Flag the file as an orphaned file.
 
                     current_app.logger.info(
                         f"'{file.aws_untouched_key}' has no associated files"
                     )
                     orphaned_files.append([file.id, file.untouched_basename])
 
-            # Persist any backfilled AWS object sizes
+            # Store the AWS object sizes that this filled in.
 
             db.session.commit()
 
             current_app.logger.info(f"Orphaned files: {orphaned_files}")
 
-            # Create a CSV of the best files and upload to the S3 bucket;
-            # if we should ever need to do a bulk restoration of our library, we can
-            # use this file to perform a restore of all our best files via
-            # S3 Bulk Operation
+            # Make a CSV of the best files and upload it to the S3 bucket. If
+            # a bulk restore of the library is necessary, this file can drive
+            # a restore of all the best files through an S3 Batch Operation.
 
             if inventory_export:
                 f = io.StringIO()
@@ -382,7 +383,7 @@ def sync_aws_s3_storage_task():
                     Key="inventory/rank_1.csv",
                 )
 
-            # Delete remote S3 files that aren't in Fitzflix
+            # Delete the remote S3 files that are not in Fitzflix.
 
             aws_untouched_keys = {
                 aws_untouched_key
@@ -391,10 +392,11 @@ def sync_aws_s3_storage_task():
                 ).all()
             }
 
-            # The rename-skew tripwire: an ACTIVE claim with no
-            # matching object means a restore would 404 — the class of
-            # silent damage the Aug 17 audit found 1,184 deep. Report
-            # it loudly here every week so it can never accumulate
+            # This is the rename-skew tripwire. An ACTIVE claim with no
+            # matching object means that a restore would return a 404.
+            # The 2026-08-17 audit found 1,184 cases of this silent
+            # damage. Report it loudly here each week. Thus, it can never
+            # accumulate.
 
             s3_key_set = set(s3_keys)
             dangling_claims = sorted(
@@ -473,7 +475,8 @@ def sync_aws_s3_storage_task():
                     ),
                 )
 
-            # Queue local files in the library folders but aren't in Fitzflix for importing
+            # Queue the local files that are in the library folders but not
+            # in Fitzflix for an import.
 
             library = []
             for path, subdirs, local_files in os.walk(
@@ -531,8 +534,8 @@ def sync_aws_s3_storage_task():
 def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
     """Download a file from AWS S3 storage."""
 
-    # Retry plumbing still lives in app.videos; imported lazily so the
-    # module import direction stays videos → aws_storage
+    # The retry constants still live in app.videos. Import them lazily.
+    # Thus, the module import direction stays videos to aws_storage.
 
     from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS
 
@@ -558,9 +561,9 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
                 e.errno in TRANSIENT_COPY_ERRNOS
                 and transient_retries < MAX_TRANSIENT_RETRIES
             ):
-                # The import volume hiccuped mid-download or mid-rename; the
-                # S3 object and the SQS message are unaffected, so retry
-                # once the mount settles
+                # The import volume had a fault during the download or the
+                # rename. The S3 object and the SQS message are not affected.
+                # Thus, retry after the mount settles.
 
                 current_app.logger.warning(
                     f"'{basename}' Download failed with a transient I/O "
@@ -589,10 +592,11 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
             current_app.logger.error(traceback.format_exc())
 
         else:
-            # Any truthy status means the SQS message was handled: the file
-            # landed (DOWNLOAD_COMPLETE), or there was nothing to download
-            # (object missing, restore pending). False means the retry budget
-            # was exhausted or the message couldn't be cleaned up.
+            # A truthy status means that the SQS message was handled. The
+            # file arrived (DOWNLOAD_COMPLETE), or there was nothing to
+            # download (object missing, restore pending). False means that
+            # the retry budget was used up, or that the message could not be
+            # deleted.
 
             if not downloaded:
                 current_app.logger.error(
@@ -603,14 +607,14 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
 
 
 def sqs_retrieve_task():
-    """Poll AWS SQS for possible files ready to download."""
+    """Poll AWS SQS for files that can be ready for download."""
 
     with app.app_context():
         sqs_client = aws_sqs_client()
         s3_client = aws_s3_client(with_retries=True)
 
-        # Extend timeout and restoration period for messages whose downloads
-        # are running or waiting in the download queue
+        # Extend the timeout and the restore period of a message whose
+        # download runs or waits in the download queue.
 
         file_operations = StartedJobRegistry(
             "fitzflix-file-operation", connection=current_app.redis
@@ -691,13 +695,13 @@ def upload_task(
 
     with app.app_context():
         try:
-            # Get the record of the file to be uploaded to AWS S3 storage
+            # Get the record of the file for the upload to AWS S3 storage.
 
             file = File.query.filter_by(id=file_id).first()
             file_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
 
-            # Pass to the aws_upload() function for uploading.
-            # Update the File record with the remote key and date it was uploaded.
+            # Pass the file to aws_upload() for the upload. Then update the
+            # File record with the remote key and the upload date.
 
             if file.aws_untouched_key:
                 (
@@ -742,13 +746,15 @@ def upload_task(
 
 
 def untouched_key_still_claimed(key):
-    """Whether any surviving file record still claims this untouched
-    S3 key. Distinct records can share a key — a replaced file whose
-    key was repointed after a rename, or a re-import landing on
-    the same basename — and deleting a claimed key would strand the
-    survivor's archive behind a delete marker (the Bambi II incident,
-    Aug 2026). Callers check AFTER their own deletes commit, so the
-    rows being purged no longer count."""
+    """Return True if a surviving file record still claims this S3 key.
+
+    This applies to the untouched key. Different records can share a
+    key. For example, a replaced file can get a new key after a rename,
+    or a second import can arrive on the same basename. A delete of a
+    claimed key would strand the archive of the survivor behind a
+    delete marker (the Bambi II incident, 2026-08). The caller must
+    check AFTER its own deletes commit. Thus, the purged rows no longer
+    count."""
 
     return (
         db.session.query(File.id)
@@ -762,30 +768,32 @@ def untouched_key_still_claimed(key):
 
 
 def rename_untouched_object(file, new_key, defer_upload=False):
-    """Move a file's untouched S3 archive when its derived key changes,
-    keeping the invariant that aws_untouched_key only ever names a REAL
-    object (the old flow rewrote the database field without
-    moving anything, stranding 1,184 keys found by the Aug 17 audit).
+    """Move the untouched S3 archive of a file when its derived key changes.
 
-    STANDARD (or restored) objects are copied server-side
-    (multipart-capable), verified, and the old key deleted; only then
-    does the field change. When the object CAN'T be copied — Deep
-    Archive without a completed restore, or missing outright — the
-    LOCAL library file force-uploads under the new key instead
-    (Glenn's call, Aug 18: close the invariant now rather than hope a
-    future re-upload heals it; the archive-replace convention already
-    trades the pristine original for the current library file on every
-    remux, and the original survives as a noncurrent version).
+    This keeps the invariant that aws_untouched_key only names a REAL
+    object. The old flow rewrote the database field and moved nothing.
+    That stranded the 1,184 keys that the 2026-08-17 audit found.
 
-    That force-upload is multi-gigabyte, so a caller running on a queue
-    with a short budget passes defer_upload and gets it handed to
-    rearchive_untouched_object on the file queue instead (#231: a
-    43.9 GB upload died at SQL_TASK_TIMEOUT mid-flight, leaving the
-    movie record renamed and its archive key not).
+    A STANDARD (or restored) object is copied on the server side, with
+    multipart support. Then the copy is verified, and the old key is
+    deleted. Only then does the field change. Some objects CANNOT be
+    copied: a Deep Archive object without a completed restore, or a
+    missing object. Then the LOCAL library file force-uploads under the
+    new key instead (decided by Glenn, 2026-08-18). This closes the
+    invariant now. It does not hope that a future upload repairs it.
+    The archive-replace convention already trades the pristine original
+    for the current library file on each remux. The original survives
+    as a noncurrent version.
 
-    Returns True when the field now matches new_key — a deferred
-    upload returns False, since the field only changes once the object
-    really lands.
+    That force-upload is multi-gigabyte. Thus, a caller on a queue with
+    a short budget passes defer_upload. Then rearchive_untouched_object
+    on the file queue does the upload instead. In #231, a 43.9 GB upload
+    died at SQL_TASK_TIMEOUT. That left the movie record renamed, and
+    its archive key not renamed.
+
+    Return True if the field now matches new_key. A deferred upload
+    returns False, because the field only changes after the object
+    really arrives.
     """
 
     old_key = file.aws_untouched_key
@@ -862,17 +870,18 @@ def rename_untouched_object(file, new_key, defer_upload=False):
 
 
 def rearchive_untouched_object(file_id, new_key):
-    """File-queue half of an archive rename that couldn't be copied
-    server-side: force-upload the local library copy under the new key.
+    """Force-upload the local library copy of a file under the new key.
 
-    Deferred off the sql queue because the upload is multi-gigabyte and
-    the sql queue's ten-minute budget is sized for database work — a
-    43.9 GB re-archive was killed at 84% mid-refresh, silently, leaving
-    the movie record pointing at one film and its archive key at
-    another (#231). The file queue's budget is six hours.
+    This is the file-queue half of an archive rename that could not be
+    copied on the server side. It is deferred off the sql queue because
+    the upload is multi-gigabyte. The 10-minute budget of the sql queue
+    is sized for database work. A 43.9 GB re-archive was killed at 84%
+    during a refresh, silently. That left the movie record pointed at
+    one film, and its archive key at a different film (#231). The
+    budget of the file queue is 6 hours.
 
-    Re-reads the File record, so a disk rename the refresh performed
-    after enqueuing is already reflected in the path uploaded.
+    This reads the File record again. Thus, the uploaded path includes
+    a disk rename that the refresh did after the enqueue.
     """
 
     with app.app_context():
@@ -888,11 +897,11 @@ def rearchive_untouched_object(file_id, new_key):
             current_app.logger.info(f"'{file.basename}' archive is already '{new_key}'")
             return True
 
-        # WEBDL-rebuild scaffolding (#158): a WEBRip row keeps its
-        # WEBDL-named archive key until a real WEB-DL replaces it —
-        # never trade the scaffold key for a fresh multi-gigabyte
-        # upload. Mirrors the guard in apply_tmdb_refresh, catching
-        # jobs that were already queued before it shipped.
+        # This is the WEBDL-rebuild scaffolding (#158). A WEBRip row
+        # keeps its WEBDL-named archive key until a real WEB-DL replaces
+        # it. Never trade the scaffold key for a new multi-gigabyte
+        # upload. This is the same as the guard in apply_tmdb_refresh. It
+        # catches the jobs that were queued before that guard shipped.
 
         if "[WEBDL-" in (file.aws_untouched_key or "") and "[WEBRip-" in new_key:
             current_app.logger.info(
@@ -901,10 +910,10 @@ def rearchive_untouched_object(file_id, new_key):
             )
             return False
 
-        # The key the record wants NOW. It differs when the refresh
-        # that queued this rolled back, or when a later refresh queued
-        # a newer key behind this one — either way, uploading tens of
-        # gigabytes under a key the record has moved on from is waste
+        # This is the key that the record wants NOW. It differs if the
+        # refresh that queued this job rolled back, or if a later refresh
+        # queued a newer key behind this one. In the two cases, an upload
+        # of tens of gigabytes under an old key is waste.
         expected_key = os.path.join(
             current_app.config["AWS_UNTOUCHED_PREFIX"],
             sanitize_s3_key(file.untouched_basename or ""),
@@ -918,8 +927,9 @@ def rearchive_untouched_object(file_id, new_key):
 
         local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         if not os.path.isfile(local_path):
-            # Nothing to re-upload — the record keeps the old key,
-            # which still names a real object, so the invariant holds
+            # There is nothing to upload again. The record keeps the old
+            # key. That key still names a real object. Thus, the invariant
+            # holds.
             current_app.logger.error(
                 f"'{file.basename}' can't be re-archived as '{new_key}': "
                 f"'{local_path}' isn't present locally"
@@ -931,8 +941,8 @@ def rearchive_untouched_object(file_id, new_key):
             db.session.commit()
 
         except Exception:
-            # Let the job fail loudly: a half-applied rename is exactly
-            # what #231 was about, and FailedJobRegistry is the trace
+            # Let the job fail loudly. A half-applied rename is exactly the
+            # problem of #231. FailedJobRegistry is the trace.
             db.session.rollback()
             raise
 
@@ -942,7 +952,8 @@ def rearchive_untouched_object(file_id, new_key):
 def aws_delete(key):
     """Delete an object from AWS S3 storage."""
 
-    # Needs app.app_context() in order for user to call directly from web application
+    # This needs app.app_context(). Thus, the web application can call it
+    # directly.
     with app.app_context():
         current_app.logger.info(f"Preparing to delete '{key}' from AWS...")
         s3_client = aws_s3_client()
@@ -951,10 +962,11 @@ def aws_delete(key):
         return datetime.now(timezone.utc)
 
 
-# aws_download outcomes. Failure is a plain False; every success status is
-# truthy, so callers that only care whether the SQS message was handled can
-# boolean-test the result, while callers that need to know whether a file
-# actually landed compare against DOWNLOAD_COMPLETE
+# These are the aws_download results. A failure is a plain False. Each
+# success status is truthy. Thus, a caller that only needs to know if
+# the SQS message was handled can boolean-test the result. A caller that
+# needs to know if a file arrived compares the result with
+# DOWNLOAD_COMPLETE.
 
 DOWNLOAD_COMPLETE = "complete"
 DOWNLOAD_OBJECT_MISSING = "object-missing"
@@ -962,8 +974,9 @@ DOWNLOAD_RESTORE_PENDING = "restore-pending"
 
 MAX_DOWNLOAD_RETRIES = 10
 
-# Client errors that fail identically on every attempt (credentials,
-# permissions, a missing bucket), so retrying only delays the failure report
+# These client errors fail in the same way on each attempt (credentials,
+# permissions, a missing bucket). Thus, a retry only delays the failure
+# report.
 
 NON_RETRYABLE_DOWNLOAD_ERRORS = (
     "AccessDenied",
@@ -973,14 +986,16 @@ NON_RETRYABLE_DOWNLOAD_ERRORS = (
     "403",
 )
 
-# Seam for tests: retry backoff sleeps through this module attribute
+# This is a seam for the tests. The retry backoff sleeps through this
+# module attribute.
 
 DOWNLOAD_RETRY_SLEEP = time.sleep
 
 
 def _spend_download_retry(retry):
-    """Spend one in-place download retry, backing off exponentially
-    (1s, 2s, 4s, ... capped at 60s) before the next attempt."""
+    """Spend 1 in-place download retry, and wait before the next attempt.
+
+    The wait grows exponentially (1s, 2s, 4s, ...) with a cap at 60s."""
 
     retry -= 1
     if retry > 0:
@@ -991,22 +1006,23 @@ def _spend_download_retry(retry):
 def aws_download(key, basename, sqs_receipt_handle=None):
     """Download an object from AWS S3 storage.
 
-    Returns DOWNLOAD_COMPLETE when the file landed in the import directory,
-    DOWNLOAD_OBJECT_MISSING when there is no such object at AWS, and
-    DOWNLOAD_RESTORE_PENDING when the object is in cold storage and a
-    restore's completion notification will re-trigger the download; all three
-    are truthy and mean the SQS message was handled. Returns False when the
-    retry budget was exhausted or the SQS message couldn't be deleted.
+    Return DOWNLOAD_COMPLETE if the file arrived in the import directory.
+    Return DOWNLOAD_OBJECT_MISSING if there is no such object at AWS.
+    Return DOWNLOAD_RESTORE_PENDING if the object is in cold storage.
+    Then the completion notification of the restore triggers the
+    download again. These 3 values are truthy. They mean that the SQS
+    message was handled. Return False if the retry budget was used up,
+    or if the SQS message could not be deleted.
     """
 
-    # Retry plumbing still lives in app.videos; imported lazily so the
-    # module import direction stays videos → aws_storage
+    # The retry constants still live in app.videos. Import them lazily.
+    # Thus, the module import direction stays videos to aws_storage.
 
     from app.videos import TRANSIENT_COPY_ERRNOS
 
     retry = MAX_DOWNLOAD_RETRIES
 
-    # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}"
+    # Rename "(edition-foo bar baz)" to "{edition-foo bar baz}".
     if "(edition-" in basename:
         basename = re.sub(
             r"\(edition\-(?P<edition>.+)\)", "{edition-\\g<edition>}", basename
@@ -1031,10 +1047,10 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 ),
             )
 
-        # Don't resume if the file doesn't exist in AWS!
+        # Do not resume if the file does not exist in AWS.
         except botocore.exceptions.ClientError as error:
-            # boto3 signals a missing object via Error.Code ("404"/"NoSuchKey");
-            # keep the HTTP status code check as a fallback
+            # boto3 signals a missing object through Error.Code ("404" or
+            # "NoSuchKey"). Keep the HTTP status code check as a fallback.
             error_code = str(error.response.get("Error", {}).get("Code", ""))
             status_code = error.response.get("ResponseMetadata", {}).get(
                 "HTTPStatusCode"
@@ -1047,18 +1063,19 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 return DOWNLOAD_OBJECT_MISSING
 
             elif error_code == "InvalidObjectState":
-                # The restored copy expired before it could be downloaded, so
-                # the object is back in cold storage and this SQS message is
-                # stale. Request a new restore unless one is already underway;
-                # its completion notification will re-trigger the download.
+                # The restored copy expired before the download. Thus, the
+                # object is back in cold storage, and this SQS message is
+                # stale. Request a new restore, unless one is already in
+                # progress. Its completion notification triggers the
+                # download again.
 
                 try:
                     head_response = s3_client.head_object(
                         Bucket=current_app.config["AWS_BUCKET"], Key=key
                     )
                 except Exception:
-                    # A failed status check spends a retry like any other
-                    # error instead of escaping the loop
+                    # A failed status check spends a retry, as each other
+                    # error does. It does not exit the loop.
 
                     current_app.logger.error(traceback.format_exc())
                     retry = _spend_download_retry(retry)
@@ -1097,9 +1114,10 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
         except OSError as e:
             if e.errno in TRANSIENT_COPY_ERRNOS:
-                # A dead import volume fails instantly, so burning the whole
-                # in-place retry budget on it is pointless: drop the partial
-                # download and let the caller defer until the mount settles
+                # A dead import volume fails immediately. Thus, the whole
+                # in-place retry budget would be wasted on it. Delete the
+                # partial download. Let the caller defer until the mount
+                # settles.
 
                 try:
                     os.remove(
@@ -1133,8 +1151,9 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         f"'{basename}' could not be downloaded from AWS S3 storage; giving up"
     )
 
-    # Import scans skip dotfiles, so an abandoned partial download would
-    # otherwise sit invisibly in the import directory forever
+    # The import scan skips dotfiles. Without this step, an abandoned
+    # partial download would stay invisible in the import directory
+    # forever.
 
     try:
         os.remove(os.path.join(current_app.config["IMPORT_DIR"], f".{basename}"))
@@ -1144,23 +1163,23 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
 
 def aws_restore(key, days=2, tier="Standard"):
-    """Request a file at AWS to be restored from Glacier status for download."""
+    """Request a restore of a file at AWS from Glacier status for a download."""
 
     with app.app_context():
         try:
             s3_client = aws_s3_client(with_retries=True)
 
-            # Make sure the key exists in the AWS bucket
+            # Make sure that the key exists in the AWS bucket.
 
             response = s3_client.list_objects(
                 Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
             )
 
-            # The listing has no "Contents" key at all when nothing matches
+            # The listing has no "Contents" key if nothing matches.
 
             contents = response.get("Contents")
 
-            # If the key exists
+            # The key exists.
 
             if contents and contents[0].get("Key"):
                 head_response = s3_client.head_object(
@@ -1202,8 +1221,8 @@ def aws_restore(key, days=2, tier="Standard"):
                     f"'{key}' does not exist in AWS S3 storage, cannot restore"
                 )
 
-        # Only botocore ClientError instances have a .response attribute;
-        # let any other exception propagate unmasked
+        # Only a botocore ClientError instance has a .response attribute.
+        # Let each other exception propagate as it is.
 
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "RestoreAlreadyInProgress":
@@ -1227,7 +1246,7 @@ def aws_upload(
     ignore_etag=False,
     storage_class="STANDARD",
 ):
-    """Search for a file in AWS S3, and upload if it doesn't exist or if it differs."""
+    """Search for a file in AWS S3. Upload it if it is missing or different."""
 
     from app.videos import TRANSIENT_COPY_ERRNOS, move_to_rejects
 
@@ -1236,8 +1255,8 @@ def aws_upload(
             f"'{file_path}' can't be uploaded to AWS since it's not a file!"
         )
 
-        # Raise instead of returning None: every caller unpacks the return value
-        # as a (key, date_uploaded, filesize_bytes) tuple
+        # Raise an error. Do not return None. Each caller unpacks the return
+        # value as a (key, date_uploaded, filesize_bytes) tuple.
 
         raise FileNotFoundError(
             f"'{file_path}' can't be uploaded to AWS since it's not a file"
@@ -1253,19 +1272,20 @@ def aws_upload(
 
     s3_client = aws_s3_client(with_retries=True)
 
-    # See if the key already exists in the AWS bucket
+    # Find out if the key already exists in the AWS bucket.
 
     response = s3_client.list_objects(
         Bucket=current_app.config["AWS_BUCKET"], Prefix=key, MaxKeys=1
     )
 
-    # If the key already exists, check to see if the local and remote ETags match.
-    # If the ETags match, then the files are the same and there's no need to re-upload.
-    # If the IGNORE_ETAGS flag is set, only compare the file/key names, not their data.
+    # If the key already exists, compare the local and the remote ETags. If
+    # the ETags match, the files are the same, and a new upload is not
+    # necessary. If the IGNORE_ETAGS flag is set, compare only the file and
+    # key names, not their data.
 
     if not force_upload and not current_app.config["FORCE_UPLOAD"]:
-        # Look for an object with this exact key: since the listing is a Prefix
-        # search, it can return a different, longer key instead
+        # Look for an object with this exact key. The listing is a Prefix
+        # search. Thus, it can return a different, longer key instead.
 
         remote_etag = None
         date_uploaded = None
@@ -1308,12 +1328,12 @@ def aws_upload(
         f"'s3://{os.path.join(current_app.config['AWS_BUCKET'], key)}'"
     )
 
-    # Upload the file to AWS S3 storage
+    # Upload the file to AWS S3 storage.
 
-    # Thanks to https://codeflex.co/python-s3-multipart-file-upload-with-metadata-and-progress-indicator/
-    # for the logic on how to handle failures; I couldn't figure out that
-    # botocore.exceptions.ClientError and boto3.exceptions.S3UploadFailedError
-    # returned different error formats until I saw this post.
+    # The failure handling logic comes from
+    # https://codeflex.co/python-s3-multipart-file-upload-with-metadata-and-progress-indicator/
+    # That post shows that botocore.exceptions.ClientError and
+    # boto3.exceptions.S3UploadFailedError return different error formats.
 
     MAX_RETRY_COUNT = 10
     retry = MAX_RETRY_COUNT
@@ -1344,10 +1364,10 @@ def aws_upload(
                 raise
 
         except OSError as e:
-            # A mount that dropped out is not a bad file. Rejecting it
-            # would move a library file out of the library over a problem
-            # that clears on its own — and this is exactly how the NAS's
-            # lost-handle state arrives, from inside s3transfer's close.
+            # A mount that dropped out is not a bad file. A reject would
+            # move a library file out of the library for a problem that
+            # clears by itself. This is exactly how the lost-handle state
+            # of the NAS occurs: inside the close() call of s3transfer.
 
             if e.errno in TRANSIENT_COPY_ERRNOS:
                 current_app.logger.error(
@@ -1372,8 +1392,8 @@ def aws_upload(
     )
     move_to_rejects(file_path, "upload error")
 
-    # Raise instead of falling off the end returning None: every caller unpacks
-    # the return value as a (key, date_uploaded, filesize_bytes) tuple
+    # Raise an error at the end. Do not return None. Each caller unpacks
+    # the return value as a (key, date_uploaded, filesize_bytes) tuple.
 
     raise RuntimeError(
         f"Unable to upload '{file_path}' to AWS after {MAX_RETRY_COUNT} attempts"
@@ -1381,13 +1401,13 @@ def aws_upload(
 
 
 def mark_archive_stale(file_id, reason=""):
-    """Record that a file's S3 archive is older than its local copy.
+    """Record that the S3 archive of a file is older than its local copy.
 
-    Committed in its own transaction because every caller is a failure
-    path that rolls back, and a marker discarded by that rollback would
-    leave the loss exactly as undiscoverable as it was before: the key
-    still exists and its date is the previous upload's, so nothing that
-    inspects the row can tell the archive is behind.
+    This commits in its own transaction. Each caller is a failure path
+    that rolls back. A rollback would discard the marker. Then the loss
+    would stay as hidden as before. The key still exists, and its date
+    is the date of the previous upload. Thus, nothing that inspects the
+    row can tell that the archive is behind.
     """
 
     from app.models import File
@@ -1421,7 +1441,8 @@ def calculate_etag(file_path):
 
     file_size = os.path.getsize(file_path)
     if file_size < EIGHT_MEGABYTES:
-        # The file is less than 8 MB, so read the file in one go, and return its MD5 hash
+        # The file is smaller than 8 MB. Read it in 1 step. Return its MD5
+        # hash.
 
         with open(file_path, "rb") as f:
             md5_hash = hashlib.md5(f.read())
@@ -1431,12 +1452,12 @@ def calculate_etag(file_path):
     else:
         md5_digests = []
 
-        # Read a file in 8 MB chunks, and get the MD5 hash of each chunk
+        # Read the file in 8 MB chunks. Get the MD5 hash of each chunk.
 
         with open(file_path, "rb") as f:
             previous_percent = None
             for chunk in iter(lambda: f.read(EIGHT_MEGABYTES), b""):
-                # Concatenate all of the MD5 hashes together
+                # Collect the MD5 hashes.
                 md5_digests.append(hashlib.md5(chunk).digest())
                 percent = int((f.tell() / file_size) * 100)
                 if previous_percent != percent:
@@ -1449,10 +1470,10 @@ def calculate_etag(file_path):
                     job.meta["progress"] = percent
                     job.save_meta()
 
-        # Get an MD5 hash of the concatenated hashes, and append the number of parts
-        # e.g. "c7c2300fd47954c421d5fe0bc7910ca3-64"
-        # c7c2300fd47954c421d5fe0bc7910ca3 is the hash of the concatenated MD5 hashes,
-        # and there were 64 parts/individual MD5 hashes for the uploaded file
+        # Get an MD5 hash of the concatenated hashes. Append the number of
+        # parts. For example, "c7c2300fd47954c421d5fe0bc7910ca3-64":
+        # c7c2300fd47954c421d5fe0bc7910ca3 is the hash of the concatenated
+        # MD5 hashes, and the uploaded file had 64 parts (MD5 hashes).
 
         return (
             hashlib.md5(b"".join(md5_digests)).hexdigest() + "-" + str(len(md5_digests))
@@ -1460,7 +1481,7 @@ def calculate_etag(file_path):
 
 
 def get_matching_s3_objects(bucket, prefix="", suffix=""):
-    """Iterate through objects in S3 storage.
+    """Iterate through the objects in S3 storage.
 
     https://alexwlchan.net/2019/07/listing-s3-keys/
 
@@ -1507,7 +1528,7 @@ def get_matching_s3_objects(bucket, prefix="", suffix=""):
 
 
 def sanitize_s3_key(key):
-    """Sanitize the key name to remove problematic characters.
+    """Sanitize the key name. Remove the characters that cause problems.
 
     See https://docs.aws.amazon.com/AmazonS3/latest/dev/UsingMetadata.html
     """
@@ -1530,7 +1551,8 @@ def sanitize_s3_key(key):
     return key
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, a process that already has an application can import this module
+# and not build a second application.
 
 app = LocalProxy(get_app)

@@ -1,31 +1,33 @@
-"""Remote playback in Infuse on each user's Apple TV (#192).
+"""Play films remotely in Infuse on the Apple TV of each user (#192).
 
-Infuse never implemented Plex Companion — no :32500, no playMedia — so
-the app.plex_player path can't target it. What Infuse does have is
-TMDB-keyed deep links (infuse://movie/{tmdb_id}?play, tvOS 8.2.3+),
-and the Apple TV will open one on Infuse's behalf over Apple's own
-Companion protocol via pyatv, waking the box and launching Infuse from
-cold if need be. With the Plex share in Library Mode the film plays
-straight away; in Direct mode (no local library index for the link to
-resolve against) Infuse lands on the film's TMDB page and the viewer
-picks it from Search — accepted trade-off, Direct mode keeps Plex's
-quick profile switching. Either way Infuse reports the watch back to
-Plex, so the diary still sees it.
+Infuse never implemented Plex Companion. It has no :32500 and no
+playMedia. Thus, the app.plex_player path cannot target it. Infuse does
+have TMDB-keyed deep links (infuse://movie/{tmdb_id}?play, tvOS 8.2.3
+and later). The Apple TV opens such a link for Infuse over the
+Companion protocol of Apple, through pyatv. If necessary, this wakes
+the box and launches Infuse from cold. With the Plex share in Library
+Mode, the film plays immediately. In Direct mode, there is no local
+library index for the link to resolve against. Then Infuse goes to the
+TMDB page of the film, and the viewer picks it from Search. This is an
+accepted trade-off. Direct mode keeps the quick profile switch of Plex.
+In both modes, Infuse reports the watch back to Plex. Thus, the diary
+still sees it.
 
-Companion requires a one-time PIN pairing per device. A pairing
-session can't span web requests — gunicorn runs six workers, and
-begin()/finish() must happen on the one object that showed the PIN —
-so pairing runs as a user-request queue task that holds the session
-open in a single worker process while the PIN crosses over from the
-web form through Redis. The credentials string that pairing yields is
-stored on the user row and is all later connections need.
+Companion requires a one-time PIN pairing per device. A pairing session
+cannot span web requests. gunicorn runs 6 workers, and begin() and
+finish() must occur on the one object that showed the PIN. Thus, the
+pairing runs as a user-request queue task. The task holds the session
+open in one worker process while the PIN crosses over from the web
+form through Redis. The pairing gives a credentials string. Fitzflix
+stores that string on the user row. Later connections need only that
+string.
 
-The Apple TV silently drops mDNS from off-subnet sources (the server
-lives on the DMZ VLAN), so there is no discovery: the user enters the
-address themselves, Companion port included — 49152 is only pyatv's
-default knock, and e.g. the living-room box answers on 49153. The
-port is found from a machine on the Apple TV's own network with
-`dns-sd -B _companion-link._tcp` + `dns-sd -L`.
+The Apple TV silently drops mDNS from off-subnet sources. The server
+lives on the DMZ VLAN. Thus, there is no discovery. The user enters the
+address, with the Companion port included. 49152 is only the default
+knock of pyatv. For example, the living-room box answers on 49153. To
+find the port, run `dns-sd -B _companion-link._tcp` and `dns-sd -L` on
+a machine on the network of the Apple TV.
 """
 
 import asyncio
@@ -41,8 +43,9 @@ from pyatv.const import PairingRequirement, Protocol
 from app import db
 from app.models import User
 
-# pyatv's default Companion knock, appended when the user enters a bare
-# address; the real port is per-device (see the module docstring)
+# The default Companion knock of pyatv. Fitzflix appends it when the user
+# enters a bare address. The real port is per device (see the module
+# docstring).
 
 COMPANION_PORT = 49152
 
@@ -54,19 +57,21 @@ PAIR_PIN_KEY = "fitzflix:infuse-pair:{user_id}:pin"
 PAIR_ATTEMPT_KEY = "fitzflix:infuse-pair:{user_id}:attempt"
 PAIR_TTL = 300
 
-# MediaInfo's commercial name for a DD+ Atmos track, as stored in
-# file_audio_track.codec. Mirrors app.atmos.EAC3_ATMOS_CODEC rather
-# than importing it — app.atmos builds the process app at import time,
-# which web routes and tests importing this module must not trigger
+# The commercial name that MediaInfo gives a DD+ Atmos track, as stored
+# in file_audio_track.codec. This mirrors app.atmos.EAC3_ATMOS_CODEC. It
+# does not import it, because app.atmos builds the process app at import
+# time. The web routes and the tests that import this module must not
+# start that build.
 
 EAC3_ATMOS_CODEC = "Dolby Digital Plus with Dolby Atmos"
 
 
 def infuse_only_formats(files):
-    """The format names among these files that only play correctly in
-    Infuse — the Plex tvOS app passes through neither E-AC-3 Atmos nor
-    Dolby Vision Profile 8, so a user with both apps configured gets
-    pointed at Infuse for films carrying either."""
+    """Return the formats in these files that play correctly only in Infuse.
+
+    The Plex tvOS app does not pass through E-AC-3 Atmos or Dolby Vision
+    Profile 8. Thus, Fitzflix points a user with both apps configured at
+    Infuse for a film that carries one of them."""
 
     reasons = []
     if any((file.dolby_vision_profile or "").startswith("8") for file in files):
@@ -79,8 +84,10 @@ def infuse_only_formats(files):
 
 
 def _device_config(address, credentials=None):
-    """A pyatv config for the Apple TV at ip:port — built by hand
-    because mDNS discovery never crosses the DMZ boundary."""
+    """Return a pyatv config for the Apple TV at ip:port.
+
+    This function builds the config by hand because mDNS discovery never
+    crosses the DMZ boundary."""
 
     host, _, port = address.strip().rpartition(":")
     device = conf.AppleTV(host.strip("[]"), "Apple TV")
@@ -98,9 +105,10 @@ def _device_config(address, credentials=None):
 
 
 async def _launch(address, credentials, tmdb_id):
-    """Connect over Companion and open the TMDB-keyed Infuse link —
-    never the raw-URL play form, which would bypass Plex and lose the
-    diary entry."""
+    """Connect over Companion and open the TMDB-keyed Infuse link.
+
+    Never use the raw-URL play form. That form bypasses Plex and loses
+    the diary entry."""
 
     loop = asyncio.get_running_loop()
     atv = await pyatv.connect(_device_config(address, credentials), loop)
@@ -111,9 +119,10 @@ async def _launch(address, credentials, tmdb_id):
 
 
 def play_movie(movie, user):
-    """Open the movie in Infuse on the user's Apple TV. Returns
-    (ok, message); every failure mode gets a message fit to show on
-    the movie page."""
+    """Open the movie in Infuse on the Apple TV of the user.
+
+    This function returns (ok, message). Every failure mode gets a
+    message that the movie page can show."""
 
     if not user.infuse_player_configured:
         return False, "Pair your Apple TV for Infuse on your Profile page first."
@@ -152,39 +161,43 @@ def play_movie(movie, user):
 
 # --- Pairing: web-side helpers -------------------------------------------
 #
-# The web process only enqueues, hands the PIN across, and reads the
-# outcome; the Companion session itself lives in pair_task's worker.
+# The web process only enqueues the task, passes the PIN across, and reads
+# the result. The Companion session itself lives in the worker of
+# pair_task.
 
 
 def _state_key(user_id):
-    """This user's pairing-state Redis key."""
+    """Return the Redis key for the pairing state of this user."""
 
     return PAIR_STATE_KEY.format(user_id=user_id)
 
 
 def _pin_key(user_id):
-    """This user's pairing-PIN Redis key."""
+    """Return the Redis key for the pairing PIN of this user."""
 
     return PAIR_PIN_KEY.format(user_id=user_id)
 
 
 def _attempt_key(user_id):
-    """This user's current pairing-attempt token Redis key."""
+    """Return the Redis key for the current pairing-attempt token of this user."""
 
     return PAIR_ATTEMPT_KEY.format(user_id=user_id)
 
 
 def start_pairing(user_id, address):
-    """Kick off PIN pairing with the Apple TV at ip:port; the TV shows
-    its PIN within a few seconds of the task starting. Returns False
-    without enqueueing while an attempt is already awaiting its PIN —
-    a second begin() makes the Apple TV drop the first session, which
-    then dies with "not connected" (live incident, 2026-08-26).
+    """Start the PIN pairing with the Apple TV at ip:port.
 
-    Each attempt carries a token: the task only writes state, consumes
-    the PIN, or stores credentials while its token is still the
-    current one, so a stale task (late off the queue, or superseded
-    after its state expired) can't clobber a newer attempt's outcome.
+    The TV shows its PIN some seconds after the task starts. If an
+    attempt already waits for its PIN, this function returns False and
+    does not enqueue. A second begin() makes the Apple TV drop the first
+    session. That session then dies with "not connected" (live incident,
+    2026-08-26).
+
+    Each attempt carries a token. The task writes state, consumes the
+    PIN, or stores credentials only while its token is the current one.
+    Thus, a stale task cannot overwrite the result of a newer attempt. A
+    task is stale when it comes late off the queue, or when a new attempt
+    replaced it after its state expired.
     """
 
     redis = current_app.redis
@@ -204,22 +217,24 @@ def start_pairing(user_id, address):
 
 
 def pairing_pending(user_id):
-    """Whether a pairing awaits its PIN (shows the Profile PIN form)."""
+    """Return True if a pairing waits for its PIN (the Profile PIN form shows)."""
 
     state = current_app.redis.get(_state_key(user_id))
     return (state or b"").decode() in ("queued", "show-pin")
 
 
 def submit_pin(user_id, pin):
-    """Hand the PIN from the Profile form over to the pairing task."""
+    """Pass the PIN from the Profile form to the pairing task."""
 
     current_app.redis.set(_pin_key(user_id), str(pin), ex=PAIR_TTL)
 
 
 def pairing_outcome(user_id, wait_seconds=20):
-    """The pairing task's verdict, polled for up to wait_seconds after
-    the PIN lands: (ok, message), or (None, message) when the task
-    still hasn't finished — success normally takes a second or two."""
+    """Return the result of the pairing task after the PIN arrives.
+
+    This function polls for up to wait_seconds. It returns (ok, message).
+    It returns (None, message) if the task has not finished. Success
+    normally takes 1 or 2 seconds."""
 
     redis = current_app.redis
     deadline = time.monotonic() + wait_seconds
@@ -241,9 +256,11 @@ def pairing_outcome(user_id, wait_seconds=20):
 
 
 def pair_task(user_id, address, attempt=None):
-    """Hold a Companion pairing session open in this worker: begin()
-    puts the PIN on the TV screen, the web form drops it into Redis,
-    finish() trades it for credentials stored on the user row."""
+    """Hold a Companion pairing session open in this worker.
+
+    begin() puts the PIN on the TV screen. The web form puts the PIN
+    into Redis. finish() trades the PIN for credentials. Fitzflix stores
+    the credentials on the user row."""
 
     from app import get_app
 
@@ -253,12 +270,15 @@ def pair_task(user_id, address, attempt=None):
 
 
 async def _pair(app, user_id, address, attempt=None):
-    """pair_task's body: the Companion session, the Redis PIN wait,
-    and the credentials write — every exit leaves a state the Profile
-    page can report. All of it is fenced on the attempt token: a task
-    that is no longer the user's current attempt bows out silently
-    instead of eating the newer attempt's PIN or overwriting its
-    outcome (attempt=None, from a legacy enqueue, always owns)."""
+    """Run the body of pair_task.
+
+    The body is the Companion session, the wait for the PIN in Redis,
+    and the credentials write. Every exit leaves a state that the
+    Profile page can report. The attempt token fences all of it. A task
+    that is no longer the current attempt of the user stops silently.
+    It does not consume the PIN of the newer attempt, and it does not
+    overwrite its result. A task with attempt=None, from a legacy
+    enqueue, always owns the attempt."""
 
     state_key = _state_key(user_id)
     pin_key = _pin_key(user_id)

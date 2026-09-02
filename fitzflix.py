@@ -31,9 +31,9 @@ cli.register(app)
 
 @app.shell_context_processor
 def make_shell_context():
-    """Create the flask shell context."""
+    """Create the context of the flask shell."""
 
-    # Return these models so when `flask shell` is called these tables are available
+    # This returns these models. Thus, the tables are available in `flask shell`.
 
     return {
         "db": db,

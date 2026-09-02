@@ -247,7 +247,7 @@ def test_promote_refuses_non_matroska_and_missing_local(app, admin_client):
         },
         follow_redirects=True,
     )
-    assert "can&#39;t be reordered in place" in response.get_data(as_text=True)
+    assert "cannot reorder its tracks in place" in response.get_data(as_text=True)
 
     detail = admin_client.get(f"/maintenance/lossy-audio/{gone_id}").get_data(
         as_text=True

@@ -19,7 +19,7 @@ from app.api.arr import (
 @bp.route("/sonarr/add", methods=["POST"])
 @import_event_webhook("Sonarr")
 def sonarr_add(payload):
-    """Endpoint for Sonarr to notify Fitzflix when a new video file is added."""
+    """Process the notification from Sonarr that a new video file is added."""
 
     response = jsonify(request.get_json())
     downloaded_file_path = os.path.join(
@@ -27,8 +27,9 @@ def sonarr_add(payload):
         payload["episodeFile"].get("relativePath"),
     )
 
-    # A provably truncated download never reaches the pipeline:
-    # mark the grab failed so Sonarr blocklists it and searches again
+    # A download that is provably truncated never goes into the pipeline.
+    # Fitzflix marks the download as failed. Thus, Sonarr blocklists the
+    # download and searches again.
 
     if import_source_incomplete(downloaded_file_path):
         series_id = payload["series"].get("id")
@@ -59,7 +60,7 @@ def sonarr_add(payload):
             f"'{downloaded_file_path}' renamed as '{sonarr_file_path}'"
         )
 
-    # If the episode aired in the last two weeks, add it to the front of the queue
+    # If the episode aired in the last 14 days, add it to the front of the queue.
 
     today = date.today()
     airdate = payload["episodes"][0].get("airDate")
@@ -76,7 +77,8 @@ def sonarr_add(payload):
                 f"'{os.path.basename(sonarr_file_path)}' Import will be prioritized"
             )
 
-    # Ask Sonarr to refresh its series data now that we've possibly renamed the file
+    # Ask Sonarr to refresh its series data, because the file possibly has a new
+    # name.
 
     series = payload.get("series")
     id = series.get("id")
@@ -89,11 +91,11 @@ def sonarr_add(payload):
             {"name": "RescanSeries", "seriesId": int(id)},
         )
 
-    # Pass the file to Fitzflix for processing; tried copying the file to the import
-    # directory for processing but if another file came in while it was copying
-    # then the first copy was abandoned, and tried doing a hard link to the import
-    # directory but that wasn't supported on my NAS, so just sending the downloaded
-    # file directly to Sonarr to be imported in place
+    # Pass the file to Fitzflix for processing. The first attempt copied the
+    # file to the import directory. If a second file arrived during the copy,
+    # the first copy stopped and was lost. The second attempt made a hard link
+    # in the import directory. The NAS did not support hard links. Thus,
+    # Fitzflix imports the downloaded file directly, in place.
 
     job = current_app.import_queue.enqueue(
         "app.videos.localization_task",

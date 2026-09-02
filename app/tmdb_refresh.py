@@ -1,15 +1,16 @@
-"""The TMDB refresh pair (the strangler split from app.videos).
+"""Run the TMDB refresh pair (the strangler split from app.videos).
 
-refresh_tmdb_info fetches a record's canonical TMDB payload on the
-network queue; apply_tmdb_refresh applies it on the single-worker sql
-queue — record updates, file renames, duplicate merges, and the
-untouched-key handoff in S3. find_or_create_tmdb_movie is the shared
-record-creation door every review/watchlist surface walks through.
+refresh_tmdb_info fetches the canonical TMDB payload of a record on the
+network queue. apply_tmdb_refresh applies the payload on the
+single-worker sql queue. That step does the record updates, the file
+renames, the duplicate merges, and the untouched-key handoff in S3.
+find_or_create_tmdb_movie is the shared record-creation door. Every
+review and watchlist surface goes through it.
 
-app.videos re-exports every name here, so stored rq job strings
-("app.videos.refresh_tmdb_info") and import sites keep resolving; the
-filename plumbing lives in app.importing and is imported lazily,
-keeping the module import direction one-way.
+app.videos re-exports every name here. Thus, the stored rq job strings
+("app.videos.refresh_tmdb_info") and the import sites continue to
+resolve. The filename plumbing lives in app.importing. This module
+imports it lazily. Thus, the module import direction stays one-way.
 """
 
 import gzip
@@ -32,16 +33,20 @@ from app.models import File, Movie, TVSeries, User, UserMovieReview
 
 
 def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
-    """(movie, created): the record for a TMDB film — reusing an existing
-    row by tmdb id, or a colliding canonical title+year record, before
-    creating a review-only one. The movie may have appeared since the
-    caller's redirect check (an import or a concurrent log). Callers
-    commit and, when created, enqueue the standard TMDB refresh.
+    """Return (movie, created), the record for a TMDB film.
 
-    The caller's live TMDB payload (details) primes the display fields
-    — title, date, overview, poster, runtime — so the movie page the
-    redirect lands on isn't bare while the queued refresh completes;
-    tmdb_data_as_of stays unset until the full refresh stamps it.
+    This function first uses an existing row with the tmdb id. Then it
+    uses a record with the same canonical title and year. Only then
+    does it create a review-only record. The movie can appear after the
+    redirect check of the caller (an import or a concurrent log). The
+    caller must commit the session. If the record is new, the caller
+    must enqueue the standard TMDB refresh.
+
+    The live TMDB payload of the caller (details) primes the display
+    fields: title, date, overview, poster, and runtime. Thus, the movie
+    page after the redirect is not bare while the queued refresh
+    completes. tmdb_data_as_of stays unset until the full refresh
+    stamps it.
     """
 
     movie = Movie.query.filter_by(tmdb_id=tmdb_id).first()
@@ -54,8 +59,8 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
         movie = Movie(title=film_title, year=year, tmdb_id=tmdb_id)
         db.session.add(movie)
     if details and movie.tmdb_title is None:
-        # Title and date prime together — display code treats a set
-        # tmdb_title as a promise that the release date exists
+        # The title and the date prime together. The display code treats
+        # a set tmdb_title as a promise that the release date exists.
         try:
             release_date = datetime.strptime(
                 details.get("release_date") or "", "%Y-%m-%d"
@@ -74,12 +79,13 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
 
 
 def _movie_refresh_lock_resources(*movies):
-    """Every title-lock resource an import of these movies could hold.
+    """Return every title-lock resource that an import of these movies can hold.
 
-    Covers the identifier of each existing file, plus each movie's base
-    main-feature identifier so a brand-new first file of the title arriving
-    mid-refresh is serialized too. Sorted, so two refreshes acquiring locks
-    for overlapping movies can't deadlock each other.
+    The list covers the identifier of each existing file. It also covers
+    the base main-feature identifier of each movie. Thus, a new first
+    file of the title that arrives during the refresh is also
+    serialized. The list is sorted. Thus, 2 refreshes that take locks
+    for overlapping movies cannot deadlock each other.
     """
 
     resources = set()
@@ -103,13 +109,15 @@ def _movie_refresh_lock_resources(*movies):
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
-    """Network phase of a TMDB refresh: query TMDB, then hand the payload
-    to apply_tmdb_refresh on the sql queue.
+    """Run the network phase of a TMDB refresh.
 
-    This phase runs on the user-request queue, where several jobs may run
-    concurrently — safe, because it writes nothing to the database. Every
-    database and library-file change happens in apply_tmdb_refresh,
-    serialized through the single sql worker.
+    This phase queries TMDB. Then it gives the payload to
+    apply_tmdb_refresh on the sql queue.
+
+    This phase runs on the user-request queue. There, several jobs can
+    run at the same time. This is safe, because the phase writes nothing
+    to the database. Every database and library-file change occurs in
+    apply_tmdb_refresh. The single sql worker serializes those changes.
     """
 
     with app.app_context():
@@ -118,15 +126,15 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
             if library == "Movies":
                 movie = Movie.query.filter_by(id=id).first()
                 if movie is None:
-                    # e.g. merged into another record by an earlier job in
-                    # a bulk refresh
+                    # For example, an earlier job in a bulk refresh merged
+                    # it into a different record.
                     current_app.logger.warning(
                         f"Movie id {id} no longer exists, skipping TMDB refresh"
                     )
                     return False
                 if movie.tmdb_ignored:
-                    # Deliberately detached from TMDB; a fetch here would
-                    # search by title and re-attach a wrong id
+                    # The record is detached from TMDB on purpose. A fetch
+                    # here would search by title and attach a wrong id.
                     current_app.logger.info(
                         f"{movie} is marked as having no TMDB match, "
                         f"skipping TMDB refresh"
@@ -151,8 +159,8 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
                     )
                     return False
 
-                # Search under the canonical record's title if this series
-                # already shares a tmdb_id with one
+                # If this series already shares a tmdb_id with a canonical
+                # record, search under the title of that record.
 
                 if tv_show.tmdb_id != None:
                     existing_series = TVSeries.query.filter_by(
@@ -166,9 +174,9 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
             else:
                 return False
 
-            # Compress the payload for its trip through Redis; a details
-            # response is small, but a bulk refresh can have thousands of
-            # these queued at once
+            # Compress the payload for its trip through Redis. A details
+            # response is small. But a bulk refresh can have thousands of
+            # them queued at the same time.
 
             tmdb_payload = None
             if tmdb_info:
@@ -196,16 +204,17 @@ def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
 
 
 def save_failed_payload(library, id, tmdb_payload):
-    """Write a payload whose apply raised beside the log, so a transient
-    upstream glitch can be examined after the fact.
+    """Write a payload whose apply raised to a file next to the log.
 
-    The 2026-08-22 overnight TV refresh failed on 14 series because TMDB
-    served malformed aggregate credits for a few seconds; by the time
-    anyone looked, the live payloads were clean again and the bad shape
-    was gone — the apply had logged only the traceback. The dump is
-    named under the log file (LOG_FILE.tmdb-payload.<library>-<id>.
-    <stamp>.json.gz) so rotate_logs' retention glob prunes it with the
-    archives. Returns the path, or None when there was nothing to save.
+    Then a transient upstream glitch can be examined later.
+
+    The 2026-08-22 overnight TV refresh failed on 14 series. TMDB served
+    malformed aggregate credits for some seconds. When somebody looked,
+    the live payloads were clean again and the bad shape was gone. The
+    apply had logged only the traceback. The dump is named under the log
+    file (LOG_FILE.tmdb-payload.<library>-<id>.<stamp>.json.gz). Thus,
+    the retention glob of rotate_logs prunes it with the archives. This
+    function returns the path, or None when there was nothing to save.
     """
 
     if not tmdb_payload:
@@ -229,19 +238,22 @@ def save_failed_payload(library, id, tmdb_payload):
 def apply_tmdb_refresh(
     library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
 ):
-    """Database phase of a TMDB refresh: apply a payload fetched by
-    refresh_tmdb_info, rewrite file paths, and merge duplicate records.
+    """Run the database phase of a TMDB refresh.
 
-    Runs on the single-worker sql queue so refreshes are serialized
-    against each other and all other database writes. Movie refreshes
-    additionally hold the affected titles' locks for the duration, so
-    they can't interleave with an import of the same title. With
-    notify_if_missing (used for new imports), an email goes out if the
-    movie still has no TMDB match after the payload is applied.
+    This phase applies a payload that refresh_tmdb_info fetched. It
+    rewrites the file paths and merges duplicate records.
+
+    This phase runs on the single-worker sql queue. Thus, the refreshes
+    are serialized against each other and against all other database
+    writes. A movie refresh also holds the locks of the affected titles
+    for its duration. Thus, it cannot interleave with an import of the
+    same title. With notify_if_missing (used for new imports), Fitzflix
+    sends an email if the movie still has no TMDB match after the
+    payload is applied.
     """
 
-    # Filename plumbing lives in app.importing; lazy so the module
-    # import direction stays one-way
+    # The filename plumbing lives in app.importing. The import is lazy.
+    # Thus, the module import direction stays one-way.
 
     from app.importing import evaluate_filename, reconstruct_filename
 
@@ -253,7 +265,7 @@ def apply_tmdb_refresh(
                 tmdb_info = json.loads(zlib.decompress(tmdb_payload).decode("utf-8"))
 
             if library == "Movies":
-                # Get the Movie record to be updated
+                # Get the Movie record to update.
 
                 movie = Movie.query.filter_by(id=id).first()
                 if movie is None:
@@ -263,19 +275,19 @@ def apply_tmdb_refresh(
                     return False
 
                 if movie.tmdb_ignored:
-                    # Detached from TMDB after this payload was fetched
+                    # The record was detached from TMDB after the payload fetch.
                     current_app.logger.info(
                         f"{movie} is marked as having no TMDB match, "
                         f"discarding the fetched TMDB payload"
                     )
                     return False
 
-                # Make a note of the original movie_id field.
+                # Keep the original movie_id field.
 
                 original_movie_id = movie.id
 
-                # See if the requested tmdb_id already exists in the Movie table.
-                # If so, we'll use that existing Movie record.
+                # Check if the requested tmdb_id already exists in the Movie
+                # table. If it does, use that existing Movie record.
 
                 existing_movie = None
                 if tmdb_id != None:
@@ -285,12 +297,13 @@ def apply_tmdb_refresh(
                         .first()
                     )
 
-                # This task rewrites file paths and — when the TMDB id
-                # reveals a duplicate — merges two movie records, so it must
-                # not interleave with a localization chain holding one of
-                # these titles' locks. Take every lock an import of either
-                # movie could hold (in sorted order, so concurrent refreshes
-                # can't deadlock); if any is busy, retry later.
+                # This task rewrites file paths. When the TMDB id shows a
+                # duplicate, it merges 2 movie records. Thus, it must not
+                # interleave with a localization chain that holds a lock
+                # on one of these titles. Take every lock that an import
+                # of one of the 2 movies can hold. Take them in sorted
+                # order, so concurrent refreshes cannot deadlock. If a
+                # lock is busy, retry later.
 
                 for resource in _movie_refresh_lock_resources(movie, existing_movie):
                     lock = current_app.lock_manager.lock(
@@ -349,11 +362,11 @@ def apply_tmdb_refresh(
                         ),
                     )
 
-                # Make a note of the updated movie_id field.
+                # Keep the updated movie_id field.
 
                 updated_movie_id = movie.id
 
-                # update files to the new movie record
+                # Move the files to the new movie record.
 
                 old_files = File.query.filter_by(movie_id=original_movie_id).all()
 
@@ -367,7 +380,7 @@ def apply_tmdb_refresh(
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
 
-                # Reconstruct untouched filenames using the new movie details
+                # Reconstruct the untouched filenames with the new movie details.
 
                 files = File.query.filter_by(movie_id=updated_movie_id).all()
 
@@ -378,10 +391,10 @@ def apply_tmdb_refresh(
                         f"New untouched basename: '{untouched_basename}'"
                     )
 
-                # The new basenames commit BEFORE any archive move is
-                # queued: a deferred re-archive reads the key the record
-                # wants from its own session, so it must not be able to
-                # start while that key is still only in this transaction
+                # Commit the new basenames BEFORE you queue an archive
+                # move. A deferred re-archive reads the key that the record
+                # wants from its own session. Thus, it must not start while
+                # that key is only in this transaction.
 
                 try:
                     db.session.commit()
@@ -396,15 +409,15 @@ def apply_tmdb_refresh(
                         sanitize_s3_key(f.untouched_basename),
                     )
 
-                    # WEBDL-rebuild scaffolding (#158): ~1,000 rows were
-                    # deliberately flipped to WEBRip while their archive
+                    # WEBDL-rebuild scaffolding (#158): approximately 1,000
+                    # rows were flipped to WEBRip on purpose. Their archive
                     # keys stay WEBDL-named until a real WEB-DL replaces
-                    # them. The keys are Deep Archive, so "renaming" one
-                    # means re-uploading the multi-gigabyte library copy
-                    # and retiring the scaffold key — the Aug 29 genre
-                    # backfill started doing exactly that. Leave those
-                    # keys alone; the old key still names a real object,
-                    # so the archive invariant holds.
+                    # them. The keys are Deep Archive. Thus, a "rename" of
+                    # one key means an upload of the multi-gigabyte library
+                    # copy again, and the retirement of the scaffold key.
+                    # The 2026-08-29 genre backfill started to do exactly
+                    # that. Leave those keys alone. The old key still names
+                    # a real object. Thus, the archive invariant holds.
 
                     if "[WEBDL-" in (f.aws_untouched_key or "") and (
                         "[WEBRip-" in aws_untouched_key
@@ -418,12 +431,12 @@ def apply_tmdb_refresh(
                     if f.aws_untouched_key != aws_untouched_key and os.path.exists(
                         os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
                     ):
-                        # Moves the S3 object — the field only changes
+                        # This moves the S3 object. The field changes only
                         # when the object really moved. An object that
-                        # can't be copied server-side (Deep Archive)
-                        # needs the library copy re-uploaded instead,
-                        # which is far too big for this queue's budget:
-                        # defer_upload hands that to the file queue (#231)
+                        # cannot be copied server-side (Deep Archive) needs
+                        # an upload of the library copy instead. That is
+                        # too big for the budget of this queue. Thus,
+                        # defer_upload gives that to the file queue (#231).
                         try:
                             rename_untouched_object(
                                 f, aws_untouched_key, defer_upload=True
@@ -438,7 +451,7 @@ def apply_tmdb_refresh(
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
 
-                # Create new directories and move files if necessary
+                # Create new directories and move the files if necessary.
 
                 files = File.query.filter_by(movie_id=updated_movie_id).all()
 
@@ -451,8 +464,8 @@ def apply_tmdb_refresh(
                         file_details = evaluate_filename(f.untouched_basename)
 
                     if not file_details:
-                        # e.g. an id tag in the untouched name that no
-                        # longer resolves; leave the file where it is
+                        # For example, an id tag in the untouched name no
+                        # longer resolves. Leave the file where it is.
                         current_app.logger.warning(
                             f"'{f.untouched_basename}' no longer evaluates, "
                             f"skipping its rename"
@@ -468,15 +481,15 @@ def apply_tmdb_refresh(
                         current_app.config["LIBRARY_DIR"], new_relative
                     )
 
-                    # A merge can land this rename on a path the target
-                    # movie already owns (the 25 Cats incident:
-                    # os.rename silently overwrote the sibling's file,
-                    # then the path UPDATE died on the unique index).
-                    # Refuse loudly and leave both records untouched —
-                    # the admin deletes one deliberately instead. The
-                    # one benign shape — old file gone, new file already
-                    # in place, no sibling row — falls through so an
-                    # interrupted rename can heal its record.
+                    # A merge can put this rename on a path that the target
+                    # movie already owns (the 25 Cats incident: os.rename
+                    # silently overwrote the file of the sibling, then the
+                    # path UPDATE died on the unique index). Refuse loudly
+                    # and leave both records untouched. The admin deletes
+                    # one on purpose instead. One shape is benign: the old
+                    # file is gone, the new file is already in place, and
+                    # there is no sibling row. That shape falls through.
+                    # Thus, an interrupted rename can heal its record.
 
                     sibling = (
                         File.query.filter(File.file_path == new_relative)
@@ -528,10 +541,10 @@ def apply_tmdb_refresh(
                         exist_ok=True,
                     )
 
-                    # Database first, disk second: the path update
-                    # flushes inside a savepoint so a unique-index
-                    # conflict surfaces BEFORE the file moves, and a
-                    # failed move rolls the record straight back
+                    # Database first, disk second. The path update flushes
+                    # inside a savepoint. Thus, a unique-index conflict
+                    # shows BEFORE the file moves, and a failed move rolls
+                    # the record back immediately.
 
                     try:
                         with db.session.begin_nested():
@@ -550,7 +563,7 @@ def apply_tmdb_refresh(
                         current_app.logger.error(traceback.format_exc())
                         continue
 
-                    # delete any old local assets
+                    # Move or delete the old local assets.
                     try:
                         old_assets = os.listdir(old_directory)
                         new_directory = os.path.join(
@@ -590,17 +603,18 @@ def apply_tmdb_refresh(
                     except FileNotFoundError:
                         pass
 
-                    # Clear the old directory tree — junk-aware, not
-                    # just empty: the poster assets moved above, but OS
-                    # metadata or a straggler image used to keep the
-                    # husk alive for the weekly sweep
+                    # Clear the old directory tree. This clear knows junk.
+                    # It does not only clear an empty directory. The poster
+                    # assets moved above. But OS metadata or a leftover
+                    # image kept the empty shell alive for the weekly sweep
+                    # before.
 
                     from app.maintenance import clear_leftover_directory
 
                     clear_leftover_directory(old_directory)
 
                     # The path fields were already updated inside the
-                    # savepoint, before the physical rename
+                    # savepoint, before the physical rename.
 
                     try:
                         db.session.commit()
@@ -611,7 +625,7 @@ def apply_tmdb_refresh(
 
                 if updated_movie_id != original_movie_id:
 
-                    # Migrate reviews to the new movie if the movie_id changed
+                    # Migrate the reviews to the new movie if the movie_id changed.
 
                     reviews = UserMovieReview.query.filter_by(
                         movie_id=original_movie_id
@@ -619,7 +633,7 @@ def apply_tmdb_refresh(
                     for review in reviews:
                         review.movie_id = movie.id
 
-                    # Delete the old movie record from the database
+                    # Delete the old movie record from the database.
 
                     original_movie_record = Movie.query.filter_by(
                         id=original_movie_id
@@ -627,7 +641,7 @@ def apply_tmdb_refresh(
                     db.session.delete(original_movie_record)
 
             elif library == "TV Shows":
-                # Get the TVSeries record to be updated
+                # Get the TVSeries record to update.
 
                 tv_show = TVSeries.query.filter_by(id=id).first()
                 if tv_show is None:
@@ -643,8 +657,8 @@ def apply_tmdb_refresh(
                     )
                     return False
 
-                # See if the requested tmdb_id already exists in the TVSeries table.
-                # If so, we'll use that existing TVSeries record.
+                # Check if the requested tmdb_id already exists in the
+                # TVSeries table. If it does, use that existing TVSeries record.
 
                 if tv_show.tmdb_id != None:
                     existing_series = TVSeries.query.filter_by(
@@ -680,14 +694,15 @@ def apply_tmdb_refresh(
 
 
 def refresh_in_production_tv():
-    """Nightly sweep: re-enqueue the standard TMDB refresh for
-    every series still in production, so new episodes and season counts
-    stay current without a manual bulk refresh.
+    """Enqueue the standard TMDB refresh again for every series in production.
 
-    Ended and canceled series change rarely; they are covered by the
-    refresh-on-import trigger and the maintenance page's bulk refresh.
-    A NULL status counts as in-production — it just means the series
-    hasn't been refreshed since before statuses were stored.
+    This is the nightly sweep. Thus, the new episodes and the season
+    counts stay current without a manual bulk refresh.
+
+    Ended and canceled series change rarely. The refresh-on-import
+    trigger and the bulk refresh of the maintenance page cover them. A
+    NULL status counts as in production. It only means that the series
+    was not refreshed since before Fitzflix stored statuses.
     """
 
     with app.app_context():
@@ -718,7 +733,8 @@ def refresh_in_production_tv():
         return len(series)
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# The app instance of this process. It resolves lazily. Thus, an import of
+# this module from a process that already has an application does not
+# build a second one.
 
 app = LocalProxy(get_app)

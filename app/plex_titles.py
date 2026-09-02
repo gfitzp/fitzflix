@@ -1,18 +1,19 @@
-"""TV episode titles into Plex from Fitzflix.
+"""Write the TV episode titles from Fitzflix into Plex.
 
-Some episode filenames carry a title segment — "Series - SxxEyy -
-Title [Quality]" — which the filename parse stores in file.edition;
-the Doctor Who (1963) specials are the population (custom episode
-numbers no agent will ever title). Glenn's rule: wherever a TV file
-carries an edition, that IS the episode's title, any show, any
-season. A nightly sweep writes it to Plex through the local API with
-the title field locked, replacing the external cron that wrote Plex's
-SQLite directly (with a hardcoded 70-character path offset that would
-have broken on any library move).
+Some episode filenames have a title segment. The pattern is "Series -
+SxxEyy - Title [Quality]". The filename parse stores this segment in
+file.edition. The Doctor Who (1963) specials are the population. They
+have custom episode numbers that no agent will title. The rule from
+Glenn: if a TV file has an edition, that edition IS the title of the
+episode. This applies to all shows and all seasons. A nightly sweep
+writes the title to Plex through the local API. It locks the title
+field. This sweep replaces the external cron that wrote directly to
+the SQLite database of Plex. That cron used a hardcoded path offset of
+70 characters. A library move would have broken it.
 
-Episodes are matched to files by Part-file BASENAME — never by title
-(Plex titles the classic series just "Doctor Who"; the "(1963)" lives
-only in the folder name).
+This module matches the episodes to the files by the BASENAME of the
+Part file. It never matches by title. Plex titles the classic series
+only "Doctor Who". The "(1963)" is only in the folder name.
 """
 
 import os
@@ -32,7 +33,7 @@ PAGE_SIZE = 1000
 
 
 def _plex_get(path, params=None):
-    """One authenticated JSON GET against the local Plex server."""
+    """Send one authenticated JSON GET to the local Plex server."""
 
     r = requests.get(
         current_app.config["PLEX_URL"] + path,
@@ -48,7 +49,7 @@ def _plex_get(path, params=None):
 
 
 def _plex_put(path, params):
-    """One PUT against the local Plex server (metadata edits)."""
+    """Send one PUT to the local Plex server (metadata edits)."""
 
     r = requests.put(
         current_app.config["PLEX_URL"] + path,
@@ -59,7 +60,7 @@ def _plex_put(path, params):
 
 
 def _tv_section_key():
-    """The Plex library section holding TV shows, or None."""
+    """Return the Plex library section that holds the TV shows, or None."""
 
     payload = _plex_get("/library/sections")
     for section in payload.get("MediaContainer", {}).get("Directory", []) or []:
@@ -69,9 +70,11 @@ def _tv_section_key():
 
 
 def sync_plex_episode_titles():
-    """Task: title every Plex episode whose Fitzflix file carries an
-    edition, and lock the field so agents can't overwrite it. Safe to
-    run any time; current titles are left untouched."""
+    """Set the title of each Plex episode whose Fitzflix file has an edition.
+
+    This task locks the title field. Thus, the agents cannot overwrite
+    it. The task is safe to run at any time. It does not change the
+    titles that are already current."""
 
     with app.app_context():
         if not (
@@ -86,9 +89,9 @@ def sync_plex_episode_titles():
             .filter(File.edition != "")
         }
 
-        # No TMDB-title fill here, deliberately (reverted): Plex's
-        # episode titles stay purely the agent's — Fitzflix stores no
-        # episode metadata of its own to push.
+        # By design, this task does not fill titles from TMDB (reverted).
+        # The episode titles in Plex come only from the agent. Fitzflix
+        # stores no episode metadata of its own to push.
 
         if not desired:
             return True

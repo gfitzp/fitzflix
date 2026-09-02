@@ -1,17 +1,18 @@
-"""The Criterion Collection spine catalog (the videos/routes split's strangler split from
-app.videos).
+"""Keep the spine catalog of the Criterion Collection.
 
-Wikidata is the source: two SPARQL queries (individual releases and
-collector's sets) merge into a day-cached release list keyed by spine,
-which the weekly refresh task applies to the library — marking owned
-films' releases, creating file-less catalog records for spines the
-library lacks, and keeping /library/criterion-collection's inventory
-current.
+This module is a strangler split from app.videos, made in the
+videos/routes split. Wikidata is the source. Two SPARQL queries, one
+for individual releases and one for collector sets, merge into one
+cached release list keyed by spine. The monthly refresh task applies
+the list to the library. It marks the releases of owned films. It
+creates file-less catalog records for spines that the library does not
+have. It keeps the inventory of /library/criterion-collection current.
 
-app.videos re-exports every name here, so stored rq job strings
-("app.videos.refresh_criterion_collection_info") and import sites keep
-resolving; the record-creation path leans on app.videos' TMDB helpers
-via lazy imports, keeping the module import direction one-way.
+app.videos exports every name in this module again. Thus, stored rq
+job strings ("app.videos.refresh_criterion_collection_info") and
+import sites continue to resolve. The record-creation path uses the
+TMDB helpers of app.videos through lazy imports. Thus, the module
+import direction stays one-way.
 """
 
 import json
@@ -26,9 +27,9 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import CatalogExclusion, Movie
 
-# Wikidata models Criterion spine numbers as property P12279, TMDB movie ids
-# as P4947, and publication dates as P577; the earliest publication year is
-# taken since a film carries one date per release
+# Wikidata models Criterion spine numbers as property P12279, TMDB movie
+# ids as P4947, and publication dates as P577. The query takes the
+# earliest publication year, because a film has one date per release.
 
 CRITERION_SPARQL_QUERY = """
 SELECT ?spine ?tmdbId ?filmLabel
@@ -44,9 +45,9 @@ GROUP BY ?spine ?film ?filmLabel ?tmdbId
 """
 
 
-# Box sets carry the spine number on the set's own Wikidata item, with the
-# member films linked via P527 ("has part"): map each member to its set's
-# spine and title
+# A box set has the spine number on the Wikidata item of the set itself.
+# The member films are linked through P527 ("has part"). This query maps
+# each member to the spine and the title of its set.
 
 CRITERION_SETS_SPARQL_QUERY = """
 SELECT ?spine ?setLabel ?tmdbId ?filmLabel
@@ -70,10 +71,11 @@ CRITERION_CACHE_SECONDS = 7 * 86400
 
 
 def wikidata_retry_after_seconds(response, default=60, cap=300):
-    """Seconds to wait out a WDQS 429, from its Retry-After header.
+    """Return the seconds to wait after a WDQS 429, from its Retry-After header.
 
-    The header may be absent or HTTP-date-shaped; both fall back to the
-    default, and the cap keeps a strange header from stalling a worker.
+    The header can be absent or can have the shape of an HTTP date. In
+    both cases this function returns the default. The cap prevents a
+    strange header from stalling a worker.
     """
 
     try:
@@ -86,9 +88,10 @@ def wikidata_retry_after_seconds(response, default=60, cap=300):
 def _wikidata_sparql(url, query):
     """Run one SPARQL query against Wikidata, per its access guidelines.
 
-    WDQS throttles with 429 + Retry-After when a client outruns its
-    processing budget; honoring the header (one retry, capped) is what
-    keeps polite clients off the temporary-ban list.
+    WDQS throttles a client with 429 and Retry-After when the client
+    exceeds its processing budget. This function obeys the header with
+    1 retry, capped. Thus, WDQS keeps polite clients off the
+    temporary-ban list.
     """
 
     contact = current_app.config["SERVER_EMAIL"] or "fitzflix"
@@ -111,7 +114,7 @@ def _wikidata_sparql(url, query):
 
 
 def _parse_criterion_binding(binding):
-    """A SPARQL result row as a release dict, or None if the spine is bad."""
+    """Return a SPARQL result row as a release dict, or None if the spine is bad."""
 
     spine = binding.get("spine", {}).get("value", "")
     if not spine.isdigit():
@@ -121,10 +124,11 @@ def _parse_criterion_binding(binding):
     title = (binding.get("filmLabel", {}).get("value") or "").strip()
     year = binding.get("year", {}).get("value", "")
 
-    # "title" is uppercased for matching; "label" keeps Wikidata's own
-    # casing for display (the catalog page shows releases the library
-    # has no record for). Cached payloads from before the label was
-    # stored simply lack the key, so readers must fall back to "title"
+    # "title" is uppercase for matching. "label" keeps the casing of
+    # Wikidata for display. The catalog page shows the releases that the
+    # library has no record for. Cached payloads from before Fitzflix
+    # stored the label do not have the key. Thus, readers must fall back
+    # to "title".
 
     return {
         "spine_number": int(spine),
@@ -138,13 +142,13 @@ def _parse_criterion_binding(binding):
 
 
 def get_criterion_collection_from_wikidata(force_refresh=False):
-    """Fetch Criterion Collection spine numbers from Wikidata.
+    """Fetch the Criterion Collection spine numbers from Wikidata.
 
-    Access follows Wikidata's data-access guidelines: a descriptive
-    User-Agent with a contact address, a single narrowly-scoped SPARQL
-    query, and results cached in Redis for a week so per-import lookups
-    never re-query the endpoint. The monthly scheduled refresh forces a
-    fresh fetch.
+    Access obeys the data-access guidelines of Wikidata. The client sends
+    a descriptive User-Agent with a contact address. It sends 1 SPARQL
+    query with a narrow scope. Redis caches the results for 1 week. Thus,
+    the per-import lookups never query the endpoint again. The monthly
+    scheduled refresh forces a new fetch.
     """
 
     url = current_app.config["WIKIDATA_SPARQL_URL"]
@@ -162,9 +166,9 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
         if release:
             criterion_collection.append(release)
 
-    # Standalone releases come first, so a film that has both its own
-    # release and a set membership keeps its own spine — the matching
-    # lookups keep the first entry per film
+    # The standalone releases come first. Thus, a film that has its own
+    # release and also a set membership keeps its own spine. The matching
+    # lookups keep the first entry per film.
 
     for binding in _wikidata_sparql(url, CRITERION_SETS_SPARQL_QUERY):
         release = _parse_criterion_binding(binding)
@@ -200,13 +204,14 @@ def criterion_release_lookups(criterion_collection):
 
 
 def assign_criterion_release(movie, by_tmdb_id, by_title_year):
-    """Record a movie's Criterion spine number if a release matches.
+    """Record the Criterion spine number of a movie if a release matches.
 
-    TMDB id matches are exact; title and year are the fallback for movies
-    that haven't been matched to TMDB yet. Box-set members get their set's
-    spine and title. Wikidata doesn't model in-print status, so existing
-    values are kept and new matches get optimistic defaults; hand-curated
-    set titles are never overwritten.
+    A TMDB id match is exact. Title and year are the fallback for the
+    movies that have no TMDB match yet. A box-set member gets the spine
+    and the title of its set. Wikidata does not model the in-print
+    status. Thus, this function keeps the existing values and gives new
+    matches optimistic defaults. It never overwrites a hand-curated set
+    title.
     """
 
     release = by_tmdb_id.get(movie.tmdb_id) if movie.tmdb_id else None
@@ -233,24 +238,26 @@ def assign_criterion_release(movie, by_tmdb_id, by_title_year):
 
 
 def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_year):
-    """Create file-less Movie records for spine releases the library
-    has no record of, so the whole Criterion catalog is first-class.
+    """Create file-less Movie records for the spine releases that the
+    library has no record of. Thus, the whole Criterion catalog is
+    first-class.
 
-    Criterion's general prestige makes every spine film worth knowing
-    about permanently: a durable record keeps its poster, overview,
-    genres, and awards in the database instead of a week-long cache
-    (Glenn's call, Aug 2026). Records are created under the Wikidata
-    label; the enqueued TMDB refresh renames each to TMDB's canonical
-    title and year (tmdb_movie_apply's standard behavior), so a later
-    import of the film matches the record by title+year and attaches
-    its files instead of spawning a duplicate. Year-less releases are
-    skipped — title+year is a record's identity. Returns the number of
-    records created; the caller commits before this returns via the
-    internal commit, so the enqueued refreshes can see their rows.
+    The prestige of Criterion makes every spine film worth a permanent
+    record. A durable record keeps its poster, overview, genres, and
+    awards in the database instead of a cache of 1 week (decided by
+    Glenn, 2026-08). This function creates the records under the
+    Wikidata label. The enqueued TMDB refresh renames each record to the
+    canonical title and year of TMDB. That is the standard behavior of
+    tmdb_movie_apply. Thus, a later import of the film matches the
+    record by title and year and attaches its files. It does not create
+    a duplicate. This function skips the releases without a year,
+    because title and year are the identity of a record. It returns the
+    number of records created. The internal commit runs before this
+    function returns. Thus, the enqueued refreshes can see their rows.
     """
 
-    # TMDB record plumbing stays in app.videos; lazy so the module
-    # import direction stays one-way
+    # The TMDB record functions stay in app.videos. The import is lazy.
+    # Thus, the module import direction stays one-way.
 
     from app.videos import find_or_create_tmdb_movie
 
@@ -263,8 +270,9 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
             Movie.tmdb_id.in_(tmdb_ids or [0])
         )
     }
-    # Hand-excluded ids (Wikidata junk like an unfinished film with a
-    # stale TMDB id) are never re-created — see CatalogExclusion
+    # This function never creates a hand-excluded id again. See
+    # CatalogExclusion. An example is Wikidata junk, such as an
+    # unfinished film with a stale TMDB id.
     excluded = {tmdb_id for (tmdb_id,) in db.session.query(CatalogExclusion.tmdb_id)}
     to_refresh = []
     created_count = 0
@@ -279,8 +287,9 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
         movie, created = find_or_create_tmdb_movie(tmdb_id, title, release["year"])
         assign_criterion_release(movie, by_tmdb_id, by_title_year)
         created_count += created
-        # An adopted title+year record (tmdb id just attached) needs the
-        # refresh as much as a new one — anything never stamped does
+        # An adopted title and year record, with the TMDB id attached
+        # now, needs the refresh as much as a new record. Every record
+        # that has no stamp needs it.
         if movie.tmdb_data_as_of is None:
             to_refresh.append(movie)
     db.session.commit()
@@ -295,21 +304,22 @@ def create_criterion_catalog_records(criterion_collection, by_tmdb_id, by_title_
 
 
 def refresh_criterion_collection_info(movie_id=None):
-    """Refresh Criterion Collection information from Wikidata.
+    """Refresh the Criterion Collection information from Wikidata.
 
-    Runs monthly on the 18th — Criterion announces each month's new titles
-    around the 15th, and a few days leaves time for Wikidata to catch up.
-    A full refresh forces a fresh fetch; single-movie refreshes use the
-    week-long cache. Full refreshes also create records for spine
-    releases the library has never seen, so new announcements join the
-    catalog as first-class films automatically.
+    This task runs monthly on the 18th. Criterion announces the new
+    titles of each month at approximately the 15th. Some days give
+    Wikidata time to catch up. A full refresh forces a new fetch. A
+    single-movie refresh uses the cache of 1 week. A full refresh also
+    creates records for the spine releases that the library has never
+    seen. Thus, new announcements join the catalog as first-class films
+    automatically.
     """
 
     with app.app_context():
         try:
 
-            # If the user specified a particular movie to be updated, update the
-            # Criterion Collection info for just that one movie. Otherwise, update all.
+            # If the user specified one movie, update the Criterion
+            # Collection info for only that movie. If not, update all.
 
             if movie_id:
                 movies = Movie.query.filter_by(id=movie_id).all()
@@ -348,7 +358,8 @@ def refresh_criterion_collection_info(movie_id=None):
             return True
 
 
-# This process's app instance, resolved lazily so importing this module from
-# a process that already has an application doesn't build a second one
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, an import of this module from a process that already has an
+# application does not build a second one.
 
 app = LocalProxy(get_app)

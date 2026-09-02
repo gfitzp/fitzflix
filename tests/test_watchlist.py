@@ -750,7 +750,7 @@ def test_movie_page_not_interested_toggle(app, admin_client):
         )
 
     page = admin_client.get(f"/movie/{record_id}").get_data(as_text=True)
-    assert "won&#39;t be recommended" in page or "won't be recommended" in page
+    assert "will not recommend" in page
     assert 'name="interested_submit"' not in page
     assert "Might interest you" not in page
 

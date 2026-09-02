@@ -1,12 +1,13 @@
-"""DVR channel editor (#182): admin CRUD over the dvr_channel table.
+"""Edit the DVR channels (#182). Admins do CRUD on the dvr_channel table.
 
-The dial is data: each row is a channel with rule columns (genres,
-keywords, network country, title pins, Criterion/leaving overlays)
-plus explicit movie/series picks resolved here by title text. Every
-mutation enqueues a lineup rebuild so Plex's next guide refresh sees
-the new dial. Slugs are frozen at creation — they are the tvg-ids and
-stream URLs Plex maps by, so renaming a channel never moves its
-stream.
+The dial is data. Each row is a channel with rule columns: genres,
+keywords, network country, title pins, and the Criterion and leaving
+overlays. Each row also has explicit movie and series picks. This
+module resolves the picks from title text. Each change enqueues a
+lineup rebuild. Thus, the next guide refresh of Plex sees the new dial.
+The slug of a channel is frozen at creation. Plex maps the tvg-ids and
+the stream URLs by the slug. Thus, a rename of a channel never moves
+its stream.
 """
 
 import re
@@ -32,8 +33,8 @@ from app.models import DVRChannel, Movie, TMDBGenre, TVSeries
 
 
 def _enqueue_rebuild(reason):
-    """Queue a lineup rebuild so the stored dial catches up with the
-    edited definitions."""
+    """Queue a lineup rebuild. Thus, the stored dial matches the edited
+    definitions."""
 
     current_app.maintenance_queue.enqueue(
         "app.dvr.build_channel_lineups",
@@ -44,8 +45,10 @@ def _enqueue_rebuild(reason):
 
 
 def _apply_form(channel, form):
-    """Copy the editor form onto the channel row — everything except
-    the slug, which is frozen at creation."""
+    """Copy the editor form onto the channel row.
+
+    This copies each field except the slug. The slug is frozen at
+    creation."""
 
     channel.name = form.name.data.strip()
     channel.number = form.number.data
@@ -61,8 +64,11 @@ def _apply_form(channel, form):
 
 
 def _identity_taken(form, channel_id=None):
-    """A flashable error when the form's number, name, or derived slug
-    collides with another channel; None when free."""
+    """Return an error message if the identity of the form is in use.
+
+    The number, the name, or the derived slug of the form can collide
+    with a different channel. Then this returns a message that the
+    caller can flash. Return None if the identity is free."""
 
     slug = _slugify(form.name.data)
     if not slug:
@@ -81,8 +87,9 @@ def _identity_taken(form, channel_id=None):
 
 
 def _rules_summary(channel):
-    """One line describing a channel's membership rules for the list
-    page."""
+    """Return one line that describes the membership rules of a channel.
+
+    The list page shows this line."""
 
     parts = []
     if channel.include_movies:
@@ -108,8 +115,10 @@ def _rules_summary(channel):
 
 
 def _resolve_movie(text):
-    """A movie resolved from title text — exact "Title (Year)" first,
-    then a unique substring. Returns (movie, error)."""
+    """Resolve a movie from title text. Return (movie, error).
+
+    This tries an exact "Title (Year)" match first. Then it tries a
+    unique substring match."""
 
     text = (text or "").strip()
     if not text:
@@ -136,8 +145,10 @@ def _resolve_movie(text):
 
 
 def _resolve_series(text):
-    """A TV series resolved from title text — exact title first, then
-    a unique substring. Returns (series, error)."""
+    """Resolve a TV series from title text. Return (series, error).
+
+    This tries an exact title match first. Then it tries a unique
+    substring match."""
 
     text = (text or "").strip()
     if not text:
@@ -164,10 +175,12 @@ def _resolve_series(text):
 @login_required
 @admin_required
 def dvr_title_search():
-    """Lookahead for the channel editor's pick fields: canonical title
-    strings — "Title (Year)" for movies, the bare title for series —
-    exactly what the member resolvers parse, so a picked suggestion
-    always resolves unambiguously."""
+    """Return the lookahead suggestions for the pick fields of the editor.
+
+    The suggestions are canonical title strings: "Title (Year)" for a
+    movie, and the bare title for a series. The member resolvers parse
+    exactly these strings. Thus, a picked suggestion always resolves to
+    one item."""
 
     query = (request.args.get("q") or "").strip().lower()
     if len(query) < 2:
@@ -195,8 +208,11 @@ def dvr_title_search():
 @login_required
 @admin_required
 def dvr_channels():
-    """The dial: every channel row with its rules and last-built
-    program count, a creation form, and delete/rebuild actions."""
+    """Show the dial and apply its actions.
+
+    The page shows each channel row with its rules and the program
+    count of the last build. It also shows a creation form and the
+    delete and rebuild actions."""
 
     form = DVRChannelForm()
     action_form = DVRChannelActionForm()
@@ -226,7 +242,7 @@ def dvr_channels():
 
     if action_form.rebuild_submit.data and action_form.validate_on_submit():
         _enqueue_rebuild("manual")
-        flash("Rebuilding the channel lineups.", "info")
+        flash("Fitzflix will rebuild the channel lineups.", "info")
         return redirect(url_for("main.dvr_channels"))
 
     channels = DVRChannel.query.order_by(DVRChannel.number.asc()).all()
@@ -236,8 +252,9 @@ def dvr_channels():
         counts[channel.id] = len(lineup["programs"]) if lineup else 0
         summaries[channel.id] = _rules_summary(channel)
 
-    # The two URLs Plex setup asks for, on the address Plex itself
-    # reaches Fitzflix at (DVR_TUNER_URL), ready to copy-paste
+    # These are the two URLs that the Plex setup asks for. They use the
+    # address that Plex uses to reach Fitzflix (DVR_TUNER_URL). The user
+    # can copy and paste them.
 
     setup = None
     token = current_app.config["DVR_TOKEN"]
@@ -263,8 +280,10 @@ def dvr_channels():
 @login_required
 @admin_required
 def dvr_channel_edit(channel_id):
-    """One channel's editor: the rule fields, plus explicit movie and
-    series picks added and removed by title."""
+    """Show the editor of one channel and apply its actions.
+
+    The editor has the rule fields. It also adds and removes the
+    explicit movie and series picks by title."""
 
     channel = db.session.get(DVRChannel, channel_id)
     if channel is None:

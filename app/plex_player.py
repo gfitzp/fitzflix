@@ -1,32 +1,33 @@
-"""Remote playback on the living-room Apple TV via Plex Companion.
+"""Remote playback on the living-room Apple TV through Plex Companion.
 
-GDM discovery is dead in this network — the Plex server lives on the
-DMZ VLAN and never hears the players' broadcasts, so /clients is
-permanently empty and there is no discovery step. Each USER carries
-their own player instead (User.plex_player_address / _id, set on the
-Profile page, which probes the address and reads the machine id off
-the player itself): user A's play buttons target their Apple TV,
-user B's target theirs. A remote household's device works the same
-way once it's network-reachable (a VPN address like Tailscale's);
-the server side is already reachable from anywhere because
-PLEX_PLAYER_SERVER_URI is a public HTTPS address.
+GDM discovery does not work in this network. The Plex server is on the
+DMZ VLAN and never hears the broadcasts of the players. Thus, /clients
+is always empty and there is no discovery step. Each USER has a player
+of their own instead (User.plex_player_address / _id). The user sets
+it on the Profile page. The Profile page probes the address and reads
+the machine id from the player itself. The play buttons of user A
+target the Apple TV of user A. The play buttons of user B target the
+Apple TV of user B. The device of a remote household works the same
+way when the network can reach it (a VPN address, for example from
+Tailscale). The server side is already reachable from all places,
+because PLEX_PLAYER_SERVER_URI is a public HTTPS address.
 
-The command flow is the one validated by hand on 2026-08-21: resolve
-the movie's ratingKey in the local library, build a play queue on the
-server, then hand the Apple TV a pointer to the queue plus a server
-address IT can reach. That address must be the plex.direct HTTPS host
-(PLEX_PLAYER_SERVER_URI) — the same route the tvOS app streams over;
-the raw LAN address dies at the inter-VLAN firewall and tvOS insists
-on TLS anyway.
+The command flow is the one validated by hand on 2026-08-21. Resolve
+the ratingKey of the movie in the local library. Build a play queue on
+the server. Then give the Apple TV a pointer to the queue and a server
+address that the Apple TV can reach. That address must be the
+plex.direct HTTPS host (PLEX_PLAYER_SERVER_URI). The tvOS app streams
+over the same route. The raw LAN address stops at the inter-VLAN
+firewall. Also, tvOS requires TLS.
 
-Two traps this module guards against, both hit during validation:
-a play queue created with a bad server id still returns a
-playQueueID, just with zero items — the player then fails with
-"container couldn't be retrieved or is empty" — so the queue's item
-count is checked before the player is told anything. And the Plex app
-must be FOREGROUNDED on the Apple TV (tvOS can't wake it), so a
-connection failure at the player is reported as "is the Plex app
-open?" rather than as an error.
+This module guards against 2 traps. Both occurred during validation.
+A play queue created with a bad server id still returns a
+playQueueID, but with 0 items. The player then fails with "container
+couldn't be retrieved or is empty". Thus, this module checks the item
+count of the queue before it sends a command to the player. Also, the
+Plex app must be in the FOREGROUND on the Apple TV (tvOS cannot wake
+it). Thus, this module reports a connection failure at the player as
+"is the Plex app open?" and not as an error.
 """
 
 import time
@@ -39,14 +40,15 @@ from flask import current_app
 
 from app.plex_titles import _plex_get
 
-# Stable controller identity: the Apple TV tracks controllers by this
-# id, so changing it makes Fitzflix look like a brand-new remote
+# Stable controller identity. The Apple TV tracks controllers by this
+# id. Thus, a change to it makes Fitzflix look like a new remote.
 CLIENT_IDENTIFIER = "fitzflix"
 
 
 def remote_playback_configured():
-    """Whether the SERVER side of remote playback is configured; the
-    player side lives on each user's row (plex_player_configured)."""
+    """Return True if the SERVER side of remote playback is configured.
+
+    The player side is on the row of each user (plex_player_configured)."""
 
     return all(
         current_app.config.get(key)
@@ -55,12 +57,13 @@ def remote_playback_configured():
 
 
 def probe_player(address):
-    """Ask the Companion player at ip:port to identify itself:
-    {"machine_id", "name"}, or None if nothing answered. This is how
-    the Profile page verifies an entered address and discovers the
-    machine id — nobody should have to curl their own Apple TV. A
-    player only answers while the Plex app is OPEN on it with
-    Advertise as Player enabled."""
+    """Ask the Companion player at ip:port to identify itself.
+
+    Return {"machine_id", "name"}, or None if no player answered. The
+    Profile page uses this function to verify an entered address and
+    to find the machine id. No user must curl their own Apple TV. A
+    player answers only while the Plex app is OPEN on it and Advertise
+    as Player is enabled."""
 
     try:
         r = requests.get(
@@ -82,19 +85,20 @@ def probe_player(address):
 
 
 def _server_machine_id():
-    """The local Plex server's machineIdentifier."""
+    """Return the machineIdentifier of the local Plex server."""
 
     payload = _plex_get("/")
     return payload.get("MediaContainer", {}).get("machineIdentifier")
 
 
 def _movie_rating_key(movie):
-    """The movie's ratingKey in the local Plex library, or None.
+    """Return the ratingKey of the movie in the local Plex library, or None.
 
-    The guid filter is exact and cheap where the server supports it;
-    the fallback is a title search with each candidate verified — by
-    its TMDB Guid when the movie has a TMDB id, by year otherwise —
-    so a remake or a same-named short can't be played by mistake.
+    The guid filter is exact and cheap where the server supports it.
+    The fallback is a title search. This function verifies each
+    candidate. It uses the TMDB Guid when the movie has a TMDB id. It
+    uses the year in the other case. Thus, a remake or a short with the
+    same name cannot play by mistake.
     """
 
     if movie.tmdb_id:
@@ -124,7 +128,7 @@ def _movie_rating_key(movie):
 
 
 def _create_play_queue(server_id, rating_key):
-    """A play queue holding the movie, or None if Plex built it empty."""
+    """Return a play queue that holds the movie, or None if Plex built it empty."""
 
     r = requests.post(
         current_app.config["PLEX_URL"] + "/playQueues",
@@ -153,8 +157,10 @@ def _create_play_queue(server_id, rating_key):
 
 
 def play_movie(movie, user):
-    """Start the movie on the user's own player. Returns (ok, message);
-    every failure mode gets a message fit to show on the movie page."""
+    """Start the movie on the player of the user.
+
+    Return (ok, message). Each failure mode gets a message that the
+    movie page can show."""
 
     if not remote_playback_configured():
         return False, "Remote playback isn't configured."

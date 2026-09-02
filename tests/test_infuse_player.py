@@ -632,7 +632,7 @@ def test_profile_refuses_a_second_pairing_while_one_waits(app, user_client):
         user_client,
         {"infuse_player_address": "192.168.1.63:49153", "infuse_player_submit": "1"},
     )
-    assert "already waiting" in r.get_data(as_text=True)
+    assert "already waits" in r.get_data(as_text=True)
     assert app.request_queue.count == 0
 
 

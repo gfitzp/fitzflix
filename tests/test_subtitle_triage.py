@@ -284,7 +284,7 @@ def test_mark_forced_refuses_non_matroska(app, admin_client):
         },
         follow_redirects=True,
     )
-    assert "can&#39;t be edited in place" in response.get_data(as_text=True)
+    assert "cannot edit its subtitle flags in place" in response.get_data(as_text=True)
     assert app.file_queue.jobs == []
 
 

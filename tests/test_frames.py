@@ -1347,7 +1347,7 @@ def test_profile_reset_wipes_frame_standings(app, admin_client):
         data={"csrf_token": csrf, "reset_frames_submit": "Reset game scores"},
         follow_redirects=True,
     ).get_data(as_text=True)
-    assert "have been reset" in body
+    assert "Reset your Name That Frame scores" in body
     with app.app_context():
         assert UserFrameScore.query.count() == 0
 

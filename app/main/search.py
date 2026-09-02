@@ -1,5 +1,7 @@
-"""Local search (the routes.py split): the library search page, the
-navbar type-ahead JSON, and the TMDB lookup page."""
+"""Local search, from the routes.py split.
+
+This module holds the library search page, the type-ahead JSON of the
+navbar, and the TMDB lookup page."""
 
 import re
 import traceback
@@ -13,7 +15,7 @@ from flask import (
     request,
 )
 
-# flask.Markup was removed in Flask 2.4; import from its actual home
+# Flask 2.4 removed flask.Markup. Import it from its real home.
 from flask_login import current_user, login_required
 
 from app import db
@@ -51,12 +53,12 @@ from app.streaming import (
 
 
 def _parse_query(q):
-    """Split modifier tokens out of a search query (#185).
+    """Split the modifier tokens out of a search query (#185).
 
-    'jaws y:1975' → ('jaws', (1975, 1975)); 'y:1980-1989' spans a
-    range, and 'year:' works as the long form. Unrecognized or
-    malformed tokens ('y:83') stay in the text, so they search
-    literally instead of guessing."""
+    'jaws y:1975' becomes ('jaws', (1975, 1975)). 'y:1980-1989' gives a
+    range. 'year:' is the long form. An unknown or malformed token
+    ('y:83') stays in the text. Thus, the search uses it literally and
+    does not guess."""
 
     years = None
     words = []
@@ -74,18 +76,18 @@ def _parse_query(q):
 
 
 def _movie_search_results(wildcard, limit=50, years=None):
-    """Movies whose titles match, each with its best owned copy.
+    """Return the movies whose titles match, each with its best owned copy.
 
-    Only films with a local main-feature file appear: review-only
-    records (a diary entry for an unowned film) belong to the TMDB
-    search, not the library search."""
+    Only films with a local main-feature file appear. A review-only
+    record (a diary entry for an unowned film) belongs to the TMDB
+    search, not to the library search."""
 
     upgrade_threshold = _upgrade_threshold()
 
-    # Match quality outranks the alphabet: exact titles first, then
-    # prefixes, then substrings — otherwise a short query like "Up"
-    # fills the result cap with alphabetically-earlier titles that
-    # merely CONTAIN it, and the film actually named Up never shows
+    # The match quality outranks the alphabet. Exact titles come first,
+    # then prefixes, then substrings. Otherwise a short query such as "Up"
+    # fills the result cap with alphabetically earlier titles that only
+    # CONTAIN it. Then the film named Up never shows.
 
     match_rank = db.case(
         (
@@ -113,9 +115,9 @@ def _movie_search_results(wildcard, limit=50, years=None):
         )
     ).filter(Movie.files.any(File.feature_type_id.is_(None)))
 
-    # A y: modifier (#185) matches either year a film answers to — its
-    # library identity year or TMDB's release year — since the two
-    # commonly differ by one around festival releases
+    # A y: modifier (#185) matches each of the 2 years of a film. These
+    # are the library identity year and the TMDB release year. The 2
+    # years frequently differ by 1 for festival releases.
 
     if years:
         query = query.filter(
@@ -153,16 +155,16 @@ def _movie_search_results(wildcard, limit=50, years=None):
 
 
 def _tv_search_results(wildcard, limit=50, years=None):
-    """TV series whose titles match, each season summarized by the worst
-    quality among its best (rank-1) episode files.
+    """Return the TV series whose titles match, with a summary per season.
 
-    TV shows are usually bought season by season, so a series-wide "best
-    quality" would hide the seasons that need upgrading: what matters in a
-    store is each season's weakest link.
+    The summary of a season is the worst quality among its best (rank 1)
+    episode files. A TV show is usually bought season by season. Thus, a
+    series-wide "best quality" would hide the seasons that need an
+    upgrade. In a store, the weakest link of each season is what counts.
     """
 
-    # Exact, then prefix, then substring — same ranking as the movie
-    # search, for the same buried-exact-match reason
+    # Exact, then prefix, then substring. This is the same ranking as the
+    # movie search, for the same reason (a buried exact match).
 
     match_rank = db.case(
         (
@@ -188,8 +190,9 @@ def _tv_search_results(wildcard, limit=50, years=None):
         )
     )
 
-    # A y: modifier (#185) means the year the series premiered; series
-    # TMDB has no first-air date for drop out while the filter is active
+    # A y: modifier (#185) means the year of the series premiere. A
+    # series with no TMDB first-air date drops out while the filter is
+    # active.
 
     if years:
         series_query = series_query.filter(
@@ -204,8 +207,9 @@ def _tv_search_results(wildcard, limit=50, years=None):
     upgrade_threshold = _upgrade_threshold()
     series_ids = [series.id for series in series_list]
 
-    # Same shape as the TV library page: rank each episode's copies, keep
-    # the best copy per episode, then take each season's worst best-copy
+    # This has the same shape as the TV library page. Rank the copies of
+    # each episode, keep the best copy per episode, then take the worst
+    # best-copy of each season.
 
     ranked_files = (
         db.session.query(
@@ -258,9 +262,9 @@ def _tv_search_results(wildcard, limit=50, years=None):
                 "episode_count": episodes,
                 "worst_quality": worst_quality,
                 "preference": preference,
-                # Physical-media seasons (DVD, SD/720p Blu-ray) are often the
-                # only release that will ever exist, so they don't count as
-                # upgradable
+                # A physical-media season (DVD, SD/720p Blu-ray) is often the
+                # only release that will exist. Thus, it does not count as
+                # upgradable.
                 "upgradable": not physical and preference < upgrade_threshold,
             }
         )
@@ -276,12 +280,12 @@ def _tv_search_results(wildcard, limit=50, years=None):
 
 
 def _people_search_results(wildcard, limit=12):
-    """Credited people whose names match, with their library film counts
-    and dominant role.
+    """Return the credited people whose names match.
 
-    Mirrors the People page's rules: cast plus key crew roles count,
-    uncredited-only roles never do, and matches order by film count
-    with the surname tie-break.
+    Each person comes with a library film count and a dominant role. The
+    rules are the same as the People page. Cast and key crew roles
+    count. Uncredited-only roles never count. The matches sort by film
+    count, and the surname breaks ties.
     """
 
     pairs = _credited_film_pairs()
@@ -297,10 +301,10 @@ def _people_search_results(wildcard, limit=12):
         .filter(TMDBCredit.name.ilike(f"%{wildcard}%"))
         .group_by(TMDBCredit.id, TMDBCredit.name, TMDBCredit.tmdb_profile_path)
         .order_by(
-            # An exact full-name match surfaces first; among partial
-            # matches, film count stays the better signal (no prefix
-            # tier here — "Ford Beebe" shouldn't outrank Harrison Ford
-            # on a "Ford" search)
+            # An exact full-name match comes first. Among the partial
+            # matches, the film count is the better signal. There is no
+            # prefix tier here. "Ford Beebe" must not outrank Harrison
+            # Ford on a "Ford" search.
             db.case((TMDBCredit.name.ilike(wildcard), 0), else_=1),
             film_count.desc(),
             db.func.substring_index(TMDBCredit.name, " ", -1).asc(),
@@ -325,7 +329,7 @@ def _people_search_results(wildcard, limit=12):
 @bp.route("/search")
 @login_required
 def search():
-    """Search movies and TV series from one box, anywhere in the app."""
+    """Search the movies and TV series from one box, anywhere in the app."""
 
     q = (request.args.get("q") or "").strip()
     text, years = _parse_query(q)
@@ -334,22 +338,24 @@ def search():
     people_results = []
 
     if q:
-        # Spaces become wildcards so word order and punctuation don't
-        # matter. A modifier-only query ('y:1983') matches every title,
-        # turning the year filter into a browse — but people results
-        # stay text-driven, since a year means nothing for a person
+        # Spaces become wildcards. Thus, the word order and the
+        # punctuation are not important. A modifier-only query ('y:1983')
+        # matches every title. That makes the year filter a browse. The
+        # people results stay text-driven because a year means nothing
+        # for a person.
 
         wildcard = text.replace(" ", "%")
         movie_results = _movie_search_results(wildcard, years=years)
         tv_results = _tv_search_results(wildcard, years=years)
         people_results = _people_search_results(wildcard) if text else []
 
-        # The personal funnel badges: "Might interest you" (in the
-        # stored recommendations — the library rail's own set) →
-        # "On your watchlist" → "Seen". Watchlist coexists with either
-        # neighbor, but a seen film already feeds the taste profile, so
-        # seen and might-interest are exclusive. All three are about
-        # the CURRENT user — their diary, their list, their profile
+        # The personal funnel badges are "Might interest you" (in the
+        # stored recommendations, the set of the library rail), then "On
+        # your watchlist", then "Seen". Watchlist can show with each
+        # neighbor. A seen film already feeds the taste profile. Thus,
+        # seen and might-interest are exclusive. All 3 badges are about
+        # the CURRENT user. That is their diary, their list, and their
+        # profile.
 
         if movie_results:
             rec_ids = recommended_movie_ids(current_app.redis, current_user.id)
@@ -361,7 +367,7 @@ def search():
                 .filter(UserMovieReview.movie_id.in_(result_ids))
                 .order_by(UserMovieReview.date_watched.asc())
             ):
-                # Later rows win, but a bare rewatch doesn't erase a rating
+                # A later row wins, but a bare rewatch does not erase a rating.
                 if rating is not None or movie_id not in ratings:
                     ratings[movie_id] = rating
             watchlisted = {
@@ -393,7 +399,7 @@ def search():
 @bp.route("/search.json")
 @login_required
 def search_json():
-    """Type-ahead suggestions for the global search box."""
+    """Return the type-ahead suggestions for the global search box."""
 
     q = (request.args.get("q") or "").strip()
     results = []
@@ -439,7 +445,7 @@ def search_json():
                 }
             )
 
-        # People results stay text-driven; a year means nothing for a person
+        # People results stay text-driven. A year means nothing for a person.
         people = _people_search_results(wildcard, limit=5) if text else []
         for person in people:
             results.append(
@@ -461,13 +467,13 @@ def search_json():
 @bp.route("/search/tmdb")
 @login_required
 def search_tmdb():
-    """Look a title up on TMDB, to confirm what exists beyond the library."""
+    """Look up a title on TMDB to see what exists outside the library."""
 
     q = (request.args.get("q") or "").strip()
 
-    # scope=movies skips the TV search entirely — the History page's
-    # "Log a film" box arrives this way (#215), and the diary only
-    # ever logs movies
+    # scope=movies skips the TV search completely. The "Log a film" box of
+    # the History page arrives this way (#215). The diary logs only
+    # movies.
 
     movies_only = request.args.get("scope") == "movies"
     movie_matches = []
@@ -481,15 +487,15 @@ def search_tmdb():
         error = "TMDB_API_KEY is not configured, so TMDB can't be searched."
 
     elif q and not text:
-        # TMDB's search endpoints need a title; a year alone can't
-        # browse them the way it browses the local library
+        # The TMDB search endpoints need a title. A year alone cannot
+        # browse them the way it browses the local library.
         error = "Add a title to the year filter — TMDB can't be searched by year alone."
 
     elif q:
-        # A single-year y: modifier (#185) rides the API's own year
-        # parameter, which also improves TMDB's ranking; ranges (which
-        # the search endpoints can't express) are enforced by the
-        # release-date filter below either way
+        # A single-year y: modifier (#185) goes with the year parameter of
+        # the API. That also improves the TMDB ranking. The search
+        # endpoints cannot express a range. The release-date filter below
+        # enforces the range in each case.
 
         params = {"api_key": current_app.config["TMDB_API_KEY"], "query": text}
         try:
@@ -538,12 +544,12 @@ def search_tmdb():
             current_app.logger.warning(traceback.format_exc())
             error = "TMDB could not be reached; try again in a moment."
 
-        # Annotate which results are already in the library, by TMDB id.
-        # "In library" means a local main-feature file exists — a
-        # review-only record (a logged unowned film) doesn't count.
-        # Each owned match also carries the shopping list's verdict, so
-        # the badge here wears the same amber/green as everywhere else
-        # (#191) instead of a colorless "In library"
+        # Mark the results that are already in the library, by TMDB id.
+        # "In library" means that a local main-feature file exists. A
+        # review-only record (a logged unowned film) does not count. Each
+        # owned match also carries the verdict of the shopping list. Thus,
+        # the badge here shows the same amber or green as all other
+        # surfaces (#191), not a colorless "In library".
 
         if movie_matches:
             owned = {
@@ -565,22 +571,22 @@ def search_tmdb():
                 .filter(TVSeries.tmdb_id.in_([m["tmdb_id"] for m in tv_matches]))
                 .all()
             )
-            # A series record with no files (one whose episodes were all
-            # deleted) has nothing to badge, so series_upgradable leaves
-            # it out and the row renders bare
+            # A series record with no files (all its episodes were deleted)
+            # has nothing to badge. Thus, series_upgradable leaves it out
+            # and the row renders bare.
             upgradable = series_upgradable(list(owned.values()))
             for match in tv_matches:
                 match["library_id"] = owned.get(match["tmdb_id"])
                 match["upgradable"] = upgradable.get(match["library_id"])
 
-        # The personal funnel badges. "Seen" and "On your watchlist"
-        # hang off any local record, file or not (a review-only record
-        # remembers a logged unowned film). "Might interest you" scores
-        # unowned matches through the coarse scorer minus the person
-        # term (a bare search result has no person context) and badges
-        # owned matches ranked in the stored recommendations — and
-        # never shows on a seen film, whose watch already feeds the
-        # taste profile
+        # The personal funnel badges. "Seen" and "On your watchlist" come
+        # from a local record, with or without a file (a review-only
+        # record remembers a logged unowned film). "Might interest you"
+        # scores an unowned match through the coarse scorer without the
+        # person term (a bare search result has no person context). It
+        # badges an owned match that is in the stored recommendations. It
+        # never shows on a seen film. That watch already feeds the taste
+        # profile.
 
         record_ids = {}
         movie_tmdb_ids = [m["tmdb_id"] for m in movie_matches if m["tmdb_id"]]
@@ -619,8 +625,9 @@ def search_tmdb():
         bar = marker_bar(profile) if profile else None
         for match in movie_matches:
             record_id = record_ids.get(match["tmdb_id"])
-            # The row's star ladder posts to the movie route when any
-            # record exists (file or not), the TMDB log route otherwise
+            # The star ladder of the row posts to the movie route if a
+            # record exists (with or without a file). Otherwise it posts to
+            # the TMDB log route.
             match["record_id"] = record_id
             match["seen"] = record_id in seen_ids
             match["watchlisted"] = record_id in watchlisted_ids
@@ -636,9 +643,10 @@ def search_tmdb():
             if score > bar:
                 match["might_interest"] = True
 
-        # Streaming and rent/buy badges on unowned movie matches, both
-        # filtered to this user's services (lookups are day-cached per
-        # title); the flag turns on the mandatory JustWatch credit
+        # Streaming and rent/buy badges on unowned movie matches. Both use
+        # only the services of this user (Fitzflix caches the lookups per
+        # title for 1 day). The flag turns on the mandatory JustWatch
+        # credit.
 
         provider_ids = user_provider_ids(current_user)
         if provider_ids:

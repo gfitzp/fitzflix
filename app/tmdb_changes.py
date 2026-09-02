@@ -1,27 +1,30 @@
-"""The TMDB change-driven refresh sweep.
+"""The refresh sweep that the TMDB change lists drive.
 
-TMDB's details payloads carry no last-updated stamp; the changes lists
-(/movie/changes, /tv/changes) are the API's cache-invalidation feed — a
-paginated list of every id edited in a window, capped at 14 days back.
-A nightly task enumerates the window since the last successful sweep,
-intersects it with the library's ids, and enqueues the standard TMDB
-refresh for just the records that actually changed — so edits land
-within a day without blindly re-fetching thousands of titles.
+The TMDB details payloads carry no last-updated stamp. The change lists
+(/movie/changes, /tv/changes) are the cache-invalidation feed of the
+API. They are a paginated list of every id edited in a window. The
+window can go back a maximum of 14 days. A nightly task enumerates the
+window since the last successful sweep. It intersects the window with
+the ids of the library. Then it enqueues the standard TMDB refresh for
+only the records that changed. Thus, the edits arrive within a day, and
+the task does not fetch thousands of titles again for no reason.
 
-The window is enumerated in one-day slices: a single query near the
-lookback cap can exceed the API's 500-page ceiling (movies alone run
-~70 pages a day), while a day slice never comes close. A Redis
-watermark records the last completed sweep and only advances when both
-enumerations finished cleanly, so a partial night is re-covered by the
-next — at worst a title is refreshed twice, which is harmless. A
-watermark beyond the 14-day history is unrecoverable from here; the
-sweep clamps to the cap and points the log at the maintenance page's
-bulk refresh.
+The task enumerates the window in slices of 1 day. A single query near
+the lookback cap can exceed the 500-page limit of the API (movies alone
+run approximately 70 pages a day). A slice of 1 day never comes near
+the limit. A Redis watermark records the last completed sweep. The
+watermark moves only when both enumerations completed with no error.
+Thus, the next sweep covers a partial night again. In the worst case,
+Fitzflix refreshes a title 2 times. That is harmless. A watermark older
+than the 14-day history cannot be recovered from here. The sweep clamps
+to the cap. The log then points to the bulk refresh on the maintenance
+page.
 
-TV is filtered to ended and canceled series: everything else is
-already re-fetched nightly by refresh_in_production_tv, and this sweep
-exists to catch the metadata edits that sweep deliberately leaves to
-"rarely changes" — without double-refreshing what it covers.
+The TV filter selects only ended and canceled series.
+refresh_in_production_tv fetches all the other series again each night.
+This sweep exists to catch the metadata edits that the nightly sweep
+leaves to "rarely changes" on purpose. It does not refresh again what
+the nightly sweep covers.
 """
 
 import traceback
@@ -34,33 +37,36 @@ from werkzeug.local import LocalProxy
 from app import db, get_app
 from app.models import Movie, TVSeries, tmdb_get
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# The app instance of this process. Fitzflix resolves it lazily. Thus,
+# the nightly task can run on a worker without a second application.
 
 app = LocalProxy(get_app)
 
-# When the last completed sweep ran (ISO datetime, UTC); the next run's
-# window opens here
+# The time of the last completed sweep (ISO datetime, UTC). The window
+# of the next run starts here.
 
 LAST_RUN_KEY = "fitzflix:tmdb-changes:last-run"
 
-# TMDB keeps 14 days of change history; anything older is unknowable
-# through this endpoint
+# TMDB keeps 14 days of change history. This endpoint cannot show
+# older changes.
 
 LOOKBACK_CAP_DAYS = 14
 
-# The API refuses pages beyond 500 on every paginated endpoint; a day
-# slice never reaches it, so hitting the cap means a truncated read
+# The API refuses pages after page 500 on every paginated endpoint. A
+# slice of 1 day never reaches the cap. Thus, a read that touches the
+# cap is a truncated read.
 
 PAGE_CAP = 500
 
 
 def _changed_ids(media_type, window_start, window_end):
-    """(ids, complete): every TMDB id of the given type ("movie" or
-    "tv") edited in the window, enumerated in one-day slices to stay
-    under the page ceiling. complete is False when any slice failed or
-    truncated — the caller keeps the watermark so tomorrow's sweep
-    re-covers the window."""
+    """Return (ids, complete) for the TMDB ids edited in the window.
+
+    The type is "movie" or "tv". This function enumerates the window in
+    slices of 1 day to stay under the page limit. complete is False if
+    a slice failed or was truncated. Then the caller keeps the
+    watermark. Thus, the sweep of the next day covers the window
+    again."""
 
     ids = set()
     complete = True
@@ -104,8 +110,10 @@ def _changed_ids(media_type, window_start, window_end):
 
 
 def refresh_changed_records():
-    """Nightly task: enqueue the standard TMDB refresh for every
-    library record whose TMDB entry changed since the last sweep."""
+    """Enqueue the standard TMDB refresh for each changed library record.
+
+    This is a nightly task. A record counts as changed if its TMDB entry
+    changed after the last sweep."""
 
     with app.app_context():
         if not current_app.config["TMDB_API_KEY"]:
@@ -121,7 +129,7 @@ def refresh_changed_records():
             except ValueError:
                 pass
         if window_start is None:
-            # First sweep: the endpoint's own default window
+            # This is the first sweep. Use the default window of the endpoint.
             window_start = now - timedelta(days=1)
         cap = now - timedelta(days=LOOKBACK_CAP_DAYS)
         if window_start < cap:
@@ -155,10 +163,11 @@ def refresh_changed_records():
             )
             movies_queued += 1
 
-        # Only the series the in-production nightly sweep leaves alone:
-        # its predicate takes everything except ended/canceled rows, so
-        # this one takes exactly those (a NULL in_production still
-        # counts as left-alone only alongside an ended/canceled status)
+        # Select only the series that the nightly in-production sweep does
+        # not touch. That predicate takes all rows except the ended and
+        # canceled rows. Thus, this predicate takes exactly those rows. A
+        # NULL in_production counts as not touched only together with an
+        # ended or canceled status.
 
         tv_queued = 0
         tv_rows = (

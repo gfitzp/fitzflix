@@ -494,5 +494,5 @@ def test_profile_rejects_a_malformed_address(
     monkeypatch.setattr(account, "probe_player", lambda address: probed.append(address))
 
     r = _profile_post(user_client, "192.168.1.63/evil?x=1")
-    assert "ip:port or hostname:port" in r.get_data(as_text=True)
+    assert "ip:port or a hostname:port" in r.get_data(as_text=True)
     assert probed == []

@@ -1,34 +1,38 @@
-"""Plex library refresh + trash emptying, safely.
+"""Refresh the Plex libraries and empty their trash, safely.
 
-Replaces the external cron that curl'd refresh and emptyTrash for
-hardcoded section ids, guarded by checking one mount per section. The
-guard is the whole point: if a section's directory is missing (an SMB
-mount dropped), a scan marks everything missing and emptying the
-trash then deletes the library's metadata — watch states included —
-rebuilding it from scratch when the mount returns.
+This module replaces the external cron. That cron ran curl for refresh
+and emptyTrash on hardcoded section ids. It checked one mount per
+section as a guard. The guard is the whole point. If the directory of a
+section is missing (for example, an SMB mount dropped), a scan marks
+every item as missing. Then the empty of the trash deletes the metadata
+of the library, with the watch states included. Plex rebuilds the
+library from zero when the mount returns.
 
-This version asks Plex for each movie/show section's OWN location
-paths and requires every location's MOUNT to be alive before touching
-that section (the old script checked a single mount per section — the
-Movies section actually has two roots on two volumes). The guard is
-mount-level, not leaf-level: an empty transcodes volume legitimately
-lacks its Movies subfolder, and an absent leaf on a healthy mount is
-harmless to scan. Mount probes go through volume_alive, which treats
-a hung SMB stat as dead instead of hanging the worker.
+This version asks Plex for the OWN location paths of each movie and
+show section. It requires the MOUNT of every location to be alive
+before it touches that section. The old script checked one mount per
+section. But the Movies section has 2 roots on 2 volumes. The guard is
+at the mount level, not at the leaf level. An empty transcodes volume
+correctly has no Movies subfolder. A missing leaf on a healthy mount is
+safe to scan. The mount probes go through volume_alive. That function
+treats a hung SMB stat as dead. It does not hang the worker.
 
-It also owns the generic re-analyze: any task that rewrites a library
-file IN PLACE calls enqueue_plex_analyze, so Plex re-reads the file at
-once instead of at the pace of its own scan and overnight analysis
-pass. Plex's manual analyze re-reads the streams and regenerates
-chapter thumbs — about two seconds on a 45 GB film (#194).
+This module also owns the generic re-analyze. Every task that rewrites
+a library file IN PLACE calls enqueue_plex_analyze. Then Plex reads the
+file again immediately. It does not wait for its own scan and its
+overnight analysis pass. The manual analyze of Plex reads the streams
+again and regenerates the chapter thumbs. This takes approximately 2
+seconds on a 45 GB film (#194).
 
-What it does NOT touch is the Media-level audioCodec/audioChannels
-summary Plex shows as an item's audio. Measured Aug 24 2026 over 3,153
-films, that summary is the file's HIGHEST-CHANNEL audio track, matching
-it 100% of the time and the first/default track only 94.6% (i.e. only
-when they coincide). A supplemented film therefore reads "FLAC 7.1" for
-as long as its lossless twin outranks the DD+ Atmos 5.1, and analyzing
-it — by this task or by hand in Plex — will not change that.
+This module does NOT touch the Media-level audioCodec and audioChannels
+summary. Plex shows that summary as the audio of an item. A measurement
+on 2026-08-24 over 3,153 films showed that the summary is the audio
+track of the file with the HIGHEST channel count. It matched that track
+100% of the time. It matched the first (default) track only 94.6% of
+the time, that is, only when the two were the same track. Thus, a
+supplemented film reads "FLAC 7.1" while its lossless twin outranks the
+DD+ Atmos 5.1. An analyze, by this task or by hand in Plex, does not
+change that.
 """
 
 import hashlib
@@ -49,22 +53,24 @@ app = LocalProxy(get_app)
 
 PAGE_SIZE = 1000
 
-# What to page for in each kind of section: a movie section's own
-# items carry the files, but in a show section they hang off episodes
+# The item type to page for in each kind of section. In a movie section,
+# the items carry the files. In a show section, the episodes carry them.
 
 SECTION_ITEM_TYPE = {"movie": 1, "show": 4}
 
-# A file Plex hasn't scanned yet can't be analyzed. Rather than lose
-# the analyze, one deferred attempt follows the next quarter-hourly
-# library scan
+# Plex cannot analyze a file that it has not scanned yet. To keep the
+# analyze, one deferred attempt follows the next quarter-hourly library
+# scan.
 
 ANALYZE_RETRY_MINUTES = 20
 ANALYZE_MAX_RETRIES = 1
 
 
 def _probe_target(path):
-    """What to health-check for a section location: the /Volumes mount
-    that backs it, or the path itself when it isn't volume-backed."""
+    """Return the path to health-check for a section location.
+
+    This is the /Volumes mount that backs the location. If no volume
+    backs it, this is the path itself."""
 
     if path.startswith(VOLUMES_ROOT + os.sep):
         return "/".join(path.split("/")[:3])
@@ -72,7 +78,7 @@ def _probe_target(path):
 
 
 def _section_locations(section):
-    """The paths a section declares as its roots."""
+    """Return the paths that a section declares as its roots."""
 
     return [
         location.get("path")
@@ -82,7 +88,7 @@ def _section_locations(section):
 
 
 def _part_files(item):
-    """Every part file path an item's media declares."""
+    """Yield every part file path that the media of an item declares."""
 
     for media in item.get("Media", []) or []:
         for part in media.get("Part", []) or []:
@@ -91,8 +97,10 @@ def _part_files(item):
 
 
 def _plex_command(method, path):
-    """A command-style Plex call (refresh, emptyTrash): these answer
-    with an EMPTY body, so nothing is parsed — success is the status."""
+    """Make a command-style Plex call (refresh, emptyTrash).
+
+    These calls answer with an EMPTY body. Thus, this function parses
+    nothing. The status is the success signal."""
 
     r = requests.request(
         method,
@@ -104,9 +112,11 @@ def _plex_command(method, path):
 
 
 def refresh_plex_libraries():
-    """Task: scan each movie/show section for changes and empty its
-    trash — per section, and only when every location it declares is
-    mounted and present."""
+    """Scan each movie and show section for changes and empty its trash.
+
+    This is a queue task. It works per section. It touches a section only
+    when every location that the section declares is mounted and
+    present."""
 
     with app.app_context():
         if not (
@@ -127,8 +137,8 @@ def refresh_plex_libraries():
             title = section.get("title")
             locations = _section_locations(section)
 
-            # A dead or hung mount makes scanning dangerous — skip the
-            # whole section until it's back
+            # A dead or hung mount makes a scan dangerous. Skip the whole
+            # section until the mount is back.
 
             missing = [
                 path
@@ -155,13 +165,16 @@ def refresh_plex_libraries():
 
 
 def _sections_holding(sections, wanted):
-    """The sections that could hold these files: one whose declared
-    location is a parent of a wanted path owns it.
+    """Return the sections that can hold these files.
 
-    Narrowing this way keeps a movie's analyze from paging the whole TV
-    section. When nothing matches — Plex mounting the library at paths
-    we don't share — every movie/show section is walked instead, since
-    the part-file basenames can still identify the items.
+    A section owns a wanted path when one of its declared locations is a
+    parent of that path.
+
+    This filter prevents the analyze of a movie from paging the whole TV
+    section. Nothing matches when Plex mounts the library at paths that
+    this host does not share. Then this function returns every movie and
+    show section instead, because the part-file basenames can still
+    identify the items.
     """
 
     owning = [
@@ -177,9 +190,11 @@ def _sections_holding(sections, wanted):
 
 
 def _analyze_section(section, targets, by_basename, analyzed):
-    """Analyze every target file this section holds, adding each one it
-    matched to `analyzed`. Files are matched on their full path, or on
-    their basename when Plex knows the library by another path."""
+    """Analyze every target file that this section holds.
+
+    This function adds each matched file to `analyzed`. It matches a
+    file on its full path. If Plex knows the library by a different
+    path, it matches the file on its basename."""
 
     key = section.get("key")
     start = 0
@@ -220,17 +235,18 @@ def _analyze_section(section, targets, by_basename, analyzed):
 
 
 def analyze_plex_media(file_paths, retries=0):
-    """Task: have Plex redo its media analysis for these library files.
+    """Make Plex do its media analysis again for these library files.
 
-    The generic answer to "this file was rewritten in place": the item
-    exists and its path is unchanged, so nothing tells Plex to look
-    again until its next scan, and the deep pass waits for overnight
-    maintenance. This asks for both now.
+    This is a queue task. It is the generic answer to "this file was
+    rewritten in place". The item exists and its path is unchanged.
+    Thus, nothing tells Plex to look again until its next scan, and the
+    deep pass waits for the overnight maintenance. This task asks for
+    both now.
 
-    Best-effort by design, like every other Plex task here: it answers
-    True whatever happened, because the rewrite it follows has already
-    succeeded and committed. See the module docstring for what an
-    analyze does and does not correct.
+    The task is best-effort by design, like every other Plex task here.
+    It returns True in all cases, because the rewrite before it has
+    already succeeded and committed. See the module docstring for what
+    an analyze does and does not correct.
     """
 
     with app.app_context():
@@ -245,15 +261,15 @@ def analyze_plex_media(file_paths, retries=0):
         if not wanted:
             return True
 
-        # Guard the FILE, not the section: this is one item's analysis,
-        # and what matters is that the copy on disk is readable —
-        # analyzing against a dropped mount has Plex record the analysis
-        # of a file it couldn't read. (The section-wide guard belongs to
-        # the refresh, where a dead mount plus emptyTrash wipes a
-        # library. It would also be the wrong test here: a Plex that
-        # reaches the library by its own mount paths declares locations
-        # this host can't see — exactly the case the basename match
-        # below exists to serve.)
+        # Guard the FILE, not the section. This is the analysis of one
+        # item. The important condition is that the copy on disk is
+        # readable. An analyze against a dropped mount makes Plex record
+        # the analysis of a file that it could not read. The section-wide
+        # guard belongs to the refresh. There, a dead mount plus
+        # emptyTrash deletes a library. That guard would also be the
+        # wrong test here. A Plex that reaches the library by its own
+        # mount paths declares locations that this host cannot see. The
+        # basename match below exists exactly for that case.
 
         readable = set()
         for path in sorted(wanted):
@@ -270,10 +286,10 @@ def analyze_plex_media(file_paths, retries=0):
             else:
                 readable.add(path)
 
-        # The library's basenames carry title, year, edition and
-        # quality, so they identify a file on their own — the same
-        # match plex_titles relies on, kept as the fallback for a Plex
-        # that reaches the library by a different mount path
+        # The basenames of the library carry the title, year, edition,
+        # and quality. Thus, a basename identifies a file on its own.
+        # plex_titles uses the same match. It is the fallback for a Plex
+        # that reaches the library by a different mount path.
 
         by_basename = {os.path.basename(path): path for path in readable}
 
@@ -303,11 +319,12 @@ def analyze_plex_media(file_paths, retries=0):
         if not unmatched:
             return True
 
-        # Left over: a file Plex hasn't scanned since it appeared (the
-        # ordinary case — a first scan analyzes it anyway), or one whose
-        # mount was down. Either resolves within the quarter-hourly
-        # scan, so one deferred attempt follows it and then the matter
-        # is dropped rather than retried forever
+        # The files that remain: a file that Plex has not scanned since
+        # it appeared (the usual case, and a first scan analyzes it
+        # anyway), or a file whose mount was down. The quarter-hourly
+        # scan resolves both. Thus, one deferred attempt follows that
+        # scan. Then the task drops the matter. It does not retry
+        # forever.
 
         if retries < ANALYZE_MAX_RETRIES:
             current_app.logger.info(
@@ -320,9 +337,9 @@ def analyze_plex_media(file_paths, retries=0):
                 sorted(wanted - analyzed),
                 retries=retries + 1,
                 job_timeout=1800,
-                # Keyed on the whole batch, not its first basename (#242):
-                # two distinct batches sharing a first file must not
-                # dedupe into one retry
+                # The key is the whole batch, not its first basename
+                # (#242). Two different batches with the same first file
+                # must not collapse into one retry.
                 job_id=retry_job_id(
                     "analyze_plex_media",
                     hashlib.sha256("|".join(unmatched).encode()).hexdigest()[:16],
@@ -340,12 +357,13 @@ def analyze_plex_media(file_paths, retries=0):
 
 
 def enqueue_plex_analyze(file_path):
-    """Queue a re-analyze for a library file that was rewritten in place.
+    """Queue a new analyze for a library file that was rewritten in place.
 
-    The call every in-place rewrite makes once its result is committed.
-    Never raises and never blocks the caller: the file is already
-    correct on disk and in the database, so an unreachable Plex or a
-    refused enqueue costs a stale Plex analysis, not the rewrite.
+    Every in-place rewrite makes this call after its result is committed.
+    This function never raises and never blocks the caller. The file is
+    already correct on disk and in the database. Thus, an unreachable
+    Plex or a refused enqueue costs only a stale Plex analysis, not the
+    rewrite.
     """
 
     try:
@@ -358,9 +376,9 @@ def enqueue_plex_analyze(file_path):
         queue = current_app.maintenance_queue
 
         # A second edit while the first analyze is still queued needs no
-        # second job — the queued one reads the file when it runs. One
-        # already RUNNING is not deduped against: it may have read the
-        # file before this edit landed
+        # second job. The queued job reads the file when it runs. A job
+        # that already RUNS is not a duplicate. It may have read the file
+        # before this edit arrived.
 
         if job_id in queue.job_ids:
             return False

@@ -1,24 +1,25 @@
 """Probe library files for the SMB lost-handle state.
 
-The NAS sometimes loses its handle for a single file: every read still
-succeeds and close(2) answers EBADF forever, per file, until the state
-clears — on its own, or when the share is remounted. It is invisible until something treats close()
-as part of a copy — an upload's final close reports it from inside
-s3transfer, so it reads as an S3 error — which makes it worth asking
-each file directly instead of waiting for a 28GB transfer to discover it.
+The NAS sometimes loses its handle for a single file. Every read
+continues to succeed. But close(2) answers EBADF for that file until
+the state clears. The state clears on its own, or when the user
+remounts the share. The state is invisible until something treats
+close() as part of a copy. The final close of an upload reports it
+from inside s3transfer. Thus, it looks like an S3 error. It is better
+to ask each file directly than to wait for a 28GB transfer to find it.
 
-The question costs one open and one close, so a task can afford to ask
-after every file it writes. Results land in Redis so a bulk run reports
-which files it broke, and so a later recheck can measure how long the
-state actually lasts, which nothing has ever recorded.
+The question costs 1 open and 1 close. Thus, a task can ask after
+every file that it writes. The results go into Redis. Thus, a bulk run
+reports which files it broke. A later recheck can measure how long the
+state lasts. Nothing has recorded that duration before.
 
-That measurement is why a recovery is recorded rather than simply
-deleted. Whichever task next touches a file is likely to probe it
-cleanly, and if that erased the record the duration would be gone before
-any recheck could read it — which is exactly how the first real
-measurement was lost. A clean probe of a known-broken file therefore
-converts its entry into a healed record; `recheck` reports those and
-reaps them.
+That measurement is the reason why Fitzflix records a recovery instead
+of a simple deletion. The next task that touches a file will probably
+get a clean probe. If that erased the record, the duration would be
+gone before a recheck could read it. That is exactly how the first real
+measurement was lost. Thus, a clean probe of a known-broken file
+converts its entry into a healed record. `recheck` reports those
+records and then removes them.
 """
 
 import errno
@@ -31,24 +32,25 @@ from flask import current_app
 
 STATE_KEY = "fitzflix:smb:handle_state"
 
-# Recoveries are reported once and reaped from the state, so the durations
-# would live nowhere but the terminal that happened to run the recheck.
-# They accumulate here instead: the state says what is broken, the history
-# says what the state has ever cost, and only the history answers how long
-# this lasts.
+# Fitzflix reports a recovery one time and then removes it from the
+# state. Without this list, the durations would exist only in the
+# terminal that ran the recheck. They accumulate here instead. The
+# state says what is broken. The history says what the state has ever
+# cost. Only the history answers how long the state lasts.
 
 HISTORY_KEY = "fitzflix:smb:handle_history"
 HISTORY_LIMIT = 1000
 
-# What a record describes: a file failing its probe now, or one that has
-# recovered and is holding its duration until a recheck reports it
+# A record describes one of 2 things: a file that fails its probe now,
+# or a file that recovered and holds its duration until a recheck
+# reports it.
 
 FAILING = "failing"
 HEALED = "healed"
 
 
 def _load_entry(path):
-    """The recorded entry for a path, or None if there isn't a usable one."""
+    """Return the recorded entry for a path, or None if there is no usable entry."""
 
     payload = current_app.redis.hget(STATE_KEY, path)
     if not payload:
@@ -64,16 +66,19 @@ def _load_entry(path):
 
 
 def _entry_state(entry):
-    """An entry written before recoveries were recorded is a failure."""
+    """Return the state of an entry.
+
+    An entry written before Fitzflix recorded recoveries is a failure."""
 
     return entry.get("state", FAILING)
 
 
 def _held_for_seconds(first_seen, healed_at):
-    """How long the state held, as far as the record can tell.
+    """Return how long the state held, as far as the record can tell.
 
-    A floor, not a measurement of onset: first_seen is when something
-    first asked, and the file was already broken by then.
+    This is a minimum, not a measurement of the start. first_seen is
+    the time when something first asked. The file was already broken
+    at that time.
     """
 
     try:
@@ -85,14 +90,14 @@ def _held_for_seconds(first_seen, healed_at):
 
 
 def probe_path(path):
-    """Open `path` read-only and close it, reporting what failed.
+    """Open `path` read-only, close it, and report what failed.
 
-    Returns a dict with `ok`, and on failure the `stage` that raised
-    ("open" or "close") along with its errno. A file that opens and
-    closes cleanly is healthy; one that opens but won't close is in the
-    lost-handle state; one that won't open at all is a different problem
-    (missing file, dead mount) and says so rather than being counted as
-    a handle failure.
+    Return a dict with `ok`. On failure, the dict also has the `stage`
+    that raised ("open" or "close") and its errno. A file that opens
+    and closes cleanly is healthy. A file that opens but does not close
+    is in the lost-handle state. A file that does not open has a
+    different problem, such as a missing file or a dead mount. The
+    result says so. It does not count as a handle failure.
     """
 
     try:
@@ -109,9 +114,9 @@ def probe_path(path):
     try:
         os.close(fd)
     except OSError as e:
-        # Don't retry the close: the descriptor is already gone as far as
-        # the kernel is concerned, and a second attempt on a reused number
-        # would close somebody else's file
+        # Do not retry the close. The kernel already released the
+        # descriptor. A second attempt on a reused number would close
+        # the file of a different caller.
 
         return {
             "path": path,
@@ -125,7 +130,7 @@ def probe_path(path):
 
 
 def lost_handle(result):
-    """Whether a probe result is the lost-handle state specifically."""
+    """Return True if a probe result is the lost-handle state specifically."""
 
     return (
         not result["ok"]
@@ -135,12 +140,12 @@ def lost_handle(result):
 
 
 def absent(result):
-    """Whether the file simply isn't on the local volume.
+    """Return True if the file is not on the local volume.
 
-    Not a finding. A File row outlives its local copy: when a better
-    edition supersedes one, the row and its S3 archive stay while the
-    local file goes away, so thousands of rows are legitimately absent
-    and would otherwise drown the real failures.
+    This is not a finding. A File row lives longer than its local copy.
+    When a better edition replaces one, the row and its S3 archive stay.
+    The local file goes away. Thus, thousands of rows are legitimately
+    absent. Without this check, they would hide the real failures.
     """
 
     return (
@@ -151,12 +156,13 @@ def absent(result):
 
 
 def share_root(path):
-    """The share a library path lives on.
+    """Return the share that a library path is on.
 
-    Library paths are LIBRARY_DIR plus a share name — /Volumes/Movies,
-    /Volumes/TV Shows — so the share is the first component below the
-    configured library directory. A path from somewhere else answers with
-    the library directory itself.
+    A library path is LIBRARY_DIR plus a share name, for example
+    /Volumes/Movies or /Volumes/TV Shows. Thus, the share is the first
+    component below the configured library directory. For a path from
+    a different location, this function returns the library directory
+    itself.
     """
 
     library_dir = current_app.config["LIBRARY_DIR"]
@@ -169,29 +175,30 @@ def share_root(path):
 
 
 def share_available(path):
-    """Whether the share a path belongs to is currently there.
+    """Return True if the share of a path is there now.
 
-    The directory existing is not enough (#232). macOS does usually
-    delete the mount point when a share unmounts cleanly, which is what
-    the original isdir check relied on — but when the SMB session dies it
-    leaves the mount point behind as an ordinary directory on the boot
-    disk, and isdir then answers True for a share that is not there.
-    Seen Aug 25 2026: /Volumes/TV Shows sat as an empty stub for ~25
-    minutes while the real share ran at /Volumes/TV Shows-1.
+    An existing directory is not sufficient (#232). macOS usually
+    deletes the mount point when a share unmounts cleanly. The original
+    isdir check depended on that. But when the SMB session dies, macOS
+    leaves the mount point behind as a normal directory on the boot
+    disk. Then isdir answers True for a share that is not there. Seen
+    on 2026-08-25: /Volumes/TV Shows was an empty stub for approximately
+    25 minutes while the real share ran at /Volumes/TV Shows-1.
 
-    That is the one case this function exists to catch. If it answers
-    True for a dead share, absent() claims every file on it as a
-    legitimate departure — thousands at once, none of them a finding,
-    and recheck reaps their durations. So a path under /Volumes has to
-    BE a mountpoint, exactly as #227 established for volume_alive.
+    That is the one case that this function exists to catch. If it
+    answers True for a dead share, absent() reports every file on it as
+    a legitimate departure. That is thousands at one time, none of them
+    a finding, and recheck removes their durations. Thus, a path under
+    /Volumes must BE a mountpoint, exactly as #227 established for
+    volume_alive.
 
-    A library that isn't under /Volumes still answers correctly: the
-    mountpoint requirement only applies below VOLUMES_ROOT.
+    A library that is not under /Volumes still gets a correct answer.
+    The mountpoint requirement applies only below VOLUMES_ROOT.
     """
 
-    # Imported here rather than at module scope: maintenance pulls in the
-    # app factory, and this module stays light enough for a CLI or a test
-    # to import on its own
+    # Import here, not at module scope. maintenance imports the app
+    # factory. This module stays light enough for a CLI or a test to
+    # import on its own.
 
     from app.maintenance import mountpoint_ok
 
@@ -203,19 +210,19 @@ def share_available(path):
 
 
 def share_responsive(path):
-    """Whether the share behind a path answers within a timeout AND is
-    really mounted.
+    """Return True if the share of a path answers in a timeout AND is mounted.
 
-    share_available asks "is it there"; this adds "will touching it
-    hang" (#237). A WEDGED share — still in the mount table, hanging
-    syscalls — stalls the very next os.open until the caller's job
-    timeout kills it, so anything about to probe many files must ask
-    this once per share first, through volume_alive's watchdog thread.
-    A path outside /Volumes answers from a plain (and safe) statvfs.
+    share_available asks "is it there". This function adds "will a
+    touch hang" (#237). A WEDGED share is still in the mount table, but
+    its syscalls hang. It stalls the next os.open until the job timeout
+    of the caller kills it. Thus, a task that will probe many files
+    must ask this 1 time per share first, through the watchdog thread of
+    volume_alive. A path outside /Volumes gets its answer from a plain
+    and safe statvfs.
     """
 
-    # Imported here rather than at module scope, like mountpoint_ok
-    # above: maintenance pulls in the app factory
+    # Import here, not at module scope, the same as mountpoint_ok above.
+    # maintenance imports the app factory.
 
     from app.maintenance import volume_alive
 
@@ -223,42 +230,43 @@ def share_responsive(path):
 
 
 def unmounted(result):
-    """Whether an ENOENT means the share is gone, not the file.
+    """Return True if an ENOENT means that the share is gone, not the file.
 
-    The difference matters enormously: one missing file is routine, a
-    missing share makes every file look deleted at once, and treating
-    that as thousands of departures would drop the whole record —
-    including durations that exist nowhere else.
+    The difference is very important. One missing file is routine. A
+    missing share makes every file look deleted at one time. If
+    Fitzflix treated that as thousands of departures, it would drop the
+    whole record. That includes the durations that exist nowhere else.
     """
 
     return absent(result) and not share_available(result["path"])
 
 
 def library_path(file):
-    """The absolute path of a File row on the library volume."""
+    """Return the absolute path of a File row on the library volume."""
 
     return os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
 
 
 def record_result(result, context=None):
-    """Fold a probe result into the recorded state.
+    """Merge a probe result into the recorded state.
 
-    A failure keeps the timestamp of its first sighting, so the record can
-    say how long the state has held. A clean probe of a file already known
-    to be broken does not throw that timestamp away: it rewrites the entry
-    as a healed record carrying `healed_at` and `held_for_seconds`, which
-    survives until a recheck reports it.
+    A failure keeps the timestamp of its first sighting. Thus, the record
+    can say how long the state has held. A clean probe of a known-broken
+    file does not discard that timestamp. It rewrites the entry as a
+    healed record with `healed_at` and `held_for_seconds`. That record
+    stays until a recheck reports it.
 
-    A clean probe of a file nobody recorded stays unrecorded — healthy
-    files are the overwhelming majority and are not news — and a file
-    that isn't on the volume at all is not recorded either.
+    A clean probe of a file that has no record stays unrecorded. Healthy
+    files are the large majority and are not news. A file that is not on
+    the volume at all also gets no record.
 
-    Returns the entry it wrote, or None when it wrote nothing.
+    Return the entry that this function wrote, or None if it wrote
+    nothing.
     """
 
     if absent(result):
-        # Nothing to say about the handle of a file that isn't there;
-        # recheck is what drops a recorded file that has since gone away
+        # There is nothing to say about the handle of a file that is not
+        # there. recheck drops a recorded file that went away later.
 
         return None
 
@@ -285,8 +293,8 @@ def record_result(result, context=None):
         _append_history(path, entry)
         return entry
 
-    # A file that broke again after recovering is a new episode, so it
-    # starts a new clock rather than inheriting the old one
+    # A file that broke again after a recovery is a new episode. Thus,
+    # it starts a new clock. It does not inherit the old one.
 
     first_seen = now
     if existing is not None and _entry_state(existing) == FAILING:
@@ -306,7 +314,7 @@ def record_result(result, context=None):
 
 
 def forget(path):
-    """Drop a file's record entirely, reported and done with."""
+    """Drop the record of a file completely, after the report is done."""
 
     current_app.redis.hdel(STATE_KEY, path)
 
@@ -314,10 +322,10 @@ def forget(path):
 def _append_history(path, entry):
     """Record one completed episode, permanently.
 
-    This is the only durable trace: the state entry it came from is
-    reaped by the next recheck. Failures here are swallowed for the same
-    reason the probe swallows its own — losing a measurement is bad, but
-    failing the task that produced it is worse.
+    This is the only durable trace. The next recheck removes the state
+    entry that it came from. This function swallows failures for the
+    same reason that the probe swallows its own. A lost measurement is
+    bad. A failed task that produced it is worse.
     """
 
     try:
@@ -345,7 +353,7 @@ def _append_history(path, entry):
 
 
 def history():
-    """Every recovery ever recorded, oldest first."""
+    """Return every recovery ever recorded, oldest first."""
 
     episodes = []
     for payload in current_app.redis.lrange(HISTORY_KEY, 0, -1):
@@ -360,10 +368,10 @@ def history():
 def probe_and_record(path, context=None):
     """Probe a path, record the result, and log a failure.
 
-    Never raises: this runs after work that has already succeeded, and a
-    diagnostic that can fail the task it's reporting on is worse than no
-    diagnostic. Returns the probe result, or None if the probe itself
-    couldn't run.
+    This function never raises. It runs after work that already
+    succeeded. A diagnostic that can fail the task it reports on is
+    worse than no diagnostic. Return the probe result, or None if the
+    probe itself could not run.
     """
 
     try:
@@ -401,10 +409,10 @@ def probe_and_record(path, context=None):
 
 
 def recorded_state(state=None):
-    """Every recorded file keyed by path, optionally filtered to one state.
+    """Return every recorded file keyed by path, optionally filtered to one state.
 
-    Unfiltered this returns failures and unreported recoveries together,
-    so callers that mean one or the other should say which.
+    Without a filter, this returns failures and unreported recoveries
+    together. Thus, a caller that wants one or the other must say which.
     """
 
     entries = {}
@@ -424,19 +432,19 @@ def recorded_state(state=None):
 
 
 def failing_state():
-    """The files failing their probe right now."""
+    """Return the files that fail their probe now."""
 
     return recorded_state(FAILING)
 
 
 def healed_state():
-    """Recoveries recorded but not yet reported by a recheck."""
+    """Return the recoveries that are recorded but not yet reported by a recheck."""
 
     return recorded_state(HEALED)
 
 
 def _healed_result(path, entry):
-    """A recovery shaped like a probe result, so callers treat it as one."""
+    """Return a recovery with the shape of a probe result, for the callers."""
 
     return {
         "path": path,
@@ -453,8 +461,10 @@ def _healed_result(path, entry):
 
 
 class RecheckReport(NamedTuple):
-    """What one recheck found. Named because four buckets is past the
-    point where positional unpacking reads as anything."""
+    """Hold what one recheck found.
+
+    The fields are named because 4 buckets are too many for positional
+    unpacking to read clearly."""
 
     healed: list
     still_failing: list
@@ -463,29 +473,29 @@ class RecheckReport(NamedTuple):
 
 
 def recheck():
-    """Re-probe the recorded failures and collect every recovery.
+    """Probe the recorded failures again and collect every recovery.
 
-    Returns a RecheckReport of result-dict lists. A healed result carries
-    `held_for_seconds` — how long the file spent in the
-    state — which is the number the investigation actually wants.
+    Return a RecheckReport of result-dict lists. A healed result has
+    `held_for_seconds`, the time that the file spent in the state. That
+    is the number that the investigation wants.
 
-    Two kinds of recovery land here: a file this recheck found closing
-    cleanly, and one whose recovery a task's own probe already recorded
-    in the meantime. Both are reported once and then reaped, so what
-    stays behind is a description of what is broken now.
+    Two kinds of recovery arrive here: a file that this recheck found
+    closing cleanly, and a file whose recovery the probe of a task
+    already recorded. This function reports both 1 time and then removes
+    them. Thus, what stays is a description of what is broken now.
 
-    A recorded file that has since left the volume goes into `gone`
-    rather than either bucket: it didn't recover, and it can't still be
-    stuck, so tracking it forever would be the wrong answer twice.
+    A recorded file that left the volume later goes into `gone`, not
+    into the other buckets. It did not recover. It cannot still be
+    stuck. Thus, permanent tracking would be the wrong answer two times.
 
     A file whose SHARE is unmounted goes into `skipped` and keeps its
-    record untouched. Every file on an unmounted share reports ENOENT at
-    once, and mistaking that for departure would drop the entire record —
-    including durations that exist nowhere else — the moment a recheck
-    happened to run mid-remount. Each share is health-checked ONCE,
-    through a watchdog, before any of its files is probed (#237): a
-    wedged share hangs the very open the probe would make, so asking
-    the file directly is what must not happen.
+    record unchanged. Every file on an unmounted share reports ENOENT at
+    one time. If Fitzflix took that for departure, it would drop the
+    whole record, with the durations that exist nowhere else, when a
+    recheck ran during a remount. This function health-checks each share
+    ONCE, through a watchdog, before it probes the files of that share
+    (#237). A wedged share hangs the open that the probe would make.
+    Thus, a direct question to the file is what must not occur.
     """
 
     healed = []
@@ -530,9 +540,9 @@ def recheck():
             forget(path)
 
         elif result["ok"]:
-            # record_result carries the failing entry's context forward,
-            # so this keeps which task broke the file and adds who found
-            # it healed
+            # record_result carries the context of the failing entry
+            # forward. Thus, this keeps which task broke the file and adds
+            # which task found it healed.
 
             recorded = record_result(result, context="recheck")
             healed.append(_healed_result(path, recorded or entry))

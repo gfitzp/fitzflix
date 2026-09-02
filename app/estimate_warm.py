@@ -1,22 +1,24 @@
-"""Nightly estimate pre-warming for the shared score source's tmdb lane.
+"""Warm the estimates for the tmdb lane of the shared score source each night.
 
-Glenn's call (Aug 2026): the TMDB API costs nothing but latency, so
-spend a nightly budget warming the enriched payloads tomorrow's
-browsing will want — the filmographies of the people his taste
-profile ranks highest, plus TMDB's popular and top-rated charts — and
-pre-score everything into the tmdb overlay, so tiles paint estimates
-instantly instead of filling on the fly.
+Decision by Glenn (2026-08): the TMDB API costs only latency. Thus,
+Fitzflix spends a nightly budget to warm the enriched payloads that
+the browsing of the next day will want. These are the filmographies
+of the people that his taste profile ranks highest, plus the popular
+and top-rated charts of TMDB. The task then pre-scores all of them
+into the tmdb overlay. Thus, the tiles show the estimates immediately.
+They do not fill them on demand.
 
-Cursors roll nightly: each night resumes where the last stopped,
-expanding the radius through the affinity people and deeper into the
-chart pages, and a source that wraps around re-warms its films — which
-re-stamps their month-long TTL, so tracked films are effectively
-always cached while one-off on-demand payloads still age out at the
-enrichment cache's own week.
+The cursors move forward each night. Each night continues where the
+last night stopped. The radius grows through the affinity people and
+deeper into the chart pages. A source that wraps around warms its
+films again. This sets their TTL of 1 month again. Thus, the tracked
+films are in the cache almost always. The one-off on-demand payloads
+still expire after the 1-week TTL of the enrichment cache.
 
-Runs after the 1:45 recompute (which drops the overlays) and the 2:15
-rail rebuild, so the pre-scores derive against the fresh profile and
-the rail's own enrichments are already in cache to piggyback on.
+This task runs after the 01:45 recompute and the 02:15 rail rebuild.
+The recompute deletes the overlays. Thus, the pre-scores derive from
+the fresh profile. The enrichments of the rail are already in the
+cache, and this task uses them.
 """
 
 import json
@@ -39,26 +41,27 @@ from app.recommendations import (
 )
 from app.streaming_rail import ENRICHED_KEY, _payload_features, enriched_movie
 
-# This process's app instance, resolved lazily so the nightly task can
-# run on a worker without building a second application
+# This is the app instance of this process. Fitzflix resolves it lazily.
+# Thus, the nightly task can run on a worker without a second application
 
 app = LocalProxy(get_app)
 
 CURSORS_KEY = "fitzflix:estimates:warm:cursors"
 
-# Enriched payload fetches per night — the budget is latency, not
-# money, so it's sized generously: 2,000 at the ten-abreast pace is
-# a few minutes of queue time
+# This is the number of enriched payload fetches per night. The budget
+# is latency, not money. Thus, the budget is large. 2000 fetches at 10
+# in parallel take some minutes of queue time
 
 WARM_FETCH_BUDGET = 2000
 
-# Warmed payloads hold a month; the rolling cursor re-warms tracked
-# films before that, so in practice they never expire
+# The warmed payloads stay for 1 month. The rolling cursor warms the
+# tracked films again before that time. Thus, in practice they never
+# expire
 
 WARM_TTL = 30 * 86400
 
-# Affinity people warmed per user per night, and chart pages consumed
-# per chart per night; TMDB stops paging charts at 500
+# These are the affinity people warmed per user per night, and the chart
+# pages read per chart per night. TMDB stops the chart pages at 500
 
 WARM_PEOPLE = 40
 CHART_PAGES_PER_NIGHT = 10
@@ -69,9 +72,11 @@ PERSON_CLASSES = ("actor",) + tuple(CREW_ROLE_JOBS)
 
 
 def _affinity_people(profile):
-    """The profile's people, strongest affinity first — the careers the
-    user is most likely to browse. A person credited in more than one
-    class (actor and director) counts once, at their best score."""
+    """Return the people of the profile, strongest affinity first.
+
+    These are the careers that the user browses most probably. A person
+    with credits in more than 1 class (actor and director) counts 1
+    time, at the best score."""
 
     best = {}
     for key, entry in (profile or {}).get("affinities", {}).items():
@@ -85,9 +90,11 @@ def _affinity_people(profile):
 
 
 def person_film_ids(person_id):
-    """The tmdb ids across one person's career, through the same
-    day-cached credits payload the filmography page reads — so a warm
-    here also spares that page its fetch."""
+    """Return the tmdb ids across the career of 1 person.
+
+    This function reads the same credits payload that the filmography
+    page reads. That payload stays in the cache for 1 day. Thus, a warm
+    here also saves that page its fetch."""
 
     cache_key = f"fitzflix:tmdb:person:{int(person_id)}:credits"
     cached = current_app.redis.get(cache_key)
@@ -126,7 +133,7 @@ def person_film_ids(person_id):
 
 
 def chart_page_ids(chart, page):
-    """(tmdb ids, total pages) for one page of a TMDB chart."""
+    """Return (tmdb ids, total pages) for 1 page of a TMDB chart."""
 
     try:
         r = tmdb_get(
@@ -144,10 +151,12 @@ def chart_page_ids(chart, page):
 
 
 def prescore_films(redis, user_id, tmdb_ids, profile):
-    """Score cached payloads straight into the user's tmdb overlay —
-    the same taste-plus-copref recipe resolved_tmdb_score runs, done
-    ahead of time so the first tile view reads a finished number.
-    Films with local records sit out; the movie-id lane owns them."""
+    """Score the cached payloads directly into the tmdb overlay of the user.
+
+    This is the same taste-plus-copref recipe that resolved_tmdb_score
+    runs. This function runs it early. Thus, the first tile view reads a
+    complete number. Films with local records are not included. The
+    movie-id lane owns them."""
 
     recorded = {
         tmdb_id
@@ -165,8 +174,8 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
         )
         mapping = {}
         for tmdb_id, payload in zip(chunk, payloads):
-            # A cached null is a deleted TMDB id — present so it isn't
-            # re-fetched, but nothing to score
+            # A cached null is a deleted TMDB id. It is present to prevent
+            # a second fetch. There is nothing to score
             data = json.loads(payload) if payload else None
             if not data:
                 continue
@@ -181,8 +190,10 @@ def prescore_films(redis, user_id, tmdb_ids, profile):
 
 
 def warm_estimates():
-    """Nightly task: warm tomorrow's estimate payloads and pre-score
-    them into each profiled user's tmdb overlay."""
+    """Warm the estimate payloads for the next day and pre-score them.
+
+    This nightly task writes the scores into the tmdb overlay of each
+    user that has a profile."""
 
     with app.app_context():
         if not current_app.config["TMDB_API_KEY"]:
@@ -193,9 +204,9 @@ def warm_estimates():
             for field, value in redis.hgetall(CURSORS_KEY).items()
         }
 
-        # Candidates, in the order the budget should favor them: each
-        # user's affinity people first, then the charts — both rolling
-        # from where last night stopped
+        # These are the candidates, in the order that the budget prefers.
+        # The affinity people of each user come first, then the charts.
+        # Both continue from the point where the last night stopped
 
         candidate_ids = []
         profiles = {}
@@ -232,7 +243,8 @@ def warm_estimates():
             mapping={field: str(value) for field, value in cursors.items()},
         )
 
-        # Fetch what the cache lacks, ten abreast under the budget
+        # Fetch the payloads that the cache lacks, 10 in parallel, in the
+        # budget
 
         cached_flags = redis.mget(
             [ENRICHED_KEY.format(tmdb_id=tmdb_id) for tmdb_id in candidates]
@@ -250,8 +262,8 @@ def warm_estimates():
             with ThreadPoolExecutor(max_workers=10) as executor:
                 list(executor.map(warm, to_fetch))
 
-        # Every warmed candidate holds the long TTL — the rolling
-        # cursor re-stamps it before it runs out
+        # Each warmed candidate gets the long TTL. The rolling cursor sets
+        # it again before it expires
 
         pipeline = redis.pipeline()
         for tmdb_id in candidates:

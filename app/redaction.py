@@ -1,20 +1,23 @@
-"""Credential redaction for the application log.
+"""Remove credentials from the application log.
 
 TMDB, Plex, Sonarr and Radarr all take their credentials as a query
-parameter, so any logged URL — most often a requests HTTPError's message
-inside a traceback — carries the key with it. A single logging.Filter on
-the app logger scrubs every record before any handler (file, mail,
-pytest's caplog) formats it, by two complementary rules:
+parameter. Thus, each logged URL carries the key with it. The most
+frequent example is the message of a requests HTTPError inside a
+traceback. One logging.Filter on the app logger cleans each record
+before a handler (file, mail, the caplog of pytest) formats it. The
+filter applies 2 rules:
 
-* ``?api_key=…``-style query parameters are blanked by name, whatever
-  the value — this catches keys the config doesn't know about.
-* every configured secret value (settings named *_KEY, *_TOKEN,
-  *_SECRET, *_PASSWORD, plus the database URI's password) is replaced
-  wherever it appears — this catches a key logged outside a URL.
+* The filter blanks query parameters such as ``?api_key=...`` by name.
+  The value is not important. This catches keys that the config does
+  not know.
+* The filter replaces each configured secret value (settings named
+  *_KEY, *_TOKEN, *_SECRET, *_PASSWORD, and the password of the
+  database URI) at each location. This catches a key logged outside a
+  URL.
 
-Records that carry an exception get their traceback text rendered and
-scrubbed here too, so a handler's formatter uses the clean cached copy
-instead of re-rendering the raw exception.
+If a record carries an exception, the filter renders its traceback text
+and cleans it here too. Thus, the formatter of a handler uses the clean
+cached copy. It does not render the raw exception again.
 """
 
 import logging
@@ -24,22 +27,26 @@ from sqlalchemy.engine import make_url
 
 REDACTED = "[redacted]"
 
-# Settings whose values are credentials; matched against config names
+# The values of these settings are credentials. The pattern matches
+# config names.
 SECRET_SETTING = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD)$")
 
-# Query parameters that carry credentials, blanked by name
+# Query parameters that carry credentials. The filter blanks them by name.
 SECRET_PARAM = re.compile(
     r"(?i)\b((?:api_?key|x-plex-token|token|password|secret)=)[^&\s'\"]+"
 )
 
-# Values shorter than this aren't treated as secrets to replace: a tiny
-# value would redact every unrelated occurrence of those characters
+# The filter does not replace values shorter than this as secrets. A
+# very short value would redact each unrelated occurrence of those
+# characters.
 MIN_SECRET_LENGTH = 6
 
 
 def secret_values(config):
-    """The credential strings found in a config mapping, longest first so
-    a secret that contains another is replaced whole."""
+    """Return the credential strings found in a config mapping.
+
+    The longest string comes first. Thus, a secret that contains a
+    different secret is replaced as a whole."""
 
     secrets = set()
     for name, value in config.items():
@@ -61,15 +68,15 @@ def secret_values(config):
 
 
 class SecretRedactor(logging.Filter):
-    """Scrub credentials out of every record logged through a logger."""
+    """Remove credentials from each record that a logger logs."""
 
     def __init__(self, config):
         super().__init__()
         self.secrets = secret_values(config)
 
     def redact(self, text):
-        """The text with credential parameters and known secret values
-        blanked."""
+        """Return the text with credential parameters and known secret
+        values blanked."""
 
         text = SECRET_PARAM.sub(rf"\g<1>{REDACTED}", text)
         for secret in self.secrets:
@@ -77,8 +84,10 @@ class SecretRedactor(logging.Filter):
         return text
 
     def filter(self, record):
-        """Scrub the record's message (pre-rendering its args) and its
-        traceback in place; always lets the record through."""
+        """Clean the message and the traceback of the record in place.
+
+        This renders the args of the record into the message first. It
+        always lets the record through."""
 
         try:
             message = record.getMessage()
@@ -95,8 +104,9 @@ class SecretRedactor(logging.Filter):
 
 
 def install(logger, config):
-    """Attach a SecretRedactor to the logger, once: both Flask instances in
-    this package share the "app" logger."""
+    """Attach a SecretRedactor to the logger one time only.
+
+    Both Flask instances in this package share the "app" logger."""
 
     if not any(isinstance(f, SecretRedactor) for f in logger.filters):
         logger.addFilter(SecretRedactor(config))
