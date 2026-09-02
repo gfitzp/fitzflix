@@ -111,8 +111,9 @@ def player_token(user):
     admin — the server's owner — gets the owner token. Anyone else
     gets a token for THEIR Plex Home user (matched to User.plex_username
     by username or title), minted through plex.tv's home switch and
-    cached; None when no Home user matches or that user is
-    PIN-protected. The owner token never travels to a device a
+    cached; None when no Home user matches (the user links one by
+    entering their Plex username on their own Profile page) or that
+    user is PIN-protected. The owner token never travels to a device a
     non-admin chose: the Profile page's probe only proves something
     answered at the address, not that it's a Plex player (security
     review, Sept 2026)."""
@@ -289,8 +290,8 @@ def play_movie(movie, user):
         token = player_token(user)
         if token is None:
             return False, (
-                "Remote playback needs your Plex Home account linked — ask "
-                "the admin to set your Plex username."
+                "Remote playback needs your Plex Home account linked — set "
+                "your Plex username on your Profile page."
             )
         rating_key = _movie_rating_key(movie)
         if rating_key is None:
