@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.conftest import page_csrf_token
 from tests.factories import make_movie
 
 SERVER_CONFIG = {
@@ -354,7 +355,9 @@ def test_play_route_uses_the_users_device(
     movie_id = _committed_movie(app)
 
     r = user_client.post(
-        f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
+        f"/movie/{movie_id}/play",
+        data={"csrf_token": page_csrf_token(user_client)},
+        headers={"X-Requested-With": "play"},
     )
     assert r.status_code == 200
     state = json.loads(r.data)
@@ -375,7 +378,9 @@ def test_play_route_without_a_device_reports_kindly(
     movie_id = _committed_movie(app)
 
     r = user_client.post(
-        f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
+        f"/movie/{movie_id}/play",
+        data={"csrf_token": page_csrf_token(user_client)},
+        headers={"X-Requested-With": "play"},
     )
     assert r.status_code == 502
     state = json.loads(r.data)
@@ -636,3 +641,54 @@ def test_profile_rejects_a_hostname(app, monkeypatch, user_client, server_config
     r = _profile_post(user_client, "appletv.local")
     assert "private-network" in r.get_data(as_text=True)
     assert probes == []
+
+
+def test_play_route_refuses_a_post_without_a_csrf_token(
+    app, monkeypatch, user_client, server_config, member_device
+):
+    """A cross-site form post (a remembered user on a browser that
+    doesn't default cookies to Lax) never reaches the player."""
+
+    fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
+    _wire(monkeypatch, fake)
+    movie_id = _committed_movie(app)
+
+    r = user_client.post(
+        f"/movie/{movie_id}/play", headers={"X-Requested-With": "play"}
+    )
+    assert r.status_code == 400
+    assert json.loads(r.data)["ok"] is False
+    assert fake.player_gets == [] and fake.queue_posts == []
+
+    # A plain form post is refused the same way
+    r = user_client.post(f"/movie/{movie_id}/play", data={"player": "plex"})
+    assert r.status_code == 400
+    assert fake.player_gets == []
+
+
+def test_remember_cookie_is_samesite_lax(app, client):
+    """Flask-Login's remember cookie defaults to no SameSite; the
+    session cookie is Lax, and the remember cookie must match or a
+    cross-site POST re-authenticates a remembered user from it."""
+
+    from tests.conftest import MEMBER_EMAIL, MEMBER_PASSWORD
+
+    assert app.config["REMEMBER_COOKIE_SAMESITE"] == "Lax"
+    page = client.get("/auth/login").get_data(as_text=True)
+    token = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
+    r = client.post(
+        "/auth/login",
+        data={
+            "csrf_token": token,
+            "email": MEMBER_EMAIL,
+            "password": MEMBER_PASSWORD,
+            "remember_me": "y",
+        },
+    )
+    assert r.status_code == 302
+    remember = [
+        header
+        for header in r.headers.getlist("Set-Cookie")
+        if header.startswith("remember_token=")
+    ]
+    assert remember and "SameSite=Lax" in remember[0]

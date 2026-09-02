@@ -57,6 +57,9 @@ class Config(object):
     SESSION_COOKIE_SECURE               = PREFERRED_URL_SCHEME == "https"
     REMEMBER_COOKIE_SECURE              = PREFERRED_URL_SCHEME == "https"
     SESSION_COOKIE_SAMESITE             = "Lax"
+    # Flask-Login's remember cookie defaults to no SameSite at all, and a
+    # remembered user is re-authenticated from it on a cross-site POST
+    REMEMBER_COOKIE_SAMESITE            = "Lax"
 
     # Fitzflix core configuration
 

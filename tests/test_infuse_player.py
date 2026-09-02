@@ -276,6 +276,9 @@ def _committed_movie(app, **kwargs):
 
 
 def _play(client, movie_id, data=None):
+    from tests.conftest import page_csrf_token
+
+    data = {"csrf_token": page_csrf_token(client), **(data or {})}
     r = client.post(
         f"/movie/{movie_id}/play", data=data, headers={"X-Requested-With": "play"}
     )

@@ -22,6 +22,8 @@ from flask import (
     url_for,
     request,
 )
+from flask_wtf.csrf import validate_csrf
+from wtforms import ValidationError
 
 # flask.Markup was removed in Flask 2.4; import from its actual home
 from markupsafe import Markup
@@ -1910,6 +1912,24 @@ def movie_play(movie_id):
     in its status message, so popover plays hear it too. Background
     posts get JSON; a plain form post falls back to flash-and-redirect.
     """
+
+    # The play forms carry the csrf token every other mutating route
+    # checks through its FlaskForm; this route reads the form by hand,
+    # so it validates the token by hand (security review, Sept 2026)
+    try:
+        validate_csrf(request.form.get("csrf_token"))
+    except ValidationError:
+        if request.headers.get("X-Requested-With") == "play":
+            return (
+                jsonify(
+                    {
+                        "ok": False,
+                        "message": "This page is stale — reload it and try again.",
+                    }
+                ),
+                400,
+            )
+        abort(400)
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     infuse_possible = bool(movie.tmdb_id) and current_user.infuse_player_configured
