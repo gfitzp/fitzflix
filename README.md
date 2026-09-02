@@ -1,5 +1,5 @@
 # fitzflix
-Fitzflix is a media library manager. Glenn Fitzpatrick made Fitzflix for two reasons. He wanted to know the contents of the family library when he looked for movies at thrift shops. He also wanted to keep a record of his movie reviews.
+Fitzflix is a media library manager. Its primary use cases are film library, shopping list, and watch history.
 
 <img width="1208" alt="Screen Shot 2022-05-31 at 11 50 36 AM" src="https://user-images.githubusercontent.com/10539597/171218753-2616f91e-677a-483b-bceb-03048b372df3.png">
 
