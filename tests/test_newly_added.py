@@ -105,6 +105,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     stored = json.loads(app.redis.get(key))
     assert [item["first_seen"] for item in stored["items"]] == [None]
     assert stored["items"][0]["scraped_title"] == "The Searchers"
+    # Planting stamps nothing new, so the DVR dial has nothing to learn
+    assert dvr_rebuild_jobs(app) == []
 
     # Second run, one new film and one unmatched newcomer: the prior
     # film keeps its null stamp and isn't re-matched, the arrivals
@@ -123,6 +125,9 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert by_title["Obscurity"]["tmdb_id"] is None
     assert by_title["Obscurity"]["director"] == "Jane Doe"
     assert match_calls == ["Love & Mercy", "Obscurity"]
+    # Fresh arrivals join the Criterion channel via the synthesized
+    # match, so the dial is rebuilt the same day
+    assert len(dvr_rebuild_jobs(app)) == 1
 
     # Third run with the planted film gone: it's pruned, the kept
     # film's stamp survives
@@ -608,3 +613,11 @@ def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
     assert "Nothing new right now." in body
     assert "Inventory Quiet" not in body
+
+
+def dvr_rebuild_jobs(app):
+    return [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.dvr.build_channel_lineups"
+    ]

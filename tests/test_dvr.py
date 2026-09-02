@@ -441,3 +441,94 @@ def test_stream_rolls_programs_and_dies_cleanly(app, client, monkeypatch):
     # An unknown channel is indistinguishable from a missing route
 
     assert client.get(f"/dvr/{TOKEN}/stream/nope.ts").status_code == 404
+
+
+def test_build_prefers_the_copy_on_disk(app, monkeypatch, tmp_path):
+    """A row can outlive its local file (the WEBDL rebuild leaves
+    WEBRip rows beside renamed WEBDL files); the better-ranked absent
+    row yields to the present one, and a movie with no copy on disk
+    keeps its best row so the probe skips it as before."""
+
+    from app import dvr
+
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", str(tmp_path))
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    with app.app_context():
+        movie = make_movie("Rebuilt", 1938)
+        make_movie_file(movie, "WEBRip-1080p")
+        present = make_movie_file(movie, "WEBDL-720p")
+        make_movie_file(make_movie("Absent", 1990), "Bluray-1080p")
+        db.session.commit()
+        on_disk = tmp_path / present.file_path
+        on_disk.parent.mkdir(parents=True)
+        on_disk.write_bytes(b"mkv")
+        assert dvr.build_channel_lineups() is True
+
+    lineup = dvr.channel_lineup(app.redis, "fitzflix-mix")
+    by_title = {p["title"]: p["file_path"] for p in lineup["programs"]}
+    assert by_title["Rebuilt"].endswith("[WEBDL-720p].mkv")
+    assert by_title["Absent"].endswith("[Bluray-1080p].mkv")
+
+
+def test_build_fills_the_cap_past_a_failed_probe(app, monkeypatch):
+    """A film whose probe fails gives its slot to the next candidate
+    instead of shrinking the day's lineup."""
+
+    from app import dvr
+
+    monkeypatch.setitem(app.config, "DVR_CHANNEL_FILMS", 2)
+    monkeypatch.setattr(
+        dvr, "_probe_duration", lambda path: None if "Drama 0" in path else 3600.0
+    )
+    with app.app_context():
+        for n in range(3):
+            make_movie_file(make_movie(f"Drama {n}", 1990 + n), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+
+    lineup = dvr.channel_lineup(app.redis, "fitzflix-mix")
+    titles = {p["title"] for p in lineup["programs"]}
+    assert len(titles) == 2 and "Drama 0" not in titles
+
+
+def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
+    """Day-one arrivals on the Channel's own newly-added page join the
+    Criterion channel before TMDB's payload catches up."""
+
+    from app import dvr
+    from app.newly_added import NEWLY_ADDED_KEY
+
+    monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
+    nothing = {"link": None, "flatrate": [], "ads": [], "rent": [], "buy": []}
+    monkeypatch.setattr(
+        dvr,
+        "batch_title_availability",
+        lambda tmdb_ids, **kwargs: ({t: nothing for t in tmdb_ids}, []),
+    )
+    app.redis.set(
+        NEWLY_ADDED_KEY.format(provider_id=258),
+        json.dumps(
+            {
+                "items": [
+                    {"tmdb_id": 9000 + n, "first_seen": date.today().isoformat()}
+                    for n in range(3)
+                ]
+            }
+        ),
+    )
+    with app.app_context():
+        for n in range(3):
+            make_movie_file(
+                make_movie(f"Criterion {n}", 1950 + n, tmdb_id=9000 + n),
+                "Bluray-1080p",
+            )
+        make_movie_file(make_movie("Other", 1990, tmdb_id=9500), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.build_channel_lineups() is True
+
+    lineup = dvr.channel_lineup(app.redis, "criterion")
+    assert {p["title"] for p in lineup["programs"]} == {
+        "Criterion 0",
+        "Criterion 1",
+        "Criterion 2",
+    }

@@ -208,7 +208,7 @@ def _process_pending(subscribed):
     streamable = [
         tmdb_id
         for tmdb_id in candidates
-        if streaming_matches(availability.get(tmdb_id), subscribed)
+        if streaming_matches(availability.get(tmdb_id), subscribed, tmdb_id=tmdb_id)
     ]
 
     profiles = []

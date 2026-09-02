@@ -195,10 +195,25 @@ def _first_audio_channels(file_id):
     return AC3_MAX_CHANNELS
 
 
+def _on_disk(file):
+    """True when the file's local copy is present. Rows can outlive
+    their local file — a superseded edition keeps its row and its S3
+    archive, and the WEBDL rebuild leaves rows whose file is a renamed
+    sibling — and none of those can air."""
+
+    return os.path.exists(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
+
+
 def _best_files_by_movie():
     """Each owned movie's best main-feature copy: never a fullscreen
     copy while a widescreen one exists, then best quality — the same
-    ranking the movie cards use."""
+    ranking the movie cards use — but only among copies that are on
+    disk, so an absent best row yields to a present lesser one. A
+    movie with no copy on disk keeps its best row (the duration probe
+    skips it), which also keeps an unmounted share from emptying the
+    dial outright."""
 
     rows = (
         db.session.query(Movie, File)
@@ -209,8 +224,15 @@ def _best_files_by_movie():
         .all()
     )
     best = {}
+    present = set()
     for movie, file in rows:
-        best.setdefault(movie.id, (movie, file))
+        if movie.id in present:
+            continue
+        if _on_disk(file):
+            best[movie.id] = (movie, file)
+            present.add(movie.id)
+        else:
+            best.setdefault(movie.id, (movie, file))
     return best
 
 
@@ -254,7 +276,9 @@ def _criterion_movie_ids(best):
     """Owned films streaming on the Criterion Channel right now, per
     the availability cache. Cache-only reads: the nightly refresh keeps
     every owned film's payload warm, and a cold entry just waits for
-    the next build."""
+    the next build. The tmdb_id lets streaming_matches synthesize the
+    match from the scraped Criterion stores, so a day-one arrival TMDB
+    hasn't noticed yet still joins the channel."""
 
     by_tmdb = {}
     for movie_id, (movie, _) in best.items():
@@ -266,7 +290,7 @@ def _criterion_movie_ids(best):
     return [
         by_tmdb[tmdb_id]
         for tmdb_id, payload in payloads.items()
-        if payload and streaming_matches(payload, {CRITERION_PROVIDER_ID})
+        if streaming_matches(payload, {CRITERION_PROVIDER_ID}, tmdb_id=tmdb_id)
     ]
 
 
@@ -697,9 +721,14 @@ def build_channel_lineups(day=None):
             if channel.leaving_only and departs:
                 note = f"Leaving the Criterion Channel {departs.strftime('%B %-d')}."
 
+            # The whole shuffled pool is the candidate list, not its
+            # first film_cap entries: a film whose probe fails gives
+            # its slot to the next one rather than shrinking the day
             Random(f"dvr:{channel.slug}:{day.isoformat()}").shuffle(movie_ids)
             movie_programs = []
-            for movie_id in movie_ids[:film_cap]:
+            for movie_id in movie_ids:
+                if len(movie_programs) == film_cap:
+                    break
                 movie, file = best[movie_id]
                 duration = _cached_duration(redis_client, file)
                 if duration is None:

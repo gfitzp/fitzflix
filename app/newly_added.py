@@ -40,6 +40,7 @@ from app.leaving_criterion import (
     CRITERION_PROVIDER_ID,
     fetch_collection_films,
     match_tmdb_id,
+    rebuild_dvr_lineups,
     user_film_sets,
 )
 from app.models import File, Movie, UserMovieReview, UserWatchlist
@@ -164,6 +165,10 @@ def _refresh_feed(provider_id, feed):
             else " (planted)"
         )
     )
+    # A day-one arrival joins the Criterion channel through the
+    # synthesized match, so the dial catches up the same day
+    if fresh and provider_id == CRITERION_PROVIDER_ID:
+        rebuild_dvr_lineups(f"{fresh} newly-added Criterion films")
 
 
 def newly_added_shelves(user):

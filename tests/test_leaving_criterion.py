@@ -319,6 +319,31 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["items"][1]["director"] == "Bill Pohlad"
     assert stored["items"][1]["year"] == 2015
 
+    # The new set reaches the DVR dial the same day (Sept 1 2026: the
+    # 6:30 build ran before the set landed at 11:38, and the Leaving
+    # Soon channel stayed dark until the next morning)
+    assert len(dvr_rebuild_jobs(app)) == 1
+
+
+def dvr_rebuild_jobs(app):
+    return [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.dvr.build_channel_lineups"
+    ]
+
+
+def test_dvr_rebuild_waits_on_a_configured_dvr(app, monkeypatch):
+    import app.leaving_criterion as leaving_criterion
+
+    with app.app_context():
+        monkeypatch.setitem(app.config, "DVR_TOKEN", None)
+        leaving_criterion.rebuild_dvr_lineups("test")
+        assert dvr_rebuild_jobs(app) == []
+        monkeypatch.setitem(app.config, "DVR_TOKEN", "dvr-test-token")
+        leaving_criterion.rebuild_dvr_lineups("test")
+        assert len(dvr_rebuild_jobs(app)) == 1
+
 
 def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
     # The daily cadence only exists to retry across the month boundary;
@@ -337,6 +362,7 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
 
     assert leaving_criterion.refresh_leaving_criterion() is True
     assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
+    assert dvr_rebuild_jobs(app) == []
 
 
 def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):

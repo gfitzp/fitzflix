@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from flask import current_app
+from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -232,22 +232,31 @@ def _criterion_provider():
     """The provider registry's Criterion Channel entry — the name and
     logo a synthesized match renders with — or a logo-less stand-in
     when the registry can't be read (the badge template skips the
-    image for a null logo_path)."""
+    image for a null logo_path). Resolved once per app context and
+    kept on flask.g: the rec-shelf pool asks per candidate film, and
+    each registry read parses the whole provider list — or, with the
+    registry uncached and TMDB unreachable, waits out a network
+    timeout that would otherwise repeat for every film."""
 
     from app.leaving_criterion import CRITERION_PROVIDER_ID
 
-    for provider in provider_registry():
-        if provider["provider_id"] == CRITERION_PROVIDER_ID:
-            return {
-                "provider_id": provider["provider_id"],
-                "provider_name": provider["provider_name"],
-                "logo_path": provider["logo_path"],
-            }
-    return {
-        "provider_id": CRITERION_PROVIDER_ID,
-        "provider_name": "Criterion Channel",
-        "logo_path": None,
-    }
+    entry = getattr(g, "_criterion_provider_entry", None)
+    if entry is None:
+        entry = {
+            "provider_id": CRITERION_PROVIDER_ID,
+            "provider_name": "Criterion Channel",
+            "logo_path": None,
+        }
+        for provider in provider_registry():
+            if provider["provider_id"] == CRITERION_PROVIDER_ID:
+                entry = {
+                    "provider_id": provider["provider_id"],
+                    "provider_name": provider["provider_name"],
+                    "logo_path": provider["logo_path"],
+                }
+                break
+        g._criterion_provider_entry = entry
+    return dict(entry)
 
 
 def streaming_matches(availability, provider_ids, tmdb_id=None):

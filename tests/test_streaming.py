@@ -1009,3 +1009,32 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([951],)
+
+
+def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
+    # The rec-shelf pool asks per candidate film; one registry parse
+    # (or one network timeout, with the registry cold) per context
+
+    from datetime import date
+
+    import app.streaming as streaming
+
+    reads = []
+
+    def counting_registry():
+        reads.append(1)
+        return [CRITERION]
+
+    monkeypatch.setattr(streaming, "provider_registry", counting_registry)
+    plant_newly_added(app, 22171, date.today())
+
+    with app.app_context():
+        first = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+        second = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+        # Callers may annotate their copy without touching the cache
+        first[0]["leaving"] = "never"
+        third = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+
+    assert len(reads) == 1
+    assert second[0]["logo_path"] == "/criterion.jpg"
+    assert "leaving" not in third[0]
