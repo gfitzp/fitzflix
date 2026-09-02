@@ -237,19 +237,19 @@ def cron_table(config):
         ),
         # Month-start catch-up for both Criterion feeds. The Channel
         # publishes the pages of the new month at some time on the 1st.
-        # On 2026-09-01, that was after the 05:00 and 06:00 morning runs.
-        # Thus, check again at noon instead of the next morning. The
-        # newly-added comparison runs again without harm. The currency
-        # guard of the leaving task makes its noon pass free when the
-        # 06:00 run succeeded.
+        # On 2026-09-01, that was after the 05:00 and 06:00 morning runs
+        # but before 11:38. Thus, check again at 8 AM instead of the
+        # next morning. The newly-added comparison runs again without
+        # harm. The currency guard of the leaving task makes this pass
+        # free when the 06:00 run succeeded.
         (
-            "0 12 1 * *",
+            "0 8 1 * *",
             "app.newly_added.refresh_newly_added",
             1800,
             "Month-start check of the newly-added streaming feeds",
         ),
         (
-            "0 12 1 * *",
+            "0 8 1 * *",
             "app.leaving_criterion.refresh_leaving_criterion",
             3600,
             "Month-start check of the leaving-Criterion film set",
