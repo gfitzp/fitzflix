@@ -21,8 +21,9 @@ TOKEN = "dvr-test-token"
 
 @pytest.fixture(autouse=True)
 def library_present(monkeypatch):
-    """These tests seed rows, not files: every row reads as on disk
-    and the shares as online unless a test says otherwise."""
+    """Make every row read as on disk and every share as online.
+
+    These tests seed rows, not files. A test can say otherwise."""
 
     from app import dvr
 
@@ -298,7 +299,7 @@ def test_build_makes_themed_tv_channels(app, monkeypatch):
         yank.networks.append(cbs)
         host = make_tv_series("The Match Game")
         host.keywords.append(game_show)
-        pinned = make_tv_series("Match Game PM")  # no keywords: a title pin
+        pinned = make_tv_series("Match Game PM")  # no keywords, thus a title pin
         for series in (brit, yank, host, pinned):
             for episode in range(1, 10):
                 make_tv_file(series, 1, episode, "Bluray-1080p")
@@ -336,7 +337,7 @@ def test_schedule_math_wraps_the_lineup(app):
         (1150.0, 1250.0),
         (1250.0, 1300.0),
     ]
-    # Contiguous: each airing stops exactly where the next one starts.
+    # The airings are contiguous. Each airing stops where the next one starts.
     assert all(airings[n][1] == airings[n + 1][0] for n in range(len(airings) - 1))
 
 
@@ -402,7 +403,7 @@ def test_playlist_and_guide_agree_on_channel_ids(app, client, monkeypatch):
     airings = [p for p in tv.findall("programme") if p.get("channel") == "horror"]
     assert airings, "guide carries no horror airings"
     assert all(a.find("title").text.startswith("Scary") for a in airings)
-    # Contiguous wall: each programme starts when the previous one stops.
+    # The wall is contiguous. Each programme starts when the previous one stops.
     stamps = [(a.get("start"), a.get("stop")) for a in airings]
     assert all(stamps[n][1] == stamps[n + 1][0] for n in range(len(stamps) - 1))
 
@@ -475,11 +476,13 @@ def test_stream_rolls_programs_and_dies_cleanly(app, client, monkeypatch):
 
 
 def test_build_prefers_the_copy_on_disk(app, monkeypatch, tmp_path):
-    """A row can outlive its local file (the WEBDL rebuild leaves
-    WEBRip rows beside renamed WEBDL files); the better-ranked absent
-    row yields to the present one, and a movie with no copy on disk
-    leaves the pool — it is neither probed nor aired, even with a
-    duration cached from before its file went."""
+    """Test that the build prefers the copy that is on disk.
+
+    A row can outlive its local file. The WEBDL rebuild leaves WEBRip
+    rows beside the renamed WEBDL files. The better-ranked absent row
+    yields to the present one. A movie with no copy on disk leaves the
+    pool. Fitzflix does not probe it and does not air it. This is true
+    even when a duration was cached before its file went."""
 
     import os
 
@@ -511,8 +514,9 @@ def test_build_prefers_the_copy_on_disk(app, monkeypatch, tmp_path):
 
 
 def test_build_fills_the_cap_past_a_failed_probe(app, monkeypatch):
-    """A film whose probe fails gives its slot to the next candidate
-    instead of shrinking the day's lineup."""
+    """Test that a failed probe does not shrink the lineup of the day.
+
+    A film whose probe fails gives its slot to the next candidate."""
 
     from app import dvr
 
@@ -532,17 +536,19 @@ def test_build_fills_the_cap_past_a_failed_probe(app, monkeypatch):
 
 
 def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
-    """Day-one arrivals on the Channel's own newly-added page join the
-    Criterion channel before TMDB's payload catches up."""
+    """Test that the Criterion channel counts the scraped arrivals.
+
+    Day-one arrivals on the newly-added page of the Channel join the
+    Criterion channel before the payload of TMDB catches up."""
 
     from app import dvr
     from app.newly_added import NEWLY_ADDED_KEY
 
     monkeypatch.setattr(dvr, "_probe_duration", lambda path: 3600.0)
-    # A cache-only read answers for nothing: the films' availability
-    # entries are cold (imported since the refresh), as the real
-    # fetch_limit=0 call would report them — the scraped store alone
-    # must carry the match
+    # A cache-only read answers for no film. The availability entries of
+    # the films are cold (imported after the refresh). The real
+    # fetch_limit=0 call reports them the same way. Thus, the scraped
+    # store alone must carry the match
     monkeypatch.setattr(
         dvr, "batch_title_availability", lambda tmdb_ids, **kwargs: ({}, [])
     )
@@ -576,8 +582,10 @@ def test_criterion_channel_counts_scraped_arrivals(app, monkeypatch):
 
 
 def test_build_keeps_stored_lineups_while_a_share_is_offline(app, monkeypatch):
-    """Off a dead share every row reads as absent; a build on that
-    reading must not replace the working dial with nothing."""
+    """Test that a build keeps the stored lineups while a share is offline.
+
+    Off a dead share, every row reads as absent. A build on that reading
+    must not replace the working dial with nothing."""
 
     from app import dvr
 
@@ -594,7 +602,9 @@ def test_build_keeps_stored_lineups_while_a_share_is_offline(app, monkeypatch):
 
 
 def test_build_keeps_stored_lineups_when_every_probe_fails(app, monkeypatch):
-    """Files on disk but not one program built is a probe outage, not
+    """Test that a build keeps the stored lineups when every probe fails.
+
+    Files on disk but not one built program is a probe outage. It is not
     an empty dial."""
 
     from app import dvr
@@ -609,9 +619,10 @@ def test_build_keeps_stored_lineups_when_every_probe_fails(app, monkeypatch):
 
 
 def test_series_episodes_prefer_the_copy_on_disk(app, monkeypatch):
-    """The episode selector skips absent rows the way the movie
-    selector does: an absent best copy yields to a present lesser one,
-    and an episode with no copy on disk is left out."""
+    """Test that the episode selector skips absent rows.
+
+    The movie selector does the same. An absent best copy yields to a
+    present lesser one. An episode with no copy on disk is left out."""
 
     from app import dvr
 
@@ -629,8 +640,11 @@ def test_series_episodes_prefer_the_copy_on_disk(app, monkeypatch):
 
 
 def test_enqueue_lineup_rebuild_gates_and_dedupes(app, monkeypatch):
-    """Rebuilds queue only with a configured DVR, only when the given
-    films include an owned one, and only one at a time."""
+    """Test the gates of the rebuild enqueue and its duplicate check.
+
+    A rebuild queues only with a configured DVR. It queues only when the
+    given films include an owned one. Only 1 rebuild queues at a
+    time."""
 
     from app import dvr
     from tests.conftest import dvr_rebuild_jobs
@@ -643,7 +657,7 @@ def test_enqueue_lineup_rebuild_gates_and_dedupes(app, monkeypatch):
         assert dvr.enqueue_lineup_rebuild("test") is None
         monkeypatch.setitem(app.config, "DVR_TOKEN", TOKEN)
 
-        # Arrivals nobody owns (or that never matched) change no program
+        # Arrivals that nobody owns (or that never matched) change no program
         assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[9500, None]) is None
         assert dvr.enqueue_lineup_rebuild("test", tmdb_ids=[]) is None
         assert dvr_rebuild_jobs(app) == []
@@ -658,8 +672,10 @@ def test_enqueue_lineup_rebuild_gates_and_dedupes(app, monkeypatch):
     [("5.1", 6), ("7.1", 6), ("2.0", 2), ("1.0", 1), ("6.0", 6), ("16", 6), ("4.1", 5)],
 )
 def test_first_audio_channels_counts_the_lfe(app, stored, expected):
-    """The scan stores "5.1" for six channels; a digits-only read gave
-    five and ffmpeg dropped the subwoofer from every 5.1 airing."""
+    """Test that the audio-channel count includes the LFE channel.
+
+    The scan stores "5.1" for 6 channels. A digits-only read gave 5.
+    Then ffmpeg dropped the subwoofer from every 5.1 airing."""
 
     from app import dvr
     from app.models import FileAudioTrack
@@ -681,9 +697,11 @@ def test_first_audio_channels_counts_the_lfe(app, stored, expected):
 
 
 def test_enqueue_lineup_rebuild_queues_beside_a_running_build(app, monkeypatch):
-    """A rebuild already RUNNING may have read old inputs, so a new
-    trigger still queues — under a timestamped id, since the running
-    job holds the deterministic one."""
+    """Test that a new trigger queues beside a rebuild that is RUNNING.
+
+    The running rebuild can have read old inputs. Thus, a new trigger
+    still queues. It uses a timestamped id, because the running job
+    holds the deterministic one."""
 
     from rq.registry import StartedJobRegistry
 
@@ -702,11 +720,11 @@ def test_enqueue_lineup_rebuild_queues_beside_a_running_build(app, monkeypatch):
         queue.connection.zrem(registry.key, dvr.REBUILD_JOB_ID)
         queue.empty()
 
-        # The window between dequeue and registration: the job record
-        # exists and is not finished, but no registry lists it yet
+        # This is the window between dequeue and registration. The job
+        # record exists and is not finished. But no registry lists it yet
         first = dvr.enqueue_lineup_rebuild("first")
         assert first.id == dvr.REBUILD_JOB_ID
-        queue.connection.lrem(queue.key, 0, first.id)  # dequeued, not yet started
+        queue.connection.lrem(queue.key, 0, first.id)  # dequeued, not started
         second = dvr.enqueue_lineup_rebuild("second")
         assert second is not None and second.id != first.id
-        assert first.get_status() == "queued"  # the live record was not overwritten
+        assert first.get_status() == "queued"  # the live record is unchanged

@@ -18,9 +18,12 @@ from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL, MEMBER_API_KEY, MEMBER_EM
 
 @pytest.fixture(autouse=True)
 def arr_roots(app, monkeypatch, tmp_path):
-    """The webhooks only act on files under the apps' configured root
-    folders; each test's tmp_path plays both (and is deliberately NOT
-    the library directory, proving the roots are their own setting)."""
+    """Point the root folders of both apps at the tmp_path of the test.
+
+    The webhooks only act on files under the configured root folders of
+    the apps. The tmp_path plays both roots. It is deliberately NOT the
+    library directory. This proves that the roots are a separate
+    setting."""
 
     monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(tmp_path)])
     monkeypatch.setitem(app.config, "SONARR_ROOT_FOLDERS", [str(tmp_path)])
@@ -53,8 +56,8 @@ class TestWebhookAuth:
         assert response.status_code == 401
 
     def test_rejects_a_member_key(self, client, endpoint):
-        # A valid key isn't enough: the handlers move files by the
-        # payload's paths, so only an admin's key opens them
+        # A valid key is not sufficient. The handlers move files by the
+        # paths in the payload. Thus, only the key of an admin opens them.
         response = client.post(
             endpoint,
             json={"eventType": "Test"},
@@ -299,8 +302,11 @@ def test_mark_grab_failed_finds_grab_and_posts(app, monkeypatch):
 def test_download_outside_the_library_root_is_refused(
     app, client, tmp_path, relative_path
 ):
-    """An absolute or parent-hopping relativePath — or a folder outside
-    the root — never reaches the rename, the probe, or the queue."""
+    """Make sure a download outside the root never reaches the pipeline.
+
+    An absolute relativePath, a relativePath that climbs to a parent, or
+    a folder outside the root never reaches the rename, the probe, or
+    the queue."""
 
     outside = tmp_path.parent / "outside"
     outside.mkdir(exist_ok=True)

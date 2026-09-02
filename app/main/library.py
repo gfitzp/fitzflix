@@ -1944,9 +1944,10 @@ def movie_play(movie_id):
     form post falls back to flash-and-redirect.
     """
 
-    # The play forms carry the csrf token every other mutating route
-    # checks through its FlaskForm; this route reads the form by hand,
-    # so it validates the token by hand (security review, Sept 2026)
+    # The play forms carry the csrf token. Each other mutating route
+    # checks the token through its FlaskForm. This route reads the form
+    # by hand. Thus, it validates the token by hand (security review,
+    # 2026-09).
     try:
         validate_csrf(request.form.get("csrf_token"))
     except ValidationError:

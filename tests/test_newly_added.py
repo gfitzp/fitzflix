@@ -111,7 +111,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     stored = json.loads(app.redis.get(key))
     assert [item["first_seen"] for item in stored["items"]] == [None]
     assert stored["items"][0]["scraped_title"] == "The Searchers"
-    # Planting stamps nothing new, so the DVR dial has nothing to learn
+    # The first run stamps no new film. Thus, the DVR dial has nothing
+    # to learn.
     assert dvr_rebuild_jobs(app) == []
 
     # The second run has 1 new film and 1 unmatched newcomer. The
@@ -137,8 +138,8 @@ def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
     assert by_title["Obscurity"]["tmdb_id"] is None
     assert by_title["Obscurity"]["director"] == "Jane Doe"
     assert match_calls == ["Love & Mercy", "Obscurity"]
-    # An OWNED fresh arrival joins the Criterion channel via the
-    # synthesized match, so the dial is rebuilt the same day
+    # An OWNED new arrival joins the Criterion channel through the
+    # synthesized match. Thus, Fitzflix rebuilds the dial the same day.
     assert len(dvr_rebuild_jobs(app)) == 1
 
     # In the third run, the planted film is gone. The run removes it.

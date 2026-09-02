@@ -49,11 +49,13 @@ CLIENT_IDENTIFIER = "fitzflix"
 PLEX_TV = "https://plex.tv"
 PLAYER_PORT = 32500
 
-# Where a player may live: the private ranges, link-local, loopback,
-# and Tailscale's 100.64/10 (a remote household's device, per the
-# module docstring). The play command carries a Plex token, so the
-# address is a literal on one of these — never a hostname, which can
-# resolve anywhere, and somewhere else again after the probe
+# These are the networks where a player can be: the private ranges,
+# link-local, loopback, and the 100.64/10 range of Tailscale (the
+# device of a remote household, refer to the module docstring). The
+# play command carries a Plex token. Thus, the address must be a
+# literal IP on one of these networks. It is never a hostname. A
+# hostname can resolve to any address, and to a different address
+# after the probe.
 PLAYER_NETWORKS = [
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -69,23 +71,25 @@ PLAYER_NETWORKS = [
     )
 ]
 
-# A non-admin's play command carries a token for THEIR Plex Home user,
-# minted through plex.tv and kept for a while; a miss (no such Home
-# user) is remembered briefly so an unlinked member's clicks don't each
-# wait on plex.tv
+# The play command of a non-admin carries a token for THEIR Plex Home
+# user. Fitzflix mints it through plex.tv and keeps it for some time.
+# Fitzflix also remembers a miss (no such Home user) for a short time.
+# Thus, the clicks of an unlinked member do not each wait on plex.tv.
 HOME_TOKEN_KEY = "fitzflix:plex:home-token:{user_id}"
 HOME_TOKEN_SECONDS = 12 * 3600
 HOME_TOKEN_MISS_SECONDS = 300
 
 
 def player_address(text, default_port=PLAYER_PORT):
-    """The normalized "ip:port" of a player address, or None when it
-    isn't a literal IP on a private network (PLAYER_NETWORKS) with a
-    sane port. A bare IP takes the default port (Plex Companion's
-    unless told otherwise — the Infuse block passes Apple's); IPv6
-    goes in brackets. The Profile page validates with this and
-    play_movie re-checks the stored value, so a hostname can't reach
-    the play command by any route."""
+    """Return the normalized "ip:port" of a player address, or None.
+
+    The result is None if the address is not a literal IP on a private
+    network (PLAYER_NETWORKS) with a valid port. A bare IP gets the
+    default port. That is the Plex Companion port unless the caller
+    gives a different one (the Infuse block passes the Apple port). An
+    IPv6 address goes in brackets. The Profile page validates with
+    this function. play_movie checks the stored value again. Thus, a
+    hostname cannot reach the play command by any route."""
 
     text = (text or "").strip()
     if not text:
@@ -113,16 +117,19 @@ def player_address(text, default_port=PLAYER_PORT):
 
 
 def player_token(user):
-    """The Plex token the play command hands the user's player. An
-    admin — the server's owner — gets the owner token. Anyone else
-    gets a token for THEIR Plex Home user (matched to User.plex_username
-    by username or title), minted through plex.tv's home switch and
-    cached; None when no Home user matches (the user links one by
-    entering their Plex username on their own Profile page) or that
-    user is PIN-protected. The owner token never travels to a device a
-    non-admin chose: the Profile page's probe only proves something
-    answered at the address, not that it's a Plex player (security
-    review, Sept 2026)."""
+    """Return the Plex token that the play command gives the player of the user.
+
+    An admin is the owner of the server. An admin gets the owner
+    token. Each other user gets a token for THEIR Plex Home user.
+    Fitzflix matches the Home user to User.plex_username by username
+    or by title. It mints the token through the home switch of plex.tv
+    and caches it. The result is None when no Home user matches, or
+    when that user is PIN-protected. A user links a Home user with the
+    Plex username field on their own Profile page. The owner token
+    never travels to a device that a non-admin chose. The probe of the
+    Profile page only proves that something answered at the address.
+    It does not prove that a Plex player answered (security review,
+    2026-09)."""
 
     if user.admin:
         return current_app.config["PLEX_TOKEN"]
@@ -141,18 +148,22 @@ def player_token(user):
 
 
 def forget_home_token(user_id):
-    """Drop the user's cached Home token — the Profile page calls
-    this when the Plex username changes, so the next play is minted
-    for the newly linked user rather than the old one."""
+    """Delete the cached Home token of the user.
+
+    The Profile page calls this when the Plex username changes. Thus,
+    the next play mints a token for the newly linked user, not for the
+    old one."""
 
     current_app.redis.delete(HOME_TOKEN_KEY.format(user_id=user_id))
 
 
 def _home_user_token(plex_username):
-    """A token for the named Plex Home user, or None. The Home user
-    flagged admin — the server's owner — is never switched to: a
-    member who claims the owner's name on their Profile page must not
-    be able to mint the owner's token this way."""
+    """Return a token for the named Plex Home user, or None.
+
+    This never switches to the Home user with the admin flag. That
+    user is the owner of the server. A member who claims the name of
+    the owner on their Profile page must not mint the token of the
+    owner in this way."""
 
     wanted = plex_username.strip().lower()
     if not wanted:

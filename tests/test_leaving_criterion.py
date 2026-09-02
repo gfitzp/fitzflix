@@ -329,10 +329,10 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["items"][1]["director"] == "Bill Pohlad"
     assert stored["items"][1]["year"] == 2015
 
-    # The new set reaches the DVR dial the same day (Sept 1 2026: the
-    # 6:30 build ran before the set landed at 11:38, and the Leaving
-    # Soon channel stayed dark until the next morning) — because The
-    # Searchers is owned; a set with no owned film changes no program
+    # The new set reaches the DVR dial the same day, because Fitzflix
+    # owns The Searchers. A set with no owned film changes no program.
+    # On 2026-09-01, the 6:30 build ran before the set arrived at 11:38.
+    # Thus, the Leaving Soon channel stayed dark until the next morning.
     assert len(dvr_rebuild_jobs(app)) == 1
 
 

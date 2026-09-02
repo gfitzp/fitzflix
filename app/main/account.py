@@ -648,7 +648,7 @@ def profile():
     plex_form = PlexUsernameForm()
     if plex_form.plex_submit.data and plex_form.validate_on_submit():
         plex_username = (plex_form.plex_username.data or "").strip() or None
-        # Case-insensitive, the way the Plex Home match reads it
+        # This match ignores case, in the same way as the Plex Home match.
         taken = (
             User.query.filter(
                 db.func.lower(User.plex_username) == plex_username.lower()
@@ -663,7 +663,7 @@ def profile():
         else:
             current_user.plex_username = plex_username
             db.session.commit()
-            # A cached Home token was minted for the OLD name
+            # Plex minted the cached Home token for the OLD name.
             forget_home_token(current_user.id)
             if plex_username:
                 flash(

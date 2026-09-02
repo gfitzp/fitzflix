@@ -82,15 +82,17 @@ def import_event_webhook(service):
 
 
 def downloaded_path(service, folder, relative):
-    """The absolute path of the file a webhook payload names, or None
-    when it doesn't sit under one of the service's root folders —
-    RADARR_ROOT_FOLDERS / SONARR_ROOT_FOLDERS, which default to the
-    movie and TV library directories because that is where this
-    deployment's apps import into. The handlers rename, delete, and
-    enqueue by this path, so the payload's two halves aren't trusted
-    to compose one: an absolute or parent-hopping relativePath, or a
-    folder outside every root, is refused (security review, Sept
-    2026)."""
+    """Return the absolute path of the file that a webhook payload names.
+
+    Return None if the file is not under a root folder of the service.
+    The root folders are RADARR_ROOT_FOLDERS and SONARR_ROOT_FOLDERS.
+    They default to the movie and TV library directories, because the
+    apps of this deployment import into those directories. The
+    handlers rename, delete, and enqueue by this path. Thus, this
+    function does not trust the 2 halves of the payload to compose
+    one path. It refuses an absolute relativePath. It refuses a
+    relativePath that steps into a parent directory. It refuses a
+    folder outside every root (security review, 2026-09)."""
 
     roots = current_app.config[
         "RADARR_ROOT_FOLDERS" if service == "Radarr" else "SONARR_ROOT_FOLDERS"

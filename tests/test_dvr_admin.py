@@ -16,8 +16,9 @@ from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_s
 
 @pytest.fixture(autouse=True)
 def library_present(monkeypatch):
-    """These tests seed rows, not files: every row reads as on disk
-    and the shares as online."""
+    """Make every row read as on disk and every share as online.
+
+    These tests seed rows, not files."""
 
     from app import dvr
 

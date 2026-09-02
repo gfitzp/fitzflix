@@ -63,9 +63,10 @@ def provider_registry():
         r.raise_for_status()
         results = r.json().get("results") or []
     except Exception:
-        # A failed fetch is remembered briefly so the callers that ask
-        # per film (rec-shelf pool, DVR build, availability alerts)
-        # pay one timeout per outage, not one per film
+        # Fitzflix remembers a failed fetch for a short time. Thus, the
+        # callers that ask for each film (the rec-shelf pool, the DVR
+        # build, the availability alerts) pay 1 timeout for each
+        # outage, not 1 for each film.
         current_app.logger.warning(traceback.format_exc())
         current_app.redis.set(REGISTRY_KEY, "[]", ex=REGISTRY_RETRY_SECONDS)
         return []

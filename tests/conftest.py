@@ -354,8 +354,9 @@ def log_capture(app):
 
 
 def dvr_rebuild_jobs(app):
-    """The lineup rebuilds waiting on the maintenance queue — what the
-    DVR editor and the Criterion scrapers enqueue."""
+    """Return the lineup rebuilds that wait on the maintenance queue.
+
+    The DVR editor and the Criterion scrapers enqueue these jobs."""
 
     return [
         job
@@ -365,8 +366,10 @@ def dvr_rebuild_jobs(app):
 
 
 def page_csrf_token(client, path="/profile"):
-    """The csrf token a signed-in client's page renders — what a
-    hand-built POST to a form-checking route must carry."""
+    """Return the csrf token that a page renders for a signed-in client.
+
+    A hand-built POST to a route that checks the form must carry this
+    token."""
 
     import re
 

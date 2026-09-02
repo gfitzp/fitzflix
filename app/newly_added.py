@@ -147,8 +147,9 @@ def _refresh_feed(provider_id, feed):
         payload = enriched_movie(tmdb_id) if tmdb_id is not None else None
         base = {**payload, "tmdb_id": tmdb_id} if payload else {**film, "tmdb_id": None}
         if previous is not None and tmdb_id is not None:
-            # New to the page, or on it unmatched until this run: either
-            # way the film can only now count as streaming here
+            # The film is new to the page, or it was on the page but
+            # unmatched until this run. In both cases, the film counts
+            # as streaming here only from now.
             arrived.append(tmdb_id)
         items.append(
             {
@@ -177,8 +178,9 @@ def _refresh_feed(provider_id, feed):
             else " (planted)"
         )
     )
-    # An owned day-one arrival joins the DVR's Criterion channel through
-    # the synthesized match, so the dial catches up the same day
+    # An owned day-one arrival joins the Criterion channel of the DVR
+    # through the synthesized match. Thus, the dial catches up the same
+    # day.
     if arrived and provider_id == CRITERION_PROVIDER_ID:
         from app.dvr import enqueue_lineup_rebuild
 

@@ -1041,8 +1041,9 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
 
 
 def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
-    # The rec-shelf pool asks per candidate film; one registry parse
-    # (or one network timeout, with the registry cold) per context
+    # The rec-shelf pool asks for each candidate film. Each context
+    # pays 1 registry parse. If the registry is cold, each context pays
+    # 1 network timeout instead.
 
     from datetime import date
 
@@ -1060,7 +1061,7 @@ def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
     with app.app_context():
         first = streaming.streaming_matches(None, {258}, tmdb_id=22171)
         second = streaming.streaming_matches(None, {258}, tmdb_id=22171)
-        # Callers may annotate their copy without touching the cache
+        # A caller can annotate its copy. The cache does not change.
         first[0]["leaving"] = "never"
         third = streaming.streaming_matches(None, {258}, tmdb_id=22171)
 
@@ -1070,8 +1071,9 @@ def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
 
 
 def test_registry_stand_in_is_not_cached_across_a_recovery(app, monkeypatch):
-    # A registry that comes back mid-context (TMDB blip at the start of
-    # a long worker task) is picked up by the next synthesized match
+    # The registry can come back in the middle of a context, for example
+    # after a TMDB blip at the start of a long worker task. The next
+    # synthesized match uses the recovered registry.
 
     from datetime import date
 
@@ -1090,7 +1092,7 @@ def test_registry_stand_in_is_not_cached_across_a_recovery(app, monkeypatch):
 
 
 def test_provider_registry_remembers_a_failed_fetch_briefly(app, monkeypatch):
-    # One timeout per outage, not one per film asking
+    # Each outage costs 1 timeout, not 1 timeout for each film.
 
     import app.streaming as streaming
 

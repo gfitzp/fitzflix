@@ -382,10 +382,10 @@ def refresh_leaving_criterion():
             f"Leaving-Criterion: stored {len(items)} of {len(films)} films "
             f"departing {departs.isoformat()}"
         )
-        # The dial's Leaving Soon channel reads this set: rebuild the
-        # same day when an owned film is on it (the Channel publishes
-        # the new month's page on its own clock, after the nightly
-        # build on Sept 1 2026)
+        # The Leaving Soon channel of the dial reads this set. Rebuild
+        # the same day when an owned film is on it. The Channel
+        # publishes the page of the new month on its own clock. On
+        # 2026-09-01, that was after the nightly build.
         from app.dvr import enqueue_lineup_rebuild
 
         enqueue_lineup_rebuild(

@@ -90,7 +90,7 @@ class FakePlex:
 
     def post(self, url, params=None, headers=None, timeout=None):
         if url.startswith("https://plex.tv/api/v2/home/users/"):
-            # The Home switch: a token for that user, not the owner's
+            # The Home switch gives a token for that user, not the owner token
             uuid = url.rsplit("/", 2)[1]
             return FakeResponse({"authToken": f"HOME-TOKEN-{uuid}"})
         assert url == "http://plex.test/playQueues"
@@ -376,9 +376,10 @@ def test_play_route_uses_the_users_device(
     [command] = fake.player_gets
     assert command["url"].startswith("http://192.168.1.63:32500/")
     assert command["headers"]["X-Plex-Target-Client-Identifier"] == "MEMBER-ATV-ID"
-    # A member's device gets a token for THEIR Plex Home user — the
-    # owner token never travels to an address a member chose — and
-    # the play queue was built as that user so the token can fetch it
+    # The device of a member gets a token for the Plex Home user of THAT
+    # member. The owner token never travels to an address that a member
+    # chose. Fitzflix built the play queue as that user. Thus, the token
+    # can fetch the queue
     assert command["params"]["token"] == "HOME-TOKEN-MEMBER-UUID"
     assert fake.queue_posts[0]["X-Plex-Token"] == "HOME-TOKEN-MEMBER-UUID"
 
@@ -399,7 +400,7 @@ def test_play_route_without_a_device_reports_kindly(
     assert "Profile" in state["message"]
 
 
-# --- The popover card's button ---
+# --- The button of the popover card ---
 
 
 def _owned_movie(app):
@@ -455,7 +456,7 @@ def test_popover_card_hides_the_button_on_unowned_films(
     assert "Play on Apple TV" not in card
 
 
-# --- The Profile page's device flow ---
+# --- The device flow of the Profile page ---
 
 
 def _profile_post(client, address):
@@ -550,7 +551,7 @@ def test_profile_rejects_a_malformed_address(
     assert probed == []
 
 
-# --- Who gets which token, and where a player may live ---
+# --- The token of each user, and the permitted player addresses ---
 
 
 def test_member_without_a_linked_home_user_never_sees_the_owner_token(
@@ -629,8 +630,8 @@ def test_player_address_accepts_only_private_literals(text, expected):
 
 
 def test_play_refuses_a_stored_hostname(app, monkeypatch, server_config):
-    # A row edited outside the Profile page still can't send the
-    # token to a name
+    # A row edited outside the Profile page still cannot send the
+    # token to a hostname
     fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
     plex_player = _wire(monkeypatch, fake)
     movie = SimpleNamespace(tmdb_id=578, title="Jaws", year=1975, tmdb_title=None)
@@ -657,8 +658,10 @@ def test_profile_rejects_a_hostname(app, monkeypatch, user_client, server_config
 def test_play_route_refuses_a_post_without_a_csrf_token(
     app, monkeypatch, user_client, server_config, member_device
 ):
-    """A cross-site form post (a remembered user on a browser that
-    doesn't default cookies to Lax) never reaches the player."""
+    """Test that a POST without a csrf token never reaches the player.
+
+    A cross-site form post is one example. It comes from a remembered
+    user on a browser that does not default cookies to Lax."""
 
     fake = FakePlex(guid_hits=[{"ratingKey": "189344"}])
     _wire(monkeypatch, fake)
@@ -671,17 +674,19 @@ def test_play_route_refuses_a_post_without_a_csrf_token(
     assert json.loads(r.data)["ok"] is False
     assert fake.player_gets == [] and fake.queue_posts == []
 
-    # A plain form post is sent back to the movie page with a flash
+    # Fitzflix sends a plain form post back to the movie page with a flash
     r = user_client.post(f"/movie/{movie_id}/play", data={"player": "plex"})
     assert r.status_code == 302 and f"/movie/{movie_id}" in r.headers["Location"]
     assert fake.player_gets == []
-    # ...and the token itself never ages out of a long-open page
+    # The token itself never ages out of a page that stays open for long
     assert app.config["WTF_CSRF_TIME_LIMIT"] is None
 
 
 def test_remember_cookie_is_samesite_lax(app, client):
-    """Flask-Login's remember cookie defaults to no SameSite; the
-    session cookie is Lax, and the remember cookie must match or a
+    """Test that the remember cookie is SameSite=Lax.
+
+    The remember cookie of Flask-Login defaults to no SameSite. The
+    session cookie is Lax. The remember cookie must match. If not, a
     cross-site POST re-authenticates a remembered user from it."""
 
     from tests.conftest import MEMBER_EMAIL, MEMBER_PASSWORD
@@ -708,7 +713,7 @@ def test_remember_cookie_is_samesite_lax(app, client):
 
 
 def _home_users_calls(monkeypatch, fake):
-    """Count plex.tv Home-user list reads on top of the fake."""
+    """Count the plex.tv Home-user list reads on top of the fake."""
 
     import app.plex_player as plex_player
 
@@ -725,8 +730,11 @@ def _home_users_calls(monkeypatch, fake):
 
 
 def test_owner_home_user_is_never_switched_to(app, monkeypatch, server_config):
-    """A member who claims the owner's Plex name gets nothing: the Home
-    user flagged admin is refused at the point tokens are minted."""
+    """Test that Fitzflix never switches to the owner Home user.
+
+    A member who claims the Plex name of the owner gets nothing.
+    Fitzflix refuses the Home user that is flagged admin at the point
+    where it mints the tokens."""
 
     fake = FakePlex(guid_hits=[{"ratingKey": "1"}])
     plex_player = _wire(monkeypatch, fake)

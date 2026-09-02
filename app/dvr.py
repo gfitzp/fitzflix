@@ -204,10 +204,10 @@ def _first_audio_channels(file_id):
         .first()
     )
     if track and track.channels:
-        # The scan stores layouts the way they're spoken — "5.1" is six
-        # channels, the ".1" being the LFE — so the count is the whole
-        # number plus one for a ".1"; a digits-only read gave 5 and
-        # ffmpeg dropped the subwoofer from every 5.1 airing
+        # The scan stores a layout in its spoken form. "5.1" is 6
+        # channels. The ".1" is the LFE. Thus, the count is the whole
+        # number plus 1 for a ".1". A digits-only read gave 5, and
+        # ffmpeg dropped the subwoofer from each 5.1 airing.
         match = re.fullmatch(r"\s*(\d+)(?:\.(\d))?\s*", str(track.channels))
         if match:
             total = int(match.group(1)) + (1 if match.group(2) == "1" else 0)
@@ -216,20 +216,24 @@ def _first_audio_channels(file_id):
 
 
 def _on_disk(file):
-    """True when the file's local copy is present. Rows can outlive
-    their local file — a superseded edition keeps its row and its S3
-    archive, and the WEBDL rebuild leaves rows whose file is a renamed
-    sibling — and none of those can air. Asked only after
-    _library_online, so a wedged share never hangs a stat per row."""
+    """Return True if the local copy of the file is present.
+
+    A row can outlive its local file. A superseded edition keeps its
+    row and its S3 archive. The WEBDL rebuild leaves rows whose file
+    is a renamed sibling. None of those can air. Call this only after
+    _library_online. Thus, a stuck share never hangs a stat for each
+    row."""
 
     return os.path.exists(library_path(file))
 
 
 def _library_online():
-    """Whether both library shares are mounted and answering — asked
-    once per build. Off a dead share every row reads as absent, and a
-    build on that reading would replace the working dial with nothing;
-    the build keeps yesterday's lineups instead."""
+    """Return True if both library shares are mounted and answer.
+
+    The build asks this 1 time. On a dead share, each row reads as
+    absent. A build on that reading would replace the working dial
+    with nothing. Thus, the build keeps the lineups of yesterday
+    instead."""
 
     return all(
         share_responsive(current_app.config[key])
@@ -318,8 +322,9 @@ def _criterion_movie_ids(best):
     if not by_tmdb:
         return []
     payloads, _ = batch_title_availability(list(by_tmdb), fetch_limit=0)
-    # Every owned film is asked, cached payload or not: the scraped
-    # stores can vouch for a film whose availability entry is cold
+    # This asks for each owned film, with or without a cached payload.
+    # The scraped stores can vouch for a film whose availability entry
+    # is cold.
     return [
         movie_id
         for tmdb_id, movie_id in by_tmdb.items()
@@ -700,7 +705,7 @@ def seed_default_channels():
 
 
 def _job_live(queue, job_id):
-    """Whether a job record with this id is still in flight."""
+    """Return True if a job record with this id is still in flight."""
 
     try:
         job = Job.fetch(job_id, connection=queue.connection)
@@ -715,14 +720,17 @@ def _job_live(queue, job_id):
 
 
 def enqueue_lineup_rebuild(reason, tmdb_ids=None):
-    """Queue a lineup rebuild so the stored dial catches up the same
-    day — the admin editor's saves, and the Criterion scrapers when a
-    new set lands after the nightly build. A no-op without a
-    configured DVR, while a rebuild is already queued (a RUNNING one
-    may have read the old inputs, so it doesn't count), or when the
-    given tmdb_ids include no owned film: the dial only airs owned
-    copies, so a Channel arrival nobody owns can't change a program.
-    Returns the job, or None when nothing was queued."""
+    """Queue a lineup rebuild. Thus, the stored dial catches up the same day.
+
+    The saves of the admin editor call this. The Criterion scrapers
+    call this when a new set arrives after the nightly build. This
+    function does nothing without a configured DVR. It does nothing
+    while a rebuild is already queued. A RUNNING rebuild can have read
+    the old inputs. Thus, a RUNNING rebuild does not count as queued.
+    It does nothing when the given tmdb_ids include no owned film. The
+    dial airs only owned copies. Thus, a Channel arrival that nobody
+    owns cannot change a program. Return the job, or None when nothing
+    was queued."""
 
     if not current_app.config.get("DVR_TOKEN"):
         return None
@@ -737,12 +745,13 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
         )
         if not owned:
             return None
-    # Deterministic job ids make the dedupe one id-list read, not a
-    # fetch of every queued job. A rebuild that is RUNNING — or was
-    # just dequeued and isn't in the started registry yet (live
-    # drill, Sept 2 2026: reusing the id in that window overwrote the
-    # running job's record) — keeps its id, so a trigger arriving
-    # mid-build queues under a timestamped one
+    # A deterministic job id makes the dedupe 1 read of the id list, not
+    # a fetch of each queued job. A RUNNING rebuild keeps its id. A
+    # rebuild that rq dequeued a moment ago, and that is not in the
+    # started registry yet, also keeps its id (live drill, 2026-09-02:
+    # a reuse of the id in that window overwrote the record of the
+    # running job). Thus, a trigger that arrives during a build queues
+    # under a timestamped id.
     queue = current_app.maintenance_queue
     if any(job_id.startswith(REBUILD_JOB_ID) for job_id in queue.job_ids):
         return None
@@ -848,9 +857,10 @@ def build_channel_lineups(day=None):
             if channel.leaving_only and departs:
                 note = f"Leaving the Criterion Channel {departs.strftime('%B %-d')}."
 
-            # The whole shuffled pool is the candidate list, not its
-            # first film_cap entries: a film whose probe fails gives
-            # its slot to the next one rather than shrinking the day
+            # The whole shuffled pool is the candidate list, not only
+            # its first film_cap entries. A film whose probe fails
+            # gives its slot to the next film. It does not shrink the
+            # day.
             Random(f"dvr:{channel.slug}:{day.isoformat()}").shuffle(movie_ids)
             movie_programs = []
             for movie_id in movie_ids:
@@ -888,9 +898,10 @@ def build_channel_lineups(day=None):
             )
 
         if not index and (best or ctx["catalog"]):
-            # Files on disk but not one program built: a probe-side
-            # outage (ffprobe missing, share wedged mid-build), not an
-            # empty dial — the stored lineups keep answering
+            # Files are on disk, but the build made no program. That is
+            # a probe-side outage (ffprobe is missing, or the share got
+            # stuck during the build). It is not an empty dial. The
+            # stored lineups continue to answer.
             current_app.logger.error(
                 "DVR: no channel produced a program; keeping the stored lineups"
             )
