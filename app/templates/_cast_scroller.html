@@ -1,10 +1,10 @@
 {# The billed-cast pane: a horizontally scrolling strip of every credited
-   actor, in credit order. Plain CSS overflow scrolling with snap points
-   (momentum-swipes on phones); the chevrons page it for pointer users and
-   the right-edge fade hints that more cast is off-screen. Expects `cast`:
-   a list of {id, name, profile_path, character} dicts, id being the TMDB
-   person id — everyone links, since the filmography page serves any
-   person TMDB knows. #}
+   actor, in credit order. It uses plain CSS overflow scrolling with snap
+   points (momentum swipes on phones). The chevrons page it for pointer
+   users. The right-edge fade hints that more cast is off-screen. It
+   expects `cast`: a list of {id, name, profile_path, character} dicts.
+   The id is the TMDB person id. Everyone links, because the filmography
+   page serves any person that TMDB knows. #}
 {% if cast %}
 <div class="mt-2">
 	<div class="d-flex align-items-center mb-1">
@@ -16,8 +16,8 @@
 		<div class="d-flex cast-scroller" style="overflow-x: auto; scroll-snap-type: x proximity; gap: 12px; padding-bottom: 4px; -webkit-overflow-scrolling: touch;">
 			{% for person in cast %}
 			<figure class="figure text-center mb-0" style="flex: 0 0 92px; scroll-snap-align: start;">
-				{# The portrait carries the name as a tooltip — the caption
-				   truncates long names, the hover never does #}
+				{# The portrait carries the name as a tooltip. The caption
+				   truncates long names. The hover never does #}
 				<a href="{{ url_for('main.movie_library', credit=person.id) }}" title="{{ person.name }}{% if person.character %} as {{ person.character }}{% endif %}">
 				{% if person.profile_path %}
 					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">
@@ -32,10 +32,10 @@
 			</figure>
 			{% endfor %}
 		</div>
-		{# The fades run to the theme's body background (#248): a
-		   hardcoded white smeared over the strip in dark mode, and the
-		   transparent stop must be transparent BODY-BG, not
-		   transparent white, or the fade tints grey off-theme #}
+		{# The fades run to the body background of the theme (#248). A
+		   hardcoded white smeared over the strip in dark mode. The
+		   transparent stop must be transparent BODY-BG, not transparent
+		   white. Otherwise the fade tints grey, off-theme #}
 		<div class="position-absolute cast-scroll-fade-left" style="top: 0; left: 0; bottom: 4px; width: 36px; background: linear-gradient(to left, rgba(var(--bs-body-bg-rgb), 0), var(--bs-body-bg)); pointer-events: none; transition: opacity 0.15s; opacity: 0;"></div>
 		<div class="position-absolute cast-scroll-fade-right" style="top: 0; right: 0; bottom: 4px; width: 36px; background: linear-gradient(to right, rgba(var(--bs-body-bg-rgb), 0), var(--bs-body-bg)); pointer-events: none; transition: opacity 0.15s;"></div>
 	</div>
@@ -46,9 +46,9 @@
 		var fadeLeft = document.querySelector(".cast-scroll-fade-left");
 		var fadeRight = document.querySelector(".cast-scroll-fade-right");
 
-		// Each fade only means "more cast this way": the left one appears
-		// once the strip has scrolled, the right one hides when the last
-		// card is fully in view (or the cast fits without scrolling)
+		// Each fade only means "more cast this way". The left one appears
+		// after the strip has scrolled. The right one hides when the last
+		// card is fully in view (or when the cast fits without a scroll)
 
 		function updateFade() {
 			fadeLeft.style.opacity = scroller.scrollLeft > 1 ? "1" : "0";

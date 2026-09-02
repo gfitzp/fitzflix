@@ -124,9 +124,10 @@
 </div>
 
 <script>
-// Lookahead on the pick fields: suggestions are the canonical strings
-// the server-side resolvers parse, so a picked title always resolves.
-// Same debounce/dropdown interaction as the global search in base.html.
+// Lookahead on the pick fields. The suggestions are the canonical strings
+// that the server-side resolvers parse. Thus, a picked title always resolves.
+// The debounce and dropdown interaction is the same as in the global
+// search in base.html.
 document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 	const menu = input.parentElement.querySelector(".dropdown-menu");
 	let timer = null;
@@ -145,7 +146,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			item.type = "button";
 			item.className = "dropdown-item text-truncate";
 			item.textContent = title;
-			// mousedown, not click: it fires before the input's blur
+			// mousedown, not click. mousedown occurs before the blur of the input.
 			item.addEventListener("mousedown", function (event) {
 				event.preventDefault();
 				input.value = title;
@@ -182,7 +183,7 @@ document.querySelectorAll(".dvr-title-lookahead").forEach(function (input) {
 			active = (active + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
 			items.forEach(function (el, i) { el.classList.toggle("active", i === active); });
 		} else if (event.key === "Enter" && active >= 0) {
-			// Fill the input; a second Enter (or the button) submits
+			// Fill the input. A second Enter (or the button) submits.
 			event.preventDefault();
 			input.value = items[active].textContent;
 			hide();

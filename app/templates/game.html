@@ -2,13 +2,15 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
-{# Display names for the difficulty slugs (renamed per #203); the
-   slugs themselves are stored in score rows and URLs, so they stay #}
+{# These are the display names for the difficulty slugs (renamed per
+   #203). The score rows and the URLs store the slugs themselves.
+   Thus, the slugs do not change. #}
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
 <h2 class="mt-n2">Name That Frame</h2>
 <p class="small text-muted">This is one random frame from one film in the library. Can you identify the film? The pool refreshes each night, so the frames change.</p>
-{# Difficulty picker: a radio button group (Glenn's ask, Aug 27 2026)
-   — picking a level submits the GET and deals a fresh round there #}
+{# The difficulty picker is a radio button group (requested by Glenn,
+   2026-08-27). A selection of a level submits the GET and deals a new
+   round at that level. #}
 <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
 	<form method="get">
 		<div class="btn-group" role="group" aria-label="Difficulty">
@@ -29,14 +31,14 @@
 	{% endif %}
 </div>
 {% if difficulty in ("difficult", "siracusa", "extra") %}
-{# Rated films are the default world (inverted per Glenn's ask, Aug
-   27 2026): the switch *includes* unrated films instead. The hidden
-   unrated=0 makes an un-tick explicit — the server treats "no 1
-   among the unrated values" as off — and the switch survives in
-   Redis, so rounds and revisits keep it without threading a
-   parameter. Only this label may disclose the Extra Difficult
-   unrated bonus — the round prompt never does, since a doubled
-   figure would mark the answer as unrated #}
+{# Rated films are the default world (inverted, requested by Glenn,
+   2026-08-27). The switch *includes* the unrated films instead. The
+   hidden unrated=0 makes an un-tick explicit. The server treats "no 1
+   among the unrated values" as off. Redis keeps the switch. Thus,
+   rounds and revisits keep it without a parameter in the URL. Only
+   this label can disclose the Extra Difficult unrated bonus. The
+   round prompt never does, because a doubled figure would mark the
+   answer as unrated. #}
 <form method="get" class="mb-3">
 	<input type="hidden" name="difficulty" value="{{ difficulty }}">
 	<input type="hidden" name="unrated" value="0">
@@ -49,16 +51,18 @@
 {% endif %}
 <hr>
 {% if result or token %}
-{# Guess and reveal share ONE skeleton (Glenn's report, Aug 20 2026:
-   the layouts shifted between states): the same alert slot up top —
-   the prompt while guessing, the verdict after — the same frame
-   column, and the same aside column, empty until the reveal fills
-   it with the answer's poster tile. The frame never moves. #}
+{# The guess state and the reveal state share ONE skeleton (reported
+   by Glenn, 2026-08-20: the layouts shifted between the states). The
+   same alert slot is at the top. It shows the prompt during the guess
+   and the verdict after it. The frame column is the same. The aside
+   column is the same. The aside is empty until the reveal fills it
+   with the poster tile of the answer. The frame never moves. #}
 {% if not result %}
 {% if difficulty == "extra" %}
-{# Extra Difficult (#202): the prompt carries the stage — how much of
-   the frame is showing, what a hit is worth now, and (after a
-   mid-round miss) what the frame turned out not to be #}
+{# Extra Difficult (#202): the prompt shows the stage. It says how
+   much of the frame is visible and how many points a hit is worth
+   now. After a miss in the middle of a round, it also says what the
+   frame is not. #}
 <div class="alert {{ 'alert-warning' if missed_guess else 'alert-light border' }}" role="status">
 	{%- if missed_guess %}Not <em>{{ missed_guess }}</em>. {% if stage == 3 %}This is the full frame.{% else %}The view zoomed out a little.{% endif %}
 	{% elif stage == 1 %}Which film is this frame from? This is a small part of the frame.
@@ -75,13 +79,14 @@
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em>. {% endif %}It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
 {% if result and result.correct and result.brag %}
-{# Bragging rights (Glenn's ask, Aug 27 2026): a zoomed win stashed
-   its crop at grading time, so it survives the played frame's
-   replacement. Share hands image + message to the native share
-   sheet — the only one-tap path that lands both in a message — and
-   Copy image takes just the crop. No message-copy button (Glenn,
-   Aug 27 2026): a clipboard paste only ever yields one
-   representation, so the words ride the share sheet instead. #}
+{# Bragging rights (requested by Glenn, 2026-08-27): a zoomed win
+   stored its crop at grading time. Thus, the crop survives the
+   replacement of the played frame. Share gives the image and the
+   message to the native share sheet. That is the only one-tap path
+   that puts both into a message. Copy image takes only the crop.
+   There is no message-copy button (Glenn, 2026-08-27). A clipboard
+   paste only gives one representation. Thus, the words go with the
+   share sheet instead. #}
 <div class="d-flex align-items-center flex-wrap gap-3 mb-3" id="brag-box"
 	data-brag-url="{{ url_for('main.game_brag', token=result.brag) }}"
 	data-brag-text="I was able to guess {{ result.answer }} from just this image">
@@ -120,8 +125,8 @@
 	copyImage.addEventListener("click", async () => {
 		try {
 			if (!navigator.clipboard || !window.ClipboardItem) throw new Error("unsupported");
-			// Promise-valued entry: Safari requires the clipboard
-			// write to start inside the click gesture
+			// The entry is a Promise. Safari requires that the clipboard
+			// write starts inside the click gesture.
 			await navigator.clipboard.write([new ClipboardItem({"image/png": pngBlob()})]);
 			status.textContent = "Image copied.";
 		} catch (error) {
@@ -131,20 +136,23 @@
 })();
 </script>
 {% endif %}
-{# On the reveal, the answer rides the aside as a standard poster
-   tile: the popover carries the synopsis and badges, the tile the
-   ladder and watchlist toggle — rate it or bank it without leaving
-   the game. align-items-start keeps the short tile from stretching
-   to the frame's height, so its actions sit right under the poster #}
-{# Order utilities flip the reveal on phones (Glenn's ask, Aug 20
-   2026): frame, then Next, then the answer tile — while md-and-up
-   keeps the tile beside the frame with Next wrapping below #}
+{# On the reveal, the answer goes into the aside as a standard poster
+   tile. The popover has the synopsis and the badges. The tile has the
+   ladder and the watchlist toggle. Thus, the user can rate the film
+   or save it without leaving the game. align-items-start prevents the
+   short tile from stretching to the height of the frame. Thus, its
+   actions sit directly under the poster. #}
+{# The order utilities flip the reveal on phones (requested by Glenn,
+   2026-08-20). The sequence is the frame, then Next, then the answer
+   tile. At md and up, the tile stays beside the frame, and Next wraps
+   below. #}
 <div class="row align-items-start mb-3">
 	<div class="col-12 col-md-8 col-lg-9 mb-3 mb-md-0 order-1">
 		<div class="game-frame-box">
-			{# The stage rides the URL only to bust the browser cache as
-			   the round zooms out — the server decides the crop; the
-			   zoom class blows the small crop up to fill the box #}
+			{# The stage is in the URL only to bypass the browser
+			   cache when the round zooms out. The server decides the
+			   crop. The zoom class enlarges the small crop to fill
+			   the box. #}
 			<img src="{{ url_for('main.game_frame', token=token, stage=stage) }}"{% if stage and stage < 3 %} class="game-frame-zoom"{% endif %} alt="{{ 'A frame from ' ~ result.answer if result else 'A frame from a mystery film' }}">
 		</div>
 	</div>
@@ -178,8 +186,9 @@
 		{% endfor %}
 	</div>
 	{% else %}
-	{# Difficult (free text): type the title yourself — close counts
-	   (typos and missing articles forgiven), the year is optional #}
+	{# Difficult (free text): the user types the title. A near match
+	   counts. Typos and missing articles are accepted. The year is
+	   optional. #}
 	<div class="mb-3">
 		<input type="text" name="guess" class="form-control" placeholder="Type the film's title&hellip;" aria-label="Your guess" autocomplete="off" autofocus>
 	</div>
@@ -189,20 +198,20 @@
 	<button type="submit" name="zoom_out" value="y" class="btn btn-secondary">Zoom Out</button>
 	{% endif %}
 	{% if difficulty == "extra" and stage and stage > 1 %}
-	{# Past the first zoom-out a round is won or lost (Glenn's rule,
-	   Aug 27 2026): surrender ends it as a miss #}
+	{# After the first zoom-out, a round is won or lost (rule by
+	   Glenn, 2026-08-27). A surrender ends the round as a miss. #}
 	<button type="submit" name="give_up" value="y" class="btn btn-danger">I give up</button>
 	{% else %}
-	{# Extra rounds resume on a plain visit, so Skip abandons the live
-	   round explicitly — and only an untouched one may skip #}
+	{# Extra rounds resume on a plain visit. Thus, Skip abandons the
+	   live round explicitly. Only an untouched round can skip. #}
 	<a class="btn btn-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
 	{% endif %}
 </form>
 {% endif %}
 {% elif pool_size %}
-{# The pool has frames, just none this difficulty can serve — Easy
-   (or a rated-films filter) before the user has rated any pooled
-   films #}
+{# The pool has frames, but this difficulty cannot serve one. This
+   occurs in Easy mode (or with a rated-films filter) before the user
+   rates a pooled film. #}
 <p class="lead">There are no frames for this difficulty yet.</p>
 {% if rated_only %}
 <p class="text-muted">You did not rate the films of the frames in the pool. Rate some more films. As an alternative, select &ldquo;Include films I haven&rsquo;t rated&rdquo; above to use the full library.</p>

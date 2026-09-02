@@ -15,9 +15,9 @@
 <h2 class="mt-2 mb-n2">Lossy-audio leads{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
 <hr>
 {% if not focus_file %}
-{# The worklist: just the pending files, each opening its own
-   triage page — the listening clips and forms all live there, and
-   its actions bounce back here via the origin param #}
+{# The worklist: only the pending files. Each file opens its own
+   triage page. The listening clips and the forms are all on that
+   page. Its actions return here through the origin param. #}
 <p class="small text-muted">In each file below, the first audio track is lossy, and a lossless track comes after it. Go down the list. Each name opens the triage page of that file. After an action on that page, you return here.</p>
 {% if candidates %}
 <div class="list-group mb-3">

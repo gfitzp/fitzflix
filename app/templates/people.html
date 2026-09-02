@@ -53,8 +53,8 @@
 <div class="d-flex flex-wrap" style="gap: 16px;">
 	{% for person in people %}
 	<figure class="figure text-center mb-2" style="flex: 0 0 92px;">
-		{# The portrait carries the name as a tooltip — the caption
-		   truncates long names, the hover never does #}
+		{# The portrait carries the name as a tooltip. The caption
+		   truncates long names. The hover never does #}
 		<a href="{{ url_for('main.movie_library', credit=person.id) }}" title="{{ person.name }}">
 			{% if person.tmdb_profile_path %}
 				<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">

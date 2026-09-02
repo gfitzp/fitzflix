@@ -1,12 +1,12 @@
 {# One Recommendations shelf tile (#235): the shared poster grammar
-   with the popover armed and the live actions underneath. Rendered by
-   the page for each suggestion and by /recommendations/tile for a
-   replacement, so a swapped-in film is markup-identical to the ones
-   around it. data-suggestion-cell is what the page's replacement
-   script keys on. A bare `col`: the width comes from the shelf-films
-   row's responsive row-cols — and on phones from the carousel rules,
-   where the strip scrolls one card at a time beside the fixed anchor
-   slot. #}
+   with the popover armed and the live actions underneath. The page
+   renders it for each suggestion. /recommendations/tile renders it
+   for a replacement. Thus, a swapped-in film is markup-identical to
+   the films around it. data-suggestion-cell is what the replacement
+   script of the page keys on. It is a bare `col`. The width comes
+   from the responsive row-cols of the shelf-films row. On phones, it
+   comes from the carousel rules, where the strip scrolls one card at
+   a time beside the fixed anchor slot. #}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 <div class="col mb-4 poster-cell" data-suggestion-cell>
 	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">

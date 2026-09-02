@@ -3,9 +3,9 @@
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
-{# No search box of its own (#188): a new search starts from the
-   navbar's Search library field, whose results page offers the
-   "Look up on TMDB" hand-off that lands here #}
+{# This page has no search box of its own (#188). A new search starts from
+   the Search library field in the navbar. Its results page offers the
+   "Look up on TMDB" hand-off that arrives here. #}
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if error %}
@@ -16,11 +16,12 @@
 <h4>Movies on TMDB</h4>
 <div class="list-group mb-4">
 	{% for match in movie_matches %}
-	{# Poster and title link — owned matches to their movie page,
-	   unowned ones with a year to the log page; films without a
-	   release year can't be logged yet, so they don't link. The row
-	   stopped being one whole anchor when the star ladder moved in
-	   (a form can't sit inside a link), like the history rows #}
+	{# Poster and title link. Owned matches link to their movie page.
+	   Unowned matches with a year link to the log page. Films without a
+	   release year cannot be logged yet. Thus, they do not link. The row
+	   stopped being one whole anchor when the star ladder moved in,
+	   because a form cannot sit inside a link. The history rows do the
+	   same. #}
 	{% set match_url = url_for('main.movie', movie_id=match.library_id) if match.library_id else (url_for('main.review_tmdb', tmdb_id=match.tmdb_id) if match.year else none) %}
 	<div class="list-group-item">
 		<div class="d-flex">
@@ -37,15 +38,16 @@
 			{% if match_url %}</a>{% endif %}
 			<div class="flex-grow-1" data-watchlist-scope>
 				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
-				{# The live star ladder, like the history rows: a
-				   record's ladder posts to its movie route, a bare TMDB
-				   result's to the log route whose first tap creates the
-				   record; the /movie_states hydration paints the verdict
-				   or the shared source's estimate — the tmdb lane, so
-				   record-less results estimate too. The watchlist
-				   toggle (#183) rides beside it, aimed the same dual
-				   way — a record-less add creates the record, and the
-				   log route 307-forwards the follow-up remove #}
+				{# The live star ladder, like the history rows. The ladder
+				   of a record posts to its movie route. The ladder of a
+				   bare TMDB result posts to the log route, whose first
+				   tap creates the record. The /movie_states hydration
+				   paints the verdict or the estimate of the shared
+				   source. It uses the tmdb lane. Thus, record-less
+				   results get an estimate too. The watchlist toggle
+				   (#183) goes beside it, aimed the same dual way. A
+				   record-less add creates the record. The log route
+				   307-forwards the follow-up remove. #}
 				{% if match.record_id or match.year %}
 				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -56,31 +58,31 @@
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="from_card" value="1">
 					{# Outline on purpose, like the gallery tiles (Glenn,
-					   Aug 31 2026): the toggle repeats on every result
-					   row, so it stays quiet #}
+					   2026-08-31). The toggle repeats on every result
+					   row. Thus, it stays quiet. #}
 					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
 					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
 				</form>
 				<br/>
 				{% endif %}
 				{# Badges sit left-aligned under the title, like the local
-				   search rows, in the movie-page strip's grammar: the
-				   Fitzflix badge for owned matches, availability badges
-				   otherwise — absence says "not in library". The badge
-				   wears the shopping colors the rest of the site uses
-				   (#191): amber for a copy worth upgrading, green once
-				   it's settled #}
+				   search rows, in the grammar of the movie-page strip.
+				   Owned matches show the Fitzflix badge. Other matches
+				   show availability badges. No badge means "not in
+				   library". The badge shows the shopping colors that the
+				   rest of the site uses (#191): amber for a copy worth an
+				   upgrade, green when the copy is settled. #}
 				{% if match.upgradable is not none %}
 				{{ library_badge(match.upgradable) }}
 				{% endif %}
-				{# The personal funnel: Seen, On your watchlist, Might
-				   interest you — seen and might-interest never show
-				   together #}
+				{# The personal funnel: Seen, On your watchlist, and Might
+				   interest you. Seen and might-interest never show
+				   together. #}
 				{% if match.seen %}
 				<span class="badge text-bg-info me-1">Seen</span>
 				{% endif %}
-				{# Always in the DOM (d-none when off) so the live
-				   toggle can reveal it without a reload #}
+				{# Always in the DOM (d-none when off). Thus, the live
+				   toggle can show it without a reload. #}
 				<span class="badge text-bg-warning me-1{% if not match.watchlisted %} d-none{% endif %}" data-watchlist-badge>On your watchlist</span>
 				{% if match.might_interest %}
 				<span class="badge text-bg-info me-1">Might interest you</span>
@@ -102,8 +104,8 @@
 <h4>TV shows on TMDB</h4>
 <div class="list-group mb-4">
 	{% for match in tv_matches %}
-	{# Owned series open their page; there's no TV log page, so unowned
-	   rows don't link #}
+	{# Owned series open their page. There is no TV log page. Thus,
+	   unowned rows do not link. #}
 	{% if match.library_id %}
 	<a href="{{ url_for('main.tv', series_id=match.library_id) }}" class="list-group-item list-group-item-action">
 	{% else %}
@@ -121,8 +123,8 @@
 			{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</h5>
-				{# Amber when any season still has an episode worth
-				   upgrading, green once every season is settled #}
+				{# Amber when any season still has an episode worth an
+				   upgrade. Green when every season is settled. #}
 				{% if match.upgradable is not none %}
 				{{ library_badge(match.upgradable) }}
 				{% endif %}

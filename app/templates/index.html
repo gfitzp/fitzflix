@@ -6,9 +6,9 @@
 <h2 class="mt-n2">Pick something to watch</h2>
 <hr>
 {% if watchlist_items or recs or rail or minutes %}
-{# The runtime filter is a view on the already-computed rails: the
-   recommendations never consider length, and films with unknown
-   runtimes hide only while a limit is set #}
+{# The runtime filter is a view on the rails that are already
+   computed. The recommendations never consider the length. Films with
+   an unknown runtime hide only while a limit is set. #}
 <form class="form-inline mb-3" action="{{ url_for('main.index') }}" method="get">
 	<label class="small text-muted me-2" for="minutes">Only films that fit your evening:</label>
 	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm me-2" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
@@ -19,10 +19,11 @@
 <p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
 {% endif %}
 {% endif %}
-{# The watchlist shelf (Aug 30 2026): the films already wanted that
-   are watchable TONIGHT — owned or streaming on a subscribed service.
-   Leaving-soon departures hold the leading slots in urgency order;
-   every shelf below this one is discovery, watchlist excluded #}
+{# The watchlist shelf (2026-08-30): the films that the user wants and
+   can watch TONIGHT. The user owns them, or they stream on a
+   subscribed service. The films that leave soon hold the first slots,
+   in urgency order. Each shelf below this one is discovery, and it
+   excludes the watchlist. #}
 {% if watchlist_items or watchlist_filtered_out %}
 <div><h4 id="watchlist-shelf" style="display: inline;">From your watchlist</h4>&nbsp;<span><a href="{{ url_for('main.watchlist') }}" class="small">See more&hellip;</a></span></div>
 {% if watchlist_filtered_out %}
@@ -58,11 +59,12 @@
 <div class="row mt-3">
 	{% for rec in recs %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
-		{# data-card-url arms the poster popover (#45c): hover (or first
-		   tap) shows the film's card, a click (or second tap) follows
-		   the link. The card carries the badges — the watchlist badge
-		   comes from the card route itself, and the recommendation
-		   reasons ride data-card-reasons; the tile keeps the actions #}
+		{# data-card-url arms the poster popover (#45c). A hover (or
+		   the first tap) shows the card of the film. A click (or the
+		   second tap) follows the link. The card shows the badges.
+		   The watchlist badge comes from the card route itself. The
+		   recommendation reasons go with data-card-reasons. The tile
+		   keeps the actions. #}
 		<a href="{{ url_for('main.movie', movie_id=rec.movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=rec.movie.id) }}"{% if rec.because %} data-card-reasons='{{ rec.because | tojson }}'{% endif %}>
 			{% if rec.movie.custom_poster %}
 				<img src="{{ url_for('static', filename='custom/movie/' + rec.movie.id|string + '/w342/' + rec.movie.custom_poster) }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ rec.movie.title }} ({{ rec.movie.year }})">
@@ -85,8 +87,8 @@
 <p class="small text-muted">Fitzflix recommends these films from your library, from your ratings, likes, and watches. It calculates the list each night. The last run was {{ computed_at }}.</p>
 {% endif %}
 {% elif recs_filtered_out %}
-{# The rail is computed, the runtime filter just emptied it (#198):
-   say so, instead of claiming the recommendations aren't ready yet #}
+{# The rail is computed, but the runtime filter emptied it (#198). Say
+   so. Do not claim that the recommendations are not ready yet. #}
 <p class="lead">No recommended film fits in {{ minutes }} minutes.</p>
 <p class="text-muted">Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the full list. While a limit is set, the films with an unknown runtime stay hidden.</p>
 {% elif recs_stored %}
@@ -100,13 +102,13 @@
 <p class="text-muted">Rate, like, or mark the films that you watched. Use the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above. This page then selects films from your library for tonight.</p>
 {% endif %}
 {% if criterion_subscriber %}
-{# The Criterion24/7 card lives in its own container so it can follow
-   the feed without a reload: the fragment is re-fetched once a
-   minute while the tab is visible, and immediately when a hidden tab
-   comes back — Glenn's "it still said the film ends at 7:38 an hour
-   later" report, Aug 2026. The container renders for every Criterion
-   subscriber even when no film is showing, so a card can appear once
-   the poller stores one #}
+{# The Criterion24/7 card is in its own container. Thus, it can follow
+   the feed without a reload. The page fetches the fragment again one
+   time each minute while the tab is visible, and immediately when a
+   hidden tab comes back. This answers the report from Glenn, 2026-08:
+   "it still said the film ends at 7:38 an hour later". The container
+   renders for each Criterion subscriber, also when no film is
+   showing. Thus, a card can appear after the poller stores one. #}
 <div id="criterion-now" data-now-url="{{ url_for('main.criterion_now') }}">
 {% include "_criterion_now_card.html" %}
 </div>
@@ -123,9 +125,9 @@
 			return card ? card.getAttribute("data-now-film") : "";
 		}
 
-		// setTimeout chaining, never setInterval: a slow answer must
-		// not stack requests. Hidden tabs stop polling outright; the
-		// visibilitychange handler polls at once on return
+		// Use setTimeout chaining, never setInterval. A slow answer must
+		// not stack requests. A hidden tab stops the polling fully. The
+		// visibilitychange handler polls immediately when the tab returns.
 		function schedule() {
 			window.clearTimeout(timer);
 			if (document.hidden) return;
@@ -136,7 +138,7 @@
 			if (document.hidden) return;
 			fetch(NOW_URL, {credentials: "same-origin", cache: "no-store"})
 				.then(function(response) {
-					// A redirect is the login page, not a card
+					// A redirect is the login page, not a card.
 					if (!response.ok || response.redirected) {
 						throw new Error(response.status);
 					}
@@ -146,7 +148,8 @@
 					var fresh = document.createElement("div");
 					fresh.innerHTML = html;
 					if (filmOf(fresh) !== filmOf(holder)) {
-						// A different film (or none): swap the card whole
+						// A different film (or no film): replace the whole
+						// card.
 						holder.innerHTML = html;
 						return;
 					}
@@ -168,18 +171,19 @@
 {% endif %}
 {% if shelf or shelf_filtered_out %}
 <hr>
-{# "See more…" opens the in-app departure inventory — the complete
-   set with library/Seen/watchlist badges; the criterionchannel.com
-   source link lives on that page #}
+{# "See more…" opens the in-app departure inventory. That is the
+   complete set with the library, Seen, and watchlist badges. The
+   criterionchannel.com source link is on that page. #}
 <div><h4 id="leaving-shelf" style="display: inline;">Leaving the Criterion Channel {{ shelf_departs }}</h4>&nbsp;<span><a href="{{ url_for('main.leaving') }}" class="small">See more&hellip;</a></span></div>
 {% if shelf_filtered_out %}
-{# Emptied by the runtime filter, not empty: the header stays so the
-   departure date and the full inventory link keep their place (#198) #}
+{# The runtime filter emptied the shelf. The shelf is not empty. The
+   header stays. Thus, the departure date and the link to the full
+   inventory keep their place (#198). #}
 <p class="text-muted mt-3">Nothing leaving fits in {{ minutes }} minutes &mdash; see the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
-{# data-no-leaving-fold: every film on this shelf is leaving by
-   definition, so the red corner fold (#197) would just repeat the
-   header — but the green newly-arrived fold still paints #}
+{# data-no-leaving-fold: each film on this shelf leaves, by
+   definition. Thus, the red corner fold (#197) would only repeat the
+   header. The green newly-arrived fold still paints. #}
 <div class="row mt-3" data-no-leaving-fold>
 	{% for item in shelf %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -202,20 +206,20 @@
 <p class="small text-muted">These films leave <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a> soon. Your taste profile ranks them. The films on your watchlist are at the front of your watchlist shelf above. Watch them before they leave, or buy the disc.</p>
 {% endif %}
 {% endif %}
-{# The newly-added discovery shelves (#246): one per subscribed
-   provider with a stored newly-added feed — Criterion's scrape is
-   the only feed today. "See more…" opens the in-app arrival
-   inventory — the complete set with library/Seen/watchlist badges;
-   the provider's own source link lives on that page #}
+{# The newly-added discovery shelves (#246): one shelf per subscribed
+   provider that has a stored newly-added feed. The Criterion scrape
+   is the only feed today. "See more…" opens the in-app arrival
+   inventory. That is the complete set with the library, Seen, and
+   watchlist badges. The source link of the provider is on that page. #}
 {% for ns in new_shelves %}
 <hr>
 <div><h4 id="newly-added-shelf-{{ ns.provider_id }}" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ url_for('main.newly_added') }}#newly-added-{{ ns.provider_id }}" class="small">See more&hellip;</a></span></div>
 {% if ns.filtered_out %}
 <p class="text-muted mt-3">Nothing newly added fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
-{# data-no-new-fold: everything on this shelf is newly added by
-   definition, so the green corner fold would just repeat the header
-   — but the red leaving fold still paints #}
+{# data-no-new-fold: each film on this shelf is newly added, by
+   definition. Thus, the green corner fold would only repeat the
+   header. The red leaving fold still paints. #}
 <div class="row mt-3" data-no-new-fold>
 	{% for item in ns.films %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -247,9 +251,10 @@
 <div class="row mt-3">
 	{% for item in rail %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
-		{# The card links to the log page, which shows the film's details
-		   and availability strip (and redirects if a record exists);
-		   the provider badges live in the card's own streaming strip #}
+		{# The card links to the log page. That page shows the details
+		   and the availability strip of the film. It redirects if a
+		   record exists. The provider badges are in the streaming
+		   strip of the card. #}
 		<a href="{{ url_for('main.review_tmdb', tmdb_id=item.tmdb_id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', tmdb_id=item.tmdb_id) }}"{% if item.because %} data-card-reasons='{{ item.because[:3] | tojson }}'{% endif %}>
 			{% if item.poster_path %}
 				<img src="{{ config['TMDB_IMAGE_URL'] }}/w342{{ item.poster_path }}" loading="lazy" class="img-fluid border rounded mb-2 w-100" alt="{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}">
@@ -271,9 +276,9 @@
 {% endif %}
 {% if again or again_filtered_out %}
 <hr>
-{# The rewatch shelf: liked films whose last watch is long past —
-   the complement of the recommendation rails, which never show
-   logged films #}
+{# The rewatch shelf: liked films with a last watch that is long past.
+   This is the complement of the recommendation rails. Those rails
+   never show logged films. #}
 <h4>Watch it again</h4>
 {% if again_filtered_out %}
 <p class="text-muted mt-3">No film that you can watch again fits in {{ minutes }} minutes. Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>

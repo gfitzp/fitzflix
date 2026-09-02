@@ -1,12 +1,14 @@
-{# One file's card on the File Activity dashboard: poster, quality and
-   track badges, and library links. Rendered inline for the landed
-   list, and served alone by /file-activity/card so the queue poll can
-   swap a finished import's chips for its card without a reload. The
-   data-file-basenames attribute is how the poll matches pipeline
-   trails to this card — the trail may be keyed by the original
-   filename rather than the File row's, so both names ride along. The
-   hidden data-trail slot is where the poll paints this file's stage
-   chips while Redis still retains its trail. #}
+{# This is the card of one file on the File Activity dashboard. It
+   shows the poster, the quality and track badges, and the library
+   links. The dashboard renders it inline for the list of arrived
+   files. /file-activity/card also serves it alone. Thus, the queue
+   poll can replace the chips of a finished import with its card
+   without a reload. The poll uses the data-file-basenames attribute
+   to match the pipeline trails to this card. The trail can be keyed
+   by the original filename, not by the name of the File row. Thus,
+   both names go with the card. The poll paints the stage chips of
+   this file into the hidden data-trail slot while Redis keeps its
+   trail. #}
 <div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
@@ -21,9 +23,9 @@
 			<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})</a><br/>
 			{% if file.edition %}{{ file.edition }}<br/>{% endif %}
 			{% if file.feature_type_id %}{{ file.feature_type.feature_type }} - {{ file.plex_title }}<br/>{% endif %}
-			{# Quality badged by upgrade eligibility, matching the search and
-			   library pages; extras aren't upgrade candidates, so they stay
-			   neutral #}
+			{# The quality badge shows the upgrade eligibility, the
+			   same as on the search and library pages. Extras are not
+			   upgrade candidates. Thus, they stay neutral. #}
 			{% if file.feature_type_id %}
 			<span class="badge text-bg-light">{{ file.quality.quality_title }}</span><br/>
 			{% else %}
@@ -53,8 +55,8 @@
 			</h5>
 			<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ file.tv_series.tmdb_name if file.tv_series.tmdb_name else file.tv_series.title }}</a><br/>
 			<a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">Season {{ file.season }}, {% if file.last_episode == file.episode %}Episode {{ file.episode }}{% else %}Episodes {{ file.episode }}–{{ file.last_episode }}{% endif %}</a><br/>
-			{# Physical-media TV seasons count as final, matching the search
-			   page's DVD-green rule #}
+			{# Physical-media TV seasons count as final. This matches
+			   the DVD-green rule of the search page. #}
 			<span class="badge text-bg-{{ 'success' if (file.quality.physical_media or file.quality.preference >= upgrade_threshold) else 'warning' }}">{{ file.quality.quality_title }}</span><br/>
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
 				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning">

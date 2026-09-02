@@ -29,8 +29,8 @@
 	</div>
 </div>
 <hr>
-{# Each nav position renders a wide and a narrow variant — the narrow
-   one trims iter_pages so the strip fits a phone #}
+{# Each nav position renders a wide variant and a narrow variant. The
+   narrow variant trims iter_pages so the strip fits a phone #}
 {% macro pagination_nav(compact=false) %}
 <nav class="{{ 'd-block d-sm-none' if compact else 'd-none d-sm-block' }}" aria-label="...">
 	<ul class="pagination">
@@ -55,10 +55,10 @@
 {% if movies %}
 {{ pagination_nav() }}
 {{ pagination_nav(compact=true) }}
-{# One gallery for every breakpoint (#45d — the separate mobile list
-   is gone): posters carry the popover, tiles keep the edition and
-   the actions; the green/amber shopping answer moved into the
-   popover's quality badge (Glenn's Aug 2026 revision) #}
+{# One gallery serves every breakpoint (#45d, the separate mobile list
+   is gone). The posters carry the popover. The tiles keep the edition
+   and the actions. The green/amber shopping answer moved into the
+   quality badge of the popover (revised by Glenn, 2026-08) #}
 <div class="row">
 	{% for file, movie, quality in movies %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">

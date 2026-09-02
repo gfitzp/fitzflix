@@ -1,6 +1,7 @@
 {% if tv.tmdb_poster_path %}
-	{# align-self-start keeps the poster's aspect ratio in a d-flex row —
-	   flex items otherwise stretch to the tallest column's height #}
+	{# align-self-start keeps the aspect ratio of the poster in a d-flex
+	   row. Without it, the flex items stretch to the height of the
+	   tallest column #}
 	<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ tv.tmdb_poster_path }}" loading="lazy" class="me-3 border align-self-start" alt="{{ tv.tmdb_name if tv.tmdb_name else tv.title }}" style="width: 92px;">
 	{% else %}
 	<div class="rounded me-3 border d-block border d-flex justify-content-center align-items-center text-secondary" style="height: 130px; width: 92px;">

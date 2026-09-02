@@ -1,10 +1,11 @@
 {% macro global_search_form(extra_classes, action=None, value=None, placeholder="Search library", width="10rem", typeahead=True) %}
-{# The global search box. The navbar renders it twice — outside the
-   collapse for phones, inside the right-side menu for desktop — so the
-   class-based type-ahead script binds to both. The results pages render
-   it again on the heading row, pre-filled and without the type-ahead
-   (Glenn's consistency pass), so a fruitless search can be retried in
-   place; the TMDB page's copy submits back to /search/tmdb. #}
+{# The global search box. The navbar renders it 2 times: outside the
+   collapse for phones, and inside the right-side menu for desktop. Thus,
+   the class-based type-ahead script binds to both. The results pages
+   render it again on the heading row, pre-filled and without the
+   type-ahead (consistency pass by Glenn). Thus, the user can retry a
+   fruitless search in place. The copy on the TMDB page submits back to
+   /search/tmdb. #}
 <form class="form-inline flex-nowrap {{ extra_classes }}" action="{{ action or url_for('main.search') }}" method="get" autocomplete="off" role="search">
 	<div class="position-relative" style="width: {{ width }};">
 		<input class="form-control form-control-sm w-100{% if typeahead %} global-search-input{% endif %}" type="search" name="q" placeholder="{{ placeholder }}" aria-label="{{ placeholder }}"{% if value %} value="{{ value }}"{% endif %}>

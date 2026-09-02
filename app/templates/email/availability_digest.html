@@ -1,8 +1,9 @@
-{# Each section is a plain table — email clients don't do flexbox —
-   with the film's artwork leading the row (custom poster or TMDB
-   rendition, absolute URLs; no artwork just drops the image, no
-   placeholder). Notes ride under the title except in the library
-   section, whose header already says everything. #}
+{# Each section is a plain table, because email clients do not support
+   flexbox. The artwork of the film leads the row (the custom poster
+   or the TMDB rendition, with absolute URLs). If there is no artwork,
+   the row omits the image. There is no placeholder. The notes go
+   under the title, except in the library section. The header of that
+   section already says everything. #}
 {% macro film_table(items, show_note=true) -%}
 <table cellpadding="0" cellspacing="0" border="0" role="presentation">
 {% for item in items %}

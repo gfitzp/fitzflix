@@ -2,18 +2,18 @@
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
-{# The header carries only the title since #215: the Log a film box
-   sits just above the diary rows, and the import / export forms moved
-   to the Profile page with the rest of the account plumbing #}
+{# The header carries only the title since #215. The Log a film box sits
+   just above the diary rows. The import and export forms moved to the
+   Profile page with the rest of the account plumbing. #}
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 mb-n1">My History</h2>
 </div>
 <hr>
 {% if rated_count %}
-{# Letterboxd-style rating distribution: five whole-star bins rendered
-   locally as CSS bars — no charting library, no external requests.
-   Outside the listing gate: dateless ratings count here even though
-   only dated viewings appear in the diary below #}
+{# Letterboxd-style rating distribution: 5 whole-star bins rendered
+   locally as CSS bars. No charting library and no external requests. This
+   sits outside the listing gate. Dateless ratings count here, although
+   only dated viewings appear in the diary below. #}
 <div class="mb-3 col-12 col-sm-6" id="rating-distribution">
 	<div class="d-flex align-items-end" style="height: 90px; gap: 2px;">
 		{% for bucket in rating_distribution %}
@@ -39,10 +39,10 @@
 	</div>
 </div>
 {% endif %}
-{# Log a film, just above the diary it will land in (#215). The hidden
-   scope keeps the TMDB results page to movies — the diary never logs
-   TV — and the results rows carry the live star ladder, so a film can
-   be logged right off the search results #}
+{# Log a film, just above the diary that it goes into (#215). The hidden
+   scope keeps the TMDB results page to movies, because the diary never
+   logs TV. The results rows carry the live star ladder. Thus, the user
+   can log a film directly from the search results. #}
 <form class="d-flex mb-3" action="{{ url_for('main.search_tmdb') }}" method="get" style="max-width: 24rem;">
 	<input type="hidden" name="scope" value="movies">
 	<input type="search" name="q" class="form-control form-control-sm me-2" placeholder="Log a film&hellip;" aria-label="Search TMDB for a film to review">
@@ -80,15 +80,14 @@
 	</a>
 	<div class="flex-grow-1">
 		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">{{ review.movie.tmdb_title if review.movie.tmdb_title else review.movie.title }} ({{ review.movie.tmdb_release_date.strftime("%Y") if (review.movie.tmdb_title and review.movie.tmdb_release_date) else review.movie.year }})</a></h5>
-		{# Each viewing carries its own live star row, posting
-		   to review_edit — stars only, never the ✕: a logged film's
-		   floor is 1 star. The typed text rides along with a star tap
-		   (both fields belong to the same form). An unrated viewing —
-		   a Plex watch, an unrated import — previews the engine's
-		   estimate until real stars land. Feed-originated rows
-		   show their stars read-only: the next poll re-asserts
-		   Letterboxd's verdict over any local edit, so edits happen
-		   there instead #}
+		{# Each viewing carries its own live star row that posts to
+		   review_edit. Stars only, never the ✕: the floor of a logged
+		   film is 1 star. The typed text goes with a star tap, because
+		   both fields belong to the same form. An unrated viewing (a Plex
+		   watch or an unrated import) shows the estimate of the engine
+		   until real stars arrive. Feed-originated rows show their stars
+		   read-only. The next poll asserts the Letterboxd verdict again
+		   over any local edit. Thus, edits happen there instead. #}
 		{% if review.letterboxd_guid %}
 		<div class="d-inline-flex align-items-center" style="pointer-events: none;" title="Synced from Letterboxd">
 			{{ rating_ladder(compact=true, allow_not_interested=false, current=(review.rating if review.rating is not none else none), estimated=estimates.get(review.movie_id)) }}
@@ -108,24 +107,25 @@
 				Rewatch
 			</span>
 		{% endif %}<br/>
-		{# Server-side dates, deliberately not flask-moment: these columns
-		   hold local wall-clock values (and imported rows hold bare
-		   calendar dates), so moment's naive-means-UTC conversion would
-		   shift them a day early for viewers west of UTC #}
+		{# Server-side dates, deliberately not flask-moment. These columns
+		   hold local wall-clock values, and imported rows hold bare
+		   calendar dates. The naive-means-UTC conversion of moment would
+		   move them 1 day early for viewers west of UTC. #}
 		{% if review.date_watched %}Watched {{ review.date_watched.strftime("%b %-d, %Y") }}. {% endif %}{% if review.date_reviewed %}Reviewed {{ review.date_reviewed.strftime("%b %-d, %Y") }}{% if review.date_updated and review.date_updated.date() != review.date_reviewed.date() %}; updated {{ review.date_updated.strftime("%b %-d, %Y") }}{% endif %}<br/>{% endif %}
-		{# review_html renders Letterboxd's inline subset (<i>, <b>, …) as
-		   real formatting and keeps everything else escaped; the textarea
-		   below stays raw markup, since that's what gets edited #}
+		{# review_html renders the inline subset of Letterboxd (<i>, <b>,
+		   …) as real formatting. It keeps everything else escaped. The
+		   textarea below stays raw markup, because that is what the user
+		   edits. #}
 		{{ review.review | review_html }}
 		{% if review.letterboxd_guid %}
-		{# No local editors on a feed row — the sync would revert them.
-		   The tmdb redirect lands on the film's Letterboxd page, where
-		   the diary entry lives #}
+		{# No local editors on a feed row, because the sync would revert
+		   them. The tmdb redirect goes to the Letterboxd page of the
+		   film, where the diary entry lives. #}
 		<div class="mt-1 small text-muted">Synced from Letterboxd{% if review.movie.tmdb_id %} — <a href="https://letterboxd.com/tmdb/{{ review.movie.tmdb_id }}/" target="_blank" rel="noreferrer">edit it there</a>{% endif %}</div>
 		{% else %}
-		{# Freeform text lives in its own per-row form (#58c) — separate
-		   from the star form, so a star tap can never silently save
-		   half-edited text. Dates still edit on the full review page #}
+		{# Freeform text lives in its own per-row form (#58c), separate
+		   from the star form. Thus, a star tap can never silently save
+		   half-edited text. Dates still edit on the full review page. #}
 		<details class="mt-1">
 			<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Edit review text" if review.review else "Add review text" }}</summary>
 			<form action="{{ url_for('main.review_edit', review_id=review.id, page=pages.page) }}" method="post" class="mt-1" style="max-width: 40rem;">

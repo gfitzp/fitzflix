@@ -1,7 +1,7 @@
-{# poster_fold, when the including route provides it (the movie and
-   review pages; the poster picker deliberately doesn't), wraps the
-   artwork in a fold host so the corner badge overlays like a gallery
-   tile's #}
+{# poster_fold wraps the artwork in a fold host when the route that
+   includes this template provides it. The movie and review pages do.
+   The poster picker deliberately does not. Thus, the corner badge
+   overlays like the badge of a gallery tile #}
 {% from "_poster_tile.html" import poster_fold_overlay %}
 {% if poster_fold is defined and poster_fold %}
 <div class="poster-fold-host mx-auto" style="width: 250px;">

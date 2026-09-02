@@ -36,8 +36,9 @@
 				{{ custom_poster_form.hidden_tag() }}
 				<div class="mb-3">
 					{{ custom_poster_form.custom_poster.label(class_="form-label") }}
-					{# BS5 native file input — the custom-file wrapper and its
-					   filename-mirroring script are gone with Bootstrap 4 #}
+					{# This is the BS5 native file input. The
+					   custom-file wrapper and its filename-mirroring
+					   script went away with Bootstrap 4. #}
 					{{ custom_poster_form.custom_poster(type="file", class_="form-control form-control-sm", id="custom-poster", accept="image/*") }}
 				</div>
 				{{ custom_poster_form.poster_submit(class_="btn btn-sm btn-warning") }}

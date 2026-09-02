@@ -1,23 +1,26 @@
-{# The poster popover's card (#45c): the fragment /movie_card renders
-   for one film — title, credits, a meta line (runtime, genres, and
-   the US rating in its MPAA-style box, so the card says at a glance
-   what sort of film it is), synopsis, and the at-a-glance badges — fetched on hover (or first tap) and injected into a
-   Bootstrap popover by the script in base.html, which finds it by the
-   shared .poster-card class (_tv_card.html is the series-shaped
-   sibling). Served for library records and bare TMDB ids alike. The
-   card is informational only
-   (Glenn's revision, Aug 2026): the star ladder and the watchlist
-   toggle live under the poster on the gallery tile itself, so the
-   card carries the film's FACTS — the In-library badge in its
-   shopping colors (amber = worth upgrading, green = settled; the
-   quality-tier badge it replaced is the movie page's business), the
-   watchlist badge, streaming availability, and any
-   page-specific labels the tile hands over through data-card-reasons
-   (filled into the slot below by the card script; long labels wrap
-   inside the popover's fixed width instead of stretching it). The one
-   action here is the Apple TV play button (Glenn's ask, Aug 2026):
-   owned films can be sent to the living-room player from any poster,
-   through the shared data-plex-play handler in base.html. #}
+{# This is the card of the poster popover (#45c). The fragment
+   /movie_card renders it for 1 film. It shows the title, the credits,
+   a meta line, the synopsis, and the at-a-glance badges. The meta line
+   holds the runtime, the genres, and the US rating in its MPAA-style
+   box. Thus, the card says at a glance what type of film it is. The
+   script in base.html fetches the card on hover (or on the first tap)
+   and injects it into a Bootstrap popover. The script finds the card
+   by the shared .poster-card class (_tv_card.html is the series
+   variant). Fitzflix serves the card for library records and for bare
+   TMDB ids. The card is informational only (revised by Glenn,
+   2026-08). The star ladder and the watchlist toggle are under the
+   poster on the gallery tile itself. Thus, the card carries the FACTS
+   of the film. These are the In-library badge in its shopping colors
+   (amber = worth an upgrade, green = settled), the watchlist badge,
+   the streaming availability, and the page-specific labels that the
+   tile hands over through data-card-reasons. The quality-tier badge
+   that the In-library badge replaced is now the business of the movie
+   page. The card script fills the labels into the slot below. Long
+   labels wrap inside the fixed width of the popover. They do not
+   stretch it. The one action here is the Apple TV play button
+   (requested by Glenn, 2026-08). The user can send an owned film to
+   the living-room player from any poster, through the shared
+   data-plex-play handler in base.html. #}
 {% from "_availability_badges.html" import library_badge %}
 <div class="poster-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
@@ -30,15 +33,15 @@
 	{% if top_cast %}
 	<p class="small text-muted mb-1">Starring {% for credit_id, name in top_cast %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 	{% endif %}
-	{# The shared strip keeps the availability grammar (and the
-	   mandatory JustWatch credit) identical to the movie page; a film
-	   the strip can't speak for still badges its library copy #}
+	{# The shared strip keeps the availability grammar the same as on the
+	   movie page. It also keeps the mandatory JustWatch credit. A film
+	   that the strip cannot describe still badges its library copy #}
 	{% if streaming %}
 		{% include "_streaming_strip.html" %}
 	{% elif in_library %}
 		<div class="mt-1">{{ library_badge(library_upgradable) }}</div>
 	{% endif %}
-	{# The badge line: the watchlist badge and the tile's own labels #}
+	{# The badge line shows the watchlist badge and the labels of the tile #}
 	<p class="mb-0 mt-1">
 		{% if on_watchlist %}
 		<span class="badge text-bg-warning fw-normal me-1 mb-1" title="On your watchlist">On your watchlist</span>

@@ -15,9 +15,9 @@
 <h2 class="mt-2 mb-n2">Possibly-forced subtitles{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
 <hr>
 {% if not focus_file %}
-{# The worklist: just the pending files, each opening its own
-   triage page — the snapshots, cue timelines, and forms all live
-   there, and its actions bounce back here via the origin param #}
+{# The worklist: only the pending files. Each file opens its own triage
+   page. The snapshots, cue timelines, and forms all live there. Its
+   actions bounce back here through the origin param. #}
 <p class="small text-muted">Each file below has a subtitle track that looks forced, but does not have the forced flag. Go down the list. Each name opens the triage page of that file. After an action on that page, you return here.</p>
 {% if candidates %}
 <div class="list-group mb-3">
@@ -77,7 +77,7 @@
 					<tr>
 						{% if file.container == "Matroska" %}<td class="border-top-0"></td>{% endif %}
 						<td colspan="4" class="border-top-0 pt-0">
-							{# Cue density across the runtime: where this track speaks #}
+							{# Cue density across the runtime: where this track speaks. #}
 							<div class="d-flex align-items-end" style="height: 22px; gap: 1px; max-width: 480px;">
 								{% for pct in item.aids.buckets %}
 								<div class="flex-fill {{ 'bg-info' if pct else 'bg-light' }} rounded-top" style="height: {{ [pct, 4] | max }}%;"></div>
@@ -85,9 +85,9 @@
 							</div>
 							<p class="small text-muted mb-1">{{ item.aids.cues }} cues from {{ item.aids.first }} to {{ item.aids.last }}</p>
 							<div>
-								{# Clicking a snapshot enlarges it in place via
-								   the shared modal below, instead of leaving
-								   the page #}
+								{# A click on a snapshot enlarges it in
+								   place through the shared modal below,
+								   instead of leaving the page. #}
 								{% for snap in item.aids.snapshots %}
 								<img src="{{ url_for('static', filename='triage/' + file.id|string + '/' + item.track.track|string + '/' + snap) }}" loading="lazy" style="height: 72px; cursor: zoom-in;" class="border rounded me-1 mb-1 triage-snapshot" alt="Track {{ item.track.track }} burned onto the film" role="button" tabindex="0">
 								{% endfor %}
@@ -108,9 +108,9 @@
 {% else %}
 <p class="small text-muted">Nothing looks forced right now.</p>
 {% endif %}
-{# One shared modal enlarges whichever snapshot was clicked; the image
-   shows at its natural render size (the frames are burned at 480px),
-   and clicking anywhere dismisses it #}
+{# One shared modal enlarges the snapshot that the user clicked. The image
+   shows at its natural render size (the frames are burned at 480px). A
+   click anywhere dismisses it. #}
 <div class="modal fade" id="triageSnapshotModal" tabindex="-1" role="dialog" aria-label="Enlarged snapshot" aria-hidden="true">
 	<div class="modal-dialog modal-lg modal-dialog-centered" role="document">
 		<div class="modal-content bg-transparent border-0 shadow-none">
@@ -125,8 +125,8 @@
 {{ super() }}
 {% if focus_file %}
 <script>
-	// Enlarge-in-place for the burned-in snapshots: clicking (or
-	// pressing Enter on) a thumbnail loads it into the shared modal
+	// Enlarge-in-place for the burned-in snapshots. A click on a
+	// thumbnail, or Enter on it, loads it into the shared modal.
 
 	document.addEventListener("click", function (event) {
 		var snapshot = event.target.closest(".triage-snapshot");

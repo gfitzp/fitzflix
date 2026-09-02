@@ -41,14 +41,15 @@
 <hr>
 {% if rows %}
 {{ pagination_nav() }}
-{# The catalog as a poster wall (#45d) — the way Criterion itself
-   shows spines. The popover carries each film's synopsis and badges;
-   its quality badge is recolored with the SETTLED rule via the card
-   URL's context=criterion (#77a — green only when the disc is owned
-   and the copy matches the release's format), so the tiles keep just
-   the spine caption, the collector's-set line, and the actions. The
-   set line renders BEFORE the actions so the bottom pin (the variant-4
-   variant 4) keeps every ladder on the row's shared baseline #}
+{# The catalog as a poster wall (#45d). This is how Criterion itself
+   shows spines. The popover shows the synopsis and the badges of each
+   film. The card URL passes context=criterion. Thus, the SETTLED rule
+   recolors the quality badge (#77a: green only when the user owns the
+   disc and the copy matches the format of the release). The tiles
+   keep only the spine caption, the collector's-set line, and the
+   actions. The set line renders BEFORE the actions. Thus, the bottom
+   pin (variant 4) keeps each ladder on the shared baseline of the
+   row. #}
 {% macro set_line(row) %}
 {% if row.set_title %}
 <p class="mb-0 mt-1 small text-muted">Part of the {{ row.set_title }} collector's set</p>
@@ -66,11 +67,12 @@
 		{{ set_line(row) }}
 		{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id) }}
 		{% elif row.kind == "tmdb" %}
-		{# A release the library lacks: a file-less local record dresses
-		   the tile with its stored poster and opens its movie page
-		   directly (the log page would just redirect there); recordless
-		   releases open the log page, so they're watchlistable — and
-		   either way the popover serves the detail on hover #}
+		{# A release that the library lacks. A local record without a
+		   file gives the tile its stored poster and opens its movie
+		   page directly. The log page would only redirect there. A
+		   release without a record opens the log page. Thus, the user
+		   can add it to the watchlist. In both cases, the popover
+		   shows the detail on hover. #}
 		{% if movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id, context='criterion') }}"{% if row.might_interest %} data-card-reasons='{{ ["Might interest you"] | tojson }}'{% endif %}>
 			{{ poster_image(movie_poster_src(movie), row.title ~ (' (' ~ row.year ~ ')' if row.year else '')) }}
@@ -90,8 +92,9 @@
 		{{ tile_actions(url_for('main.review_tmdb', tmdb_id=row.tmdb_id), tmdb_id=row.tmdb_id) }}
 		{% endif %}
 		{% else %}
-		{# Wikidata knows this release but not its TMDB id, so there's
-		   nothing to link or look up — a plain spine tile #}
+		{# Wikidata knows this release, but not its TMDB id. Thus,
+		   there is nothing to link or to look up. This is a plain
+		   spine tile. #}
 		<div>
 			{{ poster_image(none, row.title) }}
 			<p class="small mb-0">{% if row.spine %}#{{ row.spine }} &ndash; {% endif %}{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>

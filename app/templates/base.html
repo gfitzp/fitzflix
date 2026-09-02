@@ -7,23 +7,24 @@
 {% from "_search_form.html" import global_search_form %}
 
 {% block navbar %}
-{# The navigation progress hairline (see bootstrap.html's stylesheet) #}
+{# The navigation progress hairline (see the stylesheet of bootstrap.html) #}
 <div id="nav-progress" role="presentation"></div>
-{# bg-body-tertiary adapts to the active color mode — the old
+{# bg-body-tertiary adapts to the active color mode. The old
    navbar-light bg-light stayed light in dark mode #}
 <nav class="navbar navbar-expand-lg bg-body-tertiary fixed-top">
-	{# Bootstrap 5 zeroes the navbar's own horizontal padding and
-	   expects an inner container to supply the gutter; without one
-	   the logo and toggler sit flush against a phone's screen edge #}
+	{# Bootstrap 5 zeroes the own horizontal padding of the navbar. It
+	   expects an inner container to supply the gutter. Without one, the
+	   logo and the toggler sit flush against the screen edge of a phone #}
 	<div class="container-fluid">
 		<a href="{{ url_for('main.index') }}"><img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" height="40px" class="me-1" alt="Fitzflix logo"></a>
-		{# The text brand is redundant next to the logo on phones, and hiding it
-		   keeps the brand, search box, and menu toggle on a single navbar row #}
+		{# The text brand is redundant next to the logo on phones. When it is
+		   hidden, the brand, the search box, and the menu toggle stay on 1
+		   navbar row #}
 		<a class="navbar-brand d-none d-sm-block" href="{{ url_for('main.index') }}">Fitzflix</a>
 		{% if current_user.is_authenticated %}
-		{# Phones only: outside the collapse so the search box stays visible with
-		   the menu collapsed; the explicit width in the macro keeps it on the
-		   navbar's single row #}
+		{# Phones only. This is outside the collapse, so the search box stays
+		   visible when the menu is collapsed. The explicit width in the macro
+		   keeps it on the single row of the navbar #}
 		{{ global_search_form("ms-auto me-2 d-lg-none") }}
 		{% endif %}
 		<button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
@@ -92,8 +93,8 @@
 					<a class="nav-link" href="{{ url_for('auth.login') }}">Login</a>
 				</li>
 				{% else %}
-				{# Desktop only: the search box sits in the right-side menu, just
-				   left of Queue; phones use the always-visible copy outside the
+				{# Desktop only. The search box is in the right-side menu, to the
+				   left of Queue. Phones use the always-visible copy outside the
 				   collapse instead #}
 				<li class="nav-item d-none d-lg-block align-self-center me-2">
 					{{ global_search_form("") }}
@@ -136,11 +137,11 @@
 <div class="container mt-2 mb-2">
 	{% if current_user.is_authenticated %}
  	<div id="running-tasks">
- 		{# Mirrors the structure the poller's JS builds, so the page
- 		   loads showing the same card the first poll will update in
- 		   place — a task without a measurable percentage defaults to
- 		   the striped animated indeterminate bar instead of a bare
- 		   alert box that reads as a solid stuck-at-100% bar #}
+ 		{# This mirrors the structure that the JS of the poller builds.
+ 		   Thus, the page loads with the same card that the first poll
+ 		   updates in place. A task without a measurable percentage shows
+ 		   the striped animated indeterminate bar by default. A bare
+ 		   alert box reads as a solid bar stuck at 100% #}
  		{% with tasks = current_user.get_queue_details() %}
  		{% if tasks %}
  			{% for task in tasks.running %}
@@ -175,7 +176,7 @@
 		{% endwith %}
 	</div>
 
-	{# application content goes in the app_content block #}
+	{# The application content goes in the app_content block #}
 	{% block app_content %}
 	{% endblock %}
 </div>
@@ -185,9 +186,9 @@
 	{{ super() }}
     {{ moment.include_moment(version="2.29.1") }}
 	<script>
-		// Offline support (shopping list in stores with bad reception);
-		// service workers only run in secure contexts, so this is a no-op
-		// over plain http
+		// Offline support (the shopping list in stores with bad reception).
+		// Service workers run only in secure contexts. Thus, this does
+		// nothing over plain http
 
 		if ("serviceWorker" in navigator && window.isSecureContext) {
 			navigator.serviceWorker.register("/sw.js").catch(function() {});
@@ -195,10 +196,11 @@
 	</script>
 	{% if current_user.is_authenticated %}
 	<script>
-		// Type-ahead for the global search box: debounced fetch against
-		// /search.json, rendered as a dropdown. Arrow keys move through the
-		// suggestions and Enter opens the highlighted one; with nothing
-		// highlighted, Enter still submits the form for the full results page
+		// The type-ahead for the global search box: a debounced fetch
+		// against /search.json, rendered as a dropdown. The arrow keys move
+		// through the suggestions. Enter opens the highlighted suggestion.
+		// If no suggestion is highlighted, Enter submits the form for the
+		// full results page
 
 		(function() {
 			var inputs = document.querySelectorAll(".global-search-input");
@@ -285,15 +287,15 @@
 	</script>
 	{% endif %}
 	<script>
-		// Navigation feedback (Aug 2026), signed in or not: the moment
-		// a same-tab link or form commits to leaving the page, the top
-		// hairline starts growing. Listening on window, in the
-		// bubbling phase, puts this
-		// after every handler that might cancel the navigation — the
-		// poster popover's touch tap, the ladder's background posts —
-		// so a prevented default never lights it. pageshow clears it
-		// when Safari restores the page from the back-forward cache,
-		// where the scripts don't re-run
+		// Navigation feedback (2026-08), signed in or not. When a same-tab
+		// link or form commits to leave the page, the top hairline starts
+		// to grow. This listens on window, in the bubbling phase. Thus,
+		// it runs after every handler that can cancel the navigation.
+		// Examples are the touch tap of the poster popover and the
+		// background posts of the ladder. Thus, a prevented default never
+		// lights the hairline. pageshow clears it when Safari restores
+		// the page from the back-forward cache, where the scripts do not
+		// run again
 		(function() {
 			var bar = document.getElementById("nav-progress");
 			if (!bar) return;
@@ -330,13 +332,14 @@
 
         {%if current_user.is_authenticated %}
 
-		// Queue badge and task progress: poll /api/queue_details, pausing
-		// while the tab is hidden (a pocketed phone shouldn't poll forever)
-		// and only scheduling the next poll once the last one finished, so
-		// slow responses can't overlap and land out of order
+		// The queue badge and the task progress: this polls
+		// /api/queue_details. It pauses while the tab is hidden (a phone
+		// in a pocket must not poll forever). It schedules the next poll
+		// only after the last poll finished. Thus, slow responses cannot
+		// overlap and arrive out of order
 
 		(function() {
-			// A page may ask the poll for more file trails than the
+			// A page can ask the poll for more file trails than the
 			// default 25 (the pipeline page wants the full retained set)
 			var QUEUE_URL = '{{ url_for('api.queue_details') }}'
 				+ (window.pipelineTrailLimit ? '?files=' + window.pipelineTrailLimit : '');
@@ -384,9 +387,9 @@
 				var container = document.getElementById("running-tasks");
 				if (!container) return;
 
-				// While the same tasks are running, only their progress bars
-				// change — updating them in place lets the bar's CSS width
-				// transition animate instead of jumping
+				// While the same tasks run, only their progress bars change.
+				// The update in place lets the CSS width transition of the
+				// bar animate. The bar does not jump
 
 				var signature = running.map(function(task) {
 					return task.id + "|" + task.description;
@@ -426,19 +429,19 @@
 				runningSignature = signature;
 			}
 
-			// The queue page's table: one row per running, queued, or
-			// deferred job, each carrying its FILE's pipeline trail as
-			// stage chips beneath the description (the chips used to
-			// live in a separate in-flight list on the File Activity
-			// page; Glenn folded them into the rows here, Aug 2026).
-			// A row finds its trail by job id — every trail entry is
-			// stamped with the job that wrote it — so a file with two
-			// jobs listed (an archive running, a transcode waiting)
-			// shows its journey on both. Trails whose last stage is
-			// not done yet have no job of their own to list under —
-			// a failure nobody retried, or a chip frozen by a lost
-			// write — trail after the jobs as "no job in queue" rows,
-			// so nothing in flight goes unseen.
+			// The table of the queue page has 1 row per running, queued, or
+			// deferred job. Each row carries the pipeline trail of its FILE
+			// as stage chips below the description. The chips were in a
+			// separate in-flight list on the File Activity page. Glenn
+			// folded them into the rows here, 2026-08. A row finds its
+			// trail by job id. Every trail entry is stamped with the job
+			// that wrote it. Thus, a file with 2 jobs listed (an archive
+			// that runs, a transcode that waits) shows its journey on both
+			// rows. A trail whose last stage is not done yet has no job of
+			// its own to list under. Examples are a failure that nobody
+			// retried, and a chip frozen by a lost write. These trails come
+			// after the jobs as "no job in queue" rows. Thus, nothing in
+			// flight goes unseen.
 
 			function trailCell(task, trail) {
 				var cell = document.createElement("td");
@@ -460,8 +463,8 @@
 				var cell = document.createElement("td");
 				cell.className = "col-3 col-sm-3 col-lg-2";
 				if (stamp) {
-					// Tooltips carry the viewer's LOCAL time, not the
-					// raw GMT timestamp the API serves
+					// The tooltips carry the LOCAL time of the viewer, not
+					// the raw GMT timestamp that the API serves
 					var when = document.createElement("abbr");
 					when.setAttribute("title", moment(stamp).format("LLL"));
 					when.textContent = (prefix || "") + moment(stamp).fromNow();
@@ -521,8 +524,8 @@
 					row.appendChild(positionCell(task.position === null ? "—" : task.position));
 					row.appendChild(trailCell(task, trailByJob[task.id]));
 					row.appendChild(timeCell(task.enqueued_at));
-					// A deferred retry hasn't started; its slot says
-					// when it will be back in line
+					// A deferred retry has not started. Its slot says
+					// when it is back in line
 					row.appendChild(task.status === "scheduled"
 						? timeCell(task.scheduled_for, "retries ")
 						: timeCell(task.started_at));
@@ -543,14 +546,14 @@
 				allSignature = signature;
 			}
 
-			// Per-file pipeline trails: each recent file's journey
-			// as stage chips — done green, running blue, queued gray,
-			// retry-wait amber, failed red. The queue page paints them
-			// on its job rows (renderAll); the File Activity dashboard
-			// (window.fileActivityCardUrl is set) paints a trail whose
-			// file already has a landed card inline on that card, and
-			// a trail that finishes cataloging fetches its file's card
-			// so the chips blossom into the full entry in place.
+			// The per-file pipeline trails show the journey of each recent
+			// file as stage chips. Done is green, running is blue, queued is
+			// gray, retry-wait is amber, and failed is red. The queue page
+			// paints them on its job rows (renderAll). The File Activity
+			// dashboard (window.fileActivityCardUrl is set) paints a trail
+			// inline on its card if the file already has a card. When a
+			// trail finishes the cataloging, this fetches the card of its
+			// file. Thus, the chips grow into the full entry in place.
 
 			var filesSignature = null;
 			var pendingCards = {};
@@ -569,9 +572,9 @@
 				failed: "failed"
 			};
 
-			// A landed stage reads as an accomplishment ("Localized"),
-			// a running one keeps the registry's present tense with no
-			// suffix — the tense alone says which is which
+			// A completed stage reads as an accomplishment ("Localized").
+			// A running stage keeps the present tense of the registry with
+			// no suffix. The tense alone tells them apart
 
 			var chipPastTense = {
 				"Copying to staging": "Copied to staging",
@@ -608,11 +611,11 @@
 				});
 			}
 
-			// A trail's basename may be the ORIGINAL import filename
-			// while the card carries the File row's (a container
-			// conversion swaps the extension to .mkv), so cards index
-			// their chip slots under every name they know plus each
-			// name's stem
+			// The basename of a trail can be the ORIGINAL import filename,
+			// while the card carries the name of the File row (a container
+			// conversion changes the extension to .mkv). Thus, the cards
+			// index their chip slots under every name that they know, plus
+			// the stem of each name
 
 			function stemOf(name) {
 				var dot = name.lastIndexOf(".");
@@ -633,9 +636,9 @@
 				return map;
 			}
 
-			// A 404 means the File row isn't visible yet (the trail's
-			// "done" stamp races the database commit) — the pending
-			// marker clears either way, so the next poll retries
+			// A 404 means that the File row is not visible yet (the "done"
+			// stamp of the trail races the database commit). The pending
+			// marker clears in both cases. Thus, the next poll retries
 
 			function fetchCard(basename) {
 				if (pendingCards[basename]) return;
@@ -691,8 +694,8 @@
 				fetch(QUEUE_URL, { credentials: "same-origin" })
 					.then(function(response) { return response.json(); })
 					.then(function(queue_details) {
-						// An expired session redirects to the login page, which
-						// isn't queue data — never paint that into the badge
+						// An expired session redirects to the login page. That
+						// page is not queue data. Never paint it into the badge
 
 						if (!queue_details || typeof queue_details.count !== "number") return;
 						setQueueCount(queue_details.count);
@@ -712,11 +715,12 @@
 			poll();
 		})();
 
-		// The one-tap star row: forms marked data-ladder-live post
-		// in the background and the row repaints in place — no reload.
-		// Any failure falls back to a normal form submission. The
-		// painting is shared with the gallery hydration below, which
-		// fills the blank tile ladders from one batched state fetch.
+		// The one-tap star row: the forms marked data-ladder-live post
+		// in the background, and the row repaints in place with no
+		// reload. On any failure, this falls back to a normal form
+		// submission. The gallery hydration below shares the painting.
+		// The hydration fills the blank tile ladders from 1 batched
+		// state fetch.
 
 		function paintLadder(row, state) {
 			var rating = state.rating === null ? 0 : state.rating;
@@ -725,10 +729,10 @@
 			row.title = estimated
 				? "Estimated " + parseFloat(estimated.toFixed(2))
 					+ " for you — tap a star to rate it yourself" : "";
-			// The stars sit reversed in the DOM (see the ladder
-			// macro), so paint by each button's own value; both a
-			// half-star rating and a fractional estimate part-fill
-			// their last star via a gradient stop
+			// The stars are reversed in the DOM (see the ladder
+			// macro). Thus, this paints by the own value of each
+			// button. A half-star rating and a fractional estimate
+			// both part-fill their last star through a gradient stop
 			row.querySelectorAll(".star").forEach(function(star) {
 				var value = parseInt(star.value, 10);
 				var fillPct = Math.round(
@@ -739,10 +743,11 @@
 				star.classList.toggle("fill-partial", fillPct > 0 && fillPct < 100);
 				star.classList.toggle("estimated", estPct > 0);
 				star.classList.toggle("est-partial", estPct > 0 && estPct < 100);
-				// The fraction rides as a quantized fill-N class
-				// (5% steps, fixed CSS rules) — never a custom
-				// property, which iOS Safari mis-resolves inside
-				// a pseudo-element (the star-widget WebKit lesson)
+				// The fraction goes with the star as a quantized
+				// fill-N class (5% steps, fixed CSS rules). It is never
+				// a custom property. iOS Safari resolves a custom
+				// property incorrectly inside a pseudo-element (the
+				// star-widget WebKit lesson)
 				Array.prototype.slice.call(star.classList).forEach(function (cls) {
 					if (/^fill-\d+$/.test(cls)) star.classList.remove(cls);
 				});
@@ -759,9 +764,10 @@
 			var x = row.querySelector(".x-btn");
 			if (x) {
 				x.classList.toggle("active", !!state.flagged);
-				// Seen films can't be waved off — hydration hides the
-				// ✕ once a diary row exists (allow_not_interested's
-				// client-side mirror); live posts don't carry the flag
+				// The user cannot dismiss a seen film. The hydration
+				// hides the ✕ when a diary row exists (the client-side
+				// mirror of allow_not_interested). The live posts do
+				// not carry the flag
 				if (typeof state.has_review !== "undefined") {
 					x.classList.toggle("d-none", !!state.has_review);
 				}
@@ -789,11 +795,11 @@
 				return response.json();
 			}).then(function(state) {
 				paintLadder(button.closest(".star-row"), state);
-				// A rating or a ✕ clears the film's watchlist entry
-				// server-side; the toggle sharing this widget's scope
-				// (a poster tile, or the Criterion24/7 card's
-				// data-watchlist-scope) keeps up, and a tile's cached
-				// popover card is stale either way
+				// A rating or a ✕ clears the watchlist entry of the film
+				// on the server. The toggle that shares the scope of this
+				// widget (a poster tile, or the data-watchlist-scope of
+				// the Criterion24/7 card) follows. The cached popover card
+				// of a tile is stale in both cases
 				var actions = form.closest(".poster-actions, [data-watchlist-scope]");
 				if (actions && typeof state.on_watchlist !== "undefined") {
 					syncWatchlistForm(
@@ -802,9 +808,9 @@
 					);
 					invalidateCard(actions);
 				}
-				// Pages that react to a tile's verdict changing — the
-				// Recommendations page swaps the acted-on tile for a
-				// fresh suggestion — listen for this
+				// Pages that react to a changed tile verdict listen for
+				// this event. The Recommendations page swaps the acted-on
+				// tile for a new suggestion
 				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
 					{bubbles: true, detail: state}));
 			}).catch(function() {
@@ -812,17 +818,17 @@
 			});
 		});
 
-		// The poster popover (#45c): anchors marked data-card-url fetch
-		// their film's card fragment once and show it in a Bootstrap
-		// popover. Hover-capable pointers preview on hover, with a grace
-		// period to travel into the card; on touch a poster tap only
-		// ever TOGGLES its card — never navigates — and the card's
-		// title link is the way to the film's page (Glenn's revision,
-		// Aug 2026: tap-again-to-navigate meant a stray tap opened a
-		// page when closing the card was meant). The card is
-		// informational only — the ladder and watchlist toggle live
-		// under the poster — so acting on a tile drops its cached card
-		// (the watchlist badge inside went stale). One card at a time.
+		// The poster popover (#45c): the anchors marked data-card-url
+		// fetch the card fragment of their film 1 time and show it in a
+		// Bootstrap popover. Hover-capable pointers preview on hover,
+		// with a grace period to move into the card. On touch, a poster
+		// tap only TOGGLES its card. It never navigates. The title link
+		// of the card is the way to the page of the film (revised by
+		// Glenn, 2026-08: with tap-again-to-navigate, a stray tap opened
+		// a page when the user wanted to close the card). The card is
+		// informational only. The ladder and the watchlist toggle are
+		// under the poster. Thus, an action on a tile drops its cached
+		// card (the watchlist badge inside went stale). 1 card at a time.
 
 		var cardOpen = null;    // the anchor whose card is showing
 		var cardWanted = null;  // the anchor a pending hover/fetch intends
@@ -877,11 +883,11 @@
 					holder.innerHTML = html;
 					var content = holder.querySelector(".poster-card");
 					if (!content) throw new Error("empty card");
-					// Page-specific labels ride the tile as a JSON
-					// array (data-card-reasons) and render as wrapping
-					// badges inside the card — long "liked by people
-					// who liked…" reasons fold to multiple lines
-					// within the popover's fixed width
+					// The page-specific labels go with the tile as a
+					// JSON array (data-card-reasons). They render as
+					// wrapping badges inside the card. Long "liked by
+					// people who liked…" reasons fold to multiple lines
+					// inside the fixed width of the popover
 					var reasons = anchor.getAttribute("data-card-reasons");
 					var slot = content.querySelector("[data-card-reasons]");
 					if (reasons && slot) {
@@ -894,7 +900,7 @@
 							});
 						} catch (err) {}
 					}
-					// The same content node is reused across shows
+					// Each show reuses the same content node
 					anchor._cardPop = new bootstrap.Popover(anchor, {
 						content: content,
 						html: true,
@@ -904,8 +910,8 @@
 						container: "body",
 						customClass: "poster-card-pop"
 					});
-					// Show only if the pointer still wants this card —
-					// hovers move on faster than fetches return
+					// Show only if the pointer still wants this card. The
+					// hovers move on more quickly than the fetches return
 					if (cardWanted === anchor) {
 						anchor._cardPop.show();
 						cardOpen = anchor;
@@ -945,7 +951,7 @@
 		document.addEventListener("click", function(event) {
 			var anchor = event.target.closest("[data-card-url]");
 			if (!anchor) {
-				// Clicks inside the card act on it; anywhere else closes it
+				// A click inside the card acts on it. A click anywhere else closes it
 				if (cardOpen && !event.target.closest(".poster-card-pop")) cardHide();
 				return;
 			}
@@ -962,21 +968,21 @@
 			if (event.key === "Escape") cardHide();
 		});
 
-		// Plex remote playback: any [data-plex-play] form — the movie
-		// page's button or the poster popover card's — posts in the
+		// Plex remote playback: any [data-plex-play] form posts in the
 		// background and reports into its own [data-plex-play-status]
-		// line, so a film can be sent to the Apple TV from anywhere a
-		// poster shows. Delegated because popover cards are injected
-		// long after page load
+		// line. This covers the button of the movie page and the poster
+		// popover card. Thus, the user can send a film to the Apple TV
+		// from anywhere that a poster shows. The handler is delegated
+		// because the popover cards are injected long after the page load
 		document.addEventListener("click", function(event) {
 			var button = event.target.closest("[data-plex-play] button");
 			if (!button) return;
 			event.preventDefault();
 			var form = button.closest("[data-plex-play]");
 			var status = form.querySelector("[data-plex-play-status]");
-			// A form whose status line can't live inside it — the Play
-			// split-button's secondary form sits in a dropdown menu that
-			// closes on click — names a shared line by id instead
+			// Some forms cannot hold their status line. The secondary
+			// form of the Play split-button is in a dropdown menu that
+			// closes on click. Such a form names a shared line by id instead
 			if (!status) status = document.getElementById(form.getAttribute("data-plex-play-status-ref") || "");
 			var label = button.innerHTML;
 			button.disabled = true;
@@ -1004,9 +1010,9 @@
 			});
 		});
 
-		// The tile's watchlist toggle posts in the background and swaps
-		// its two faces on the JSON state; any failure falls back to a
-		// normal form submission
+		// The watchlist toggle of the tile posts in the background and
+		// swaps its 2 faces on the JSON state. On any failure, this falls
+		// back to a normal form submission
 
 		document.addEventListener("submit", function(event) {
 			var form = event.target.closest("form[data-card-watchlist]");
@@ -1027,16 +1033,16 @@
 			}).then(function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
 				invalidateCard(form.closest(".poster-actions"));
-				// A surface pairing the toggle with an "On your
-				// watchlist" badge (movie page, TMDB results) marks
-				// their shared wrapper data-watchlist-scope and the
-				// badge keeps up (#187/#183)
+				// A surface that pairs the toggle with an "On your
+				// watchlist" badge (the movie page, the TMDB results)
+				// marks their shared wrapper data-watchlist-scope. Then
+				// the badge follows (#187/#183)
 				var scope = form.closest("[data-watchlist-scope]");
 				var badge = scope && scope.querySelector("[data-watchlist-badge]");
 				if (badge) badge.classList.toggle("d-none", !state.on_watchlist);
-				// The watchlist page's own Remove clears its tile in
-				// place and settles the filter counts, using the
-				// bucket the cell rendered with (#187)
+				// The own Remove of the watchlist page clears its tile
+				// in place and settles the filter counts. It uses the
+				// bucket that the cell rendered with (#187)
 				if (form.hasAttribute("data-watchlist-remove-cell") && !state.on_watchlist) {
 					var cell = form.closest(".poster-cell");
 					if (cell) {
@@ -1048,7 +1054,7 @@
 					}
 				}
 				// The Recommendations page swaps a banked suggestion
-				// for a fresh one on this event, like a rating's
+				// for a new one on this event, as it does for a rating
 				form.dispatchEvent(new CustomEvent("fitzflix:tile-state",
 					{bubbles: true, detail: state}));
 			}).catch(function() {
@@ -1056,31 +1062,31 @@
 			});
 		});
 
-		// Gallery hydration (#45c, Aug 2026 revision): tiles render
-		// their star row blank and their toggle Add-first; batched
-		// /movie_states fetches paint the real verdicts, estimates,
-		// and watchlist faces. Duplicate tiles for the same film (a
-		// movie's editions on the library wall) all paint from the
-		// one entry. The ids ride in chunks under the endpoint's
-		// 300-id cap — the unpaginated watchlist can carry hundreds
-		// of films, and one oversized request would 400 and leave
-		// every ladder blank. Each chunk paints its own tiles as it
-		// lands, so one failed chunk costs only its own tiles —
-		// posts still answer with authoritative state.
+		// Gallery hydration (#45c, revision of 2026-08): the tiles
+		// render their star row blank and their toggle Add-first.
+		// Batched /movie_states fetches paint the real verdicts,
+		// estimates, and watchlist faces. Duplicate tiles for the same
+		// film (the editions of a movie on the library wall) all paint
+		// from the 1 entry. The ids go in chunks below the 300-id cap
+		// of the endpoint. The unpaginated watchlist can carry hundreds
+		// of films. 1 oversized request would answer 400 and leave
+		// every ladder blank. Each chunk paints its own tiles when it
+		// arrives. Thus, 1 failed chunk costs only its own tiles. The
+		// posts still answer with the authoritative state.
 
 		(function() {
 			var tiles = document.querySelectorAll("[data-state-movie], [data-state-tmdb]");
 			// Poster folds (#197): every popover-armed movie tile also
-			// hydrates its corner fold from the same batched fetch —
-			// the film's id is parsed off its own card URL, so no
-			// template carries fold-specific markup. At most ONE fold
-			// paints, in the top-right corner, red (leaving) outranking
+			// hydrates its corner fold from the same batched fetch. This
+			// parses the id of the film off its own card URL. Thus, no
+			// template carries fold-specific markup. At most 1 fold
+			// paints, in the top-right corner. Red (leaving) outranks
 			// green (newly added). The leaving shelf and page suppress
-			// just the red fold with data-no-leaving-fold on a wrapper
-			// (everything there is leaving by definition, so the green
-			// fold gets the corner); the newly-added shelf and page
-			// suppress just the green fold with data-no-new-fold for
-			// the mirror reason; tv_card tiles never match.
+			// only the red fold with data-no-leaving-fold on a wrapper.
+			// Everything there is leaving by definition, so the green
+			// fold gets the corner. The newly-added shelf and page
+			// suppress only the green fold with data-no-new-fold, for
+			// the mirror reason. tv_card tiles never match.
 			var cards = [];
 			document.querySelectorAll("[data-card-url]").forEach(function(el) {
 				var cardUrl = el.getAttribute("data-card-url");
@@ -1167,10 +1173,10 @@
 					if (state) paintFolds(card.el, state, card.noLeaving, card.noNew);
 				});
 			}
-			// The in-flight shimmer: every tile a request still owes an
-			// answer pulses (see state-loading in the stylesheet), and
-			// the pulse stops the moment its state paints — tiles a
-			// follow-up pass re-asks for keep pulsing until it lands
+			// The in-flight shimmer: every tile that a request still owes
+			// an answer pulses (see state-loading in the stylesheet). The
+			// pulse stops when its state paints. A tile that a follow-up
+			// pass asks for again pulses until its state arrives
 			var byMovie = {};
 			var byTmdb = {};
 			tiles.forEach(function(tile) {
@@ -1192,10 +1198,11 @@
 				});
 			}
 			// A huge career page can hold more record-less films than
-			// the server's per-request TMDB fetch budget; ids that come
-			// back with no state at all re-ask in follow-up passes that
-			// paint as they land, until a pass stops making progress —
-			// so every page fills without a reload
+			// the per-request TMDB fetch budget of the server. The ids
+			// that come back with no state at all are asked again in
+			// follow-up passes. Each pass paints when it arrives. The
+			// passes stop when a pass makes no progress. Thus, every
+			// page fills with no reload
 			function hydrate(movieIds, tmdbIds, rounds) {
 				var params = [];
 				if (movieIds.length) params.push("movie_ids=" + movieIds.join(","));

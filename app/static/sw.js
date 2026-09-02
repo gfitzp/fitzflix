@@ -1,15 +1,16 @@
-// Fitzflix service worker: keeps the shopping list and search usable in
-// stores with bad reception. Static assets (posters, icons, CDN styles)
-// are served from cache and revalidated in the background; pages are
-// network-first so they're always fresh online, with the last good copy
-// as the offline fallback.
+// This is the Fitzflix service worker. It keeps the shopping list and the
+// search usable in stores with bad reception. The worker serves the static
+// assets (posters, icons, CDN styles) from the cache and revalidates them
+// in the background. Pages are network-first. Thus, they are always fresh
+// online. The last good copy is the offline fallback.
 //
-// Only successful responses are cached. A failure kept cache-first is
-// permanent: a 502 from the reverse proxy — gunicorn recycling mid-request
-// is enough to produce one — was stored under a custom poster's URL and
-// served in that image's place from then on, in the one browser that
-// happened to load it during the restart, until its cache was emptied
-// by hand (#206).
+// The worker caches only successful responses. A failure that is kept
+// cache-first is permanent. Example (#206): the reverse proxy returned a
+// 502. A gunicorn recycle in the middle of a request is sufficient to cause
+// one. The worker stored the 502 under the URL of a custom poster. From
+// then on, it served the 502 in the place of that image. This occurred in
+// the one browser that loaded the poster during the restart. It continued
+// until the user emptied that cache by hand.
 
 const CACHE = "fitzflix-v2";
 
@@ -38,11 +39,11 @@ self.addEventListener("activate", function (event) {
 	);
 });
 
-// An error page or a missing file must never displace the last good copy:
-// the offline fallback would then serve the failure instead of the page,
-// and a cached 404 for an asset would outlive the file that replaced it.
-// Cross-origin CDN responses are opaque (status 0), so they're judged by
-// type rather than by status
+// An error page or a missing file must never replace the last good copy.
+// The offline fallback would then serve the failure instead of the page. A
+// cached 404 for an asset would outlive the file that replaced it.
+// Cross-origin CDN responses are opaque (status 0). Thus, the worker judges
+// them by type, not by status
 
 function isCacheable(response) {
 	return response.ok || response.type === "opaque";
@@ -51,21 +52,21 @@ function isCacheable(response) {
 self.addEventListener("fetch", function (event) {
 	var request = event.request;
 
-	// Only GETs are cacheable; shopping-cart toggles and other POSTs
-	// always go to the network
+	// Only GET requests are cacheable. Shopping-cart toggles and other POST
+	// requests always go to the network
 
 	if (request.method !== "GET") return;
 
 	var url = new URL(request.url);
 
-	// The manifest must stay network-first even though it lives under
-	// /static/: served cache-first, an installed app would never see
-	// changes to start_url, icons, or shortcuts
+	// The manifest must stay network-first, although it is under /static/.
+	// If the worker served it cache-first, an installed app would never see
+	// the changes to start_url, icons, or shortcuts
 
 	var isManifest = url.pathname.endsWith("/site.webmanifest");
 
-	// Static assets and CDN resources: answered from cache, refreshed
-	// in the background
+	// Static assets and CDN resources: the worker answers from the cache
+	// and refreshes in the background
 
 	if (
 		!isManifest &&
@@ -73,12 +74,12 @@ self.addEventListener("fetch", function (event) {
 	) {
 		event.respondWith(
 			caches.match(request).then(function (cached) {
-				// Stale-while-revalidate: the cached copy answers straight
-				// away, and the background fetch replaces it for next time.
-				// These URLs are stable but their contents are not — a
-				// custom poster and the site's own CSS are both replaced in
-				// place — so an entry that never refreshed would serve the
-				// old bytes until the cache version changed
+				// Stale-while-revalidate: the cached copy answers
+				// immediately. The background fetch replaces it for the
+				// next time. These URLs are stable, but their contents are
+				// not. A custom poster and the CSS of the site are both
+				// replaced in place. Thus, an entry that never refreshed
+				// would serve the old bytes until the cache version changed
 
 				var revalidated = fetch(request)
 					.then(function (response) {
@@ -100,8 +101,9 @@ self.addEventListener("fetch", function (event) {
 		return;
 	}
 
-	// Pages: network first (refreshing the cached copy), cached copy when
-	// offline, and an explanation when the page was never visited online
+	// Pages: network first (this refreshes the cached copy). The cached
+	// copy answers when offline. An explanation answers when the user never
+	// visited the page online
 
 	event.respondWith(
 		fetch(request)

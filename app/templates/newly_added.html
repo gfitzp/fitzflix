@@ -7,15 +7,16 @@
 <h2 class="mt-n2" id="newly-added-{{ section.provider_id }}">Newly added to {{ section.label }}</h2>
 <p class="small text-muted">These are all the films that arrived in the last month. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because you do not need to stream them. Source: <a href="{{ section.source }}" target="_blank" rel="noreferrer">{{ section.source | replace("https://www.", "") }}</a>.</p>
 <hr>
-{# The arrival set as a poster gallery, the /leaving page's grammar —
-   the popover carries each film's synopsis and badges (ownership,
-   watchlist, the green "added" availability badge, the taste reasons
-   via data-card-reasons); the actions sit under the poster. Owned
-   tiles open their movie page, the rest open the log page, which
-   redirects when a record already exists #}
-{# data-no-new-fold: the whole page is the arrival set, so the green
-   corner fold would repeat on every tile — the red leaving fold
-   still paints #}
+{# The arrival set as a poster gallery, with the grammar of the
+   /leaving page. The popover shows the synopsis and the badges of
+   each film (ownership, watchlist, the green "added" availability
+   badge, and the taste reasons through data-card-reasons). The
+   actions are under the poster. Owned tiles open their movie page.
+   The other tiles open the log page. That page redirects when a
+   record already exists. #}
+{# data-no-new-fold: the whole page is the arrival set. Thus, the
+   green corner fold would repeat on each tile. The red leaving fold
+   still paints. #}
 <div class="row mb-2" data-no-new-fold>
 	{% for item in section.films %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
@@ -32,8 +33,9 @@
 	{% endfor %}
 </div>
 {% if section.unmatched %}
-{# Films the TMDB matcher couldn't resolve: listed from the scrape
-   alone so the inventory stays complete, but with nowhere to link #}
+{# These are the films that the TMDB matcher could not resolve. The
+   page lists them from the scrape alone. Thus, the inventory stays
+   complete, but there is no link. #}
 <h4>Also new</h4>
 <div class="list-group mb-4">
 	{% for film in section.unmatched %}

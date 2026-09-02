@@ -5,15 +5,16 @@
   <head>
   	{%- block head %}
   	{%- block metas %}
-    <!-- Required meta tags -->
+    <!-- The required meta tags -->
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <meta name="color-scheme" content="light dark">
     {%- endblock metas %}
 
-	{# Dark mode via Bootstrap 5.3's color modes: follow the
-	   system preference, applied before first paint so there's no
-	   flash, and live-updated if the preference changes #}
+	{# Dark mode through the color modes of Bootstrap 5.3. Fitzflix
+	   follows the system preference. It applies the theme before the
+	   first paint. Thus, there is no flash. It updates the theme live
+	   when the preference changes #}
 	<script>
 		(function () {
 			var media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -29,30 +30,32 @@
     <!-- Bootstrap CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
     <style>
-		/* The installed PWA owns pull-to-refresh itself, so the
-		   browser's native overscroll can't fight the gesture */
+		/* The installed PWA owns the pull-to-refresh gesture itself. Thus,
+		   the native overscroll of the browser cannot conflict with the
+		   gesture */
 		@media (display-mode: standalone) {
 			body { overscroll-behavior-y: none; }
 		}
 
-		/* Keep the last row of content clear of a phone's rounded
-		   corners, which clipped it at the left and right. env()
+		/* Keep the last row of content clear of the rounded corners of
+		   a phone. The corners clipped it at the left and right. env()
 		   reports 0 unless the viewport meta opts into viewport-fit=
-		   cover, so max() carries the fix on its own today and defers
-		   to the real inset if we ever go edge-to-edge */
+		   cover. Thus, max() carries the fix on its own today. It defers
+		   to the real inset if Fitzflix ever goes edge-to-edge */
 		body { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 
-		/* Badges are STATUS, buttons are ACTIONS. Badges shared the
-		   buttons' saturated text-bg-* fills at button-ish sizes, so
-		   the two were hard to tell apart at a glance (Glenn's ask,
-		   Aug 31 2026). Two redundant channels now separate them:
-		   badges are PILLS in the SUBTLE tint of their hue (Bootstrap
-		   5.3's *-bg-subtle/*-text-emphasis tokens, which follow
-		   data-bs-theme into dark mode), while only pressable controls
-		   keep a saturated fill and the squarer button radius. Hues
-		   are untouched, so the amber/green shopping semantics (#191)
-		   read the same — just quieter. !important matches Bootstrap's
-		   own on .text-bg-*. */
+		/* Badges are STATUS. Buttons are ACTIONS. Badges shared the
+		   saturated text-bg-* fills of the buttons at sizes near the
+		   button size. Thus, the two were hard to tell apart at a glance
+		   (requested by Glenn, 2026-08-31). Two redundant channels now
+		   separate them. Badges are PILLS in the SUBTLE tint of their
+		   hue. They use the *-bg-subtle and *-text-emphasis tokens of
+		   Bootstrap 5.3, which follow data-bs-theme into dark mode. Only
+		   pressable controls keep a saturated fill and the squarer
+		   button radius. The hues do not change. Thus, the amber/green
+		   shopping semantics (#191) read the same, only quieter.
+		   !important matches the !important that Bootstrap sets on
+		   .text-bg-*. */
 		.badge { border-radius: 50rem; }
 		.badge.text-bg-primary { background-color: var(--bs-primary-bg-subtle) !important; color: var(--bs-primary-text-emphasis) !important; border: 1px solid var(--bs-primary-border-subtle); }
 		.badge.text-bg-secondary { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-secondary-text-emphasis) !important; border: 1px solid var(--bs-secondary-border-subtle); }
@@ -63,9 +66,9 @@
 		.badge.text-bg-light { background-color: var(--bs-light-bg-subtle) !important; color: var(--bs-light-text-emphasis) !important; border: 1px solid var(--bs-light-border-subtle); }
 		.badge.text-bg-dark { background-color: var(--bs-dark-bg-subtle) !important; color: var(--bs-dark-text-emphasis) !important; border: 1px solid var(--bs-dark-border-subtle); }
 
-		/* Bootstrap 5 dropped .form-inline; this is OUR class now,
-		   replicating the BS4 behavior the templates were written for:
-		   controls flow inline at their natural width */
+		/* Bootstrap 5 dropped .form-inline. This is OUR class now. It
+		   replicates the BS4 behavior that the templates were written
+		   for. The controls flow inline at their natural width */
 		.form-inline { display: flex; flex-flow: row wrap; align-items: center; }
 		.form-inline .form-control, .form-inline .form-select, .form-inline label { width: auto; display: inline-block; }
 		.form-inline .mb-3 { margin-bottom: 0 !important; display: flex; align-items: center; flex-wrap: wrap; }
@@ -127,54 +130,57 @@
 
 		/* The one-tap star row: glyph buttons without button
 		   chrome. The DOM holds the stars REVERSED under row-reverse
-		   flex, so a star's DOM-following siblings are the stars
-		   visually before it — the hover preview fills the hovered
-		   star plus those siblings, and hovering the gaps between
-		   buttons lights nothing. While previewing, :has() dims the
-		   stored fill so the preview reads unambiguously (without
-		   :has() support the stored stars simply stay lit). The ✕
-		   lights up when the film is flagged not-interested. */
+		   flex. Thus, the DOM-following siblings of a star are the
+		   stars that are visually before it. The hover preview fills
+		   the hovered star plus those siblings. A hover on the gaps
+		   between the buttons lights nothing. During a preview, :has()
+		   dims the stored fill. Thus, the preview reads unambiguously.
+		   Without :has() support, the stored stars simply stay lit.
+		   The ✕ lights up when the film is flagged not-interested. */
 
 		.star-row { display: inline-flex; flex-direction: row-reverse; justify-content: flex-end; align-items: center; margin-bottom: .5rem; }
 		.star-btn { background: none; border: 0; padding: 0 .12em; font-size: 1.7rem; line-height: 1; color: #c9c9c9; cursor: pointer; }
 		.star-btn:focus { outline: 0; }
 		.star-row.star-row-sm .star-btn { font-size: 1.15rem; }
-		/* Each star is an outlined ☆ (the button's own text) under a
-		   solid ★ overlay clipped to the filled percentage: a
-		   verdict paints the overlay gold — ★★★☆☆ — and the engine's
-		   estimate paints it gray, never mistakable for a verdict; the
-		   unfilled remainder shows the outline underneath. The overlay
-		   mirrors the button's padding so the two glyphs align, and
-		   clip-path trims the fractional boundary (half-star ratings,
-		   fractional estimates; the -20% vertical slack keeps the glyph
-		   unclipped at line-height 1). --fill / --est-fill arrive from
-		   the macro or the live repaint only when partial; full stars
+		/* Each star is an outlined ☆ (the own text of the button)
+		   under a solid ★ overlay. The overlay is clipped to the filled
+		   percentage. A verdict paints the overlay gold (★★★☆☆). The
+		   estimate of the engine paints it gray. Thus, an estimate is
+		   never mistaken for a verdict. The unfilled remainder shows
+		   the outline underneath. The overlay mirrors the padding of
+		   the button. Thus, the two glyphs align. clip-path trims the
+		   fractional boundary (half-star ratings, fractional
+		   estimates). The -20% vertical slack keeps the glyph unclipped
+		   at line-height 1. --fill and --est-fill arrive from the macro
+		   or the live repaint only when the fill is partial. Full stars
 		   use the 100% fallback.
 
-		   WebKit constraint, learned the hard way (twice): everything
+		   WebKit constraint, learned the hard way (2 times): everything
 		   about the overlay MUST be keyed by plain class selectors on
-		   ::before with static values — Safari's handling of custom
-		   properties consumed inside a pseudo-element is broken across
-		   versions (no repaint when an inherited custom property
-		   changes; var()-in-gradient and var()-in-clip-path resolve
-		   wrongly on some iOS builds even at initial render, so a
-		   fraction renders whole on the phone while desktop looks
-		   right). The fraction is therefore QUANTIZED to 5% steps as a
-		   fill-N class mapped to fixed clip-path rules — no var(), no
-		   calc(), nothing for an engine to mis-resolve */
+		   ::before with static values. Safari handles custom properties
+		   that a pseudo-element consumes incorrectly, across versions.
+		   There is no repaint when an inherited custom property
+		   changes. var()-in-gradient and var()-in-clip-path resolve
+		   incorrectly on some iOS builds, even at the initial render.
+		   Then a fraction renders whole on the phone while the desktop
+		   looks right. Thus, the fraction is QUANTIZED to 5% steps as
+		   a fill-N class that maps to fixed clip-path rules. No var(),
+		   no calc(), nothing for an engine to resolve incorrectly */
 		.star-row .star { position: relative; }
-		/* While a state fetch is in flight, unpainted rows pulse — the
-		   hydration script sets state-loading on each tile's state
-		   container and clears it the moment the tile paints (or the
-		   passes finish), so the shimmer IS the "estimating…" spinner */
+		/* While a state fetch is in flight, the unpainted rows pulse.
+		   The hydration script sets state-loading on the state container
+		   of each tile. It clears the class the moment the tile paints
+		   (or when the passes finish). Thus, the shimmer IS the
+		   "estimating…" spinner */
 		.state-loading .star-btn { animation: state-pulse 1.2s ease-in-out infinite; }
-		/* The navigation bar (Aug 2026): a hairline across the top of the
-		   viewport that starts growing the moment a link or form commits
-		   to a new page, so a tap reads as registered while the server
-		   renders — Safari paints nothing of its own until the first
-		   bytes arrive, and a second-long wait looked like a missed tap.
-		   base.html's handler sets nav-progress-active; the width eases
-		   toward 90% and stays there until the next page replaces it */
+		/* The navigation bar (2026-08): a hairline across the top of the
+		   viewport. It starts to grow the moment a link or form commits
+		   to a new page. Thus, a tap reads as registered while the server
+		   renders. Safari paints nothing of its own until the first
+		   bytes arrive, and a wait of 1 second looked like a missed tap.
+		   The handler in base.html sets nav-progress-active. The width
+		   eases toward 90% and stays there until the next page replaces
+		   it */
 		#nav-progress { position: fixed; top: 0; left: 0; height: 3px; width: 0; background: var(--bs-primary); z-index: 2000; opacity: 0; pointer-events: none; transition: none; }
 		#nav-progress.nav-progress-active { opacity: 1; width: 90%; transition: width 4s cubic-bezier(.1, .7, .3, 1), opacity .1s linear; }
 		@media (prefers-reduced-motion: reduce) { #nav-progress.nav-progress-active { width: 90%; transition: none; } }
@@ -183,94 +189,100 @@
 		.star-row .star::before { content: "\2605"; position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0 .12em; line-height: 1; color: transparent; }
 		.star-row .star.filled::before { color: #f0ad4e; }
 		.star-row .star.estimated::before { color: #adb5bd; }
-		{# The percentage maps onto the glyph's INKED span, not the box:
-		   the box is advance width + .12em padding a side, and the ★'s
-		   ink occupies only 15.1%–84.4% of it (measured by pixel-scan
-		   of the Apple system font; other platform fonts differ by a
-		   point or two, which shifts a boundary imperceptibly). Without
-		   this mapping an 80% fill cut at 94% of the visible star and
-		   read as whole — a 2.8 estimate looked like a flat 3 #}
+		{# The percentage maps onto the INKED span of the glyph, not the
+		   box. The box is the advance width plus .12em padding on each
+		   side. The ink of the ★ occupies only 15.1% to 84.4% of the
+		   box. A pixel-scan of the Apple system font measured this.
+		   Other platform fonts differ by 1 or 2 points, which shifts a
+		   boundary imperceptibly. Without this mapping, an 80% fill cut
+		   at 94% of the visible star and read as whole. A 2.8 estimate
+		   looked like a flat 3 #}
 		{% for pct in range(5, 100, 5) -%}
 		{% set cut = '%.1f' % (100 - (15.1 + pct * 0.693)) -%}
 		.star-row .star.fill-{{ pct }}::before { -webkit-clip-path: inset(-20% {{ cut }}% -20% 0); clip-path: inset(-20% {{ cut }}% -20% 0); }
 		{% endfor -%}
-		/* Hover previews exist only where hover does:
+		/* Hover previews exist only where hover exists.
 		   iOS keeps a tapped element in :hover until the next tap
-		   elsewhere, so on touch these rules repainted the row as a
-		   preview and masked the toggle-off's real repaint — a removed
-		   rating looked unchanged. Touch gets no preview; the tap's
-		   state change IS the feedback */
+		   elsewhere. Thus, on touch, these rules repainted the row as a
+		   preview and masked the real repaint of the toggle-off. A
+		   removed rating looked unchanged. Touch gets no preview. The
+		   state change of the tap IS the feedback */
 		@media (hover: hover) {
 			.star-row:has(.star:hover) .star::before { color: transparent; }
 			.star-row:hover .star:hover::before, .star-row:hover .star:hover ~ .star::before { color: #f0ad4e; clip-path: none; }
 		}
-		/* The ✕'s visual gap to the stars is PADDING, not margin, so
-		   the whole row is one continuous hit area — clicking between
-		   the ✕ and the first star still triggers the ✕ */
+		/* The visual gap between the ✕ and the stars is PADDING, not
+		   margin. Thus, the whole row is one continuous hit area. A
+		   click between the ✕ and the first star still triggers the ✕ */
 		.star-row .x-btn { font-size: 1.2rem; padding-right: .45em; }
 		.star-row.star-row-sm .x-btn { font-size: .95rem; padding-right: .35em; }
 		.star-row .x-btn.active { color: #dc3545; }
 		@media (hover: hover) {
 			.star-row .x-btn:hover { color: #dc3545; }
 		}
-		/* The poster popover's card (#45c): roomier than Bootstrap's
-		   276px default so the credits and badges breathe, but never
-		   wider than the screen; the synopsis clamps to four lines like
-		   the Criterion card's. --bs-popover-max-width is the tip's own
-		   design token, so no cascade race with the CDN stylesheet.
-		   .poster-card is the contract the base.html script looks for,
-		   shared by the film card and the TV series card so both
-		   popovers are the same object with different facts inside */
+		/* The card of the poster popover (#45c). It is roomier than the
+		   276px default of Bootstrap. Thus, the credits and badges have
+		   space. It is never wider than the screen. The synopsis clamps
+		   to 4 lines, like the Criterion card. --bs-popover-max-width
+		   is the own design token of the tip. Thus, there is no cascade
+		   race with the CDN stylesheet. .poster-card is the contract
+		   that the base.html script looks for. The film card and the TV
+		   series card share it. Thus, both popovers are the same object
+		   with different facts inside */
 		.poster-card-pop { --bs-popover-max-width: min(22rem, calc(100vw - 1rem)); }
 		.poster-card-pop .poster-card { min-width: min(19rem, calc(100vw - 3rem)); }
 		.poster-card .poster-card-overview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-		/* Badges wrap INSIDE the card (Bootstrap pins them nowrap):
-		   a long "liked by people who liked…" reason folds to multiple
-		   left-aligned lines within the popover's fixed width instead
-		   of stretching it — the fix for labels that used to overflow
-		   the gallery cells (Glenn's Aug 2026 revision) */
-		/* …and a wrapped two-line badge as a full pill reads as a
-		   lozenge, so the card's badges take a softer rounding */
+		/* Badges wrap INSIDE the card (Bootstrap pins them nowrap). A
+		   long "liked by people who liked…" reason folds to multiple
+		   left-aligned lines within the fixed width of the popover. It
+		   does not stretch the popover. This is the fix for the labels
+		   that used to overflow the gallery cells (revision by Glenn,
+		   2026-08) */
+		/* A wrapped two-line badge as a full pill reads as a lozenge.
+		   Thus, the badges of the card take a softer rounding */
 		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; }
-		/* Gallery tiles (Glenn's variant 4): each cell is a flex
-		   column with its actions pinned to the bottom — Bootstrap's
-		   row already stretches cells in a row to equal height, so
-		   every ladder and watchlist button lands on one shared
-		   baseline while captions wrap freely between poster and
-		   actions. Tile text centers under the poster (#77c); the
-		   pin rides margin-top: auto, which is why tile_actions uses
-		   pt-1 spacing, never mt-* (Bootstrap margins are !important
-		   and would defeat the auto margin). The watchlist page pins
-		   its whole button-cluster via .poster-bottom instead. */
+		/* Gallery tiles (variant 4 by Glenn): each cell is a flex
+		   column with its actions pinned to the bottom. The Bootstrap
+		   row already stretches the cells in a row to equal height.
+		   Thus, every ladder and watchlist button goes onto one shared
+		   baseline, while the captions wrap freely between the poster
+		   and the actions. The tile text centers under the poster
+		   (#77c). The pin uses margin-top: auto. This is why
+		   tile_actions uses pt-1 spacing, never mt-*. Bootstrap margins
+		   are !important and would defeat the auto margin. The
+		   watchlist page pins its whole button cluster through
+		   .poster-bottom instead. */
 		.poster-cell { display: flex; flex-direction: column; text-align: center; }
 		.poster-cell > .poster-actions, .poster-cell > .poster-bottom { margin-top: auto; }
 		/* Poster corner folds (#197 + #156/#230): the Plex-style
-		   status fold, painted by the /movie_states hydration onto
-		   every popover-armed movie tile — green upper-left with a
-		   plus = recently became available (watchlist alert diff),
-		   red upper-right with a clock = in the leaving-Criterion
-		   set. Each state owns its corner and carries a glyph, so
-		   the pair never relies on color alone (Glenn's A-prime
-		   pick from the overlay studies). The fold layer sizes
-		   itself to the poster's 2:3 box from the tile's top and
-		   clips to the same radius, so folds hug the artwork's
-		   rounded corners and never bleed past them. */
+		   status fold. The /movie_states hydration paints it onto
+		   every popover-armed movie tile. Green upper-left with a
+		   plus = the film recently became available (the watchlist
+		   alert diff). Red upper-right with a clock = the film is in
+		   the leaving-Criterion set. Each state owns its corner and
+		   carries a glyph. Thus, the pair never relies on color alone
+		   (the A-prime pick by Glenn from the overlay studies). The
+		   fold layer sizes itself to the 2:3 box of the poster from
+		   the top of the tile. It clips to the same radius. Thus, the
+		   folds hug the rounded corners of the artwork and never bleed
+		   past them. */
 		.poster-fold-host { position: relative; display: block; }
 		.poster-folds { position: absolute; top: 0; left: 0; right: 0; aspect-ratio: 2 / 3; border-radius: var(--bs-border-radius); overflow: hidden; pointer-events: none; }
 		.poster-fold { position: absolute; top: 0; width: 30px; height: 30px; pointer-events: auto; }
-		/* Both folds wear the top-right corner — at most one paints
+		/* Both folds show in the top-right corner. At most one paints
 		   per tile (red leaving outranks green newly-added) */
 		.poster-fold-new { right: 0; background: var(--bs-success); clip-path: polygon(0 0, 100% 0, 100% 100%); }
 		.poster-fold-leaving { right: 0; background: var(--bs-danger); clip-path: polygon(0 0, 100% 0, 100% 100%); }
 		.poster-fold svg { position: absolute; top: 3px; right: 3px; width: 11px; height: 11px; color: #fff; }
 		.poster-actions { display: flex; flex-direction: column; align-items: center; }
-		/* The Recommendations anchor slot (#235 follow-up, Glenn's
-		   fanned-pair pick): each shelf's first cell shows the two
-		   anchor films as small overlapped posters on a dashed-border
-		   ground — evidence for the shelf, visually distinct from the
-		   suggestion tiles it sits beside, with no actions to mistake
-		   for a rateable card. Bootstrap tokens keep it right in both
-		   themes; the eyebrow borrows the watchlist amber. */
+		/* The anchor slot of Recommendations (#235 follow-up, the
+		   fanned-pair pick by Glenn): the first cell of each shelf
+		   shows the two anchor films as small overlapped posters on a
+		   dashed-border ground. It is the evidence for the shelf. It
+		   is visually distinct from the suggestion tiles beside it. It
+		   has no actions that a user could mistake for a rateable
+		   card. Bootstrap tokens keep it right in both themes. The
+		   eyebrow borrows the watchlist amber. */
 		.anchor-slot { height: 100%; display: flex; flex-direction: column; background: var(--bs-tertiary-bg); border: 1px dashed var(--bs-border-color); border-radius: .5rem; padding: .6rem .6rem .75rem; text-align: start; }
 		.anchor-slot-eyebrow { font-size: .62rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--bs-warning-text-emphasis); margin-bottom: .5rem; }
 		.anchor-fan { position: relative; aspect-ratio: 5 / 6; margin-bottom: .4rem; }
@@ -279,25 +291,26 @@
 		.anchor-fan a.anchor-fan-front { bottom: 0; right: 0; transform: rotate(3deg); }
 		.anchor-fan a.anchor-fan-solo { top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-2deg); }
 		.anchor-fan img, .anchor-fan .anchor-fan-blank { width: 100%; height: 100%; object-fit: cover; border: 1px solid var(--bs-border-color); border-radius: .375rem; background: var(--bs-body-bg); }
-		/* Phone shelves (Glenn, Aug 26 2026): two slots per row — the
-		   anchor slot stays put on the left, and the films column
-		   beside it becomes a native scroll-snap strip, one card at a
-		   time with the next card's edge peeking as the swipe
-		   affordance. CSS only: swiping is plain horizontal scroll, so
-		   the refill loop's swap/fade needs no changes. scroll-padding
-		   mirrors the gutter so a snapped card sits flush where a
-		   static one would. */
+		/* Phone shelves (Glenn, 2026-08-26): 2 slots per row. The
+		   anchor slot stays in place on the left. The films column
+		   beside it becomes a native scroll-snap strip. It shows one
+		   card at a time, with the edge of the next card visible as
+		   the swipe affordance. CSS only: a swipe is a plain horizontal
+		   scroll. Thus, the swap/fade of the refill loop needs no
+		   changes. scroll-padding mirrors the gutter. Thus, a snapped
+		   card sits flush where a static card would sit. */
 		@media (max-width: 575.98px) {
 			.shelf-films { flex-wrap: nowrap; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: calc(var(--bs-gutter-x) * .5); scrollbar-width: none; }
 			.shelf-films::-webkit-scrollbar { display: none; }
 			.shelf-films > * { flex: 0 0 92%; width: auto; max-width: 92%; scroll-snap-align: start; }
 		}
-		/* The refill swap: the acted-on tile fades out, its
-		   replacement fades into place (Glenn, Aug 26 2026). The
-		   fade-out rides a transition the page's script triggers by
-		   adding .tile-fade-out; the fade-in is a one-shot animation
-		   on the freshly inserted cell. Reduced-motion users get an
-		   instant swap — the script checks the same media query. */
+		/* The refill swap: the tile that the user acted on fades out.
+		   Its replacement fades into place (Glenn, 2026-08-26). The
+		   fade-out goes with a transition. The script of the page
+		   triggers it when it adds .tile-fade-out. The fade-in is a
+		   one-shot animation on the newly inserted cell. Reduced-motion
+		   users get an instant swap. The script checks the same media
+		   query. */
 		.tile-fade-out { transition: opacity .25s ease-out; opacity: 0; }
 		.tile-fade-in { animation: tile-fade-in .45s ease-out; }
 		@keyframes tile-fade-in { from { opacity: 0; } }
@@ -306,19 +319,21 @@
 			.tile-fade-in { animation: none; }
 		}
 		/* Name That Frame: the frame sits in a fixed-size
-		   letterbox, so a scope frame and a 4:3 frame occupy identical
-		   space and the page never resizes between rounds; the black
-		   ground reads as cinema bars in both themes. Phones swap the
-		   tall fixed height for a 16:9 box (Glenn's report: 60vh of a
-		   portrait screen buried wide frames in black) — scope frames
-		   keep slim bars, near-square frames pillarbox instead */
+		   letterbox. Thus, a scope frame and a 4:3 frame occupy
+		   identical space, and the page never resizes between rounds.
+		   The black ground reads as cinema bars in both themes. Phones
+		   swap the tall fixed height for a 16:9 box. Glenn reported
+		   that 60vh of a portrait screen buried the wide frames in
+		   black. Scope frames keep slim bars. Near-square frames
+		   pillarbox instead */
 		.game-frame-box { height: min(60vh, 34rem); display: flex; align-items: center; justify-content: center; background: #000; border: 1px solid var(--bs-border-color); border-radius: .375rem; overflow: hidden; }
 		.game-frame-box img { max-width: 100%; max-height: 100%; }
-		/* Extra Difficult crops arrive at a fraction of the frame's
-		   pixels — cover, not contain, so the stage fills the whole
-		   pane: a crop cut from a scope film's active picture area is
-		   wider than the box, and contain re-letterboxed it against
-		   the box's black background (Glenn's report, Aug 27 2026) */
+		/* Extra Difficult crops arrive at a fraction of the pixels of
+		   the frame. Use cover, not contain. Thus, the stage fills the
+		   whole pane. A crop cut from the active picture area of a
+		   scope film is wider than the box. contain re-letterboxed it
+		   against the black background of the box (reported by Glenn,
+		   2026-08-27) */
 		.game-frame-box img.game-frame-zoom { width: 100%; height: 100%; object-fit: cover; }
 		@media (max-width: 767.98px) {
 			.game-frame-box { height: auto; aspect-ratio: 16 / 9; }
@@ -338,7 +353,7 @@
 	<meta name="theme-color" content="#f8f9fa" media="(prefers-color-scheme: light)">
 	<meta name="theme-color" content="#212529" media="(prefers-color-scheme: dark)">
 
-	<!-- webfonts for monthly styling -->
+	<!-- The webfonts for the monthly styling -->
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link href="https://fonts.googleapis.com/css2?family=Creepster&display=swap" rel="stylesheet">
@@ -355,15 +370,15 @@
     {%- endblock content %}
 
 	{% block scripts %}
-    <!-- Bootstrap 5 bundle (includes Popper); jQuery is gone with Bootstrap 4 -->
+    <!-- The Bootstrap 5 bundle (includes Popper). jQuery left with Bootstrap 4 -->
 	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 
-	{# Pull-to-refresh for the installed PWA: armed only when the
-	   page is scrolled to the very top, ~70px threshold with a live
-	   indicator, and a plain reload — the service worker is
-	   network-first for pages, so the reload is genuinely fresh. Only
-	   in standalone display mode on touch devices; browsers keep their
-	   own gesture #}
+	{# Pull-to-refresh for the installed PWA. It is armed only when the
+	   page is scrolled to the very top. The threshold is about 70px,
+	   with a live indicator. The refresh is a plain reload. The service
+	   worker is network-first for pages. Thus, the reload is really
+	   fresh. It runs only in standalone display mode on touch devices.
+	   Browsers keep their own gesture #}
 	<script>
 		(function () {
 			if (!window.matchMedia("(display-mode: standalone)").matches) return;
@@ -373,9 +388,9 @@
 			var pulled = 0;
 			var indicator = document.createElement("div");
 			indicator.style.cssText = "position:fixed;top:0;left:0;right:0;height:0;display:flex;align-items:flex-end;justify-content:center;overflow:hidden;z-index:2000;background:var(--bs-tertiary-bg);color:var(--bs-secondary-color);font-size:.85rem;padding-bottom:.5rem;";
-			// The indicator grows to exactly the navbar's height and
-			// shares its background, so the pull reads as the navbar
-			// making room rather than a foreign banner
+			// The indicator grows to exactly the height of the navbar and
+			// shares its background. Thus, the pull reads as the navbar that
+			// makes room, not as a foreign banner
 			var maxHeight = 56;
 			document.addEventListener("DOMContentLoaded", function () {
 				document.body.appendChild(indicator);
@@ -416,7 +431,7 @@
 		})();
 	</script>
 
-	<!-- Make it scary in October -->
+	<!-- Make the title scary in October -->
 	<script>
 		function titleTheme() {
 			const d = new Date();

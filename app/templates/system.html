@@ -9,10 +9,10 @@
 </div>
 <p class="small text-muted" id="system-health-stale" hidden>Live updates interrupted &mdash; showing data from <span id="system-health-age"></span> ago.</p>
 <script>
-	// Poll the health fragment while the page is visible. setTimeout
-	// chaining (not setInterval) so a slow response — e.g. a dead network
-	// mount holding system_health() for its 10s probe timeout — never
-	// stacks overlapping requests.
+	// Poll the health fragment while the page is visible. Use setTimeout
+	// chaining (not setInterval). Thus, a slow response never stacks
+	// overlapping requests. For example, a dead network mount can hold
+	// system_health() for its 10-second probe timeout.
 	(function() {
 		var container = document.getElementById("system-health");
 		var stale = document.getElementById("system-health-stale");
@@ -38,15 +38,16 @@
 		}
 
 		function poll() {
-			// While hidden, stop entirely; the visibilitychange handler
-			// resumes with a fresh poll on return
+			// While the page is hidden, stop fully. The visibilitychange
+			// handler resumes with a new poll when the page returns
 			if (document.hidden) {
 				return;
 			}
 			fetch("{{ url_for('main.system_metrics') }}", {cache: "no-store"})
 				.then(function(response) {
-					// A redirect means the session or admin gate lapsed;
-					// treat it as a failure rather than swapping in a page
+					// A redirect means that the session or the admin gate
+					// lapsed. Treat it as a failure. Do not put a page into
+					// the container
 					if (!response.ok || response.redirected) {
 						throw new Error(response.status);
 					}

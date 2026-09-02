@@ -9,8 +9,8 @@
 	</ol>
 </nav>
 <h2 class="mt-n2">{{ title }}</h2>
-{# The restore is an admin tool like the series page's (#186 follow-up);
-   the episode listing below stays for everyone #}
+{# The restore is an admin tool, the same as on the series page (#186
+   follow-up). The episode list below stays for all users. #}
 {% if current_user.admin %}
 <div class="row my-2">
 	<div class="col-sm-4 col-md-3">
@@ -44,10 +44,11 @@
 		<tr>
 			<th scope="row" class="align-middle">{{ file.id }}</th>
 			<td class="align-middle">{{ file.episode }}{% if file.episode != file.last_episode %}-{{ file.last_episode }}{% endif %}</td>
-			{# The edition IS the title where one exists (the
-			   curated specials); no other episode titles are stored #}
+			{# The edition IS the title where one exists (the curated
+			   specials). Fitzflix stores no other episode titles. #}
 			<td class="align-middle">{% if file.edition %}{{ file.edition }}{% endif %}</td>
-			{# The file pages are admin tools, so only admins get links #}
+			{# The file pages are admin tools. Thus, only admins get
+			   links #}
 			<td class="align-middle">{% if current_user.admin %}<a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a>{% else %}{{ file.basename }}{% endif %}</td>
 			<td class="align-middle">{{ quality.quality_title }}</td>
 			<td class="align-middle">{% if quality.physical_media %}<span class="badge text-bg-success">Physical media</span>{% endif %}</td>

@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 
 {% macro triage_row(record, kind) %}
-{# One unmatched record's row: enough to decide without leaving —
-   title, year, file count, date added — plus the two actions and a
-   search hand-off. The search link opens the site's own TMDB search,
-   whose results carry the id-bearing rows this page's Match field
-   wants; the hidden id names the record, movie or series. #}
+{# This is the row of 1 unmatched record. It shows enough to decide
+   without a page change: the title, the year, the file count, and the
+   date added. It also shows the 2 actions and a search hand-off. The
+   search link opens the own TMDB search of the site. Its results carry
+   the id-bearing rows that the Match field of this page wants. The
+   hidden id names the record, movie or series. #}
 <tr>
 	<td>
 		<a href="{{ url_for('main.movie', movie_id=record.id) if kind == 'movie' else url_for('main.tv', series_id=record.id) }}">{{ record.title }}</a>

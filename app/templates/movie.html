@@ -13,41 +13,42 @@
 	<div class="col-md-auto">
 		{% include "_movie_poster_large.html" %}
 	</div>
-	{# min-width: 0 lets this column shrink below the cast strip's
-	   intrinsic width, so the wide scroller can't push the whole
-	   column down beneath the poster #}
+	{# min-width: 0 lets this column shrink to less than the intrinsic
+	   width of the cast strip. Thus, the wide scroller cannot push the
+	   whole column down below the poster. #}
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ title }}</h3>
-			{# The meta line leads and the synopsis follows — the popover
-			   card's order, so page and popup read the same: directed by,
-			   runtime, genres, and the US rating in its bordered box.
-			   Genres keep their library-filter links, the card's genres
-			   are plain text #}
+			{# The meta line comes first and the synopsis follows. This is
+			   the order of the popover card. Thus, the page and the popup
+			   read the same: directed by, runtime, genres, and the US
+			   rating in its bordered box. The genres keep their
+			   library-filter links. The genres of the card are plain
+			   text. #}
 			{% if directors or movie.tmdb_runtime or genres or certification %}
 				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if movie.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or movie.tmdb_runtime %} &middot; {% endif %}{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or movie.tmdb_runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
 			{% endif %}
-			{# Gated on the overview, not the refresh stamp: a just-created
-			   record's primed fields render while the full refresh is
-			   still in the queue #}
+			{# This is gated on the overview, not on the refresh stamp.
+			   The primed fields of a just-created record render while the
+			   full refresh is still in the queue. #}
 			{% if movie.tmdb_overview %}
 				<p>{{ movie.tmdb_overview }}</p>
 			{% endif %}
-			{# The star row is the page's rating control: it shows
-			   the verdict — or the engine's estimate in paler gold until
-			   there is one — and taps post in the background. A tap
-			   creates a date-less verdict row — a preference signal, not
-			   a diary entry. The liked heart follows 3+ stars
-			   automatically #}
+			{# The star row is the rating control of the page. It shows
+			   the verdict. Until there is a verdict, it shows the
+			   estimate of the engine in paler gold. A tap posts in the
+			   background. A tap creates a verdict row with no date. That
+			   row is a preference signal, not a diary entry. The liked
+			   heart follows a rating of 3 or more stars automatically. #}
 			<form action="" method="post" class="mb-2 d-flex align-items-center">
 				{{ movie_review_form.csrf_token }}
 				{{ rating_ladder(allow_not_interested=not review, current=(review.rating if review and review.rating is not none else none), flagged=refused, live=true, estimated=estimated_rating) }}
 			</form>
 			{# Letterboxd-first logging: with a linked account, dated
-			   watches and reviews belong on Letterboxd — the feed syncs
+			   watches and reviews belong on Letterboxd. The feed syncs
 			   them back on its own. The local log form is the demoted
-			   fallback for what the feed can't carry (outages, entries
-			   older than its ~50-item window) #}
+			   fallback for what the feed cannot carry (outages, and
+			   entries older than its window of approximately 50 items). #}
 			{% set letterboxd_logging = current_user.letterboxd_username and movie.tmdb_id %}
 			{% if letterboxd_logging %}
 				<a class="btn btn-sm btn-primary mb-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
@@ -75,9 +76,9 @@
 				<p>Part of the Criterion Collection's {{ movie.criterion_set_title }} collector's set.</p>
 			{% endif %}
 			{% if awards %}
-				{# What Wikidata lists, wins first — strong for major
-				   ceremonies, patchy for festivals, so the strip never
-				   claims completeness #}
+				{# What Wikidata lists wins first. Wikidata is strong for
+				   major ceremonies and patchy for festivals. Thus, the
+				   strip never claims that it is complete. #}
 				<p class="mb-2">
 					{% for award in awards[:16] %}
 					<span class="badge text-bg-light border fw-normal me-1 mb-1 text-wrap text-start lh-sm">{% if award.win %}<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trophy-fill mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M2.5.5A.5.5 0 0 1 3 0h10a.5.5 0 0 1 .5.5c0 .538-.012 1.05-.034 1.536a3 3 0 1 1-1.133 5.89c-.79 1.865-1.878 2.777-2.833 3.011v2.173l1.425.356c.194.048.377.135.537.255L13.3 15.1a.5.5 0 0 1-.3.9H3a.5.5 0 0 1-.3-.9l1.838-1.379c.16-.12.343-.207.537-.255L6.5 13.11v-2.173c-.955-.234-2.043-1.146-2.833-3.012a3 3 0 1 1-1.132-5.89A33.076 33.076 0 0 1 2.5.5zm.099 2.54a2 2 0 0 0 .72 3.935c-.333-1.05-.588-2.346-.72-3.935zm10.083 3.935a2 2 0 0 0 .72-3.935c-.133 1.59-.388 2.885-.72 3.935z"/></svg> {% endif %}{{ award.award_name }}{% if award.year %} ({{ award.year }}){% endif %}{% if not award.win %} &mdash; nominated{% endif %}</span>
@@ -94,9 +95,9 @@
 </div>
 {% if suggestions %}
 <hr>
-{# Enjoyment picks earned by the positive rating just logged. The
-   actions sit under each poster — rate it, bank it, wave it off —
-   and tile posts never disturb the strip's anchor #}
+{# Enjoyment picks that the positive rating just logged earned. The
+   actions sit under each poster: rate it, bank it, or wave it off. Tile
+   posts never move the anchor of the strip. #}
 <h5>Since you liked {{ title }}&hellip;</h5>
 <p class="small text-muted">These films from your library have features in common with it. You did not see them, and they fit your taste profile.</p>
 <div class="row">
@@ -122,31 +123,33 @@
 </div>
 {% endif %}
 <hr>
-{# Radarr request eligibility for the Find menu: admin, Radarr
-   configured, unowned, and TMDB-known #}
+{# Radarr request eligibility for the Find menu: the user is an admin,
+   Radarr is configured, the film is unowned, and TMDB knows the film. #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
-	{# Remote playback hand-off (owned + player configured): the
-	   background post — base.html's shared data-plex-play handler —
-	   starts the film on the Apple TV via the Plex app (Plex
-	   Companion) or Infuse (Apple Companion deep link, #192); failures
-	   land as the small status line under the button. With both apps
-	   configured the user's default leads, and films whose formats
-	   only Infuse plays right carry a recommendation note #}
+	{# Remote playback hand-off (owned film and a configured player). The
+	   background post uses the shared data-plex-play handler of
+	   base.html. It starts the film on the Apple TV through the Plex app
+	   (Plex Companion) or through Infuse (Apple Companion deep link,
+	   #192). Failures go into the small status line under the button.
+	   When both apps are configured, the default player of the user
+	   leads. Films with formats that only Infuse plays correctly carry a
+	   recommendation note. #}
 	{% set both_playable = plex_playable and infuse_playable %}
 	{% set targets = [] %}
 	{% if plex_playable %}{% set _ = targets.append(("plex", "Play (Plex)" if both_playable else "Play on Apple TV")) %}{% endif %}
 	{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
 	{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
 	{% if targets|length > 1 %}
-	{# One Play control (Glenn, Aug 31 2026): the default player IS the
-	   button, the other waits under the split dropdown — like the Find
-	   menu. Both forms post through the shared data-plex-play handler;
-	   the secondary form's status line can't live inside the menu (it
-	   closes on click), so both report into the shared line under the
-	   group via data-plex-play-status-ref. The form wrapping the main
-	   button keeps Bootstrap's group corner rules from reaching it,
-	   so the two halves flatten their meeting corners by hand #}
+	{# One Play control (Glenn, 2026-08-31): the default player IS the
+	   button. The other player waits under the split dropdown, like the
+	   Find menu. Both forms post through the shared data-plex-play
+	   handler. The status line of the secondary form cannot live inside
+	   the menu, because the menu closes on click. Thus, both forms report
+	   into the shared line under the group through
+	   data-plex-play-status-ref. The form that wraps the main button
+	   keeps the group corner rules of Bootstrap away from it. Thus, the
+	   two halves flatten their meeting corners by hand. #}
 	<div class="col-sm-3 col-md-2 my-1">
 		<div class="btn-group w-100">
 			<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post" class="flex-fill d-grid">
@@ -182,8 +185,8 @@
 		</form>
 	</div>
 	{% endif %}
-	{# The file pages are admin tools (#186 follow-up), so only admins
-	   get the door to them #}
+	{# The file pages are admin tools (#186 follow-up). Thus, only admins
+	   get the door to them. #}
 	{% if current_user.admin %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
@@ -239,11 +242,11 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
-{# The personal funnel: Seen (this user's diary), On your watchlist,
-   Might interest you — seen and might-interest never show together.
-   The watchlist badge always renders (d-none when off) so the live
-   toggle (#187) can reveal it without a reload; the wrapping
-   data-watchlist-scope ties badge and toggle together for the JS #}
+{# The personal funnel: Seen (the diary of this user), On your watchlist,
+   and Might interest you. Seen and might-interest never show together.
+   The watchlist badge always renders (d-none when off). Thus, the live
+   toggle (#187) can show it without a reload. The wrapping
+   data-watchlist-scope ties the badge and the toggle together for the JS. #}
 <div data-watchlist-scope>
 <div class="mt-1">
 	{% if review %}
@@ -254,34 +257,34 @@
 	<span class="badge text-bg-info me-1">Might interest you</span>
 	{% endif %}
 </div>
-{# Watchlist: any film can be wanted — unowned ones as the funnel stage
-   before the shopping list, owned ones to track which of the library's
-   many films this user specifically means to watch. Both faces render
-   and data-card-watchlist swaps them in the background (#187) — the
-   route's card branch answers JSON, and any fetch failure falls back
-   to the full post #}
+{# Watchlist: the user can want any film. An unowned film is in the funnel
+   stage before the shopping list. An owned film tracks which of the many
+   library films this user specifically means to watch. Both faces render,
+   and data-card-watchlist swaps them in the background (#187). The card
+   branch of the route answers JSON. Any fetch failure falls back to the
+   full post. #}
 <div class="mt-2">
 	<form action="" method="post" class="d-inline" data-card-watchlist>
 		{{ watchlist_form.hidden_tag() }}
 		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
 		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
 	</form>
-	{# Not interested (#45b, buttons removed per #184): the ladder's
-	   &#10005; toggle is the one way to declare disinterest — the note
-	   just surfaces the standing verdict #}
+	{# Not interested (#45b, buttons removed per #184): the &#10005;
+	   toggle of the ladder is the one way to declare disinterest. The
+	   note only shows the standing verdict. #}
 	{% if refused %}
 	<span class="small text-muted ms-1">This film won't be recommended.</span>
 	{% endif %}
-	{# The ad-hoc Radarr hand-off lives on the Find menu now; the
-	   badge stays behind so a standing request reads at a glance #}
+	{# The ad-hoc Radarr hand-off now lives on the Find menu. The badge
+	   stays here so a standing request reads at a glance. #}
 	{% if radarr_requestable and in_radarr %}
 	<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
 	{% endif %}
 </div>
 </div>
-{# Movie Data is an admin section (#186 follow-up): the route bounces
-   stray posts from everyone else, so hiding it here is presentation,
-   not the protection #}
+{# Movie Data is an admin section (#186 follow-up). The route bounces
+   stray posts from everyone else. Thus, to hide it here is presentation,
+   not the protection. #}
 {% if current_user.admin %}
 <hr>
 <h5>Movie Data</h5>
@@ -304,9 +307,9 @@
 		</form>
 		{% endif %}
 		{% else %}
-		{# A record with no local files mirrors its TMDB entry: the id is
-		   the record's identity, shown for reference only — refresh
-		   re-fetches the same id, and there's no re-point or detach #}
+		{# A record with no local files mirrors its TMDB entry. The id is
+		   the identity of the record, shown for reference only. A refresh
+		   fetches the same id again. There is no re-point and no detach. #}
 		<p class="mb-2">TMDB ID: {{ movie.tmdb_id if movie.tmdb_id else "not matched" }}</p>
 		{% if movie.tmdb_id %}
 		<form action="" method="post">
@@ -315,9 +318,9 @@
 		</form>
 		{% endif %}
 		{% endif %}
-		{# tmdb_data_as_of lags tmdb_id on a just-created record: the page
-		   renders immediately after a watchlist add or log, while the
-		   enrichment refresh is still in the queue #}
+		{# tmdb_data_as_of lags tmdb_id on a just-created record. The page
+		   renders immediately after a watchlist add or a log, while the
+		   enrichment refresh is still in the queue. #}
 		{% if movie.tmdb_id and movie.tmdb_data_as_of %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% elif movie.tmdb_id %}<em class="small">TMDB data refreshing&hellip;</em>{% endif %}
 		{% if movie.tmdb_ignored %}<em class="small text-muted">Detached from TMDB — enter an ID above to match it again</em>{% endif %}
 		<hr class="d-block d-sm-none">
@@ -355,8 +358,8 @@
 		</form>
 		<hr class="d-block d-sm-none">
 	</div>
-	{# Poster curation is a library tool: a record with no local files
-	   wears its TMDB poster #}
+	{# Poster curation is a library tool. A record with no local files
+	   shows its TMDB poster. #}
 	{% if films or features %}
 	<div class="col-sm-4">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.movie_poster', movie_id=movie.id) }}" role="button">Change poster&hellip;</a>

@@ -10,9 +10,10 @@
 <div data-shelf data-criteria="{{ shelf.criteria_param }}">
 	{% if not loop.first %}<hr>{% endif %}
 	{% if shelf.kind == "copref" %}
-	{# The shared-genre clause names the anchors' common ground (Glenn,
-	   Aug 30 2026) — a solo shelf shows its one film's genres, a pair
-	   the intersection; films with no genre data show the plain line #}
+	{# The shared-genre clause names the common ground of the anchors
+	   (Glenn, 2026-08-30). A solo shelf shows the genres of its one
+	   film. A pair shows the intersection. Films with no genre data
+	   show the plain line. #}
 	{% set common = shelf.shared_genres | join(' · ') %}
 	{% if shelf.anchors | length == 1 %}
 	<h4>More like this one</h4>
@@ -22,29 +23,33 @@
 	<p class="small text-muted mb-2">The people who loved the two films also loved these. The source is thirty-two million MovieLens ratings, not shared features.{% if common %} The two films have this in common: {{ common }}.{% endif %}</p>
 	{% endif %}
 	{% else %}
-	{# First character upcased by hand — the capitalize filter would
-	   lowercase the names in "films directed by Sidney Lumet" #}
+	{# The first character is uppercased by hand. The capitalize
+	   filter would lowercase the names in "films directed by Sidney
+	   Lumet". #}
 	{% set heading = shelf.labels | join(' · ') %}
 	<h4>{{ heading[:1] | upper }}{{ heading[1:] }}</h4>
 	{% endif %}
 	<div class="row">
-		{# The anchor slot (Glenn's fanned-pair pick, Aug 26 2026): the
-		   two films that prove the interest, as evidence rather than
-		   another suggestion — no star ladder, no watchlist button,
-		   never swapped by the refill loop. It replaces the old
-		   caption clause that named the anchors in prose. On phones it
-		   holds the row's left half while the films beside it become a
-		   one-card swipe strip (Glenn, Aug 26 2026). #}
+		{# The anchor slot (the fanned-pair choice of Glenn,
+		   2026-08-26): the two films that prove the interest. They
+		   are evidence, not a different suggestion. There is no star
+		   ladder and no watchlist button. The refill loop never
+		   replaces them. The slot replaces the old caption clause
+		   that named the anchors in prose. On phones, it holds the
+		   left half of the row. The films beside it become a one-card
+		   swipe strip (Glenn, 2026-08-26). #}
 		<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4">
 			<div class="anchor-slot">
 				<div class="anchor-slot-eyebrow">Because you liked</div>
-				{# No visible titles (Glenn's call after the live look,
-				   Aug 26 2026) — the posters carry the identity, with
-				   the film named in the link tooltip and alt text #}
+				{# There are no visible titles (decision by Glenn
+				   after the live look, 2026-08-26). The posters show
+				   the identity. The link tooltip and the alt text
+				   name the film. #}
 				<div class="anchor-fan">
 					{% for anchor in shelf.anchors %}
 					{% set src = movie_poster_src(anchor) | trim %}
-					{# A single-anchor shelf (#249) centers its lone card #}
+					{# A single-anchor shelf (#249) centers its one
+					   card #}
 					{% set fan_class = 'anchor-fan-solo' if shelf.anchors | length == 1 else ('anchor-fan-front' if loop.last else 'anchor-fan-back') %}
 					<a href="{{ url_for('main.movie', movie_id=anchor.id) }}" class="{{ fan_class }}" title="{{ anchor.title }} ({{ anchor.year }})">
 						{% if src %}
@@ -61,12 +66,12 @@
 				</div>
 			</div>
 		</div>
-		{# The films live in their own column so the phone layout can
-		   turn just this part into a scroll-snap carousel: the nested
-		   row-cols reproduce the old tile widths exactly at sm and up
-		   (8/12÷2, 9/12÷3, 10/12÷5 of the container), and below sm
-		   the shelf-films rules take over — one card at a time, the
-		   next one peeking, native swipe, no JS #}
+		{# The films are in their own column. Thus, the phone layout
+		   can turn only this part into a scroll-snap carousel. The
+		   nested row-cols reproduce the old tile widths exactly at sm
+		   and up (8/12÷2, 9/12÷3, 10/12÷5 of the container). Below
+		   sm, the shelf-films rules apply: one card at a time, the
+		   next card partly visible, native swipe, no JS. #}
 		<div class="col-6 col-sm-8 col-md-9 col-lg-10">
 			<div class="row shelf-films row-cols-2 row-cols-sm-2 row-cols-md-3 row-cols-lg-5">
 				{% for movie in shelf.movies %}
@@ -78,13 +83,13 @@
 </div>
 {% endfor %}
 <script>
-	// The refill loop (#235): acting on a suggestion — a rating, a
-	// watchlist add, a ✕ — swaps just that tile for the next film
-	// matching the shelf's criteria. The tile's live posts already
-	// repaint the widgets; base.html announces each success with a
-	// fitzflix:tile-state event, and this listener answers only for
-	// tiles inside a shelf. Undo gestures (removing a rating, undoing
-	// ✕, dropping a watchlist add) never swap the tile.
+	// The refill loop (#235): an action on a suggestion (a rating, a
+	// watchlist add, a ✕) replaces only that tile with the next film that
+	// matches the criteria of the shelf. The live posts of the tile already
+	// repaint the widgets. base.html announces each success with a
+	// fitzflix:tile-state event. This listener answers only for the tiles
+	// inside a shelf. Undo gestures (the removal of a rating, an undo of ✕,
+	// the removal of a watchlist add) never replace the tile.
 	(function() {
 		var TILE_URL = {{ url_for('main.recommendations_tile') | tojson }};
 		var STATES_URL = {{ url_for('main.movie_states') | tojson }};
@@ -126,11 +131,11 @@
 					return response.text();
 				})
 				.then(function(html) {
-					// The old tile always fades out — whether a
-					// replacement fades into its place or the criteria
-					// set is spent and the slot closes up (Glenn: no
-					// sudden disappearances). Reduced-motion users get
-					// the instant version of both.
+					// The old tile always fades out. Either a replacement
+					// fades into its place, or the criteria set is spent
+					// and the slot closes (Glenn: no sudden
+					// disappearances). Reduced-motion users get the instant
+					// version of both.
 					var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 					var fresh = null;
 					if (html !== null) {
@@ -166,7 +171,8 @@
 			if (!acted) return;
 			var shelf = cell.closest("[data-criteria]");
 			if (!shelf) return;
-			// A beat's pause so the tap's repaint lands before the swap
+			// A short pause. Thus, the repaint of the tap occurs before the
+			// replacement.
 			window.setTimeout(function() { replaceCell(shelf, cell); }, 700);
 		});
 	})();

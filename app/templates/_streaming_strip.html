@@ -1,12 +1,12 @@
-{# Availability badges for the current user's services. Rendered only
+{# Availability badges for the services of the current user. Rendered only
    when the route supplies `streaming` (the user picked services on their
-   Profile). One shared badge grammar — [logo] Name — covers all three
-   facts: the library copy, streaming matches, and rentals (suffixed
-   "(rent)"); an owned film's library badge comes first so streaming
-   never upstages the shelf. The JustWatch attribution is mandatory
-   whenever JustWatch-derived facts are shown — TMDB licenses this data
-   from JustWatch and revokes API access without the credit — but the
-   library badge alone shows none of their data, so it carries no
+   Profile). One shared badge grammar, [logo] Name, covers all 3 facts:
+   the library copy, streaming matches, and rentals (with the suffix
+   "(rent)"). The library badge of an owned film comes first. Thus,
+   streaming never upstages the shelf. The JustWatch attribution is
+   mandatory whenever JustWatch-derived facts are shown. TMDB licenses
+   this data from JustWatch and revokes API access without the credit. The
+   library badge alone shows none of their data. Thus, it carries no
    credit. #}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
 {% if streaming %}

@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
 {# The File Activity dashboard: the old Recently Added page and the
-   Pipeline Activity trails merged (Glenn, Aug 2026). Landed files
-   show as full cards, each carrying its own trail chips while Redis
-   retains them; files still working through the pipeline show on the
-   Queue page, as chips on their job rows. The 5-second queue poll in
-   base.html keeps the card chips live and adds a file's card the
-   moment cataloging lands — window.fileActivityCardUrl is what
-   switches renderFiles into that dashboard mode, so it only exists
-   on page 1. #}
+   Pipeline Activity trails, merged (Glenn, 2026-08). Files that
+   arrived show as full cards. Each card carries its own trail chips
+   while Redis retains them. Files that still move through the
+   pipeline show on the Queue page, as chips on their job rows. The
+   5-second queue poll in base.html keeps the card chips live. It adds
+   the card of a file the moment the cataloging completes.
+   window.fileActivityCardUrl is what switches renderFiles into that
+   dashboard mode. Thus, it only exists on page 1. #}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -93,9 +93,9 @@
 </nav>
 {% endif %}
 
-{# The poll inserts a freshly landed file's card at the top of this
-   holder, so it exists (empty is fine) even when nothing has landed
-   in the last week #}
+{# The poll inserts the card of a newly arrived file at the top of
+   this holder. Thus, the holder exists (empty is fine) even when no
+   file arrived in the last week #}
 <div id="file-activity-cards" class="list-group mb-3">
 {% for file in recently_added %}
 {% include "_file_activity_card.html" %}

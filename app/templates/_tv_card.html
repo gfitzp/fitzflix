@@ -1,21 +1,24 @@
-{# The poster popover's card for a TV series: the fragment /tv_card
-   renders for one show — title, the run's meta line, synopsis, billed
-   cast, and what's on the shelf — fetched on hover (or first tap) and
-   injected into the same Bootstrap popover as the film card by the
-   script in base.html, which finds either by the shared .poster-card
-   class. Served for library records and bare TMDB ids alike, so a
-   person's unowned television credits get a card too.
+{# The card of the poster popover for a TV series. The fragment
+   /tv_card renders it for one show: the title, the meta line of the
+   run, the synopsis, the billed cast, and what is on the shelf. The
+   script in base.html fetches it on hover (or on the first tap). It
+   injects the card into the same Bootstrap popover as the film card.
+   The script finds either card by the shared .poster-card class.
+   Fitzflix serves it for library records and for bare TMDB ids
+   alike. Thus, the unowned television credits of a person get a
+   card too.
 
-   Same shape as _movie_card.html with the facts TV actually has: the
-   series meta line stands in for "Directed by … · 96 min" (with the
-   US content rating in the same bordered box the film card wears), and the
-   In-library badge keeps its shopping colors (#191 — amber when a
-   season still has an episode worth upgrading, green once every
-   season is settled) beside a plain count of what's owned. Three
-   things the film card carries are deliberately absent: streaming
-   availability (title_availability only asks TMDB's /movie endpoint),
-   the watchlist badge, and the Apple TV play button — all film-keyed
-   here, so the card would be guessing. #}
+   It has the same shape as _movie_card.html, with the facts that TV
+   actually has. The series meta line stands in for "Directed by … ·
+   96 min". The US content rating sits in the same bordered box that
+   the film card shows. The In-library badge keeps its shopping
+   colors (#191: amber when a season still has an episode worth an
+   upgrade, green when every season is settled). Beside it is a plain
+   count of what the user owns. 3 things that the film card carries
+   are deliberately absent: the streaming availability
+   (title_availability only asks the /movie endpoint of TMDB), the
+   watchlist badge, and the Apple TV play button. All 3 are film-keyed
+   here. Thus, the card would only guess. #}
 {% from "_availability_badges.html" import library_badge %}
 <div class="poster-card">
 	<h6 class="mb-1">{% if href %}<a href="{{ href }}" class="text-body">{{ display_title }}</a>{% else %}{{ display_title }}{% endif %}</h6>
@@ -28,15 +31,15 @@
 	{% if top_cast %}
 	<p class="small text-muted mb-1">Starring {% for credit_id, name in top_cast %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 	{% endif %}
-	{# What's actually on the shelf, in the season/episode terms the TV
-	   Library page counts in — the badge says whether it's worth
-	   upgrading, this says how much of the run it covers #}
+	{# What is actually on the shelf, in the season/episode terms that
+	   the TV Library page counts in. The badge says if an upgrade is
+	   worth it. This line says how much of the run the shelf covers #}
 	{% if in_library %}
 	<div class="mt-1">{{ library_badge(upgradable) }}</div>
 	{% if owned_episodes %}
 	<p class="small text-muted mb-0 mt-1">{% if owned_seasons %}{{ owned_seasons }} season{{ "s" if owned_seasons != 1 }}{% if owned_specials %} plus specials{% endif %}{% else %}Specials{% endif %}, {{ owned_episodes }} episode{{ "s" if owned_episodes != 1 }} in your library</p>
 	{% endif %}
 	{% endif %}
-	{# The tile's own labels, filled in by the card script #}
+	{# The own labels of the tile. The card script fills them in #}
 	<p class="mb-0 mt-1"><span data-card-reasons></span></p>
 </div>

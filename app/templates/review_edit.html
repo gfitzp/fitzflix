@@ -20,8 +20,8 @@
 		<form action="" method="post">
 			{{ movie_review_form.hidden_tag() }}
 			{{ rating_ladder(allow_not_interested=false, current=(user_review.rating if user_review.rating is not none else none), live=true, estimated=estimated) }}
-			{# A ladder tap re-rates this viewing in place; saving without
-			   one keeps the stars exactly as they are #}
+			{# A ladder tap re-rates this viewing in place. A save without a
+			   ladder tap keeps the stars exactly as they are #}
 			<div class="row">
 				<div class="mb-3 col-sm-5">
 					{{ movie_review_form.date_watched.label }}

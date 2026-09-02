@@ -1,14 +1,14 @@
-{# Shared poster-gallery grammar (#45d): every gallery surface draws
-   its posters through these macros — w342 artwork, a 2/3 placeholder
-   when there's none — while captions stay in each page's own
-   template. Tiles arm their anchor with data-card-url so the poster
-   popover (#45c) rides along; row-style lists never do, keeping the
-   touch gesture split clean: posters toggle cards, rows navigate.
-   tile_actions puts the star ladder and the watchlist toggle under
-   the poster (Glenn's Aug 2026 revision — the popover is
-   informational only); the widgets render blank and one batched
-   /movie_states fetch per page paints them, so gallery routes never
-   compute per-film state. #}
+{# Shared poster-gallery grammar (#45d): every gallery surface draws its
+   posters through these macros. They use w342 artwork, or a 2/3
+   placeholder when there is none. Captions stay in the template of each
+   page. Tiles arm their anchor with data-card-url. Thus, the poster
+   popover (#45c) goes with them. Row-style lists never do this. This
+   keeps the touch gesture split clean: posters toggle cards, rows
+   navigate. tile_actions puts the star ladder and the watchlist toggle
+   under the poster (revision by Glenn, 2026-08). The popover is
+   informational only. The widgets render blank. One batched /movie_states
+   fetch per page paints them. Thus, gallery routes never compute per-film
+   state. #}
 
 {% macro poster_image(src, alt) -%}
 {% if src %}
@@ -22,11 +22,11 @@
 {% endif %}
 {%- endmacro %}
 
-{# The server-rendered corner fold for a standalone poster (the movie
-   and log pages' large artwork): the same markup base.html's script
-   builds for gallery tiles, from a (kind, label) pair the route
-   computes with app.newly_added.poster_fold — at most one fold,
-   top-right, red leaving outranking green newly-added #}
+{# The server-rendered corner fold for a standalone poster (the large
+   artwork of the movie and log pages). This is the same markup that the
+   script of base.html builds for gallery tiles. The route computes a
+   (kind, label) pair with app.newly_added.poster_fold. There is at most 1
+   fold, top-right. Red leaving outranks green newly-added. #}
 {% macro poster_fold_overlay(fold) -%}
 {% if fold %}
 <div class="poster-folds">
@@ -53,17 +53,16 @@
 
 {% macro tile_actions(action, movie_id=none, tmdb_id=none, watchlist=true) %}
 {# The actions under a gallery poster: the live star ladder and (by
-   default) the watchlist toggle, posting to the film's movie route —
-   or to the TMDB log route for record-less films, whose first tap
-   creates the record and which 307-forwards afterwards. from_card
-   keeps gallery posts from moving the rating drive's anchor. The
-   ladder renders blank and both toggle faces render Add-first; the
-   /movie_states hydration in base.html paints the real state. The
-   watchlist page passes watchlist=false — it has its own Remove
-   button that clears the tile in place. Spacing is pt-1, never
-   mt-* — inside a .poster-cell the block pins to the cell bottom
-   via margin-top: auto (Glenn's variant 4), which a !important
-   Bootstrap margin would defeat. #}
+   default) the watchlist toggle. They post to the movie route of the
+   film. For record-less films they post to the TMDB log route. Its first
+   tap creates the record, and it 307-forwards after that. from_card keeps
+   gallery posts from moving the anchor of the rating drive. The ladder
+   renders blank. Both toggle faces render Add-first. The /movie_states
+   hydration in base.html paints the real state. The watchlist page passes
+   watchlist=false. It has its own Remove button that clears the tile in
+   place. Spacing is pt-1, never mt-*. Inside a .poster-cell, the block
+   pins to the cell bottom through margin-top: auto (variant 4 by Glenn).
+   A Bootstrap margin with !important would defeat that. #}
 <div class="poster-actions pt-1"{% if movie_id %} data-state-movie="{{ movie_id }}"{% elif tmdb_id %} data-state-tmdb="{{ tmdb_id }}"{% endif %}>
 	<form action="{{ action }}" method="post" class="mb-1 d-flex align-items-center">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -71,10 +70,10 @@
 		{{ rating_ladder(compact=true, live=true) }}
 	</form>
 	{% if watchlist %}
-	{# The one deliberate outline exception (Glenn, Aug 31 2026): a
-	   gallery repeats this toggle under every poster, and a page of
-	   solid-filled buttons shouts — the tile's quiet outline is the
-	   point. Standalone page buttons stay filled #}
+	{# The one deliberate outline exception (Glenn, 2026-08-31). A gallery
+	   repeats this toggle under every poster. A page of solid-filled
+	   buttons shouts. The quiet outline of the tile is the point.
+	   Standalone page buttons stay filled. #}
 	<form action="{{ action }}" method="post" data-card-watchlist>
 		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 		<input type="hidden" name="from_card" value="1">

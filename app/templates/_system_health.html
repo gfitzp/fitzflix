@@ -1,7 +1,7 @@
-{# The System page's live health fragment: rendered on page load and again
-   by /system/metrics on every poll. Relative times are rendered server-side
-   with ago() because flask-moment's scripts don't re-run inside swapped-in
-   HTML. #}
+{# The live health fragment of the System page. It renders on page load
+   and again through /system/metrics on every poll. Relative times render
+   server-side with ago(), because the scripts of flask-moment do not run
+   again inside swapped-in HTML. #}
 <div class="mb-2">
 	<span class="badge text-bg-success me-1">Database {{ health.db_ms }} ms</span>
 	<span class="badge text-bg-success me-1">Redis {{ health.redis_ms }} ms</span>

@@ -5,11 +5,11 @@
 	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
 </div>
 <hr>
-{# Every job running, waiting, or booked for a deferred retry, each
-   with its file's pipeline trail as stage chips — the 5-second poll
-   in base.html (renderAll) keeps the rows live. The poll is asked for
-   the full retained trail set so a file with no job left to list
-   under still shows as a trailing "no job in queue" row. #}
+{# Every job that runs, waits, or is booked for a deferred retry, each
+   with the pipeline trail of its file as stage chips. The 5-second poll
+   in base.html (renderAll) keeps the rows live. The poll asks for the
+   full retained trail set. Thus, a file with no job left to list under
+   still shows as a trailing "no job in queue" row. #}
 <script>
 	window.pipelineTrailLimit = 100;
 </script>

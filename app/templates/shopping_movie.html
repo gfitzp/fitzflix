@@ -54,10 +54,10 @@
 </div>
 <hr>
 {% if watchlist_groups %}
-{# The watchlist view (#247): every user's watchlisted, unowned films
-   grouped hardest-to-watch first — the worst case among a film's
-   watchers decides its group, so a film one watcher can't stream or
-   rent leads even if another watcher could stream it #}
+{# The watchlist view (#247): the watchlisted, unowned films of every
+   user, grouped hardest-to-watch first. The worst case among the watchers
+   of a film decides its group. Thus, a film that one watcher cannot
+   stream or rent leads, even if a different watcher could stream it. #}
 <p class="small text-muted">These are the films on the watchlist of each user that have no copy in the library. The films that are the most difficult to watch come first: the films that no service has, then the rentals, then the films that stream now. A film goes in the group of its worst case across its watchers. Streaming data by JustWatch.</p>
 {% for group in watchlist_groups %}
 <h4 class="mt-4">{{ group.heading }} <span class="text-muted fs-6 fw-normal">&middot; {{ group.rows | length }} film{% if group.rows | length != 1 %}s{% endif %}</span></h4>
@@ -136,16 +136,16 @@
 			</li>
 		</ul>
 	</nav>
-	{# Each row wears the gallery grammar (#45c): the poster anchor
-	   carries data-card-url for the popover (hover on a pointer, tap
-	   on touch — the title link is the way to the film's page), and
-	   the details column is the data-state-movie scope whose blank
-	   star ladder the batched /movie_states fetch paints. The ladder
-	   posts to the film's movie route and repaints in place; a rating
-	   drops the row's cached card, since the card's watchlist badge
-	   went stale. The route's averaged rating columns ride along
-	   unpacked but undrawn — the ladder shows the latest verdict, as
-	   every other surface does. #}
+	{# Each row shows the gallery grammar (#45c). The poster anchor
+	   carries data-card-url for the popover (hover on a pointer, tap on
+	   touch). The title link is the way to the page of the film. The
+	   details column is the data-state-movie scope. The batched
+	   /movie_states fetch paints its blank star ladder. The ladder posts
+	   to the movie route of the film and repaints in place. A rating
+	   drops the cached card of the row, because the watchlist badge of
+	   the card went stale. The averaged rating columns of the route go
+	   with the row, unpacked but not drawn. The ladder shows the latest
+	   verdict, as every other surface does. #}
 	{% for file, movie, quality, rating, modified_rating, whole_stars, half_stars, instruction in movies %}
 	<div class="d-flex mb-3">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
@@ -227,7 +227,7 @@
 	</nav>
 </div>
 
-<!-- Display differently on mobile device -->
+<!-- This displays differently on a mobile device -->
 
 <div class="d-block d-sm-none mt-n2">
 	<nav class="d-block d-sm-none" aria-label="...">

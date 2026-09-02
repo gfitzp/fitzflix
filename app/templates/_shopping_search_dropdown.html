@@ -26,10 +26,10 @@
 		{% endif %}
         <a class="dropdown-item" target="_blank" href="https://www.deepdiscount.com/search?mod=AV&q={{ title|urlencode }}" rel="noreferrer">DeepDiscount.com</a>
 		<a class="dropdown-item" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title_year|urlencode }}{{ criterion|urlencode }}{{ ebay_format }}&_sop=15" rel="noreferrer">eBay</a>
-		{# The ad-hoc Radarr hand-off rides the Find menu: one click
+		{# The ad-hoc Radarr hand-off goes with the Find menu. One click
 		   requests an unowned film with the house settings and starts the
-		   search; once Radarr has it, the entry reverts to the plain
-		   Radarr link every other page shows — withdrawal happens in
+		   search. After Radarr has the film, the entry reverts to the plain
+		   Radarr link that every other page shows. A withdrawal happens in
 		   Radarr itself #}
 		{% if radarr_requestable and not in_radarr %}
 			<form action="{{ url_for('main.radarr_request', origin=(request.full_path if request.query_string else request.path)) }}" method="post">

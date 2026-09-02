@@ -4,10 +4,11 @@
 <div class="row mt-n2 mb-n2 d-flex">
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
-		{# The TV library's own search (#210): this library alone, the
-		   movie library's grammar. Series matches and episode matches
-		   render as separate sections, like the main search page — a
-		   matched episode never drags its series into the series list #}
+		{# This is the own search of the TV library (#210). It searches
+		   this library only, with the grammar of the movie library. The
+		   series matches and the episode matches render as separate
+		   sections, like the main search page. A matched episode never
+		   pulls its series into the series list #}
 		<form class="form-inline float-sm-right mb-2 d-flex" action="" method="post">
 			{{ library_search_form.hidden_tag() }}
 			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
@@ -25,22 +26,22 @@
 {% if series %}
 {% for tv in series %}
 <div class="d-flex" id="{{ tv.id }}" style="scroll-margin-top: 60px;">
-	{# The poster carries the series popover (the same card the
-	   filmography's TV tiles show): synopsis, cast, and the In-library
-	   badge, none of which this page's season list says. Only the
-	   poster is armed, never the row — posters toggle cards, rows
-	   navigate #}
+	{# The poster carries the series popover. It is the same card that
+	   the TV tiles of the filmography show. It has the synopsis, the
+	   cast, and the In-library badge. The season list of this page says
+	   none of these. Only the poster is armed, never the row. Posters
+	   toggle cards. Rows navigate #}
 	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}" data-card-url="{{ url_for('main.tv_card', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>
 	</div>
 	<div class="flex-grow-1">
-		{# The TMDB name with its first-air year, the movie library's
-		   grammar: three series here are called "Doctor Who" and the
-		   year is what tells them apart. A series TMDB doesn't know
-		   keeps its folder title, which already carries whatever
-		   disambiguation it has #}
+		{# This shows the TMDB name with its first-air year, the grammar
+		   of the movie library. 3 series here are named "Doctor Who",
+		   and only the year tells them apart. A series that TMDB does
+		   not know keeps its folder title. That title already carries
+		   the disambiguation that it has #}
 		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{% if tv.tmdb_name %}{{ tv.tmdb_name }}{% if tv.first_air_year %} ({{ tv.first_air_year }}){% endif %}{% else %}{{ tv.title }}{% endif %}</a></h5>
 		{% if tv.seasons %}
 		<div class="list-group col-12 col-md-8 col-lg-4">

@@ -2,10 +2,10 @@
 {% from "_poster_tile.html" import poster_image, tile_actions %}
 
 {% block app_content %}
-{# Portrait on the left, lifespan and biography in a column to its
-   right. The title renders in that right-hand column on wider screens
-   but moves above the portrait on phones — two copies, exactly one
-   displayed per breakpoint #}
+{# Portrait on the left. Lifespan and biography in a column to its right.
+   The title renders in that right-hand column on wider screens. On phones
+   it moves above the portrait. There are 2 copies, and exactly 1 is
+   displayed per breakpoint. #}
 <h2 class="d-sm-none mt-n2">{{ title }}</h2>
 <div class="d-flex mt-0 mt-sm-n2">
 	{% if profile_path %}
@@ -20,8 +20,8 @@
 		{% if bio and bio.born_line %}<div class="small text-muted">{{ bio.born_line }}</div>{% endif %}
 		{% if bio and bio.died_line %}<div class="small text-muted">{{ bio.died_line }}</div>{% endif %}
 		{% if bio and bio.biography %}
-		{# Clamped to a few lines; the toggle only appears when there's
-		   more. pre-line keeps TMDB's paragraph breaks #}
+		{# Clamped to some lines. The toggle only appears when there is
+		   more. pre-line keeps the paragraph breaks of TMDB. #}
 		<p class="small text-muted mt-2 mb-0" id="person-biography" style="white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ bio.biography }}</p>
 		<button type="button" class="btn btn-link btn-sm p-0" id="person-biography-toggle" style="display: none;">Show more</button>
 		<script>
@@ -45,12 +45,13 @@
 {% if tmdb_unavailable %}
 <div class="alert alert-warning" role="alert">Fitzflix could not reach TMDB. This list shows only the films that have local records.</div>
 {% endif %}
-{# The filmography as a poster gallery (#45d): the poster popover
-   carries each film's synopsis, credits, availability, and badges
-   (Glenn's Aug 2026 revision moved the library/funnel/streaming
-   badges there), so the tile keeps what identifies the film in THIS
-   career — title and this person's roles — plus the actions: the
-   ladder shows the verdict or estimate, the toggle the watchlist #}
+{# The filmography as a poster gallery (#45d). The poster popover carries
+   the synopsis, credits, availability, and badges of each film. The
+   revision by Glenn (2026-08) moved the library, funnel, and streaming
+   badges there. Thus, the tile keeps what identifies the film in THIS
+   career: the title and the roles of this person. It also keeps the
+   actions. The ladder shows the verdict or the estimate. The toggle shows
+   the watchlist. #}
 <div class="row">
 	{% for row in filmography %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
@@ -63,8 +64,8 @@
 				{{ poster_image(none, row.title) }}
 			{% endif %}
 			<p class="small mb-0">{{ row.title }}{% if row.year %} ({{ row.year }}){% endif %}</p>
-			{# Crew roles and characters share the credit line:
-			   "Director · Writer · as The Cameo" #}
+			{# Crew roles and characters share the credit line: "Director
+			   · Writer · as The Cameo". #}
 			{% if row.jobs or row.characters %}
 			<p class="mb-0 small text-muted">{% for job in row.jobs %}{{ job }}{% if not loop.last or row.characters %} &middot; {% endif %}{% endfor %}{% if row.characters %}as {{ row.characters | join(", ") }}{% endif %}</p>
 			{% endif %}
@@ -81,14 +82,14 @@
 <p class="lead">Fitzflix found no films for this person.</p>
 {% endif %}
 {% if television %}
-{# The TV career as the same poster grid, and the same division of
-   labor as the films above: the series popover carries the synopsis,
-   the cast, and the In-library badge, so the tile keeps only what
-   identifies the show in THIS career — title and this person's roles.
-   Owned series link to their pages; TV has no review flow, so unowned
-   tiles stay unlinked (the TMDB-row rule) and hang their popover on a
-   plain div, and there are no tile actions — ladders and watchlists
-   are film concepts #}
+{# The TV career as the same poster grid, with the same division of labor
+   as the films above. The series popover carries the synopsis, the cast,
+   and the In-library badge. Thus, the tile keeps only what identifies the
+   show in THIS career: the title and the roles of this person. Owned
+   series link to their pages. TV has no review flow. Thus, unowned tiles
+   stay unlinked (the TMDB-row rule) and hang their popover on a plain
+   div. There are no tile actions, because ladders and watchlists are film
+   concepts. #}
 <hr>
 <h4>Television</h4>
 <div class="row">

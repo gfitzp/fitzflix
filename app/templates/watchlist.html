@@ -6,11 +6,12 @@
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">My Watchlist</h2>
 	<div class="col-12 col-sm-auto mt-2">
 		{# The availability filter: all films by default, or one
-		   exclusive bucket — owned, streaming, rent-only, or nowhere
-		   at all — the criterion page's radio grammar, counts included.
-		   Title and runtime (#216/#195) share the form, so one Filter
-		   applies all three; the counts wear data-watchlist-count so a
-		   live tile removal (#187) keeps them honest without a reload #}
+		   exclusive bucket (owned, streaming, rent-only, or nowhere).
+		   This is the radio grammar of the criterion page, with
+		   counts. Title and runtime (#216/#195) share the form. Thus,
+		   one Filter applies all 3. The counts show
+		   data-watchlist-count. Thus, a live tile removal (#187)
+		   keeps them correct without a reload. #}
 		<form class="float-sm-right mb-2" action="{{ url_for('main.watchlist') }}" method="get">
 			<div class="d-inline-flex align-items-center me-2 mb-2">
 				<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm me-2" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
@@ -35,36 +36,42 @@
 <p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} {{ "is" if pending == 1 else "are" }} not on this page yet, because Fitzflix continues to get the streaming availability. Come back in some minutes.</p>
 {% endif %}
 {% if rows %}
-{# The watchlist as a poster gallery (#45d): the popover carries each
-   film's synopsis, credits, availability, and badges (Glenn's Aug
-   2026 revision moved the library/provider badges there); the tile
-   keeps the actions — the star ladder plus this page's own Remove,
-   which clears the tile in place, so the standard toggle is skipped #}
+{# The watchlist as a poster gallery (#45d): the popover shows the
+   synopsis, the credits, the availability, and the badges of each
+   film. The revision by Glenn (2026-08) moved the library and
+   provider badges there. The tile keeps the actions: the star ladder
+   and the Remove button of this page. Remove clears the tile in
+   place. Thus, the page skips the standard toggle. #}
 <div class="row mb-2">
 	{% for row in rows %}
 	{% set movie = row.movie %}
-	{# data-bucket feeds the live removal's count bookkeeping (#187) #}
+	{# data-bucket feeds the count bookkeeping of the live removal
+	   (#187) #}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell" data-bucket="{{ row.bucket or '' }}">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-			{# The corner folds (#197 + #156/#230's badge) paint here
-			   through the same batched /movie_states hydration as the
-			   star ladders — nothing tile-specific on this page #}
+			{# The corner folds (#197, and the badge of #156/#230)
+			   paint here through the same batched /movie_states
+			   hydration as the star ladders. Nothing on this page is
+			   tile-specific. #}
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
 			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }}){% if minutes %} <span class="text-muted">&middot; {{ movie.tmdb_runtime }} min</span>{% endif %}</p>
 		</a>
-		{# This page pins its whole action cluster — ladder, buttons,
-		   date — to the cell bottom as one .poster-bottom block, so
-		   Radarr-eligible and owned tiles keep a shared baseline #}
+		{# This page pins its whole action cluster (ladder, buttons,
+		   date) to the bottom of the cell as one .poster-bottom
+		   block. Thus, Radarr-eligible tiles and owned tiles keep a
+		   shared baseline. #}
 		<div class="poster-bottom">
 			{{ tile_actions(url_for('main.movie', movie_id=movie.id), movie_id=movie.id, watchlist=false) }}
-			{# The form's own movie_id field carries the value —
-			   hidden_tag() would render a second, empty movie_id input,
-			   and WTForms reads the first one submitted #}
+			{# The movie_id field of the form itself carries the
+			   value. hidden_tag() would render a second, empty
+			   movie_id input. WTForms reads the first one that is
+			   submitted. #}
 			<div class="d-flex justify-content-center mt-1" style="gap: .25rem;">
-				{# The movie page's Find split button replaced the bare
-				   Request button: the face opens the best
-				   shop for the film, the menu fans out to the rest — the
-				   Radarr request and withdrawal now live on the menu #}
+				{# The Find split button of the movie page replaced
+				   the bare Request button. The face opens the best
+				   shop for the film. The menu shows the rest. The
+				   Radarr request and the Radarr withdrawal are now on
+				   the menu. #}
 				{% if not row.owned %}
 				{% set in_radarr = row.in_radarr %}
 				{% set radarr_requestable = radarr_available and movie.tmdb_id %}
@@ -84,12 +91,12 @@
 					{% include "_shopping_search_dropdown.html" %}
 				</div>
 				{% endif %}
-				{# d-flex on the form drops its line-box strut, which
-				   otherwise stretches the neighboring Find group two
-				   pixels past the Remove button. data-card-watchlist
-				   posts in the background (#187) and
-				   data-watchlist-remove-cell clears the tile in place;
-				   any fetch failure falls back to the full post #}
+				{# d-flex on the form removes its line-box strut.
+				   Without this, the strut stretches the adjacent Find
+				   group 2 pixels past the Remove button.
+				   data-card-watchlist posts in the background (#187).
+				   data-watchlist-remove-cell clears the tile in
+				   place. A fetch failure falls back to the full post. #}
 				<form action="" method="post" class="d-flex" data-card-watchlist data-watchlist-remove-cell>
 					{{ watchlist_form.csrf_token }}
 					{{ watchlist_form.movie_id(value=movie.id) }}

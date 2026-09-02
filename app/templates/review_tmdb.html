@@ -28,9 +28,9 @@
 			</div>
 		{% endif %}
 	</div>
-	{# min-width: 0 lets this column shrink below the cast strip's
-	   intrinsic width, so the wide scroller can't push the whole
-	   column down beneath the poster #}
+	{# min-width: 0 lets this column shrink below the intrinsic width
+	   of the cast strip. Thus, the wide scroller cannot push the
+	   whole column down below the poster. #}
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ film_title }} ({{ year }})</h3>
@@ -40,21 +40,22 @@
 			{% if directors %}
 				<p class="text-muted mb-2">Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
 			{% endif %}
-			{# The star row is the page's rating control, mirroring the
-			   movie page — showing the engine's estimate in paler gold
-			   until the user's own stars exist: a tap logs a date-less
-			   verdict and creates the review-only record (the route then
-			   redirects to its movie page); the ✕ waves the film off
-			   without one. Not live: the redirect to the movie page IS
-			   the flow #}
+			{# The star row is the rating control of the page, the
+			   same as on the movie page. It shows the estimate of the
+			   engine in paler gold until the stars of the user exist.
+			   A tap logs a verdict without a date and creates the
+			   review-only record. The route then redirects to the
+			   movie page of the record. The ✕ rejects the film
+			   without a record. The control is not live. The redirect
+			   to the movie page IS the flow. #}
 			<form action="" method="post" class="mb-2 d-flex align-items-center">
 				{{ movie_review_form.csrf_token }}
 				{{ rating_ladder(estimated=estimated_rating) }}
 			</form>
-			{# Letterboxd-first logging, as on the movie page: a linked
-			   account logs dated watches on Letterboxd and lets the feed
-			   sync them back — the first tap here still creates the
-			   local record #}
+			{# Letterboxd-first logging, as on the movie page. A
+			   linked account logs dated watches on Letterboxd and
+			   lets the feed sync them back. The first tap here still
+			   creates the local record. #}
 			{% set letterboxd_logging = current_user.letterboxd_username %}
 			{% if letterboxd_logging %}
 				<a class="btn btn-sm btn-primary mb-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
@@ -80,9 +81,9 @@
 	</div>
 </div>
 <hr>
-{# The same store-search dropdown and external-site links as the movie
-   page, minus the Files button and shopping-list toggle — this film has
-   no local record yet #}
+{# This is the same store-search dropdown and the same external-site
+   links as on the movie page. The Files button and the shopping-list
+   toggle are absent. This film has no local record yet. #}
 <div class="row">
 	<div class="col-sm-3 col-md-2 my-1">
 		<div class="btn-group show w-100">
@@ -103,12 +104,13 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
-{# The personal funnel, as on the movie page — only the states a
-   record-less film can be in: "Might interest you" (Seen or a standing
-   watchlist row would mean a record exists, and the route would have
-   redirected to its movie page). The badge and toggle share the
-   data-watchlist-scope so the live add (#187) reveals the badge without
-   a reload; a remove after that forwards to the movie route intact #}
+{# The personal funnel, as on the movie page. It shows only the states
+   that a film without a record can have: "Might interest you". Seen
+   or a standing watchlist row would mean that a record exists. The
+   route would then have redirected to the movie page of that record.
+   The badge and the toggle share the data-watchlist-scope. Thus, the
+   live add (#187) shows the badge without a reload. A remove after
+   that forwards to the movie route intact. #}
 <div data-watchlist-scope>
 <div class="mt-1">
 	<span class="badge text-bg-warning me-1 d-none" data-watchlist-badge>On your watchlist</span>

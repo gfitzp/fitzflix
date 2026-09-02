@@ -3,9 +3,10 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
-{# The navbar's search box again, pre-filled and right-aligned on the
-   heading row like the index page's log-a-film form — a fruitless
-   search can be reworked right here instead of via the navbar #}
+{# This is the search box of the navbar again. It is pre-filled and
+   right-aligned on the heading row, like the log-a-film form of the
+   index page. The user can rework a fruitless search here and not
+   through the navbar #}
 <div class="row mt-n2 mb-n3 d-flex">
 	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
 	<div class="col-12 col-sm-auto mt-2">
@@ -19,12 +20,13 @@
 
 {% if movie_results %}
 <h4>Movies</h4>
-{# Movie matches as a poster gallery (#45d) — the popover carries the
-   synopsis and badges (the shopping-colored quality tier moved there
-   in Glenn's Aug 2026 revision), the tile keeps the actions: the
-   ladder shows the verdict or estimate, the toggle shows the
-   watchlist answer. TV and people below stay rows: season-level
-   quality badges need the width, and people aren't films #}
+{# The movie matches show as a poster gallery (#45d). The popover
+   carries the synopsis and the badges. The shopping-colored quality
+   tier moved there in the revision by Glenn, 2026-08. The tile keeps
+   the actions. The ladder shows the verdict or the estimate. The
+   toggle shows the watchlist answer. TV and people below stay as
+   rows. The season-level quality badges need the width, and people
+   are not films #}
 <div class="row mb-2">
 	{% for result in movie_results %}
 	{% set movie = result.movie %}
@@ -50,9 +52,9 @@
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h5>
 				{% if result.seasons %}
-				{# Each season is summarized by the worst quality among its
-				   best (rank=1) episode files — amber means that season has
-				   at least one episode worth upgrading #}
+				{# The worst quality among the best (rank=1) episode files of a
+				   season summarizes that season. Amber means that the season
+				   has at least 1 episode worth an upgrade #}
 				{% for season in result.seasons %}
 				<span class="badge text-bg-{{ "warning" if season.upgradable else "success" }}" title="{{ season.episode_count }} episode{{ "s" if season.episode_count != 1 }}">{{ "Specials" if season.season == 0 else "Season " ~ season.season }}: {{ season.worst_quality }}</span>
 				{% endfor %}
@@ -101,9 +103,9 @@
 <p class="lead">Nothing in the library matches &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 {% endif %}
 
-{# The TMDB lookup understands the same y: modifiers as this page, so
-   it gets the full query; the filename search doesn't, so it gets the
-   bare text #}
+{# The TMDB lookup understands the same y: modifiers as this page.
+   Thus, it gets the full query. The filename search does not. Thus,
+   it gets the bare text #}
 <a class="btn btn-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
 {% if current_user.admin %}
 <a class="btn btn-secondary btn-sm" href="{{ url_for('main.files', q=q_text) }}">Search filenames</a>

@@ -1,19 +1,20 @@
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_availability_badges.html" import library_badge %}
-{# The Criterion24/7 now-playing card as a fragment: the home
-   page includes it at render time and re-fetches it from
-   main.criterion_now once a minute while visible, so an open tab
-   follows the feed instead of freezing on the film it loaded with.
-   data-now-film fingerprints the showing film — a change swaps the
-   whole card; otherwise only the data-now-status line (minutes in,
-   next film) is repainted, so a star row mid-tap is never yanked away #}
+{# The Criterion24/7 now-playing card as a fragment. The home
+   page includes it at render time. It re-fetches the card from
+   main.criterion_now one time a minute while visible. Thus, an open
+   tab follows the feed. It does not freeze on the film it loaded
+   with. data-now-film fingerprints the film that shows. A change
+   swaps the whole card. Otherwise Fitzflix repaints only the
+   data-now-status line (minutes in, next film). Thus, a star row
+   mid-tap is never pulled away #}
 {% if now_playing %}
 <hr>
-{# The Criterion24/7 now-playing card: one film, scraped from
-   whatsonnow.criterionchannel.com by the self-scheduling poller. The
-   poster is a direct TMDB link when the film matched; the card links
-   into the log page on a match and out to criterionchannel.com
-   otherwise #}
+{# The Criterion24/7 now-playing card: one film. The self-scheduling
+   poller scrapes it from whatsonnow.criterionchannel.com. The
+   poster is a direct TMDB link when the film matched. The card links
+   into the log page on a match. Otherwise it links out to
+   criterionchannel.com #}
 <h4>On Criterion24/7 now</h4>
 <div class="d-flex mt-3 mb-2" data-now-film="{{ now_playing.signature }}" style="gap: 1rem; max-width: 40rem;">
 	<div style="flex: 0 0 7rem;">
@@ -37,9 +38,10 @@
 		{% if now_playing.ladder.upgradable is not none %}
 		<div class="mb-1">{{ library_badge(now_playing.ladder.upgradable) }}</div>
 		{% endif %}
-		{# Credit ids from the verified TMDB match are person ids, so
-		   director and billed cast link to their filmography pages;
-		   an unmatched film falls back to the Channel's plain text #}
+		{# The credit ids from the verified TMDB match are person ids.
+		   Thus, the director and the billed cast link to their filmography
+		   pages. An unmatched film falls back to the plain text of the
+		   Channel #}
 		{% if now_playing.directors %}
 		<p class="mb-1 small">Directed by {% for person in now_playing.directors %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if now_playing.country %} &middot; {{ now_playing.country }}{% endif %}</p>
 		{% elif now_playing.director %}
@@ -51,19 +53,20 @@
 		<p class="mb-1 small text-muted">Starring {{ now_playing.starring }}</p>
 		{% endif %}
 		{% if now_playing.overview %}
-		{# The TMDB synopsis, clamped to four lines — enough to know
-		   what the film is about at a glance without swallowing the
-		   card (the More link carries the full description) #}
+		{# The TMDB synopsis, clamped to 4 lines. That is enough to know
+		   what the film is about at a glance. It does not swallow the
+		   card. The More link carries the full description #}
 		<p class="mb-1 small" style="display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;">{{ now_playing.overview }}</p>
 		{% endif %}
 		{% if now_playing.tmdb_id %}
-		{# The star row: the viewer's own verdict, or the engine's
-		   estimate in paler gold until there is one. Taps post live to
-		   the movie route once a record exists; before that, to the
-		   TMDB log route, whose first tap creates the record (and which
-		   307-forwards ladder posts once it exists). The watchlist
-		   toggle posts the same way; the shared scope lets a
-		   rating that clears the list entry sync the toggle's face #}
+		{# The star row: the own verdict of the viewer, or the estimate
+		   of the engine in paler gold until there is one. Taps post live
+		   to the movie route when a record exists. Before that, they post
+		   to the TMDB log route. The first tap there creates the record.
+		   That route 307-forwards ladder posts after the record exists.
+		   The watchlist toggle posts the same way. The shared scope lets
+		   a rating that clears the list entry sync the face of the
+		   toggle #}
 		{% set now_action = url_for('main.movie', movie_id=now_playing.ladder.movie_id) if now_playing.ladder.movie_id else url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) %}
 		<div data-watchlist-scope>
 			<form action="{{ now_action }}" method="post" class="mb-1 d-flex align-items-center">
@@ -79,7 +82,7 @@
 		</div>
 		{% endif %}
 		<p class="mb-1">
-			{# Green like every other play control (Glenn, Aug 31 2026) #}
+			{# Green, like every other play control (Glenn, 2026-08-31) #}
 			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-success">&#9654;&nbsp;Watch live</a>
 			{% if now_playing.more_url %}
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary">More</a>
