@@ -999,7 +999,7 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     page = admin_client.get("/watchlist?availability=services").get_data(as_text=True)
     assert "Inline Cached" in page
     assert "Inline Uncached" not in page
-    assert "1 film isn&#39;t shown here yet" in page or "1 film aren" in page
+    assert "1 film is not on this page yet" in page
     assert calls == []
 
     warm_jobs = [

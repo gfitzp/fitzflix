@@ -54,7 +54,7 @@
 </p>
 {% if not file_exists_locally %}
 <div class="alert alert-warning" role="alert">
-	This file isn't present in the local library — restore it from AWS to enable editing, transcoding, or uploading.
+	This file is not in the local library. Restore it from AWS before you edit, transcode, or upload it.
 </div>
 {% endif %}
 {% if audio_tracks or subtitle_tracks %}
@@ -182,14 +182,14 @@
 	</form>
 </div>
 {% if file_exists_locally %}
-<p class="small text-muted mt-2 mb-0"><em>Update MKV Properties</em> saves the Language, Default and Forced columns, editing the file in place. <em>Remux MKV File</em> rebuilds it with only the tracks still ticked under Keep.</p>
+<p class="small text-muted mt-2 mb-0"><em>Update MKV Properties</em> saves the Language, Default, and Forced columns. It edits the file in place. <em>Remux MKV File</em> rebuilds the file with only the tracks that you selected under Keep.</p>
 {% endif %}
 {% endif %}
 <hr>
 <div class="row">
 	<div class="col-lg-4 col-md-6 col-sm-8">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.file_poster', file_id=file.id) }}" role="button">Change poster&hellip;</a>
-		<p class="small text-muted mt-1 mb-0">Pick from the TMDB gallery or upload an image for this file.</p>
+		<p class="small text-muted mt-1 mb-0">Select an image from the TMDB gallery, or upload an image for this file.</p>
 	</div>
 </div>
 <hr>

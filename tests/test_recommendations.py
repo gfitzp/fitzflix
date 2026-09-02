@@ -305,7 +305,7 @@ def test_landing_page_shows_recommendations(app, admin_client):
     assert "Pick something to watch" in body
     assert "Landing Pick (1995)" in body
     assert "Comedy" in body
-    assert "last run 2026-08-10 01:45" in body
+    assert "The last run was 2026-08-10 01:45" in body
     assert "Landing Seen Since" not in body
 
 
@@ -318,7 +318,7 @@ def test_landing_page_requests_compute_once(app, admin_client):
         db.session.commit()
 
     body = admin_client.get("/").get_data(as_text=True)
-    assert "being computed" in body
+    assert "calculates your recommendations now" in body
 
     recompute_jobs = [
         job
@@ -340,7 +340,7 @@ def test_landing_page_requests_compute_once(app, admin_client):
 
 def test_landing_page_onboards_users_without_history(app, user_client):
     body = user_client.get("/").get_data(as_text=True)
-    assert "Log a few films" in body
+    assert "Log some films" in body
     assert app.maintenance_queue.jobs == []
 
 
@@ -607,7 +607,7 @@ def test_runtime_filter_trims_the_library_rail(app, admin_client):
     assert "95 min" in body
     assert "Filter Long" not in body
     assert "Filter Unknown" not in body
-    assert "films with unknown runtimes are hidden" in body
+    assert "hides the films that have an unknown runtime" in body
     assert ">Clear</a>" in body
 
     body = admin_client.get("/").get_data(as_text=True)
@@ -644,7 +644,7 @@ def test_runtime_filter_says_when_nothing_fits(app, admin_client):
     )
 
     body = admin_client.get("/?minutes=10").get_data(as_text=True)
-    assert "No recommended films fit in 10 minutes" in body
+    assert "No recommended film fits in 10 minutes" in body
     assert "check back in a few minutes" not in body
     assert ">Clear</a>" in body
 
@@ -680,7 +680,7 @@ def test_runtime_filter_says_when_the_rewatch_shelf_empties(app, admin_client):
 
     body = admin_client.get("/?minutes=10").get_data(as_text=True)
     assert "Watch it again" in body
-    assert "Nothing you'd rewatch fits in 10 minutes" in body
+    assert "No film that you can watch again fits in 10 minutes" in body
     assert "Again Nothing Fits" not in body
 
     body = admin_client.get("/").get_data(as_text=True)
@@ -922,7 +922,7 @@ def test_index_watch_again_shelf_renders(app, admin_client):
     assert "Shelf Old Favorite (1975)" in body
     # The last-watched labels ride the anchors as card labels (Aug 2026)
     assert f"data-card-reasons='[\"Last watched {old_year}\"]'" in body
-    assert "haven't watched in at least two years" in body
+    assert "did not watch for two years or more" in body
 
     # The re-watchlisted film surfaces on the watchlist shelf up top —
     # owned, so watchable tonight — not on the rewatch shelf, and its

@@ -377,7 +377,7 @@ def test_watchlist_page_lists_availability_and_removes(app, admin_client, monkey
     assert entries_for(app, user_id) == []
 
     page = admin_client.get("/watchlist").get_data(as_text=True)
-    assert "Nothing on your watchlist yet." in page
+    assert "Your watchlist is empty." in page
 
     # The nav links to the page from everywhere
 
@@ -872,13 +872,13 @@ def test_watchlist_availability_filter(app, admin_client):
         "rent": 1,
         "unavailable": 2,
     }
-    assert "still being fetched" not in page
+    assert "continues to get the streaming availability" not in page
 
     local = admin_client.get("/watchlist?availability=local").get_data(as_text=True)
     assert "Filter Owned Film" in local
     assert "Filter Owned Streaming Film" in local
     assert "Filter Streaming Film" not in local
-    assert "still being fetched" not in local
+    assert "continues to get the streaming availability" not in local
 
     services = admin_client.get("/watchlist?availability=services").get_data(
         as_text=True
@@ -889,14 +889,14 @@ def test_watchlist_availability_filter(app, admin_client):
     assert "Filter Owned Streaming Film" not in services
     assert "Filter Rentable Film" not in services
     assert "Filter Warming Film" not in services
-    assert "1 film aren't shown here yet" in services
+    assert "1 film is not on this page yet" in services
 
     rent = admin_client.get("/watchlist?availability=rent").get_data(as_text=True)
     assert "Filter Rentable Film" in rent
     assert "Filter Both Film" not in rent
     assert "Filter Owned Film" not in rent
     assert "Filter Nowhere Film" not in rent
-    assert "still being fetched" in rent
+    assert "continues to get the streaming availability" in rent
 
     unavailable = admin_client.get("/watchlist?availability=unavailable").get_data(
         as_text=True
@@ -906,7 +906,7 @@ def test_watchlist_availability_filter(app, admin_client):
     assert "Filter Warming Film" not in unavailable
     assert "Filter Rentable Film" not in unavailable
     assert "Filter Owned Film" not in unavailable
-    assert "still being fetched" in unavailable
+    assert "continues to get the streaming availability" in unavailable
 
     # Removal under a filter redirects back INTO the filter
 
@@ -972,7 +972,7 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert "Brisk Renamed" in page
     assert "Alpha Epic" not in page
     assert "Gamma Mystery" not in page
-    assert "films with unknown runtimes are hidden" in page
+    assert "hides the films that have an unknown runtime" in page
     assert "90 min" in page
 
     # The filters stack, and a nonsense minutes value is ignored

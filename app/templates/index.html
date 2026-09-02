@@ -16,7 +16,7 @@
 	{% if minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
 </form>
 {% if minutes %}
-<p class="small text-muted">Showing films of {{ minutes }} minutes or less; films with unknown runtimes are hidden.</p>
+<p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
 {% endif %}
 {% endif %}
 {# The watchlist shelf (Aug 30 2026): the films already wanted that
@@ -49,7 +49,7 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Films from your watchlist you can watch tonight &mdash; owned, or streaming on your services. Films leaving a service soon come first.</p>
+<p class="small text-muted">These are the films on your watchlist that you can watch tonight. You own them, or they stream on your services. The films that leave a service soon come first.</p>
 {% endif %}
 <hr>
 {% endif %}
@@ -82,22 +82,22 @@
 	{% endfor %}
 </div>
 {% if computed_at %}
-<p class="small text-muted">Recommended from your library by what you've rated, liked, and watched. Recomputed nightly; last run {{ computed_at }}.</p>
+<p class="small text-muted">Fitzflix recommends these films from your library, from your ratings, likes, and watches. It calculates the list each night. The last run was {{ computed_at }}.</p>
 {% endif %}
 {% elif recs_filtered_out %}
 {# The rail is computed, the runtime filter just emptied it (#198):
    say so, instead of claiming the recommendations aren't ready yet #}
-<p class="lead">No recommended films fit in {{ minutes }} minutes.</p>
-<p class="text-muted">Try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the whole list. Films with unknown runtimes stay hidden while a limit is set.</p>
+<p class="lead">No recommended film fits in {{ minutes }} minutes.</p>
+<p class="text-muted">Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the full list. While a limit is set, the films with an unknown runtime stay hidden.</p>
 {% elif recs_stored %}
-<p class="lead">Nothing left on tonight's list.</p>
-<p class="text-muted">You've logged or waved off every film it picked &mdash; the nightly rebuild will choose a fresh set from your diary.</p>
+<p class="lead">There is nothing left on the list for tonight.</p>
+<p class="text-muted">You logged or rejected each film on the list. The nightly rebuild selects a new set from your diary.</p>
 {% elif has_history %}
-<p class="lead">Your recommendations are being computed &mdash; check back in a few minutes.</p>
-<p class="text-muted">They're rebuilt from your diary every night, so new ratings, likes, and watches keep steering the list.</p>
+<p class="lead">Fitzflix calculates your recommendations now. Come back in some minutes.</p>
+<p class="text-muted">Fitzflix rebuilds the list from your diary each night. Thus, new ratings, likes, and watches change the list.</p>
 {% else %}
-<p class="lead">Log a few films to get recommendations.</p>
-<p class="text-muted">Rate, like, or just mark films you've watched &mdash; from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above &mdash; and this page will start picking what to watch tonight from your library.</p>
+<p class="lead">Log some films to get recommendations.</p>
+<p class="text-muted">Rate, like, or mark the films that you watched. Use the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above. This page then selects films from your library for tonight.</p>
 {% endif %}
 {% if criterion_subscriber %}
 {# The Criterion24/7 card lives in its own container so it can follow
@@ -199,7 +199,7 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Departing films from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>, ranked by your taste profile. Watchlisted departures lead your watchlist shelf up top &mdash; watch them before they leave, or buy the disc.</p>
+<p class="small text-muted">These films leave <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a> soon. Your taste profile ranks them. The films on your watchlist are at the front of your watchlist shelf above. Watch them before they leave, or buy the disc.</p>
 {% endif %}
 {% endif %}
 {# The newly-added discovery shelves (#246): one per subscribed
@@ -235,7 +235,7 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Recent arrivals from {{ ns.label }}&rsquo;s newly-added page, ranked by your taste profile &mdash; films you own, have already seen, or have watchlisted don&rsquo;t appear.</p>
+<p class="small text-muted">These films are recent arrivals from the newly-added page of {{ ns.label }}. Your taste profile ranks them. The shelf does not show the films that you own, saw, or put on your watchlist.</p>
 {% endif %}
 {% endfor %}
 {% if rail or rail_filtered_out %}
@@ -276,7 +276,7 @@
    logged films #}
 <h4>Watch it again</h4>
 {% if again_filtered_out %}
-<p class="text-muted mt-3">Nothing you'd rewatch fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">No film that you can watch again fits in {{ minutes }} minutes. Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in again %}
@@ -299,7 +299,7 @@
 	</div>
 	{% endfor %}
 </div>
-<p class="small text-muted">Films you liked that you haven't watched in at least two years.</p>
+<p class="small text-muted">These are films that you liked and did not watch for two years or more.</p>
 {% endif %}
 {% endif %}
 {% endblock %}

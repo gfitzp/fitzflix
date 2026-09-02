@@ -29,10 +29,10 @@
 </div>
 <hr>
 {% if minutes %}
-<p class="small text-muted">Showing films of {{ minutes }} minutes or less; films with unknown runtimes are hidden.</p>
+<p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
 {% endif %}
 {% if pending %}
-<p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} aren't shown here yet &mdash; their streaming availability is still being fetched. Check back in a few minutes.</p>
+<p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} {{ "is" if pending == 1 else "are" }} not on this page yet, because Fitzflix continues to get the streaming availability. Come back in some minutes.</p>
 {% endif %}
 {% if rows %}
 {# The watchlist as a poster gallery (#45d): the popover carries each
@@ -105,7 +105,7 @@
 <p class="lead">No watchlisted films match {% if q or minutes %}this search{% else %}this filter{% endif %}.</p>
 <p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ total }} watchlisted film{{ "s" if total != 1 }}</a> instead.</p>
 {% else %}
-<p class="lead">Nothing on your watchlist yet.</p>
-<p class="text-muted">Add films from their pages &mdash; search TMDB for anything you want to watch, owned or not. Watching a film clears it from the list automatically.</p>
+<p class="lead">Your watchlist is empty.</p>
+<p class="text-muted">Add films from their pages. Search TMDB for each film that you want to watch, owned or not. When you watch a film, Fitzflix removes it from the list automatically.</p>
 {% endif %}
 {% endblock %}

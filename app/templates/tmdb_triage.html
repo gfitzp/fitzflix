@@ -35,7 +35,7 @@
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if movies or series %}
-<p class="text-muted">{{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id you enter and refreshes the record; <b>Flag as unmatchable</b> marks it so no refresh path ever guesses an id from its title again. A record with zero files may just want deleting from its own page instead.</p>
+<p class="text-muted">There {{ "is" if (movies|length) + (series|length) == 1 else "are" }} {{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id that you enter and refreshes the record. <b>Flag as unmatchable</b> marks the record, so no refresh path guesses an id from its title again. If a record has zero files, the better option is possibly to delete it from its own page.</p>
 {% if movies %}
 <h4>Movies</h4>
 <table class="table table-sm mt-2 mb-4 align-middle">
@@ -77,7 +77,7 @@
 </table>
 {% endif %}
 {% else %}
-<p class="lead">Every record is matched or flagged &mdash; nothing to triage.</p>
-<p class="text-muted">A newly imported record only lands here if its TMDB title search misses.</p>
+<p class="lead">Each record is matched or flagged. There is nothing to triage.</p>
+<p class="text-muted">A newly imported record comes here only if its TMDB title search finds nothing.</p>
 {% endif %}
 {% endblock %}

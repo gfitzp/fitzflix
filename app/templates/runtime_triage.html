@@ -4,7 +4,7 @@
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if candidates %}
-<p class="text-muted">{{ candidates|length }} file{{ "s" if candidates|length != 1 }} whose estimated length disagrees hard with the film's TMDb runtime &mdash; the shape of a mislabelled recording matched faithfully, or a truncated download. The estimate comes from file size over the summed track bitrates, so it's approximate: <b>verify a flagged file with ffprobe before acting on it</b>. Acknowledge accepts a known-benign mismatch (a full-disc rip, a short recorded into a longer slot) until the file is replaced.</p>
+<p class="text-muted">There {{ "is" if candidates|length == 1 else "are" }} {{ candidates|length }} file{{ "s" if candidates|length != 1 }} whose estimated length is very different from the TMDB runtime of the film. The usual causes are a recording with the wrong label, or a truncated download. The estimate is the file size divided by the sum of the track bitrates. Thus, it is approximate: <b>verify a flagged file with ffprobe before you act on it</b>. Acknowledge accepts a known-benign mismatch until the file is replaced. Examples are a full-disc rip, or a short film recorded in a longer slot.</p>
 <table class="table table-sm mt-3 align-middle">
 	<thead class="table-light">
 		<tr>
@@ -40,7 +40,7 @@
 	</tbody>
 </table>
 {% else %}
-<p class="lead">Every file's length agrees with its film's runtime &mdash; nothing to triage.</p>
-<p class="text-muted">Films with runtimes of 25 minutes or less sit outside this check: a short recorded into a longer broadcast slot is normal and always will be.</p>
+<p class="lead">The length of each file agrees with the runtime of its film. There is nothing to triage.</p>
+<p class="text-muted">This check does not include films with a runtime of 25 minutes or less. A short film recorded in a longer broadcast slot is normal.</p>
 {% endif %}
 {% endblock %}

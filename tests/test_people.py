@@ -175,7 +175,7 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
     assert "Pure Actor" in default_page
     assert "Pure Director" not in default_page
     assert "Sometimes Actor" in default_page
-    assert "Every actor credited" in default_page
+    assert "Each actor with credits" in default_page
     assert 'id="people-role-cast" value="cast" checked' in default_page
 
     # The hyphenate's count under Cast is their two acting credits,
@@ -189,12 +189,12 @@ def test_people_role_filter_defaults_to_cast(app, admin_client):
     assert "Sometimes Actor" in crew_page
     assert "3 titles" in crew_page
     assert "Pure Actor" not in crew_page
-    assert "Every key crew member credited" in crew_page
+    assert "Each key crew member with credits" in crew_page
 
     all_page = admin_client.get("/people?role=all").get_data(as_text=True)
     assert "Pure Actor" in all_page
     assert "Pure Director" in all_page
-    assert "Every person credited" in all_page
+    assert "Each person with credits" in all_page
 
 
 def test_search_finds_crew_people_with_roles(app, admin_client):

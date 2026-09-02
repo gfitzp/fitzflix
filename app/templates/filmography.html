@@ -43,7 +43,7 @@
 </div>
 <hr>
 {% if tmdb_unavailable %}
-<div class="alert alert-warning" role="alert">TMDB couldn't be reached, so this list only shows films with local records.</div>
+<div class="alert alert-warning" role="alert">Fitzflix could not reach TMDB. This list shows only the films that have local records.</div>
 {% endif %}
 {# The filmography as a poster gallery (#45d): the poster popover
    carries each film's synopsis, credits, availability, and badges
@@ -78,7 +78,7 @@
 	{% endfor %}
 </div>
 {% if not filmography %}
-<p class="lead">No films found for this person.</p>
+<p class="lead">Fitzflix found no films for this person.</p>
 {% endif %}
 {% if television %}
 {# The TV career as the same poster grid, and the same division of

@@ -1,8 +1,8 @@
 <p>Hello,</p>
 <p/>
-<p>The movie '{{ movie.title }} ({{ movie.year }})' was added, but it couldn't be matched to a TMDB record.</p>
+<p>Fitzflix added the movie '{{ movie.title }} ({{ movie.year }})', but it could not find a TMDB record that matches.</p>
 <p/>
-<p>Go <a href="{{ url_for("main.movie", movie_id=movie.id, _external=True) }}">here</a> to fix it:</p>
+<p>Go <a href="{{ url_for("main.movie", movie_id=movie.id, _external=True) }}">here</a> to correct it:</p>
 <p/>
 <p>{{ url_for("main.movie", movie_id=movie.id, _external=True) }}</p>
 <p/>

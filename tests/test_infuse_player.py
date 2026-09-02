@@ -391,7 +391,7 @@ def test_movie_page_offers_both_apps_and_the_recommendation(
     assert "Play (Plex)" in page
     assert "Play (Infuse)" in page
     assert 'name="player" value="infuse"' in page
-    assert "Recommended" in page
+    assert "We recommend Infuse" in page
     # Default-first ordering: Plex leads while no default says otherwise
     assert page.index("Play (Plex)") < page.index("Play (Infuse)")
     # One Play control (Aug 31 2026): the default player is the button,

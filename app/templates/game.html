@@ -6,7 +6,7 @@
    slugs themselves are stored in score rows and URLs, so they stay #}
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
 <h2 class="mt-n2">Name That Frame</h2>
-<p class="small text-muted">One random frame from one library film &mdash; can you place it? The pool refreshes nightly, so the frames keep changing.</p>
+<p class="small text-muted">This is one random frame from one film in the library. Can you identify the film? The pool refreshes each night, so the frames change.</p>
 {# Difficulty picker: a radio button group (Glenn's ask, Aug 27 2026)
    — picking a level submits the GET and deals a fresh round there #}
 <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
@@ -60,19 +60,19 @@
    the frame is showing, what a hit is worth now, and (after a
    mid-round miss) what the frame turned out not to be #}
 <div class="alert {{ 'alert-warning' if missed_guess else 'alert-light border' }}" role="status">
-	{%- if missed_guess %}Not <em>{{ missed_guess }}</em> &mdash; {% if stage == 3 %}here&rsquo;s the whole frame.{% else %}zoomed out a little.{% endif %}
-	{% elif stage == 1 %}Which film is this frame from? You&rsquo;re zoomed way in.
-	{% elif stage == 2 %}Zoomed out a little.
-	{% else %}The whole frame.
-	{% endif %} {% if stage == 3 %}Last chance &mdash; name it for {{ stage_points }} point.{% else %}Guess now for {{ stage_points }} points, or zoom out.{% endif %}
+	{%- if missed_guess %}Not <em>{{ missed_guess }}</em>. {% if stage == 3 %}This is the full frame.{% else %}The view zoomed out a little.{% endif %}
+	{% elif stage == 1 %}Which film is this frame from? This is a small part of the frame.
+	{% elif stage == 2 %}The view zoomed out a little.
+	{% else %}This is the full frame.
+	{% endif %} {% if stage == 3 %}This is your last chance. Name the film for {{ stage_points }} point.{% else %}Guess now for {{ stage_points }} points, or zoom out.{% endif %}
 </div>
 {% else %}
 <div class="alert alert-light border" role="status">Which film is this frame from?</div>
 {% endif %}
 {% elif result.correct %}
-<div class="alert alert-success" role="alert">Correct &mdash; it&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}{% if result.doubled %} &mdash; 2x bonus for an unrated film{% endif %}){% endif %}{% if streak > 1 %}. That&rsquo;s {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %} &mdash; a new personal best{% endif %}.</div>
+<div class="alert alert-success" role="alert">Correct. It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}{% if result.doubled %}, with the 2x bonus for an unrated film{% endif %}){% endif %}{% if streak > 1 %}. That is {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %}. This is a new personal best{% endif %}.</div>
 {% else %}
-<div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em> &mdash; it{% else %}It{% endif %}&rsquo;s <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
+<div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em>. {% endif %}It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
 {% if result and result.correct and result.brag %}
 {# Bragging rights (Glenn's ask, Aug 27 2026): a zoomed win stashed
@@ -203,14 +203,14 @@
 {# The pool has frames, just none this difficulty can serve — Easy
    (or a rated-films filter) before the user has rated any pooled
    films #}
-<p class="lead">No frames to serve on this difficulty yet.</p>
+<p class="lead">There are no frames for this difficulty yet.</p>
 {% if rated_only %}
-<p class="text-muted">None of the pooled frames are films you&rsquo;ve rated &mdash; rate a few more, or tick &ldquo;Include films I haven&rsquo;t rated&rdquo; above to deal from the whole library.</p>
+<p class="text-muted">You did not rate the films of the frames in the pool. Rate some more films. As an alternative, select &ldquo;Include films I haven&rsquo;t rated&rdquo; above to use the full library.</p>
 {% else %}
-<p class="text-muted">Easy only deals films you've rated &mdash; rate a few from the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or your <a href="{{ url_for('main.movie_library') }}">library</a>, or try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which deals from the whole library.</p>
+<p class="text-muted">The Easy mode uses only the films that you rated. Rate some films on the <a href="{{ url_for('main.recommendations') }}">Recommendations</a> page or in your <a href="{{ url_for('main.movie_library') }}">library</a>. As an alternative, try <a href="{{ url_for('main.name_that_frame', difficulty='difficult') }}">Hard</a>, which uses the full library.</p>
 {% endif %}
 {% else %}
 <p class="lead">The frame pool is still empty.</p>
-<p class="text-muted">Frames are extracted nightly from the library{% if current_user.admin %} &mdash; or start a fill now with <code>flask frames refresh</code>{% endif %}. Check back soon.</p>
+<p class="text-muted">Fitzflix extracts the frames from the library each night{% if current_user.admin %}. To fill the pool now, run <code>flask frames refresh</code>{% endif %}. Come back soon.</p>
 {% endif %}
 {% endblock %}

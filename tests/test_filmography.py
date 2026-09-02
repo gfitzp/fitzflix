@@ -48,7 +48,7 @@ def test_filmography_includes_unowned_films_without_tmdb(app, admin_client):
     assert page.count("data-state-movie=") == 2
     assert "Unowned Credit Film" in page
     assert "Not in library" not in page
-    assert "only shows films with local records" in page
+    assert "shows only the films that have local records" in page
 
 
 def test_filmography_merges_full_tmdb_career(app, admin_client, monkeypatch):

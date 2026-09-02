@@ -18,7 +18,7 @@
 {# The worklist: just the pending files, each opening its own
    triage page — the listening clips and forms all live there, and
    its actions bounce back here via the origin param #}
-<p class="small text-muted">Each file below leads with a lossy audio track while a lossless track rides behind. Work down the list: each name opens that file's own triage page, and acting there returns here.</p>
+<p class="small text-muted">In each file below, the first audio track is lossy, and a lossless track comes after it. Go down the list. Each name opens the triage page of that file. After an action on that page, you return here.</p>
 {% if candidates %}
 <div class="list-group mb-3">
 	{% for entry in candidates %}
@@ -31,10 +31,10 @@
 	{% endfor %}
 </div>
 {% else %}
-<p class="small text-muted">Every file leads with its best audio right now.</p>
+<p class="small text-muted">In each file, the first audio track is the best track.</p>
 {% endif %}
 {% else %}
-<p class="small text-muted">This file's first audio track is lossy while a lossless track rides behind &mdash; usually the wrong order, sometimes a commentary that only looks redundant. The verdict correlates the <em>entire</em> tracks &mdash; matching programme audio tracks each other (near 100%), a commentary doesn't &mdash; and the listening clips sample the same moments so your ears can confirm what the number claims. Promote the lossless track to remux it into the lead, or "Keep as-is" if the pairing is not redundant.</p>
+<p class="small text-muted">The first audio track of this file is lossy, and a lossless track comes after it. Usually the sequence is wrong. Sometimes the second track is a commentary that only looks redundant. The verdict correlates the <em>full</em> tracks. Two tracks with the same program audio correlate at almost 100%. A commentary does not. The listening clips sample the same moments, so you can confirm the number with your ears. Promote the lossless track to remux it into the lead. If the tracks are not redundant, select "Keep as-is".</p>
 {% if candidates %}
 {% for entry in candidates %}
 {% set file = entry.file %}
@@ -124,16 +124,16 @@
 			{{ triage_form.file_id(value=file.id) }}
 			{{ triage_form.generate_submit(class_="btn btn-sm btn-primary") }}
 		</form>
-		<span class="small text-muted ms-2">No listening clips yet &mdash; generate them to hear both tracks side by side before acting.</span>
+		<span class="small text-muted ms-2">There are no listening clips yet. Make them to hear the two tracks side by side before you act.</span>
 		{% else %}
 		<hr>
-		<p class="small text-muted mb-0">This file is not present locally, so no listening clips can be generated and no remux can run.</p>
+		<p class="small text-muted mb-0">This file is not on the local disk. Thus, Fitzflix cannot make listening clips, and it cannot remux the file.</p>
 		{% endif %}
 	</div>
 </div>
 {% endfor %}
 {% else %}
-<p class="small text-muted">Every file leads with its best audio right now.</p>
+<p class="small text-muted">In each file, the first audio track is the best track.</p>
 {% endif %}
 {% endif %}
 {% endblock %}

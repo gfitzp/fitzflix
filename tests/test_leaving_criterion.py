@@ -670,7 +670,7 @@ def test_leaving_page_lists_the_complete_inventory(app, admin_client):
     from app.videos import star_rating_fields
 
     empty = admin_client.get("/leaving").get_data(as_text=True)
-    assert "Nothing is currently scheduled to leave." in empty
+    assert "No film is scheduled to leave now." in empty
 
     user_id = subscribe_criterion(app)
     with app.app_context():

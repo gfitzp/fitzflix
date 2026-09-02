@@ -3,7 +3,7 @@
 {% block app_content %}
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
-<p class="text-muted">The virtual DVR dial: each channel airs owned media matched by its rules and explicit picks. Edits rebuild the lineups automatically; Plex shows the new dial after its next guide refresh.</p>
+<p class="text-muted">This is the virtual DVR dial. Each channel plays the owned media that its rules and its explicit picks select. When you edit a channel, Fitzflix rebuilds the lineups automatically. Plex shows the new dial after its next guide refresh.</p>
 
 {% if setup %}
 <div class="card mb-3" style="max-width: 44rem;">
@@ -22,7 +22,7 @@
 	</div>
 </div>
 {% else %}
-<p class="text-muted small">Set <code>DVR_TOKEN</code> in <code>.env</code> to enable the tuner endpoints; the Plex setup URLs will appear here.</p>
+<p class="text-muted small">Set <code>DVR_TOKEN</code> in <code>.env</code> to enable the tuner endpoints. The Plex setup URLs then show here.</p>
 {% endif %}
 
 <form action="" method="post" class="d-inline">
@@ -87,7 +87,7 @@
 		{{ form.enabled(class_="form-check-input", checked=True) }}
 		{{ form.enabled.label(class_="form-check-label") }}
 	</div>
-	<p class="text-muted small mt-2 mb-2">Rules are optional and comma-separated; the editor page has the full set, plus explicit picks by title.</p>
+	<p class="text-muted small mt-2 mb-2">The rules are optional. Separate the values with commas. The editor page has all the rules, and the explicit picks by title.</p>
 	{{ form.save_submit(class_="btn btn-sm btn-primary") }}
 </form>
 

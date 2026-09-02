@@ -1,8 +1,8 @@
 <p>Hello,</p>
 <p/>
-<p>The file '{{ file.basename }}' was added with a lossy first audio track but has a lossless track available.</p>
+<p>Fitzflix added the file '{{ file.basename }}'. Its first audio track is lossy, but the file also has a lossless track.</p>
 <p/>
-<p>Go <a href="{{ url_for('main.lossy_audio_triage', file_id=file.id, _external=True) }}">here</a> to compare the tracks and remux if necessary:</p>
+<p>Go <a href="{{ url_for('main.lossy_audio_triage', file_id=file.id, _external=True) }}">here</a> to compare the tracks. Remux the file if necessary:</p>
 <p/>
 <p>{{ url_for('main.lossy_audio_triage', file_id=file.id, _external=True) }}</p>
 <p/>

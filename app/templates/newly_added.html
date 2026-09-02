@@ -5,7 +5,7 @@
 {% if sections %}
 {% for section in sections %}
 <h2 class="mt-n2" id="newly-added-{{ section.provider_id }}">Newly added to {{ section.label }}</h2>
-<p class="small text-muted">Everything that arrived within the last month, ranked by your taste profile &mdash; watchlisted films first, films you own last (no need to stream those). Source: <a href="{{ section.source }}" target="_blank" rel="noreferrer">{{ section.source | replace("https://www.", "") }}</a>.</p>
+<p class="small text-muted">These are all the films that arrived in the last month. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because you do not need to stream them. Source: <a href="{{ section.source }}" target="_blank" rel="noreferrer">{{ section.source | replace("https://www.", "") }}</a>.</p>
 <hr>
 {# The arrival set as a poster gallery, the /leaving page's grammar —
    the popover carries each film's synopsis and badges (ownership,
@@ -48,7 +48,7 @@
 {% else %}
 <h2 class="mt-n2">Newly added to streaming</h2>
 <hr>
-<p class="lead">Nothing new right now.</p>
-<p class="text-muted">Each service's newly-added collection is checked daily &mdash; the Criterion Channel's from <a href="https://www.criterionchannel.com/newly-added" target="_blank" rel="noreferrer">criterionchannel.com</a> &mdash; and arrivals stay listed here for a month.</p>
+<p class="lead">There is nothing new now.</p>
+<p class="text-muted">Fitzflix checks the newly-added collection of each service each day. For the Criterion Channel, the source is <a href="https://www.criterionchannel.com/newly-added" target="_blank" rel="noreferrer">criterionchannel.com</a>. The arrivals stay on this list for one month.</p>
 {% endif %}
 {% endblock %}

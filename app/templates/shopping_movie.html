@@ -58,7 +58,7 @@
    grouped hardest-to-watch first — the worst case among a film's
    watchers decides its group, so a film one watcher can't stream or
    rent leads even if another watcher could stream it #}
-<p class="small text-muted">Films on any user's watchlist with no copy in the library. Hardest to watch first: films nobody's services carry, then rentals, then films already streaming &mdash; a film files under its watchers' worst case. Streaming data by JustWatch.</p>
+<p class="small text-muted">These are the films on the watchlist of each user that have no copy in the library. The films that are the most difficult to watch come first: the films that no service has, then the rentals, then the films that stream now. A film goes in the group of its worst case across its watchers. Streaming data by JustWatch.</p>
 {% for group in watchlist_groups %}
 <h4 class="mt-4">{{ group.heading }} <span class="text-muted fs-6 fw-normal">&middot; {{ group.rows | length }} film{% if group.rows | length != 1 %}s{% endif %}</span></h4>
 {% if not group.rows %}

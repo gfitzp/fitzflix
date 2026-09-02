@@ -293,7 +293,7 @@ def test_recommendations_page_empty_states(app, admin_client):
     overlapping unseen films: the not-enough-overlap prompt."""
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
-    assert "Log a few films to get recommendations." in page
+    assert "Log some films to get recommendations." in page
 
     with app.app_context():
         user_id = admin_id()
@@ -302,7 +302,7 @@ def test_recommendations_page_empty_states(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
-    assert "Not enough overlapping interest" in page
+    assert "There is not enough common interest" in page
 
 
 def test_tile_endpoint_refills_and_exhausts(app, admin_client):
@@ -516,7 +516,7 @@ def test_copref_shelf_page_render(app, admin_client):
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
     assert "More like these two" in page
-    assert "Loved by the people who loved both" in page
+    assert "The people who loved the two films also loved these" in page
     assert 'title="Copref Anchor A (1977)"' in page
     assert "Copref Anchor B (1980)" in page
     assert 'data-criteria="copref:501:502"' in page or (
@@ -645,7 +645,7 @@ def test_single_anchor_shelf_page_render(app, admin_client):
 
     page = admin_client.get("/recommendations").get_data(as_text=True)
     assert "More like this one" in page
-    assert "Loved by the people who loved it" in page
+    assert "The people who loved it also loved these" in page
     assert 'title="Copref Solo A (1977)"' in page
     assert 'class="anchor-fan-solo"' in page
     # The pair classes name only CSS rules here, never a card

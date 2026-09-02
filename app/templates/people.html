@@ -46,7 +46,7 @@
 {% if query_text %}
 <p class="small text-muted">{{ noun|capitalize }}s matching &ldquo;{{ query_text }}&rdquo;{% if pages %} ({{ pages.total }}){% endif %} &mdash; <a href="{{ url_for('main.people', role=role_param) }}">clear search</a></p>
 {% else %}
-<p class="small text-muted">Every {{ noun }} credited in more than one of the library's films or series{% if pages %} ({{ pages.total }} people){% endif %}, most titles first. Search to find anyone, including single-title appearances.</p>
+<p class="small text-muted">Each {{ noun }} with credits in more than one film or series in the library{% if pages %} ({{ pages.total }} people){% endif %}. The persons with the most titles come first. Use the search to find a person, including a person with one title.</p>
 {% endif %}
 {% if people %}
 {{ pagination_nav() }}

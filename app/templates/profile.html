@@ -36,7 +36,7 @@
     		</div>
     		{{ plex_form.plex_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">Plex watches by this account are recorded in your diary. Leave blank to unmap.</p>
+    	<p class="small text-muted mt-1">Fitzflix records the Plex watches of this account in your diary. To remove the map, clear the field.</p>
     </div>
     <div class="col-md-4">
     	<p>Letterboxd username:{% if current_user.letterboxd_username %} {{ current_user.letterboxd_username }}{% else %} <span class="text-muted">not syncing</span>{% endif %}</p>
@@ -48,7 +48,7 @@
     		</div>
     		{{ letterboxd_form.letterboxd_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">Diary entries and reviews from this Letterboxd account's public RSS feed sync into your history twice an hour. Leave blank to disable.</p>
+    	<p class="small text-muted mt-1">Fitzflix reads the public RSS feed of this Letterboxd account two times each hour. It adds the diary entries and the reviews to your history. To disable the sync, clear the field.</p>
     </div>
     {% if remote_playback %}
     <div class="col-md-4">
@@ -61,7 +61,7 @@
     		</div>
     		{{ plex_player_form.plex_player_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">The Plex player (e.g. an Apple TV) your ▶&#xFE0E; Play buttons send films to — enter its IP address or hostname (port optional). Open the Plex app on it with "Advertise as Player" enabled before saving, so it can be verified. A device in another household works too if it's reachable over a VPN (enter its VPN address). Leave blank to remove.</p>
+    	<p class="small text-muted mt-1">This is the Plex player, for example an Apple TV, that receives the films from your ▶&#xFE0E; Play buttons. Enter its IP address or hostname. The port is optional. Before you save, open the Plex app on the device with "Advertise as Player" enabled, so Fitzflix can verify the device. A device in an other household is applicable if you can reach it over a VPN. Enter its VPN address. To remove the device, clear the field.</p>
     </div>
     {% endif %}
     <div class="col-md-4">
@@ -75,7 +75,7 @@
     		</div>
     		{{ infuse_pin_form.infuse_pin_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">The Apple TV is showing a pairing PIN — enter it here to finish.</p>
+    	<p class="small text-muted mt-1">The Apple TV shows a pairing PIN. Enter it here to complete the pairing.</p>
     	{% else %}
     	<form action="" method="post">
     		{{ infuse_form.hidden_tag() }}
@@ -85,7 +85,7 @@
     		</div>
     		{{ infuse_form.infuse_player_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">The Apple TV your ▶&#xFE0E; Play buttons open Infuse on — enter its IP address and Companion port, then type the PIN the TV shows. Find the port from a machine on the Apple TV's own network with <code>dns-sd -B _companion-link._tcp</code>. Unlike the Plex path this can wake the box and launch Infuse from cold. Leave blank to remove.</p>
+    	<p class="small text-muted mt-1">This is the Apple TV on which your ▶&#xFE0E; Play buttons open Infuse. Enter its IP address and its Companion port. Then enter the PIN that the TV shows. To find the port, run <code>dns-sd -B _companion-link._tcp</code> on a machine on the network of the Apple TV. This path can wake the device and start Infuse, which the Plex path cannot do. To remove the device, clear the field.</p>
     	{% endif %}
     </div>
     {% if current_user.plex_player_configured and current_user.infuse_player_configured %}
@@ -103,13 +103,13 @@
     		</div>
     		{{ default_player_form.default_player_submit(class_="btn btn-sm btn-warning") }}
     	</form>
-    	<p class="small text-muted mt-1">With both apps configured, plain ▶&#xFE0E; Play buttons use this one. Movie pages offer both, and flag films whose formats (Dolby Vision Profile 8, E-AC-3 Atmos) only play correctly in Infuse.</p>
+    	<p class="small text-muted mt-1">When you configured the two apps, the plain ▶&#xFE0E; Play buttons use this app. The movie pages offer the two apps. They flag the films with formats that play correctly only in Infuse, for example Dolby Vision Profile 8 and E-AC-3 Atmos.</p>
     </div>
     {% endif %}
 </div>
 <hr>
 <h5>Streaming Services</h5>
-<p class="small text-muted">Pick the services you subscribe to: movie pages and TMDB search results will show when a film streams on them. This is your setting alone, not the household's. Streaming data by JustWatch.</p>
+<p class="small text-muted">Select the services that you subscribe to. The movie pages and the TMDB search results then show when a film streams on them. This setting is yours only, not the setting of the household. Streaming data by JustWatch.</p>
 {% if streaming_form.providers.choices %}
 <form action="" method="post">
 	{{ streaming_form.hidden_tag() }}
@@ -130,11 +130,11 @@
 	{{ streaming_form.providers_submit(class_="btn btn-sm btn-warning mt-2") }}
 </form>
 {% else %}
-<p class="text-muted">The provider list couldn't be loaded from TMDB right now; try again later.</p>
+<p class="text-muted">Fitzflix could not load the provider list from TMDB now. Try again later.</p>
 {% endif %}
 <hr>
 <h5>Watchlist Alerts</h5>
-<p class="small text-muted">A nightly email digest when films on your watchlist become available &mdash; added to the library, or newly streaming on one of your services above &mdash; and, if you subscribe to the Criterion Channel, when they're about to leave it. Rentals are a separate opt-in, since renting costs an extra fee on top of what you already pay for.</p>
+<p class="small text-muted">A nightly email digest tells you when the films on your watchlist become available. A film becomes available when it is added to the library, or when it starts to stream on one of your services above. If you subscribe to the Criterion Channel, the digest also tells you when a film leaves it soon. Rentals are a separate option, because a rental has a fee in addition to your subscriptions.</p>
 <form action="" method="post">
 	{{ alerts_form.hidden_tag() }}
 	<div class="form-check">
@@ -159,7 +159,7 @@
 			{{ review_upload_form.file(class_="form-control form-control-sm mb-2", accept=".zip,.json,.txt") }}
 			{{ review_upload_form.upload_submit(class_="btn btn-sm btn-warning") }}
 		</form>
-		<p class="small text-muted mt-1">A Letterboxd account export zip imports the diary, ratings, reviews, and likes; the legacy JSON-lines ratings file works too.</p>
+		<p class="small text-muted mt-1">A Letterboxd account-export zip file imports the diary, the ratings, the reviews, and the likes. The older JSON-lines ratings file is also applicable.</p>
 	</div>
 	<div class="col-md-4">
 		<p class="mb-1">Export reviews</p>
@@ -173,7 +173,7 @@
 			</div>
 			{{ review_export_form.export_submit(class_="btn btn-sm btn-warning") }}
 		</form>
-		<p class="small text-muted mt-1">Emails your reviews as a Letterboxd-format CSV. Unchecked, only entries logged or updated since your last export are included, so each file uploads to Letterboxd without duplicates.</p>
+		<p class="small text-muted mt-1">This sends your reviews by email as a CSV file in the Letterboxd format. If the box is not selected, the file includes only the entries that you logged or changed after your last export. Thus, each file uploads to Letterboxd without duplicates.</p>
 	</div>
 </div>
 <hr>
@@ -182,5 +182,5 @@
 	{{ reset_frames_form.hidden_tag() }}
 	{{ reset_frames_form.reset_frames_submit(class_="btn btn-sm btn-warning") }}
 </form>
-<p class="small text-muted mt-1">Wipes your streaks, personal bests, points, and win rates on every difficulty and starts the game fresh. There&rsquo;s no undo.</p>
+<p class="small text-muted mt-1">This deletes your streaks, personal bests, points, and win rates for each difficulty. The game starts again. You cannot undo this.</p>
 {% endblock %}

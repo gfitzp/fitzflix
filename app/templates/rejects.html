@@ -4,7 +4,7 @@
 <h2 class="mt-n2">{{ title }}</h2>
 <hr>
 {% if rejected %}
-<p class="text-muted">{{ rejected|length }} file{{ "s" if rejected|length != 1 }} in the rejects directory. The folder name says why each file was rejected; re-importing moves a file back to the import directory, where it's picked up automatically.</p>
+<p class="text-muted">There {{ "is" if rejected|length == 1 else "are" }} {{ rejected|length }} file{{ "s" if rejected|length != 1 }} in the rejects directory. The folder name gives the cause of the rejection. An import moves a file back to the import directory, where Fitzflix finds it automatically.</p>
 <div class="list-group">
 	{% for entry in rejected %}
 	<div class="list-group-item">
@@ -23,6 +23,6 @@
 	{% endfor %}
 </div>
 {% else %}
-<p class="lead">The rejects directory is empty &mdash; nothing to triage.</p>
+<p class="lead">The rejects directory is empty. There is nothing to triage.</p>
 {% endif %}
 {% endblock %}

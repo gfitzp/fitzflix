@@ -599,12 +599,12 @@ def test_log_page_poster_wears_the_fold(app, admin_client, monkeypatch):
 
 def test_newly_added_page_says_when_nothing_is_new(app, admin_client):
     body = admin_client.get("/newly-added").get_data(as_text=True)
-    assert "Nothing new right now." in body
+    assert "There is nothing new now." in body
 
     # A stored feed whose arrivals all predate tracking or the window
     # reads the same as no feed
 
     plant_feed(app, [new_item(9601, "Inventory Quiet", first_seen=None)])
     body = admin_client.get("/newly-added").get_data(as_text=True)
-    assert "Nothing new right now." in body
+    assert "There is nothing new now." in body
     assert "Inventory Quiet" not in body

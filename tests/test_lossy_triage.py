@@ -116,7 +116,7 @@ def test_dismiss_marks_the_file_reviewed(app, admin_client):
     )
     body = response.get_data(as_text=True)
     assert "audio as reviewed" in body
-    assert "Every file leads with its best audio right now." in body
+    assert "In each file, the first audio track is the best track." in body
 
     with app.app_context():
         assert db.session.get(File, file_id).lossy_audio_reviewed is not None

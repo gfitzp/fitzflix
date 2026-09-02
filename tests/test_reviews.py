@@ -769,7 +769,7 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Jaws 2 (1978)" in page
-    assert "isn&#39;t in the library" in page or "isn't in the library" in page
+    assert "is not in the library" in page
     assert 'name="quick_rating"' in page
     # Runtime, genres, and the US certification badge, like the movie page
     assert "116&nbsp;minutes" in page

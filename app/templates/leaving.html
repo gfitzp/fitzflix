@@ -4,7 +4,7 @@
 {% block app_content %}
 {% if inventory %}
 <h2 class="mt-n2">Leaving the Criterion Channel {{ inventory.departs.strftime("%B %-d") }}</h2>
-<p class="small text-muted">The complete departure set, ranked by your taste profile &mdash; watchlisted films first, films you own last (those aren't going anywhere). Source: <a href="{{ inventory.url }}" target="_blank" rel="noreferrer">criterionchannel.com</a>.</p>
+<p class="small text-muted">This is the full set of films that leave. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because they stay in your library. Source: <a href="{{ inventory.url }}" target="_blank" rel="noreferrer">criterionchannel.com</a>.</p>
 <hr>
 {# The departure set as a poster gallery (#45d), the index shelf's
    grammar — the popover carries each film's synopsis and badges
@@ -46,7 +46,7 @@
 {% else %}
 <h2 class="mt-n2">Leaving the Criterion Channel</h2>
 <hr>
-<p class="lead">Nothing is currently scheduled to leave.</p>
-<p class="text-muted">The leaving collection refreshes monthly from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>; once a departure date passes, the set clears until the next page appears.</p>
+<p class="lead">No film is scheduled to leave now.</p>
+<p class="text-muted">Fitzflix refreshes the leaving collection each month from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>. When the departure date passes, the set is empty until the next page appears.</p>
 {% endif %}
 {% endblock %}

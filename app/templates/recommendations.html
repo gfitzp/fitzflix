@@ -5,7 +5,7 @@
 <h2 class="mt-n2">Recommendations</h2>
 <hr>
 {% if shelves %}
-<p class="small text-muted">Shelves of films you haven't seen &mdash; on your shelf or streaming on your services &mdash; keyed by what your diary and watchlist say you're into. Rate a film, add it to your watchlist, or wave it off with the &#10005;, and its spot refills; reload the page for a fresh set of shelves.</p>
+<p class="small text-muted">These shelves show films that you did not see. You own them, or they stream on your services. Your diary and your watchlist select them. Rate a film, add it to your watchlist, or reject it with the &#10005;. Its position then fills again. Reload the page for a new set of shelves.</p>
 {% for shelf in shelves %}
 <div data-shelf data-criteria="{{ shelf.criteria_param }}">
 	{% if not loop.first %}<hr>{% endif %}
@@ -16,10 +16,10 @@
 	{% set common = shelf.shared_genres | join(' · ') %}
 	{% if shelf.anchors | length == 1 %}
 	<h4>More like this one</h4>
-	<p class="small text-muted mb-2">Loved by the people who loved it &mdash; from thirty-two million MovieLens ratings, not shared features.{% if common %} It's a {{ common }} film, if you're wondering.{% endif %}</p>
+	<p class="small text-muted mb-2">The people who loved it also loved these. The source is thirty-two million MovieLens ratings, not shared features.{% if common %} It is a {{ common }} film.{% endif %}</p>
 	{% else %}
 	<h4>More like these two</h4>
-	<p class="small text-muted mb-2">Loved by the people who loved both &mdash; from thirty-two million MovieLens ratings, not shared features.{% if common %} Their common ground: {{ common }}.{% endif %}</p>
+	<p class="small text-muted mb-2">The people who loved the two films also loved these. The source is thirty-two million MovieLens ratings, not shared features.{% if common %} The two films have this in common: {{ common }}.{% endif %}</p>
 	{% endif %}
 	{% else %}
 	{# First character upcased by hand — the capitalize filter would
@@ -172,10 +172,10 @@
 	})();
 </script>
 {% elif has_history %}
-<p class="lead">Not enough overlapping interest to build shelves yet.</p>
-<p class="text-muted">Shelves appear once a few films you've rated, liked, watched, or watchlisted share genres, keywords, awards, or people with films you haven't seen &mdash; keep logging from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above and check back.</p>
+<p class="lead">There is not enough common interest to build shelves yet.</p>
+<p class="text-muted">The shelves appear when some films that you rated, liked, watched, or watchlisted have features in common with films that you did not see. The features are genres, keywords, awards, or people. Continue to log films from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above, and come back.</p>
 {% else %}
-<p class="lead">Log a few films to get recommendations.</p>
-<p class="text-muted">Rate, like, or just mark films you've watched &mdash; from the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above &mdash; and this page will build shelves of unseen films around what you're into.</p>
+<p class="lead">Log some films to get recommendations.</p>
+<p class="text-muted">Rate, like, or mark the films that you watched. Use the <a href="{{ url_for('main.movie_library') }}">movie library</a> or the search box above. This page then builds shelves of films that you did not see, from your interests.</p>
 {% endif %}
 {% endblock %}

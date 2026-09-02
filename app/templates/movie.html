@@ -98,7 +98,7 @@
    actions sit under each poster — rate it, bank it, wave it off —
    and tile posts never disturb the strip's anchor #}
 <h5>Since you liked {{ title }}&hellip;</h5>
-<p class="small text-muted">These unseen films from your library share its DNA and fit your taste profile.</p>
+<p class="small text-muted">These films from your library have features in common with it. You did not see them, and they fit your taste profile.</p>
 <div class="row">
 	{% for suggestion in suggestions %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell">
@@ -168,7 +168,7 @@
 			</ul>
 		</div>
 		{% if infuse_reasons %}
-		<div class="small text-muted">Recommended — {{ infuse_reasons|join(" and ") }} only play correctly in Infuse.</div>
+		<div class="small text-muted">We recommend Infuse: {{ infuse_reasons|join(" and ") }} play correctly only in Infuse.</div>
 		{% endif %}
 		<div class="small" id="play-status-shared"></div>
 	</div>
@@ -360,7 +360,7 @@
 	{% if films or features %}
 	<div class="col-sm-4">
 		<a class="btn btn-sm btn-warning" href="{{ url_for('main.movie_poster', movie_id=movie.id) }}" role="button">Change poster&hellip;</a>
-		<p class="small text-muted mt-1 mb-0">Pick from the TMDB gallery or upload an image.</p>
+		<p class="small text-muted mt-1 mb-0">Select an image from the TMDB gallery, or upload an image.</p>
 	</div>
 	{% endif %}
 </div>

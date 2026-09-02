@@ -267,7 +267,7 @@ def test_easy_serves_only_rated_films(app, admin_client):
 
     unrated_token = seed_frame(app, unrated_id)
     page = admin_client.get("/game?difficulty=easy").get_data(as_text=True)
-    assert "No frames to serve on this difficulty yet." in page
+    assert "There are no frames for this difficulty yet." in page
     assert unrated_token not in page
 
     # With a one-film diary the distractors pad from the whole library
@@ -422,7 +422,7 @@ def test_high_scores_persist_per_difficulty(app, admin_client):
 
     guess("difficult", str(answer_id))
     body = guess("difficult", str(answer_id))
-    assert "That&rsquo;s 2 in a row &mdash; a new personal best." in body
+    assert "That is 2 in a row. This is a new personal best." in body
     guess("difficult", "999999")
 
     # A hit on another difficulty starts its own row
@@ -1230,9 +1230,9 @@ def test_rated_default_empty_state_offers_the_way_out(app, admin_client):
 
     seed_frame(app, unrated_id)
     page = admin_client.get("/game?difficulty=siracusa").get_data(as_text=True)
-    assert "No frames to serve on this difficulty yet." in page
+    assert "There are no frames for this difficulty yet." in page
     assert "Include films I haven&rsquo;t rated" in page
-    assert "rate a few more" in page
+    assert "Rate some more films" in page
     assert 'id="include-unrated" checked' not in page
 
 
@@ -1889,7 +1889,7 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
     # A first-look hit banks 3 doubled to 6, and only now says why
 
     body = post({"guess": "Bonus Secret Film", "guess_submit": "y"})
-    assert "(+6 points &mdash; 2x bonus for an unrated film)" in body
+    assert "(+6 points, with the 2x bonus for an unrated film)" in body
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert (score.points, score.current_streak) == (6, 1)
@@ -1900,7 +1900,7 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
     assert "3 points" in page and "6 points" not in page  # no leak
     post({"zoom_out": "y"})
     body = post({"guess": "bonus secret film", "guess_submit": "y"})
-    assert "(+4 points &mdash; 2x bonus for an unrated film)" in body
+    assert "(+4 points, with the 2x bonus for an unrated film)" in body
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert (score.points, score.current_streak) == (10, 2)

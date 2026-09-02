@@ -18,7 +18,7 @@
 {# The worklist: just the pending files, each opening its own
    triage page — the snapshots, cue timelines, and forms all live
    there, and its actions bounce back here via the origin param #}
-<p class="small text-muted">Each file below has a subtitle track that looks forced but isn't flagged. Work down the list: each name opens that file's own triage page, and acting there returns here.</p>
+<p class="small text-muted">Each file below has a subtitle track that looks forced, but does not have the forced flag. Go down the list. Each name opens the triage page of that file. After an action on that page, you return here.</p>
 {% if candidates %}
 <div class="list-group mb-3">
 	{% for entry in candidates %}
@@ -34,7 +34,7 @@
 <p class="small text-muted">Nothing looks forced right now.</p>
 {% endif %}
 {% else %}
-<p class="small text-muted">Each of these unforced tracks holds a quarter or less of the elements of the largest same-language track in its file &mdash; the shape of a foreign-parts-only track. The cue timeline shows when in the film a track speaks (sparse clusters look forced, an even spread looks like commentary), and the snapshots burn the track onto the film's own frames. Check the tracks that are really forced and flag them in one pass; "Nothing forced here" stops the file from being flagged again.</p>
+<p class="small text-muted">Each of these tracks has no forced flag, and it has a quarter or less of the elements of the largest track in the same language in its file. This is the shape of a track that covers only the foreign parts. The cue timeline shows when in the film a track speaks. Small groups of cues look forced. An even spread looks like a commentary. The snapshots burn the track onto the frames of the film. Select the tracks that are really forced, and flag them in one pass. "Nothing forced here" prevents a new flag on the file.</p>
 {% if candidates %}
 {% for entry in candidates %}
 {% set file = entry.file %}

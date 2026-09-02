@@ -59,7 +59,7 @@
 			{{ form.network_country(class_="form-control form-control-sm", placeholder="GB") }}
 		</div>
 	</div>
-	<p class="text-muted small mt-1 mb-2">Comma-separated, any-of matching. Genres and keywords apply to whichever libraries are included above; the network country applies to TV series; a title pin pulls a matching title in past every other rule.</p>
+	<p class="text-muted small mt-1 mb-2">Separate the values with commas. A title matches if it has one of the values. Genres and keywords apply to the libraries that you selected above. The network country applies to TV series only. A title pin adds a title that matches, before all other rules.</p>
 	<div class="form-check">
 		{{ form.criterion_only(class_="form-check-input") }}
 		{{ form.criterion_only.label(class_="form-check-label") }}
@@ -74,7 +74,7 @@
 </form>
 
 <h4 class="mt-4">Explicit picks</h4>
-<p class="text-muted small mb-2">Always on the channel, regardless of the rules. Movies resolve as &ldquo;Title (Year)&rdquo; or a unique fragment; series by title.</p>
+<p class="text-muted small mb-2">These titles are always on the channel. The rules do not apply to them. Enter a movie as &ldquo;Title (Year)&rdquo; or as a unique part of its title. Enter a series by its title.</p>
 
 <div class="row g-3" style="max-width: 50rem;">
 	<div class="col-md-6">

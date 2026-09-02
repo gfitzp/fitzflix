@@ -1,8 +1,8 @@
 <p>Hello,</p>
 <p/>
-<p>The file '{{ file.basename }}' was added and its first audio track was in a foreign language.</p>
+<p>Fitzflix added the file '{{ file.basename }}'. Its first audio track is in a foreign language.</p>
 <p/>
-<p>Go <a href="{{ url_for("main.file", file_id=file.id, _external=True) }}">here</a> to remux if necessary:</p>
+<p>Go <a href="{{ url_for("main.file", file_id=file.id, _external=True) }}">here</a> to remux the file if necessary:</p>
 <p/>
 <p>{{ url_for("main.file", file_id=file.id, _external=True) }}</p>
 <p/>

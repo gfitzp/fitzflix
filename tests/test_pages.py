@@ -128,7 +128,7 @@ def test_maintenance_page_shows_file_tools_and_bulk_ops(admin_client):
     assert "Duplicate movies" in body
     assert "Filename tester" in body
     assert "Bulk operations" in body
-    assert "VERY SURE" in body  # the S3 sync form moved along too
+    assert "WARNING:" in body  # the S3 sync form moved along too
 
 
 def test_profile_page_holds_only_the_profile_forms(admin_client):
