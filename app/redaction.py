@@ -21,6 +21,7 @@ cached copy. It does not render the raw exception again.
 """
 
 import logging
+import os
 import re
 
 from sqlalchemy.engine import make_url
@@ -52,8 +53,13 @@ def secret_values(config):
 
     secrets = set()
     for name, value in config.items():
-        if SECRET_SETTING.search(str(name)) and isinstance(value, str):
-            secrets.add(value)
+        if not (SECRET_SETTING.search(str(name)) and isinstance(value, str)):
+            continue
+        # A setting that names a file (CDN_PRIVATE_KEY) holds a path, not
+        # a credential. A blanked path would hide which file is missing.
+        if value.startswith(("/", "~")) or os.path.isfile(value):
+            continue
+        secrets.add(value)
 
     uri = config.get("SQLALCHEMY_DATABASE_URI")
     if isinstance(uri, str) and uri:

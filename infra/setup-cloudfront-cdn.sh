@@ -257,7 +257,21 @@ DIST_ARN="arn:aws:cloudfront::$ACCOUNT:distribution/$DIST_ID"
 # ------------------------------------------------------------------- 8. policies
 say "Bucket policy (delegate the object access to the access points of this account)"
 POLICY_BACKUP="$KEY_DIR/bucket-policy-backup-$(date +%Y%m%d%H%M%S).json"
-EXISTING_POLICY=$(awsx s3api get-bucket-policy --bucket "$BUCKET" --query 'Policy' 2>/dev/null || echo "")
+# Only "no bucket policy" may read as empty. Any other failure (a denied
+# GetBucketPolicy, throttling) must stop the script, or the merge below
+# would replace the real policy with this script's single statement.
+POLICY_ERR=$(mktemp)
+if EXISTING_POLICY=$(awsx s3api get-bucket-policy --bucket "$BUCKET" --query 'Policy' 2>"$POLICY_ERR"); then
+    :
+elif grep -q NoSuchBucketPolicy "$POLICY_ERR"; then
+    EXISTING_POLICY=""
+else
+    echo "error: could not read the bucket policy of $BUCKET:" >&2
+    cat "$POLICY_ERR" >&2
+    rm -f "$POLICY_ERR"
+    exit 1
+fi
+rm -f "$POLICY_ERR"
 if [ -n "$EXISTING_POLICY" ] && [ "$EXISTING_POLICY" != "None" ]; then
     printf '%s' "$EXISTING_POLICY" > "$POLICY_BACKUP"
     echo "existing bucket policy saved to $POLICY_BACKUP"

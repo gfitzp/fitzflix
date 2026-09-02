@@ -817,10 +817,7 @@ def rename_untouched_object(file, new_key, defer_upload=False):
         )
 
     storage_class = (head or {}).get("StorageClass") or "STANDARD"
-    restored = 'ongoing-request="false"' in ((head or {}).get("Restore") or "")
-    copyable = head is not None and (
-        storage_class not in ("DEEP_ARCHIVE", "GLACIER") or restored
-    )
+    copyable = head is not None and _object_is_readable(head)
 
     if copyable:
         current_app.logger.info(
@@ -973,6 +970,10 @@ def aws_delete(key):
 
 DOWNLOAD_COMPLETE = "complete"
 DOWNLOAD_OBJECT_MISSING = "object-missing"
+# CloudFront refused the signed URL for an object that S3 can read. Only
+# a change to the key pair, the key group, or the WAF allowlist clears
+# it. The SQS message is dropped, so the fault cannot loop.
+DOWNLOAD_ACCESS_DENIED = "access-denied"
 DOWNLOAD_RESTORE_PENDING = "restore-pending"
 
 MAX_DOWNLOAD_RETRIES = 10
@@ -1054,6 +1055,48 @@ def missing_cdn_settings():
     ]
 
 
+def cdn_settings_problem():
+    """Return what is wrong with the CloudFront settings, or None.
+
+    A setting that is not set, or a private key that this process cannot
+    read or parse, is a configuration fault. The caller fails fast on it.
+    A retry cannot clear it, and the redaction filter blanks the path of
+    the key from a traceback (its name ends in KEY)."""
+
+    missing = missing_cdn_settings()
+    if missing:
+        return f"{', '.join(missing)} not set"
+    path = current_app.config["CDN_PRIVATE_KEY"]
+    try:
+        _cdn_private_key(path)
+    except OSError as error:
+        return f"CDN_PRIVATE_KEY cannot be read ({error.strerror})"
+    except ValueError as error:
+        return f"CDN_PRIVATE_KEY does not parse as a PEM private key ({error})"
+    return None
+
+
+_CDN_KEY_CACHE = {}
+
+
+def _cdn_private_key(path):
+    """Return the parsed private key, read from disk one time per change.
+
+    Each download attempt signs a new URL. The key is parsed again only
+    when the file changes."""
+
+    from cryptography.hazmat.primitives import serialization
+
+    stamp = os.stat(path).st_mtime_ns
+    cached = _CDN_KEY_CACHE.get(path)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    with open(path, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+    _CDN_KEY_CACHE[path] = (stamp, private_key)
+    return private_key
+
+
 def cdn_signed_url(key, expires_in=None):
     """Sign a CloudFront URL for one object key.
 
@@ -1064,14 +1107,13 @@ def cdn_signed_url(key, expires_in=None):
     """
 
     from botocore.signers import CloudFrontSigner
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
     if expires_in is None:
         expires_in = current_app.config["CDN_URL_EXPIRY"]
 
-    with open(current_app.config["CDN_PRIVATE_KEY"], "rb") as key_file:
-        private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+    private_key = _cdn_private_key(current_app.config["CDN_PRIVATE_KEY"])
 
     # CloudFront accepts only RSA-SHA1 (PKCS#1 v1.5) signatures on a
     # signed URL. The signature protects a URL with a short life. It does
@@ -1092,26 +1134,43 @@ def cdn_download(key, destination, progress, expected_size=0):
     """Fetch one object through CloudFront, and write it to destination.
 
     The progress callback gets the size of each chunk, as the boto3
-    transfer callback does. Raise CdnDownloadError for an HTTP error
-    status. Raise RuntimeError if the body length differs from the
-    Content-Length header or from expected_size (the object size that
-    the S3 API reported). The requests transport errors escape as they
-    are.
+    transfer callback does. A partial file at the destination from an
+    earlier attempt is resumed with a Range request when the S3 size is
+    known. Thus, a transport fault does not restart a large object from
+    byte zero. Raise CdnDownloadError for an HTTP error status. Raise
+    RuntimeError if the body length differs from the Content-Length
+    header or from expected_size (the object size from the S3 API).
+    Raise RuntimeError if neither size is known. The requests transport
+    errors escape as they are.
     """
 
     url = cdn_signed_url(key)
-    written = 0
+    have = _partial_size(destination)
+    headers = {}
+    if have and expected_size and have < expected_size:
+        headers["Range"] = f"bytes={have}-"
+    else:
+        have = 0
 
     # The signed URL is a bearer credential while it is valid. No log
     # line here holds it. A transport error from requests names the URL
     # in its message. The SecretRedactor filter on the app logger blanks
     # the Signature parameter of each record.
 
-    with CDN_HTTP_GET(url, stream=True, timeout=CDN_TIMEOUT) as response:
-        if response.status_code != 200:
+    with CDN_HTTP_GET(
+        url, stream=True, timeout=CDN_TIMEOUT, headers=headers
+    ) as response:
+        if response.status_code == 206 and have:
+            mode, written = "ab", have
+            progress(have)
+        elif response.status_code == 200:
+            mode, written, have = "wb", 0, 0
+        else:
             raise CdnDownloadError(response.status_code)
         content_length = int(response.headers.get("Content-Length") or 0)
-        with open(destination, "wb") as output:
+        if content_length:
+            content_length += have
+        with open(destination, mode) as output:
             for chunk in response.iter_content(chunk_size=CDN_CHUNK_SIZE):
                 output.write(chunk)
                 written += len(chunk)
@@ -1119,12 +1178,34 @@ def cdn_download(key, destination, progress, expected_size=0):
 
     # A body that ends early without a transport error must not become a
     # visible import. The S3 size catches it when the header is absent.
+    # With no size known at all, the body cannot be trusted.
 
+    if not content_length and not expected_size:
+        raise RuntimeError(f"CloudFront sent {written} bytes for '{key}', size unknown")
     for label, size in (("Content-Length", content_length), ("S3", expected_size)):
         if size and written != size:
             raise RuntimeError(
                 f"CloudFront sent {written} bytes for '{key}', {label} says {size}"
             )
+
+
+def _partial_size(destination):
+    """Return the size of a partial download at the destination, or 0."""
+
+    try:
+        return os.path.getsize(destination)
+    except OSError:
+        return 0
+
+
+def _discard_partial(destination):
+    """Remove a partial download. The import scan skips dotfiles, so an
+    abandoned partial would stay invisible in the import directory."""
+
+    try:
+        os.remove(destination)
+    except OSError:
+        pass
 
 
 def _object_is_readable(head_response):
@@ -1173,6 +1254,29 @@ def _resolve_missing_object(sqs_client, basename, sqs_receipt_handle):
     return DOWNLOAD_OBJECT_MISSING
 
 
+def _refuse_access_fault(sqs_client, basename, sqs_receipt_handle):
+    """Report a CloudFront refusal of an object that S3 can read.
+
+    Only a change to the key pair, the key group, or the WAF allowlist
+    clears this. A retry cannot. If the SQS message stayed, each
+    redelivery would request a new restore and send a new email. Thus,
+    the message is dropped, and the operator requests the restore again
+    after the fix. Return DOWNLOAD_ACCESS_DENIED, or False if the delete
+    failed."""
+
+    current_app.logger.error(
+        f"'{basename}' CloudFront refused the signed URL, but the object is "
+        f"readable at S3; check the key pair, the key group, and the WAF "
+        f"allowlist, then request the restore again"
+    )
+    if sqs_receipt_handle:
+        if not delete_sqs_message(
+            sqs_client, sqs_receipt_handle, note="CloudFront access fault"
+        ):
+            return False
+    return DOWNLOAD_ACCESS_DENIED
+
+
 def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_response):
     """Hand the download to the next restore-completed notification.
 
@@ -1208,8 +1312,9 @@ def aws_download(key, basename, sqs_receipt_handle=None):
     Return DOWNLOAD_OBJECT_MISSING if there is no such object at AWS.
     Return DOWNLOAD_RESTORE_PENDING if the object is in cold storage.
     Then the completion notification of the restore triggers the
-    download again. These 3 values are truthy. They mean that the SQS
-    message was handled. Return False if the retry budget was used up,
+    download again. Return DOWNLOAD_ACCESS_DENIED if CloudFront refused
+    an object that S3 can read. These 4 values are truthy. They mean
+    that the SQS message was handled. Return False if the retry budget was used up,
     or if the SQS message could not be deleted.
 
     When AWS_DOWNLOAD_VIA_CDN is set, the bytes come through CloudFront
@@ -1232,15 +1337,15 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
     via_cdn = cdn_download_enabled()
     if via_cdn:
-        missing = missing_cdn_settings()
-        if missing:
+        problem = cdn_settings_problem()
+        if problem:
             # A silent fallback to S3 egress would spend money that the
             # operator chose not to spend. The SQS message stays in the
             # queue for a later delivery.
 
             current_app.logger.error(
                 f"'{basename}' CloudFront download is enabled, but "
-                f"{', '.join(missing)} not set; giving up"
+                f"{problem}; giving up"
             )
             return False
 
@@ -1269,6 +1374,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                 "HTTPStatusCode"
             )
             if error_code in ("404", "NoSuchKey") or status_code == 404:
+                _discard_partial(destination)
                 return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
 
             elif error_code == "InvalidObjectState":
@@ -1281,6 +1387,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
                     current_app.logger.error(traceback.format_exc())
                     retry = _spend_download_retry(retry)
                     continue
+                _discard_partial(destination)
                 return _defer_to_restore(
                     sqs_client, key, basename, sqs_receipt_handle, head_response
                 )
@@ -1299,28 +1406,48 @@ def aws_download(key, basename, sqs_receipt_handle=None):
 
         except CdnDownloadError as error:
             if error.status_code == 404:
+                _discard_partial(destination)
                 return _resolve_missing_object(sqs_client, basename, sqs_receipt_handle)
 
             elif error.status_code == 403:
-                # A 403 from CloudFront has 3 possible causes. The object
-                # is back in cold storage. The signature or the key group
-                # is wrong. The WAF allowlist does not hold this address.
-                # The S3 API tells the first apart from the other two.
+                # A 403 from CloudFront has 4 possible causes. The object
+                # does not exist (the bucket policy grants no list right,
+                # so S3 says 403, not 404). The object is back in cold
+                # storage. The signature or the key group is wrong. The
+                # WAF allowlist does not hold this address. The S3 API
+                # tells the first two apart from the other two.
 
                 try:
                     head_response = s3_client.head_object(Bucket=bucket, Key=key)
+                except botocore.exceptions.ClientError as head_error:
+                    head_code = str(
+                        head_error.response.get("Error", {}).get("Code", "")
+                    )
+                    head_status = head_error.response.get("ResponseMetadata", {}).get(
+                        "HTTPStatusCode"
+                    )
+                    if (
+                        head_code in ("404", "NoSuchKey", "NotFound")
+                        or head_status == 404
+                    ):
+                        _discard_partial(destination)
+                        return _resolve_missing_object(
+                            sqs_client, basename, sqs_receipt_handle
+                        )
+                    current_app.logger.error(traceback.format_exc())
+                    retry = _spend_download_retry(retry)
+                    continue
                 except Exception:
                     current_app.logger.error(traceback.format_exc())
                     retry = _spend_download_retry(retry)
                     continue
                 if _object_is_readable(head_response):
-                    current_app.logger.error(
-                        f"'{basename}' CloudFront refused the signed URL, but "
-                        f"the object is readable at S3; check the key pair, "
-                        f"the key group, and the WAF allowlist; giving up"
+                    _discard_partial(destination)
+                    return _refuse_access_fault(
+                        sqs_client, basename, sqs_receipt_handle
                     )
-                    retry = 0
                 else:
+                    _discard_partial(destination)
                     return _defer_to_restore(
                         sqs_client, key, basename, sqs_receipt_handle, head_response
                     )
@@ -1377,14 +1504,7 @@ def aws_download(key, basename, sqs_receipt_handle=None):
         f"'{basename}' could not be downloaded from {source}; giving up"
     )
 
-    # The import scan skips dotfiles. Without this step, an abandoned
-    # partial download would stay invisible in the import directory
-    # forever.
-
-    try:
-        os.remove(destination)
-    except OSError:
-        pass
+    _discard_partial(destination)
     return False
 
 

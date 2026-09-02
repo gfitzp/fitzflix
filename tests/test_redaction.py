@@ -95,3 +95,15 @@ def test_app_logger_carries_the_redactor(app, caplog):
         )
     assert "live-key-value" not in caplog.text
     assert f"api_key={REDACTED}&x=1" in caplog.text
+
+
+def test_path_valued_settings_are_not_secrets():
+    """Test that a setting that names a file keeps its path in logs.
+
+    CDN_PRIVATE_KEY ends in KEY, but its value is a path. A blanked path
+    would hide which file is missing."""
+
+    secrets = secret_values(
+        {"CDN_PRIVATE_KEY": "/etc/fitzflix/cdn-key.pem", "TMDB_API_KEY": "abcdef123456"}
+    )
+    assert secrets == ["abcdef123456"]

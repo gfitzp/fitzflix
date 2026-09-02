@@ -15,11 +15,15 @@ import pytest
 
 
 class _FakeResponse:
-    """A streamed HTTP response with a fixed status and body."""
+    """A streamed HTTP response with a fixed status and body.
 
-    def __init__(self, status_code, body=b""):
+    A body that stops after fail_after bytes raises a transport error,
+    as a dropped connection does."""
+
+    def __init__(self, status_code, body=b"", fail_after=None):
         self.status_code = status_code
         self._body = body
+        self._fail_after = fail_after
         self.headers = {"Content-Length": str(len(body))}
 
     def __enter__(self):
@@ -29,8 +33,16 @@ class _FakeResponse:
         return False
 
     def iter_content(self, chunk_size):
+        import requests
+
+        sent = 0
         for start in range(0, len(self._body), chunk_size):
-            yield self._body[start : start + chunk_size]
+            chunk = self._body[start : start + chunk_size]
+            if self._fail_after is not None and sent + len(chunk) > self._fail_after:
+                yield chunk[: self._fail_after - sent]
+                raise requests.exceptions.ConnectionError("dropped")
+            sent += len(chunk)
+            yield chunk
 
 
 class _FakeS3:
@@ -81,12 +93,15 @@ def cdn(app, monkeypatch):
         record["signed"].append(key)
         return f"https://d1.cloudfront.net/{key}?Signature=n{len(record['signed'])}"
 
-    def fake_get(url, stream=True, timeout=None):
+    def fake_get(url, stream=True, timeout=None, headers=None):
         record["requested"].append(url)
+        record.setdefault("headers", []).append(headers or {})
         return record["responses"].pop(0)
 
     monkeypatch.setattr(aws_storage, "cdn_signed_url", fake_sign)
     monkeypatch.setattr(aws_storage, "CDN_HTTP_GET", fake_get)
+    # The signer is stubbed, so the key file is not read here
+    monkeypatch.setattr(aws_storage, "cdn_settings_problem", lambda: None)
     return record
 
 
@@ -359,7 +374,7 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
 
     The HEAD shows a restored copy. Thus, the 403 comes from the
     signature or from the WAF allowlist, and a retry cannot clear it.
-    The function gives up, keeps the SQS message, and removes the
+    The function gives up, drops the SQS message, and removes the
     partial file."""
 
     from app import aws_storage
@@ -378,11 +393,17 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
 
     with app.app_context():
-        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r403") is False
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r403")
+            == aws_storage.DOWNLOAD_ACCESS_DENIED
+        )
         assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
 
+    # The message is dropped. A kept message would request a restore and
+    # send an email on each redelivery, for a fault only a config change
+    # clears.
     assert restored == []
-    assert sqs.deleted == []
+    assert sqs.deleted == ["r403"]
     assert len(cdn["signed"]) == 1
 
 
@@ -418,7 +439,7 @@ def test_cdn_transport_error_spends_a_retry(app, monkeypatch, cdn, caplog):
 
     calls = []
 
-    def flaky_get(url, stream=True, timeout=None):
+    def flaky_get(url, stream=True, timeout=None, headers=None):
         calls.append(url)
         if len(calls) == 1:
             raise requests.exceptions.ConnectionError(
@@ -530,3 +551,155 @@ def test_cdn_signed_url_verifies_with_the_public_key(app, monkeypatch, tmp_path)
     private_key.public_key().verify(
         signature, policy.encode("utf8"), padding.PKCS1v15(), hashes.SHA1()
     )
+
+
+def _client_error(status, code):
+    import botocore.exceptions
+
+    return botocore.exceptions.ClientError(
+        {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}},
+        "HeadObject",
+    )
+
+
+def test_cdn_403_on_a_missing_object_is_a_missing_object(app, monkeypatch, cdn):
+    """Test that a 403 for a key that does not exist reports it missing.
+
+    The bucket policy grants no list right. Thus, S3 says 403 for a
+    missing key, and CloudFront forwards it. The HEAD says 404."""
+
+    from app import aws_storage
+
+    cdn["responses"] = [_FakeResponse(403)]
+    sqs = _FakeSQS()
+    s3 = _FakeS3()
+    heads = [{"ContentLength": 3}, _client_error(404, "404")]
+
+    def head_object(Bucket, Key):
+        head = heads.pop(0)
+        if isinstance(head, Exception):
+            raise head
+        return head
+
+    s3.head_object = head_object
+    _wire(monkeypatch, s3, sqs)
+
+    with app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r403")
+            == aws_storage.DOWNLOAD_OBJECT_MISSING
+        )
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
+
+    assert sqs.deleted == ["r403"]
+    assert len(cdn["signed"]) == 1
+
+
+def test_early_return_removes_the_partial_file(app, monkeypatch, cdn):
+    """Test that a partial file does not survive a terminal result.
+
+    The first attempt drops mid-body and leaves bytes on disk. The second
+    gets a 404. The partial dotfile must go with the message."""
+
+    from app import aws_storage
+
+    cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), _FakeResponse(404)]
+    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+
+    with app.app_context():
+        partial = os.path.join(app.config["IMPORT_DIR"], ".x.mkv")
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv", "r")
+            == aws_storage.DOWNLOAD_OBJECT_MISSING
+        )
+        assert not os.path.exists(partial)
+
+
+def test_cdn_resumes_a_dropped_download_with_a_range(app, monkeypatch, cdn):
+    """Test that a retry continues from the bytes already on disk.
+
+    The first attempt drops after 2 of 3 bytes. The second sends a Range
+    header and gets a 206 with the last byte. The file is complete."""
+
+    from app import aws_storage
+
+    rest = _FakeResponse(206, b"n")
+    cdn["responses"] = [_FakeResponse(200, b"cdn", fail_after=2), rest]
+    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+
+    with app.app_context():
+        assert (
+            aws_storage.aws_download("untouched/x.mkv", "x.mkv")
+            == aws_storage.DOWNLOAD_COMPLETE
+        )
+        landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
+        assert open(landed, "rb").read() == b"cdn"
+
+    assert cdn["headers"] == [{}, {"Range": "bytes=2-"}]
+    assert len(cdn["signed"]) == 2
+
+
+def test_cdn_body_with_no_known_size_is_not_trusted(app, monkeypatch, cdn):
+    """Test that a body with no Content-Length and no S3 size fails.
+
+    Neither guard can run. Thus, the attempt fails rather than rename
+    an unchecked body into a visible import."""
+
+    from app import aws_storage
+
+    responses = []
+    for _ in range(aws_storage.MAX_DOWNLOAD_RETRIES):
+        response = _FakeResponse(200, b"cd")
+        response.headers = {}
+        responses.append(response)
+    cdn["responses"] = responses
+    _wire(monkeypatch, _FakeS3(head={"ContentLength": 0}), _FakeSQS())
+
+    with app.app_context():
+        landed = os.path.join(app.config["IMPORT_DIR"], "x.mkv")
+        if os.path.exists(landed):  # left by an earlier test in this session
+            os.remove(landed)
+        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], "x.mkv"))
+        assert not os.path.exists(os.path.join(app.config["IMPORT_DIR"], ".x.mkv"))
+
+
+def test_unreadable_private_key_fails_fast(app, monkeypatch, tmp_path):
+    """Test that a key file this process cannot read is a config fault.
+
+    No HTTP request goes out, and the message names the setting."""
+
+    from app import aws_storage
+
+    monkeypatch.setitem(app.config, "AWS_DOWNLOAD_VIA_CDN", True)
+    monkeypatch.setitem(app.config, "CDN_DOMAIN", "d1.cloudfront.net")
+    monkeypatch.setitem(app.config, "CDN_KEY_PAIR_ID", "KTEST")
+    monkeypatch.setitem(app.config, "CDN_PRIVATE_KEY", str(tmp_path / "missing.pem"))
+    requested = []
+    monkeypatch.setattr(
+        aws_storage, "CDN_HTTP_GET", lambda *a, **k: requested.append(a)
+    )
+    _wire(monkeypatch, _FakeS3(), _FakeSQS())
+
+    with app.app_context():
+        assert "CDN_PRIVATE_KEY cannot be read" in aws_storage.cdn_settings_problem()
+        assert aws_storage.aws_download("untouched/x.mkv", "x.mkv") is False
+    assert requested == []
+
+    (tmp_path / "missing.pem").write_text("not a key")
+    with app.app_context():
+        assert "does not parse" in aws_storage.cdn_settings_problem()
+
+
+def test_archive_rename_defers_on_an_expired_restore(app):
+    """Test that the rename path reads restore state the same way.
+
+    A restored copy whose expiry date has passed is not copyable."""
+
+    from app.aws_storage import _object_is_readable
+
+    head = {
+        "StorageClass": "DEEP_ARCHIVE",
+        "Restore": 'ongoing-request="false", expiry-date="Fri, 01 Jan 2021 00:00:00 GMT"',
+    }
+    assert not _object_is_readable(head)
