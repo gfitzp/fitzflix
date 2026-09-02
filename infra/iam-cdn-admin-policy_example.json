@@ -1,0 +1,71 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFrontCdnLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:ListDistributions",
+        "cloudfront:ListPublicKeys",
+        "cloudfront:ListKeyGroups",
+        "cloudfront:ListOriginAccessControls",
+        "cloudfront:CreateDistribution",
+        "cloudfront:CreatePublicKey",
+        "cloudfront:CreateKeyGroup",
+        "cloudfront:CreateOriginAccessControl",
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:GetPublicKey",
+        "cloudfront:GetKeyGroup",
+        "cloudfront:GetOriginAccessControl",
+        "cloudfront:UpdateDistribution",
+        "cloudfront:DeleteDistribution",
+        "cloudfront:DeletePublicKey",
+        "cloudfront:DeleteKeyGroup",
+        "cloudfront:DeleteOriginAccessControl"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "WafIpAllowlistLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "wafv2:ListIPSets",
+        "wafv2:ListWebACLs",
+        "wafv2:CreateIPSet",
+        "wafv2:CreateWebACL",
+        "wafv2:GetIPSet",
+        "wafv2:GetWebACL",
+        "wafv2:UpdateIPSet",
+        "wafv2:DeleteIPSet",
+        "wafv2:DeleteWebACL",
+        "wafv2:AssociateWebACL",
+        "wafv2:DisassociateWebACL"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ArchiveBucketPolicyAdmin",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetBucketPolicy",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy"
+      ],
+      "Resource": "arn:aws:s3:::YOUR_BUCKET_NAME"
+    },
+    {
+      "Sid": "AccessPointLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateAccessPoint",
+        "s3:GetAccessPoint",
+        "s3:GetAccessPointPolicy",
+        "s3:PutAccessPointPolicy",
+        "s3:DeleteAccessPoint"
+      ],
+      "Resource": "arn:aws:s3:YOUR_REGION:YOUR_ACCOUNT_ID:accesspoint/fitzflix-cdn-ap"
+    }
+  ]
+}

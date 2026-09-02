@@ -50,6 +50,23 @@ def test_redactor_blanks_query_keys_and_known_values():
     assert f"the bare key {REDACTED}" in redacted
 
 
+def test_redactor_blanks_a_cloudfront_signature():
+    """Test that a CloudFront signed URL loses its Signature parameter.
+
+    A transport error from requests names the full URL, with the query.
+    Without the signature, the URL can fetch nothing."""
+
+    redactor = SecretRedactor({})
+    text = (
+        "Max retries exceeded with url: /untouched/x.mkv?Expires=1788366310"
+        "&Signature=QiX88rSfoOePSop-RYLjplbfJEVJi3XB8fuoupW1vjqgKAK05~V36bk"
+        "&Key-Pair-Id=KTEST (Caused by NameResolutionError)"
+    )
+    redacted = redactor.redact(text)
+    assert "QiX88rSfoOePSop" not in redacted
+    assert f"&Signature={REDACTED}&Key-Pair-Id=KTEST" in redacted
+
+
 def test_filter_scrubs_message_args_and_traceback(caplog):
     logger = logging.getLogger("test_redaction")
     logger.addFilter(SecretRedactor({"PLEX_TOKEN": "plextoken-abcdef"}))

@@ -32,8 +32,10 @@ REDACTED = "[redacted]"
 SECRET_SETTING = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD)$")
 
 # Query parameters that carry credentials. The filter blanks them by name.
+# A CloudFront signed URL is a bearer credential while its Signature
+# parameter is intact. Thus, the filter blanks that parameter too.
 SECRET_PARAM = re.compile(
-    r"(?i)\b((?:api_?key|x-plex-token|token|password|secret)=)[^&\s'\"]+"
+    r"(?i)\b((?:api_?key|x-plex-token|token|password|secret|signature)=)[^&\s'\"]+"
 )
 
 # The filter does not replace values shorter than this as secrets. A

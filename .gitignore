@@ -10,5 +10,6 @@ app.db
 /backups
 .pytest_cache/
 .claude/launch.json
+/infra/iam-cdn-admin-policy.json
 app/frame_pool/
 .claude

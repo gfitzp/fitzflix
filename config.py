@@ -128,6 +128,17 @@ class Config(object):
     FORCE_UPLOAD                        = os.environ.get("FORCE_UPLOAD") is not None
     AWS_SQS_URL                         = os.environ.get("AWS_SQS_URL") or None
 
+    # CloudFront download path for a library rebuild (refer to the README
+    # section "Downloading through CloudFront" and to infra/README.md).
+    # Off by default. When it is on, each restore download fetches the
+    # bytes through a CloudFront distribution with a signed URL, not
+    # through S3 egress. The restore requests still use the S3 API.
+    AWS_DOWNLOAD_VIA_CDN                = os.environ.get("AWS_DOWNLOAD_VIA_CDN") is not None
+    CDN_DOMAIN                          = os.environ.get("CDN_DOMAIN") or None
+    CDN_KEY_PAIR_ID                     = os.environ.get("CDN_KEY_PAIR_ID") or None
+    CDN_PRIVATE_KEY                     = os.environ.get("CDN_PRIVATE_KEY") or None
+    CDN_URL_EXPIRY                      = int(os.environ.get("CDN_URL_EXPIRY") or 3600)
+
     # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
     AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"
     MEDIACONVERT_ENDPOINT               = os.environ.get("MEDIACONVERT_ENDPOINT") or "https://mediaconvert.us-east-1.amazonaws.com"

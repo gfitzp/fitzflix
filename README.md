@@ -379,6 +379,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `PREVENT_ACCOUNT_CREATION` | Disables the registration page when an admin account exists |
 | `ARCHIVE_ORIGINAL_MEDIA` | Uploads each imported original file to AWS S3 for archival |
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | The credentials for the archival bucket. Uploads need all three. |
+| `AWS_DOWNLOAD_VIA_CDN`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY` | The CloudFront download path for a library rebuild. The flag turns it on. The other three name the distribution, the CloudFront key pair, and the local private key file (refer to [Downloading through CloudFront](#downloading-through-cloudfront)). |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking. The URL and the token enable the 15-minute history poller. The webhook token protects the `/api/plex/webhook/<token>` endpoint (refer to [Tracking Plex watches](#tracking-plex-watches)). |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
@@ -576,6 +577,20 @@ The archived originals are in S3 Glacier Deep Archive. Thus, a restore has two s
 
 1. On the detail page of the file, request the download. Fitzflix asks AWS to restore the object from Glacier. A restore from Deep Archive usually takes some hours. To restore many files, use the **Restore series from AWS** button on a TV series page. A season page has the **Restore season from AWS** button. Each button requests each best-ranked archived file at the same time. A restore has a cost. Thus, each restore button shows an estimated cost, and you must enter your account password to confirm. The estimate includes the fee for each request, the retrieval fee for each GB, and the transfer fee for each GB. A season or series restore uses the cheaper Bulk retrieval tier. A single file uses the Standard tier. Set the values `AWS_RESTORE_PER_1K_REQUEST_COST`, `AWS_RESTORE_PER_1K_REQUEST_BULK_COST`, `AWS_RESTORE_PER_GB_COST`, `AWS_RESTORE_PER_GB_BULK_COST`, and `AWS_DOWNLOAD_PER_GB_COST` in `.env` to match the current AWS prices.
 2. When AWS completes the restore, it sends a notification to the SQS queue (`AWS_SQS_URL`). Configure the S3 bucket to send its restore-completed event notifications to that queue. Fitzflix polls the queue each hour and downloads each completed restore into the library. To poll now, run `flask sqs`.
+
+### Downloading through CloudFront
+
+A download from S3 costs about $0.09 for each GB. Thus, a full rebuild of the library costs about $90 for each TB. A CloudFront distribution in front of the bucket removes that charge. The first TB in a month is free, and the Pro pricing plan covers 50 TB for $15 a month. Fitzflix can fetch the bytes of each restore download through such a distribution. This is a mode for a rebuild, not a permanent path. Stand the distribution up when a rebuild starts, and tear it down when it is complete.
+
+The scripts in `infra/` make and remove the distribution and its supporting resources. Refer to `infra/README.md` for the procedure. In short:
+
+1. Run `infra/setup-cloudfront-cdn.sh` with a temporary admin profile. It makes the distribution and its supporting resources. These are an RSA key pair, a CloudFront key group, an S3 access point, and an origin access control. An optional WAF allowlist admits only your public IP. The private key stays on this machine. The bucket stays private. Only a URL that the local key signs can read an object.
+2. Enroll in a flat-rate pricing plan on the "Pricing plans" page of the CloudFront console. No API can do this step.
+3. Set `AWS_DOWNLOAD_VIA_CDN=1`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, and `CDN_PRIVATE_KEY` in `.env`, and restart the workers. The setup script prints the lines.
+4. Request the restores as usual. Only the download leg changes. Fitzflix signs a new URL for each attempt, and it streams the object into the import directory. The restore requests, the SQS notifications, and the size check stay on the S3 API.
+5. When the rebuild is complete, run `infra/teardown-cloudfront-cdn.sh`, and remove the four settings from `.env`.
+
+To test the path, run `flask aws cdn-url "untouched/<key>"`. It prints a signed URL that curl can fetch. A CloudFront 403 has three possible causes: the object is back in cold storage, the signature is wrong, or the WAF allowlist does not hold your address. Fitzflix asks S3 for the restore state to tell them apart. An object in cold storage gets a new restore request. A readable object with a 403 is an access fault, and the download gives up.
 
 
 ## Disaster recovery

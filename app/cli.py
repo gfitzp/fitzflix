@@ -187,6 +187,29 @@ def register(app):
             + ("" if created else " — everything was already in place")
         )
 
+    @aws.command("cdn-url")
+    @click.argument("key")
+    @click.option(
+        "--expires",
+        default=600,
+        show_default=True,
+        help="Seconds until the signed URL expires.",
+    )
+    def cdn_url(key, expires):
+        """Print a signed CloudFront URL for one object key.
+
+        Use it with curl to test the CloudFront download path (refer to
+        infra/README.md). KEY is the full object key, for example
+        "untouched/Film (2021) - [Bluray-1080p].mkv". The settings
+        CDN_DOMAIN, CDN_KEY_PAIR_ID, and CDN_PRIVATE_KEY must be set."""
+
+        from app.aws_storage import cdn_signed_url, missing_cdn_settings
+
+        missing = missing_cdn_settings()
+        if missing:
+            raise click.ClickException(f"{', '.join(missing)} must be set in .env")
+        click.echo(cdn_signed_url(key, expires))
+
     @app.cli.group()
     def recs():
         """Manage the film recommendation engine."""
