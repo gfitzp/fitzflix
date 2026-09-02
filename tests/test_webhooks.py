@@ -13,7 +13,17 @@ from datetime import date, timedelta
 import pytest
 
 from app import safe_job_id
-from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL
+from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL, MEMBER_API_KEY, MEMBER_EMAIL
+
+
+@pytest.fixture(autouse=True)
+def arr_roots(app, monkeypatch, tmp_path):
+    """The webhooks only act on files under the apps' configured root
+    folders; each test's tmp_path plays both (and is deliberately NOT
+    the library directory, proving the roots are their own setting)."""
+
+    monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(tmp_path)])
+    monkeypatch.setitem(app.config, "SONARR_ROOT_FOLDERS", [str(tmp_path)])
 
 
 def auth_header(email=ADMIN_EMAIL, key=ADMIN_API_KEY):
@@ -41,6 +51,16 @@ class TestWebhookAuth:
             headers=auth_header(email="nobody@example.test"),
         )
         assert response.status_code == 401
+
+    def test_rejects_a_member_key(self, client, endpoint):
+        # A valid key isn't enough: the handlers move files by the
+        # payload's paths, so only an admin's key opens them
+        response = client.post(
+            endpoint,
+            json={"eventType": "Test"},
+            headers=auth_header(email=MEMBER_EMAIL, key=MEMBER_API_KEY),
+        )
+        assert response.status_code == 403
 
     def test_accepts_test_event(self, client, endpoint):
         response = client.post(
@@ -270,3 +290,54 @@ def test_mark_grab_failed_finds_grab_and_posts(app, monkeypatch):
         assert arr_module.mark_grab_failed("Radarr", "http://r", "key", "dl1") is True
     assert requests_made[0][0] == "GET"
     assert requests_made[1] == ("POST", "http://r/api/v3/history/failed/42")
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["/etc/hosts", "../../outside/secret.mkv", "Season 01/../../outside/secret.mkv"],
+)
+def test_download_outside_the_library_root_is_refused(
+    app, client, tmp_path, relative_path
+):
+    """An absolute or parent-hopping relativePath — or a folder outside
+    the root — never reaches the rename, the probe, or the queue."""
+
+    outside = tmp_path.parent / "outside"
+    outside.mkdir(exist_ok=True)
+    secret = outside / "secret.mkv"
+    secret.write_bytes(b"not yours")
+
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 3, "folderPath": str(tmp_path / "Heat (1995)")},
+            "movieFile": {"relativePath": relative_path, "quality": "Bluray-1080p"},
+            "customFormatInfo": {"customFormatScore": 2000},
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 400
+    assert secret.exists()
+    assert app.import_queue.jobs == []
+
+
+def test_download_folder_outside_the_root_is_refused(app, client, tmp_path):
+    outside = tmp_path.parent / "elsewhere" / "Heat (1995)"
+    outside.mkdir(parents=True, exist_ok=True)
+    original = "Heat (1995) - [Bluray-1080p].mkv"
+    (outside / original).write_bytes(b"movie")
+
+    response = client.post(
+        "/api/sonarr/add",
+        json={
+            "eventType": "Download",
+            "series": {"id": 7, "title": "Heat", "path": str(outside)},
+            "episodeFile": {"relativePath": original, "quality": "Bluray-1080p"},
+            "episodes": [{"airDate": "2005-03-26"}],
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 400
+    assert (outside / original).exists()
+    assert app.import_queue.jobs == []

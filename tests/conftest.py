@@ -351,3 +351,26 @@ def log_capture(app):
     app.logger.addHandler(handler)
     yield handler.records
     app.logger.removeHandler(handler)
+
+
+def dvr_rebuild_jobs(app):
+    """The lineup rebuilds waiting on the maintenance queue — what the
+    DVR editor and the Criterion scrapers enqueue."""
+
+    return [
+        job
+        for job in app.maintenance_queue.jobs
+        if job.func_name == "app.dvr.build_channel_lineups"
+    ]
+
+
+def page_csrf_token(client, path="/profile"):
+    """The csrf token a signed-in client's page renders — what a
+    hand-built POST to a form-checking route must carry."""
+
+    import re
+
+    page = client.get(path).get_data(as_text=True)
+    match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page)
+    assert match, f"no csrf token found on {path}"
+    return match.group(1)

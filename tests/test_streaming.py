@@ -1038,3 +1038,74 @@ def test_list_pages_never_fetch_availability_inline(app, admin_client, monkeypat
     ]
     assert len(warm_jobs) == 1
     assert warm_jobs[0].args == ([951],)
+
+
+def test_synthesized_matches_read_the_registry_once(app, monkeypatch):
+    # The rec-shelf pool asks per candidate film; one registry parse
+    # (or one network timeout, with the registry cold) per context
+
+    from datetime import date
+
+    import app.streaming as streaming
+
+    reads = []
+
+    def counting_registry():
+        reads.append(1)
+        return [CRITERION]
+
+    monkeypatch.setattr(streaming, "provider_registry", counting_registry)
+    plant_newly_added(app, 22171, date.today())
+
+    with app.app_context():
+        first = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+        second = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+        # Callers may annotate their copy without touching the cache
+        first[0]["leaving"] = "never"
+        third = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+
+    assert len(reads) == 1
+    assert second[0]["logo_path"] == "/criterion.jpg"
+    assert "leaving" not in third[0]
+
+
+def test_registry_stand_in_is_not_cached_across_a_recovery(app, monkeypatch):
+    # A registry that comes back mid-context (TMDB blip at the start of
+    # a long worker task) is picked up by the next synthesized match
+
+    from datetime import date
+
+    import app.streaming as streaming
+
+    answers = [[], [CRITERION]]
+    monkeypatch.setattr(streaming, "provider_registry", lambda: answers.pop(0))
+    plant_newly_added(app, 22171, date.today())
+
+    with app.app_context():
+        first = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+        second = streaming.streaming_matches(None, {258}, tmdb_id=22171)
+
+    assert first[0]["logo_path"] is None
+    assert second[0]["logo_path"] == "/criterion.jpg"
+
+
+def test_provider_registry_remembers_a_failed_fetch_briefly(app, monkeypatch):
+    # One timeout per outage, not one per film asking
+
+    import app.streaming as streaming
+
+    calls = []
+
+    def failing_tmdb_get(url, **kwargs):
+        calls.append(url)
+        raise RuntimeError("down")
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(streaming, "tmdb_get", failing_tmdb_get)
+
+    with app.app_context():
+        assert streaming.provider_registry() == []
+        assert streaming.provider_registry() == []
+
+    assert len(calls) == 1
+    assert 0 < app.redis.ttl(streaming.REGISTRY_KEY) <= streaming.REGISTRY_RETRY_SECONDS

@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from flask import current_app
+from flask import current_app, g
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -36,6 +36,7 @@ WATCH_REGION = "US"
 CACHE_SECONDS = 2 * 86400
 REFRESH_WORKERS = 20
 REGISTRY_KEY = "fitzflix:tmdb:watch-providers:registry"
+REGISTRY_RETRY_SECONDS = 300
 AVAILABILITY_KEY = "fitzflix:tmdb:watch-providers:movie:{tmdb_id}"
 
 
@@ -62,7 +63,11 @@ def provider_registry():
         r.raise_for_status()
         results = r.json().get("results") or []
     except Exception:
+        # A failed fetch is remembered briefly so the callers that ask
+        # per film (rec-shelf pool, DVR build, availability alerts)
+        # pay one timeout per outage, not one per film
         current_app.logger.warning(traceback.format_exc())
+        current_app.redis.set(REGISTRY_KEY, "[]", ex=REGISTRY_RETRY_SECONDS)
         return []
 
     providers = [
@@ -242,22 +247,34 @@ def _criterion_provider():
 
     A synthesized match renders with this name and logo. If Fitzflix
     cannot read the registry, return a stand-in without a logo. The
-    badge template skips the image for a null logo_path."""
+    badge template skips the image for a null logo_path. A registry hit
+    is kept on flask.g for the app context. The rec-shelf pool asks for
+    each candidate film, and each registry read parses the full provider
+    list. The stand-in is never cached. Thus, a registry that comes back
+    in the same context is picked up. The retry window of
+    provider_registry bounds the cost of a new request while TMDB is
+    down."""
 
     from app.leaving_criterion import CRITERION_PROVIDER_ID
 
-    for provider in provider_registry():
-        if provider["provider_id"] == CRITERION_PROVIDER_ID:
-            return {
-                "provider_id": provider["provider_id"],
-                "provider_name": provider["provider_name"],
-                "logo_path": provider["logo_path"],
-            }
-    return {
-        "provider_id": CRITERION_PROVIDER_ID,
-        "provider_name": "Criterion Channel",
-        "logo_path": None,
-    }
+    entry = getattr(g, "_criterion_provider_entry", None)
+    if entry is None:
+        for provider in provider_registry():
+            if provider["provider_id"] == CRITERION_PROVIDER_ID:
+                entry = {
+                    "provider_id": provider["provider_id"],
+                    "provider_name": provider["provider_name"],
+                    "logo_path": provider["logo_path"],
+                }
+                g._criterion_provider_entry = entry
+                break
+    if entry is None:
+        return {
+            "provider_id": CRITERION_PROVIDER_ID,
+            "provider_name": "Criterion Channel",
+            "logo_path": None,
+        }
+    return dict(entry)
 
 
 def streaming_matches(availability, provider_ids, tmdb_id=None):

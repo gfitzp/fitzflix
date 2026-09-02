@@ -8,6 +8,7 @@ import json
 
 from datetime import date, timedelta
 
+from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 
 LEAVING_HTML = """
@@ -305,6 +306,11 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
     monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
     monkeypatch.setattr(streaming_rail, "tmdb_get", fake_tmdb_get)
+    from app import db
+
+    with app.app_context():
+        make_movie_file(make_movie("The Searchers", 1956, tmdb_id=3110), "DVD")
+        db.session.commit()
 
     assert leaving_criterion.refresh_leaving_criterion() is True
 
@@ -322,6 +328,12 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     assert stored["items"][1]["title"] == "Love & Mercy"
     assert stored["items"][1]["director"] == "Bill Pohlad"
     assert stored["items"][1]["year"] == 2015
+
+    # The new set reaches the DVR dial the same day (Sept 1 2026: the
+    # 6:30 build ran before the set landed at 11:38, and the Leaving
+    # Soon channel stayed dark until the next morning) — because The
+    # Searchers is owned; a set with no owned film changes no program
+    assert len(dvr_rebuild_jobs(app)) == 1
 
 
 def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
@@ -341,6 +353,7 @@ def test_refresh_task_noops_while_stored_set_is_current(app, monkeypatch):
 
     assert leaving_criterion.refresh_leaving_criterion() is True
     assert app.redis.get(leaving_criterion.LEAVING_KEY).decode() == planted
+    assert dvr_rebuild_jobs(app) == []
 
 
 def test_refresh_task_retries_once_stored_set_has_departed(app, monkeypatch):

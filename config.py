@@ -58,6 +58,12 @@ class Config(object):
     SESSION_COOKIE_SECURE               = PREFERRED_URL_SCHEME == "https"
     REMEMBER_COOKIE_SECURE              = PREFERRED_URL_SCHEME == "https"
     SESSION_COOKIE_SAMESITE             = "Lax"
+    # Flask-Login's remember cookie defaults to no SameSite at all, and a
+    # remembered user is re-authenticated from it on a cross-site POST
+    REMEMBER_COOKIE_SAMESITE            = "Lax"
+    # The signed-in session is the boundary for form tokens; Flask-WTF's
+    # one-hour default would fail the play buttons on any page left open
+    WTF_CSRF_TIME_LIMIT                 = None
 
     # Fitzflix core configuration
 
@@ -184,6 +190,9 @@ class Config(object):
     # Sonarr configuration
     SONARR_API_KEY                      = os.environ.get("SONARR_API_KEY") or None
     SONARR_URL                          = os.environ.get("SONARR_URL") or None
+    # Where Sonarr's root folders live as this host sees them (colon-separated);
+    # the import webhook only acts on files under one of them
+    SONARR_ROOT_FOLDERS                 = [p for p in (os.environ.get("SONARR_ROOT_FOLDERS") or "").split(":") if p] or [TV_LIBRARY]
 
     # Plex configuration. The URL and the token enable the watch-history
     # poller. The webhook token gates the /api/plex/webhook endpoint.
@@ -217,6 +226,8 @@ class Config(object):
     # Radarr configuration
     RADARR_API_KEY                      = os.environ.get("RADARR_API_KEY") or None
     RADARR_URL                          = os.environ.get("RADARR_URL") or None
+    # Where Radarr's root folders live as this host sees them (colon-separated)
+    RADARR_ROOT_FOLDERS                 = [p for p in (os.environ.get("RADARR_ROOT_FOLDERS") or "").split(":") if p] or [MOVIE_LIBRARY]
     RADARR_PROXY_URL                    = os.environ.get("RADARR_PROXY_URL") or RADARR_URL
 
     # TMDB configuration

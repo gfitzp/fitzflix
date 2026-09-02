@@ -34,14 +34,14 @@ from app.models import DVRChannel, Movie, TMDBGenre, TVSeries
 
 def _enqueue_rebuild(reason):
     """Queue a lineup rebuild. Thus, the stored dial matches the edited
-    definitions."""
+    definitions.
 
-    current_app.maintenance_queue.enqueue(
-        "app.dvr.build_channel_lineups",
-        args=(),
-        job_timeout=3600,
-        description=f"Building virtual DVR channel lineups ({reason})",
-    )
+    Return the job. Return None when a rebuild is already queued (that
+    rebuild picks up the edit), or when the DVR is not configured."""
+
+    from app.dvr import enqueue_lineup_rebuild
+
+    return enqueue_lineup_rebuild(reason)
 
 
 def _apply_form(channel, form):
@@ -241,8 +241,14 @@ def dvr_channels():
         return redirect(url_for("main.dvr_channels"))
 
     if action_form.rebuild_submit.data and action_form.validate_on_submit():
-        _enqueue_rebuild("manual")
-        flash("Fitzflix will rebuild the channel lineups.", "info")
+        if _enqueue_rebuild("manual"):
+            flash("Fitzflix will rebuild the channel lineups.", "info")
+        else:
+            flash(
+                "No rebuild queued. A rebuild is already waiting, or "
+                "DVR_TOKEN is not configured.",
+                "warning",
+            )
         return redirect(url_for("main.dvr_channels"))
 
     channels = DVRChannel.query.order_by(DVRChannel.number.asc()).all()

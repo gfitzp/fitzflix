@@ -7,8 +7,22 @@ do not air."""
 
 import re
 
+import pytest
+
 from app.models import DVRChannel, db
+from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file, make_tv_file, make_tv_series
+
+
+@pytest.fixture(autouse=True)
+def library_present(monkeypatch):
+    """These tests seed rows, not files: every row reads as on disk
+    and the shares as online."""
+
+    from app import dvr
+
+    monkeypatch.setattr(dvr, "_on_disk", lambda file: True)
+    monkeypatch.setattr(dvr, "_library_online", lambda: True)
 
 
 def csrf_token_from(page_html):
@@ -17,11 +31,7 @@ def csrf_token_from(page_html):
 
 
 def rebuild_jobs(app):
-    return [
-        job
-        for job in app.maintenance_queue.jobs
-        if job.func_name == "app.dvr.build_channel_lineups"
-    ]
+    return dvr_rebuild_jobs(app)
 
 
 def test_editor_requires_admin(client, user_client):
@@ -244,3 +254,21 @@ def test_build_honors_picks_and_disabled(app, monkeypatch):
     # the film at the end
     assert programs[-1]["title"] == "Jaws" or programs[-2]["title"] == "Jaws"
     assert len(programs) == 4
+
+
+def test_manual_rebuild_reports_when_nothing_was_queued(app, admin_client):
+    page = admin_client.get("/dvr/channels").get_data(as_text=True)
+    token = csrf_token_from(page)
+    first = admin_client.post(
+        "/dvr/channels",
+        data={"csrf_token": token, "rebuild_submit": "1"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "will rebuild the channel lineups" in first
+    second = admin_client.post(
+        "/dvr/channels",
+        data={"csrf_token": token, "rebuild_submit": "1"},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "No rebuild queued" in second
+    assert len(rebuild_jobs(app)) == 1

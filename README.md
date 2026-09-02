@@ -206,7 +206,9 @@ Fitzflix can operate downstream of Sonarr and Radarr, and import each file that 
 
 - URL: `http://<fitzflix host>:8000/api/sonarr/add` (Sonarr) or `http://<fitzflix host>:8000/api/radarr/add` (Radarr)
 - Method: `POST`, with the triggers **On Import** and **On Upgrade**
-- Credentials (HTTP Basic authentication): the username is the email address of a Fitzflix account. The password is the **API key** of that account. The admin page of the user shows the key. The endpoint does not accept the password of the account. You can make a new key on the admin page without a change to your login password.
+- Credentials (HTTP Basic authentication): the username is the email address of an **admin** account. The password is the **API key** of that account. The admin page of the user shows the key. The webhook renames and imports files at the paths in the payload. Thus, Fitzflix refuses the key of a member account (403). The endpoint does not accept the password of the account. You can make a new key on the admin page without a change to your login password.
+
+Fitzflix acts only on files below the root folders of the apps, as this host sees them. The settings `RADARR_ROOT_FOLDERS` and `SONARR_ROOT_FOLDERS` in `.env` give the folders, separated by colons. The defaults are the `Movies` and `TV Shows` library directories. If a webhook names a file at a different location, Fitzflix refuses it with a 400 and writes a log line.
 
 When a download completes, Fitzflix renames the file with a *lower* quality title before the import. The quality names for physical media are only for files that come from real discs. Fitzflix does not use `Remux` for downloads:
 
@@ -274,7 +276,7 @@ Restart Fitzflix after you set the value. Without the value, the Profile page do
 
 ### Per-user device setup (on the Profile page)
 
-Each user enters the IP address or the hostname of the device under **Profile → Playback Device**. The port is optional. The default port is `32500`, the Companion default:
+Each user enters the private-network IP address of the device under **Profile → Playback Device**. The port is optional. The default port is `32500`, the Companion default. Fitzflix does not accept hostnames. The play command carries a Plex token. Thus, the address must be a literal on a private range (RFC1918, link-local, or the 100.64/10 range of Tailscale):
 
 1. Find the IP address of the device. On an Apple TV, open **Settings → Network**. As an alternative, look in the client list of your router.
 2. Give the device a DHCP reservation or a static IP address. This keeps the address the same.

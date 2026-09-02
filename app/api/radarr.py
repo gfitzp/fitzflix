@@ -7,6 +7,7 @@ from app import safe_job_id
 from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
+    downloaded_path,
     import_event_webhook,
     import_source_incomplete,
     reject_incomplete_download,
@@ -20,10 +21,16 @@ def radarr_add(payload):
     """Receive the Radarr notification that a new video file was added."""
 
     response = jsonify(request.get_json())
-    downloaded_file_path = os.path.join(
-        payload["movie"].get("folderPath"),
-        payload["movieFile"].get("relativePath"),
-    )
+    folder = payload["movie"].get("folderPath")
+    relative = payload["movieFile"].get("relativePath")
+    downloaded_file_path = downloaded_path("Radarr", folder, relative)
+    if downloaded_file_path is None:
+        current_app.logger.warning(
+            f"Radarr webhook named a file outside RADARR_ROOT_FOLDERS "
+            f"({folder!r} + {relative!r}); refusing it"
+        )
+        response.status_code = 400
+        return response
 
     # A download that is truncated per its container never reaches the
     # pipeline. Fitzflix marks the grab as failed. Thus, Radarr blocklists

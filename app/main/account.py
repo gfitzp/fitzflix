@@ -6,7 +6,6 @@ editor, and the profile."""
 import csv
 import io
 import json
-import re
 import secrets
 
 
@@ -50,7 +49,12 @@ from app.infuse_player import (
     start_pairing,
     submit_pin,
 )
-from app.plex_player import probe_player, remote_playback_configured
+from app.plex_player import (
+    forget_home_token,
+    player_address,
+    probe_player,
+    remote_playback_configured,
+)
 from app.models import (
     Movie,
     User,
@@ -644,8 +648,11 @@ def profile():
     plex_form = PlexUsernameForm()
     if plex_form.plex_submit.data and plex_form.validate_on_submit():
         plex_username = (plex_form.plex_username.data or "").strip() or None
+        # Case-insensitive, the way the Plex Home match reads it
         taken = (
-            User.query.filter(User.plex_username == plex_username)
+            User.query.filter(
+                db.func.lower(User.plex_username) == plex_username.lower()
+            )
             .filter(User.id != current_user.id)
             .first()
             if plex_username
@@ -656,6 +663,8 @@ def profile():
         else:
             current_user.plex_username = plex_username
             db.session.commit()
+            # A cached Home token was minted for the OLD name
+            forget_home_token(current_user.id)
             if plex_username:
                 flash(
                     f"Plex watches by '{plex_username}' now count as yours.", "success"
@@ -665,9 +674,10 @@ def profile():
         return redirect(url_for("main.profile"))
 
     # The playback device of this user: the Plex player that the play
-    # buttons send films to. The user enters only an address (ip or
-    # hostname, with an optional port). The default port is 32500, the
-    # Companion port. Fitzflix probes the address. It reads the machine
+    # buttons send films to. The user enters a private-network IP
+    # address with an optional port. The default port is 32500, the
+    # Companion port. Fitzflix refuses hostnames (refer to
+    # player_address). Fitzflix probes the address. It reads the machine
     # id from the player itself. Thus, Fitzflix saves a device only if
     # it is reachable. A blank address removes the device.
 
@@ -682,11 +692,15 @@ def profile():
             current_user.plex_player_id = None
             db.session.commit()
             flash("Removed your playback device.", "success")
-        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That is not an ip:port or a hostname:port.", "danger")
+        elif player_address(address) is None:
+            flash(
+                "That is not a private-network ip:port. Fitzflix does not "
+                "accept hostnames, because the play command carries a Plex "
+                "token.",
+                "danger",
+            )
         else:
-            if ":" not in address.strip("[]"):
-                address = f"{address}:32500"
+            address = player_address(address)
             player = probe_player(address)
             if player is None:
                 flash(
@@ -722,11 +736,17 @@ def profile():
             current_user.infuse_player_credentials = None
             db.session.commit()
             flash("Removed your Infuse player.", "success")
-        elif not re.fullmatch(r"[A-Za-z0-9.\-:\[\]]+", address):
-            flash("That is not an ip:port or a hostname:port.", "danger")
+        elif player_address(address, default_port=COMPANION_PORT) is None:
+            # This is the same fence as the Plex device. The server
+            # connects to this address. Thus, it must be a private-network
+            # literal.
+            flash(
+                "That is not a private-network ip:port. Fitzflix does not "
+                "accept hostnames.",
+                "danger",
+            )
         else:
-            if ":" not in address.strip("[]"):
-                address = f"{address}:{COMPANION_PORT}"
+            address = player_address(address, default_port=COMPANION_PORT)
             if start_pairing(current_user.id, address):
                 flash(
                     "Look at the Apple TV. It shows a PIN in some seconds. "
