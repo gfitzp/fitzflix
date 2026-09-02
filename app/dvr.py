@@ -26,15 +26,12 @@ import json
 import os
 import re
 import subprocess
-import time
+import uuid
 
 from datetime import date, datetime, timezone
 from random import Random
 
 from flask import current_app
-from rq.exceptions import NoSuchJobError
-from rq.job import Job, JobStatus
-from rq.registry import StartedJobRegistry
 from werkzeug.local import LocalProxy
 
 from app import db, get_app
@@ -704,19 +701,14 @@ def seed_default_channels():
     return True
 
 
-def _job_live(queue, job_id):
-    """Return True if a job record with this id is still in flight."""
+def rebuild_queued(queue):
+    """Return True when a lineup rebuild waits on the queue.
 
-    try:
-        job = Job.fetch(job_id, connection=queue.connection)
-    except NoSuchJobError:
-        return False
-    return job.get_status() in (
-        JobStatus.QUEUED,
-        JobStatus.STARTED,
-        JobStatus.DEFERRED,
-        JobStatus.SCHEDULED,
-    )
+    The helper below queues rebuilds under ids that start with
+    REBUILD_JOB_ID. Thus, this is 1 read of the id list, not a fetch of
+    each queued job."""
+
+    return any(job_id.startswith(REBUILD_JOB_ID) for job_id in queue.job_ids)
 
 
 def enqueue_lineup_rebuild(reason, tmdb_ids=None):
@@ -727,6 +719,9 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
     function does nothing without a configured DVR. It does nothing
     while a rebuild is already queued. A RUNNING rebuild can have read
     the old inputs. Thus, a RUNNING rebuild does not count as queued.
+    Each job gets its own id. An id is never used again. rq keeps the
+    expiry of an old record under the same id. A queued job under that
+    id can then vanish before a worker reaches it (review, 2026-09-02).
     It does nothing when the given tmdb_ids include no owned film. The
     dial airs only owned copies. Thus, a Channel arrival that nobody
     owns cannot change a program. Return the job, or None when nothing
@@ -745,24 +740,12 @@ def enqueue_lineup_rebuild(reason, tmdb_ids=None):
         )
         if not owned:
             return None
-    # A deterministic job id makes the dedupe 1 read of the id list, not
-    # a fetch of each queued job. A RUNNING rebuild keeps its id. A
-    # rebuild that rq dequeued a moment ago, and that is not in the
-    # started registry yet, also keeps its id (live drill, 2026-09-02:
-    # a reuse of the id in that window overwrote the record of the
-    # running job). Thus, a trigger that arrives during a build queues
-    # under a timestamped id.
     queue = current_app.maintenance_queue
-    if any(job_id.startswith(REBUILD_JOB_ID) for job_id in queue.job_ids):
+    if rebuild_queued(queue):
         return None
-    job_id = REBUILD_JOB_ID
-    if job_id in StartedJobRegistry(queue=queue).get_job_ids() or _job_live(
-        queue, job_id
-    ):
-        job_id = f"{REBUILD_JOB_ID}-{int(time.time())}"
     return queue.enqueue(
         REBUILD_FUNC,
-        job_id=job_id,
+        job_id=f"{REBUILD_JOB_ID}-{uuid.uuid4().hex[:12]}",
         job_timeout=3600,
         description=f"Building virtual DVR channel lineups ({reason})",
     )
@@ -792,6 +775,16 @@ def build_channel_lineups(day=None):
         if not _library_online():
             current_app.logger.error(
                 "DVR: a library share is offline; keeping the stored lineups"
+            )
+            return True
+
+        # The nightly cron build has a random job id, so the dedupe in
+        # enqueue_lineup_rebuild cannot see it. When a triggered rebuild
+        # already waits behind this one, that rebuild has the fresher
+        # inputs. Thus, this one steps aside.
+        if rebuild_queued(current_app.maintenance_queue):
+            current_app.logger.info(
+                "DVR: a lineup rebuild is already queued; skipping this build"
             )
             return True
 

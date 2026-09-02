@@ -7,6 +7,16 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(basedir, ".env"))
 
 
+def _path_list(raw, default):
+    """Parse a colon-separated list of paths, or return the default.
+
+    Each entry is stripped. Thus, a space after a colon does not become
+    part of a path that a webhook root check then never matches."""
+
+    paths = [entry.strip() for entry in (raw or "").split(":")]
+    return [path for path in paths if path] or default
+
+
 def _mount_urls(raw):
     """Parse a comma-separated list of share URLs into {share name: URL}.
 
@@ -192,7 +202,7 @@ class Config(object):
     SONARR_URL                          = os.environ.get("SONARR_URL") or None
     # The root folders of Sonarr, as this host sees them (colon-separated).
     # The import webhook acts only on the files under one of them.
-    SONARR_ROOT_FOLDERS                 = [p for p in (os.environ.get("SONARR_ROOT_FOLDERS") or "").split(":") if p] or [TV_LIBRARY]
+    SONARR_ROOT_FOLDERS                 = _path_list(os.environ.get("SONARR_ROOT_FOLDERS"), [TV_LIBRARY])
 
     # Plex configuration. The URL and the token enable the watch-history
     # poller. The webhook token gates the /api/plex/webhook endpoint.
@@ -227,7 +237,7 @@ class Config(object):
     RADARR_API_KEY                      = os.environ.get("RADARR_API_KEY") or None
     RADARR_URL                          = os.environ.get("RADARR_URL") or None
     # The root folders of Radarr, as this host sees them (colon-separated).
-    RADARR_ROOT_FOLDERS                 = [p for p in (os.environ.get("RADARR_ROOT_FOLDERS") or "").split(":") if p] or [MOVIE_LIBRARY]
+    RADARR_ROOT_FOLDERS                 = _path_list(os.environ.get("RADARR_ROOT_FOLDERS"), [MOVIE_LIBRARY])
     RADARR_PROXY_URL                    = os.environ.get("RADARR_PROXY_URL") or RADARR_URL
 
     # TMDB configuration

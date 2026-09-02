@@ -42,6 +42,7 @@ from pyatv.const import PairingRequirement, Protocol
 
 from app import db
 from app.models import User
+from app.plex_player import player_address
 
 # The default Companion knock of pyatv. Fitzflix appends it when the user
 # enters a bare address. The real port is per device (see the module
@@ -128,12 +129,20 @@ def play_movie(movie, user):
         return False, "Pair your Apple TV for Infuse on your Profile page first."
     if not movie.tmdb_id:
         return False, "Infuse links films by TMDB id, and this one doesn't have one."
+    # The Profile page fences the address when it saves it. This is the
+    # same fence at play time, so a stored name cannot reach pyatv.
+    address = player_address(user.infuse_player_address, default_port=COMPANION_PORT)
+    if address is None:
+        return False, (
+            "Your Apple TV is not at a private-network address. Pair it "
+            "again on your Profile page."
+        )
 
     try:
         asyncio.run(
             asyncio.wait_for(
                 _launch(
-                    user.infuse_player_address,
+                    address,
                     user.infuse_player_credentials,
                     movie.tmdb_id,
                 ),

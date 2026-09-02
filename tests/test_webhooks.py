@@ -347,3 +347,14 @@ def test_download_folder_outside_the_root_is_refused(app, client, tmp_path):
     assert response.status_code == 400
     assert (outside / original).exists()
     assert app.import_queue.jobs == []
+
+
+def test_root_folder_lists_strip_whitespace():
+    from config import _path_list
+
+    assert _path_list("/mnt/movies: /mnt/movies2 :", ["x"]) == [
+        "/mnt/movies",
+        "/mnt/movies2",
+    ]
+    assert _path_list("", ["/default"]) == ["/default"]
+    assert _path_list(None, ["/default"]) == ["/default"]

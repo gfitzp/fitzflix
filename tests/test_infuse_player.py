@@ -811,3 +811,24 @@ def test_infuse_profile_rejects_a_hostname(app, monkeypatch, user_client):
     )
     assert "private-network" in r.get_data(as_text=True)
     assert started == []
+
+
+def test_play_refuses_a_stored_hostname(app, monkeypatch):
+    """A row from before the address fence, or one edited outside the
+    form, never reaches pyatv."""
+
+    from app import infuse_player
+
+    launched = []
+
+    async def fake_launch(address, credentials, tmdb_id):
+        launched.append(address)
+
+    monkeypatch.setattr(infuse_player, "_launch", fake_launch)
+    movie = SimpleNamespace(id=1, tmdb_id=578)
+    with app.app_context():
+        ok, message = infuse_player.play_movie(
+            movie, infuse_user(address="attacker.example.com:49153")
+        )
+    assert ok is False and "private-network" in message
+    assert launched == []

@@ -697,14 +697,11 @@ def test_first_audio_channels_counts_the_lfe(app, stored, expected):
         assert dvr._first_audio_channels(file.id) == expected
 
 
-def test_enqueue_lineup_rebuild_queues_beside_a_running_build(app, monkeypatch):
-    """Test that a new trigger queues beside a rebuild that is RUNNING.
-
-    The running rebuild can have read old inputs. Thus, a new trigger
-    still queues. It uses a timestamped id, because the running job
-    holds the deterministic one."""
-
-    from rq.registry import StartedJobRegistry
+def test_enqueue_lineup_rebuild_never_reuses_a_job_id(app, monkeypatch):
+    """Each rebuild gets its own id. rq keeps the expiry of an old record
+    under a reused id, so a queued job could vanish before a worker
+    reached it. A rebuild that is RUNNING is not on the queue, so a
+    trigger during a build queues a new one."""
 
     from app import dvr
     from tests.conftest import dvr_rebuild_jobs
@@ -712,20 +709,30 @@ def test_enqueue_lineup_rebuild_queues_beside_a_running_build(app, monkeypatch):
     with app.app_context():
         monkeypatch.setitem(app.config, "DVR_TOKEN", TOKEN)
         queue = app.maintenance_queue
-        registry = StartedJobRegistry(queue=queue)
-        queue.connection.zadd(registry.key, {dvr.REBUILD_JOB_ID: 9999999999})
-        job = dvr.enqueue_lineup_rebuild("mid-build")
-        assert job is not None and job.id.startswith(dvr.REBUILD_JOB_ID + "-")
-        assert dvr.enqueue_lineup_rebuild("again") is None
-        assert len(dvr_rebuild_jobs(app)) == 1
-        queue.connection.zrem(registry.key, dvr.REBUILD_JOB_ID)
-        queue.empty()
-
-        # This is the window between dequeue and registration. The job
-        # record exists and is not finished. But no registry lists it yet
         first = dvr.enqueue_lineup_rebuild("first")
-        assert first.id == dvr.REBUILD_JOB_ID
-        queue.connection.lrem(queue.key, 0, first.id)  # dequeued, not started
+        assert first.id.startswith(dvr.REBUILD_JOB_ID + "-")
+        assert dvr.enqueue_lineup_rebuild("again") is None
+        queue.connection.lrem(queue.key, 0, first.id)  # a worker took it
         second = dvr.enqueue_lineup_rebuild("second")
         assert second is not None and second.id != first.id
-        assert first.get_status() == "queued"  # the live record is unchanged
+        assert first.get_status() == "queued"  # the first record is intact
+        assert len(dvr_rebuild_jobs(app)) == 1
+
+
+def test_build_steps_aside_for_a_queued_rebuild(app, monkeypatch):
+    """The cron build has a random id that the dedupe cannot see. When
+    a triggered rebuild already waits, it has the fresher inputs, so
+    the build does not write anything."""
+
+    from app import dvr
+
+    monkeypatch.setitem(app.config, "DVR_TOKEN", TOKEN)
+    app.redis.set(dvr.LINEUP_KEY.format(slug="fitzflix-mix"), json.dumps({"x": 1}))
+    with app.app_context():
+        make_movie_file(make_movie("Drama", 1990), "Bluray-1080p")
+        db.session.commit()
+        assert dvr.enqueue_lineup_rebuild("waiting") is not None
+        assert dvr.build_channel_lineups() is True
+    assert json.loads(app.redis.get(dvr.LINEUP_KEY.format(slug="fitzflix-mix"))) == {
+        "x": 1
+    }
