@@ -5,7 +5,11 @@
 <hr>
 <h3>Rejected files</h3>
 <p class="small text-muted">The files that Fitzflix could not import, sorted by the cause of the rejection.</p>
-<a class="btn btn-sm btn-{{ "warning" if rejected_count else "secondary" }}" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
+{% if rejected_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing to triage.</p>
+{% endif %}
 <hr>
 <h3>Pipeline activity</h3>
 <p class="small text-muted">The path of each recent file through the import, as a status chip for each stage. The chips show the current stage of each file, the scheduled retries, and the failures.</p>
@@ -50,20 +54,37 @@
 <hr>
 <h3>Unmatched TMDB records</h3>
 <p class="small text-muted">The movies and series that have no TMDB id and no decision. Match each one by hand, or flag it as unmatchable. A flagged record never gets a blind title search from a refresh.</p>
-<a class="btn btn-sm btn-{{ "warning" if tmdb_triage_count else "secondary" }}" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
+{% if tmdb_triage_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing to triage.</p>
+{% endif %}
 <hr>
 <h3>Runtime mismatches</h3>
 <p class="small text-muted">The files whose estimated length is very different from the TMDB runtime of the film. The usual causes are a recording with the wrong label, or a truncated download.</p>
-<a class="btn btn-sm btn-{{ "warning" if runtime_mismatch_count else "secondary" }}" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
+{% if runtime_mismatch_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing to triage.</p>
+{% endif %}
 <hr>
 <h3>Possibly-forced subtitles</h3>
 <p class="small text-muted">The subtitle tracks without the forced flag that are much smaller than an other track in the same language in the same file. Such a track is possibly a forced track that covers only the foreign parts.</p>
-<a class="btn btn-sm btn-{{ "warning" if subtitle_triage_count else "secondary" }}" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
+{% if subtitle_triage_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing to triage.</p>
+{% endif %}
 <hr>
 <h3>Lossy-audio leads</h3>
 <p class="small text-muted">The files whose first audio track is lossy, with a lossless track after it. Remux the lossless track into the lead, or keep a commentary pair as it is.</p>
-<a class="btn btn-sm btn-{{ "warning" if lossy_triage_count else "secondary" }}" href="{{ url_for('main.lossy_audio_triage') }}" role="button">Triage lossy audio <span class="badge text-bg-light">{{ lossy_triage_count }}</span></a>
+{% if lossy_triage_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.lossy_audio_triage') }}" role="button">Triage lossy audio <span class="badge text-bg-light">{{ lossy_triage_count }}</span></a>
 <a class="btn btn-sm btn-secondary ms-1" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
+{% else %}
+<p class="small text-muted mb-2">Nothing to triage.</p>
+<a class="btn btn-sm btn-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
+{% endif %}
 <hr>
 <h3>TV episode titles</h3>
 <p class="small text-muted">This shows how well the TMDB episode titles of each series agree with the titles that Plex gave the same files. Fitzflix flags a series with different numbers, so the episode titles are never wrong.</p>

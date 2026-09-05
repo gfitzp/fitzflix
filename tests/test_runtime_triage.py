@@ -170,4 +170,5 @@ def test_page_lists_and_acknowledges(app, admin_client):
     assert "nothing to triage" in body
 
     mpage = admin_client.get("/maintenance").get_data(as_text=True)
-    assert re.search(r'btn-secondary" href="[^"]*/maintenance/runtime"', mpage)
+    assert "Triage runtime mismatches" not in mpage
+    assert "Nothing to triage." in mpage
