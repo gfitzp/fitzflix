@@ -561,10 +561,76 @@ def test_rearchive_untouched_object_uploads_or_skips(app, monkeypatch):
         os.remove(local_path)
         file.untouched_basename = "thawed.mkv"
         db.session.commit()
-        assert videos.rearchive_untouched_object(file_id, new_key) is False
+        assert (
+            videos.rearchive_untouched_object(
+                file_id, new_key, path_retries=aws_storage.MAX_REARCHIVE_PATH_RETRIES
+            )
+            is False
+        )
         db.session.expire_all()
         assert file.aws_untouched_key == "untouched/current.mkv"
         assert uploads == []
+
+
+def test_rearchive_waits_for_the_path_commit(app, monkeypatch):
+    """Make sure the re-archive waits when the record path has no file.
+
+    The refresh that queues the job renames the file on disk inside a
+    transaction. On 2026-09-05 the job dequeued 11 ms after that rename,
+    and before the commit. It read the old path, found no file, and gave
+    up. The archive of the film kept the old name. Now the job returns
+    to the queue and reads the record again after 5 minutes."""
+
+    from app import aws_storage, db, retry_job_id, videos
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+    from tests.test_scheduling import scheduled_jobs
+
+    with app.app_context():
+        file = make_movie_file(make_movie("Deferred Subject III", 1943), "HDTV-720p")
+        file.aws_untouched_key = "untouched/old.mkv"
+        file.untouched_basename = "new.mkv"
+        db.session.commit()
+        file_id = file.id
+        basename = file.basename
+        new_key = os.path.join(app.config["AWS_UNTOUCHED_PREFIX"], "new.mkv")
+
+        uploads = []
+        monkeypatch.setattr(
+            aws_storage, "aws_upload", lambda *a, **kw: uploads.append(a)
+        )
+
+        assert videos.rearchive_untouched_object(file_id, new_key) is False
+        assert uploads == []
+
+        retries = [
+            job
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.rearchive_untouched_object"
+            and job.args[0] == file_id
+        ]
+        assert [job.id for job in retries] == [
+            retry_job_id("rearchive_untouched_object", f"'{basename}'", 1)
+        ]
+        assert retries[0].args[1] == new_key
+        assert retries[0].kwargs == {"path_retries": 1}
+        assert retries[0].timeout == app.config["UPLOAD_TASK_TIMEOUT"]
+
+        # The last attempt gives up. The record keeps the old key.
+
+        assert (
+            videos.rearchive_untouched_object(
+                file_id, new_key, path_retries=aws_storage.MAX_REARCHIVE_PATH_RETRIES
+            )
+            is False
+        )
+        db.session.expire_all()
+        assert db.session.get(File, file_id).aws_untouched_key == "untouched/old.mkv"
+        assert not any(
+            job.args[0] == file_id and job.kwargs.get("path_retries", 0) > 1
+            for job in scheduled_jobs(app.file_queue)
+            if job.func_name == "app.videos.rearchive_untouched_object"
+        )
 
 
 def test_rearchive_keeps_webdl_scaffold_keys(app, monkeypatch):

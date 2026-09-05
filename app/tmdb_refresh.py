@@ -403,54 +403,6 @@ def apply_tmdb_refresh(
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
 
-                for f in files:
-                    aws_untouched_key = os.path.join(
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        sanitize_s3_key(f.untouched_basename),
-                    )
-
-                    # WEBDL-rebuild scaffolding (#158): approximately 1,000
-                    # rows were flipped to WEBRip on purpose. Their archive
-                    # keys stay WEBDL-named until a real WEB-DL replaces
-                    # them. The keys are Deep Archive. Thus, a "rename" of
-                    # one key means an upload of the multi-gigabyte library
-                    # copy again, and the retirement of the scaffold key.
-                    # The 2026-08-29 genre backfill started to do exactly
-                    # that. Leave those keys alone. The old key still names
-                    # a real object. Thus, the archive invariant holds.
-
-                    if "[WEBDL-" in (f.aws_untouched_key or "") and (
-                        "[WEBRip-" in aws_untouched_key
-                    ):
-                        current_app.logger.info(
-                            f"'{f.untouched_basename}' keeps its WEBDL-named "
-                            f"archive key (rebuild scaffolding, #158)"
-                        )
-                        continue
-
-                    if f.aws_untouched_key != aws_untouched_key and os.path.exists(
-                        os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
-                    ):
-                        # This moves the S3 object. The field changes only
-                        # when the object really moved. An object that
-                        # cannot be copied server-side (Deep Archive) needs
-                        # an upload of the library copy instead. That is
-                        # too big for the budget of this queue. Thus,
-                        # defer_upload gives that to the file queue (#231).
-                        try:
-                            rename_untouched_object(
-                                f, aws_untouched_key, defer_upload=True
-                            )
-                        except Exception:
-                            current_app.logger.error(traceback.format_exc())
-
-                try:
-                    db.session.commit()
-
-                except Exception:
-                    current_app.logger.error(traceback.format_exc())
-                    db.session.rollback()
-
                 # Create new directories and move the files if necessary.
 
                 files = File.query.filter_by(movie_id=updated_movie_id).all()
@@ -622,6 +574,62 @@ def apply_tmdb_refresh(
                     except Exception:
                         current_app.logger.error(traceback.format_exc())
                         db.session.rollback()
+
+                # Rename the archive objects LAST. The deferred re-archive
+                # reads the record path from its own session, then
+                # uploads that local file. On 2026-09-05 a job dequeued
+                # 11 ms after the disk rename, but before the path
+                # commit. It saw the old path, found no file, and gave
+                # up. Thus, the archive move is queued only after the
+                # path commit above.
+
+                for f in files:
+                    aws_untouched_key = os.path.join(
+                        current_app.config["AWS_UNTOUCHED_PREFIX"],
+                        sanitize_s3_key(f.untouched_basename),
+                    )
+
+                    # WEBDL-rebuild scaffolding (#158): approximately 1,000
+                    # rows were flipped to WEBRip on purpose. Their archive
+                    # keys stay WEBDL-named until a real WEB-DL replaces
+                    # them. The keys are Deep Archive. Thus, a "rename" of
+                    # one key means an upload of the multi-gigabyte library
+                    # copy again, and the retirement of the scaffold key.
+                    # The 2026-08-29 genre backfill started to do exactly
+                    # that. Leave those keys alone. The old key still names
+                    # a real object. Thus, the archive invariant holds.
+
+                    if "[WEBDL-" in (f.aws_untouched_key or "") and (
+                        "[WEBRip-" in aws_untouched_key
+                    ):
+                        current_app.logger.info(
+                            f"'{f.untouched_basename}' keeps its WEBDL-named "
+                            f"archive key (rebuild scaffolding, #158)"
+                        )
+                        continue
+
+                    if f.aws_untouched_key != aws_untouched_key and os.path.exists(
+                        os.path.join(current_app.config["LIBRARY_DIR"], f.file_path)
+                    ):
+                        # This moves the S3 object. The field changes only
+                        # when the object really moved. An object that
+                        # cannot be copied server-side (Deep Archive) needs
+                        # an upload of the library copy instead. That is
+                        # too big for the budget of this queue. Thus,
+                        # defer_upload gives that to the file queue (#231).
+                        try:
+                            rename_untouched_object(
+                                f, aws_untouched_key, defer_upload=True
+                            )
+                        except Exception:
+                            current_app.logger.error(traceback.format_exc())
+
+                try:
+                    db.session.commit()
+
+                except Exception:
+                    current_app.logger.error(traceback.format_exc())
+                    db.session.rollback()
 
                 if updated_movie_id != original_movie_id:
 

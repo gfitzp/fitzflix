@@ -54,6 +54,10 @@ from app.models import (
 
 EIGHT_MEGABYTES = 8388608
 
+# A re-archive whose record path has no file waits this many times for
+# the path commit of the refresh that queued it.
+MAX_REARCHIVE_PATH_RETRIES = 2
+
 
 def aws_s3_client(with_retries=False):
     """Build an S3 client using the application credentials."""
@@ -869,7 +873,7 @@ def rename_untouched_object(file, new_key, defer_upload=False):
     return True
 
 
-def rearchive_untouched_object(file_id, new_key):
+def rearchive_untouched_object(file_id, new_key, path_retries=0):
     """Force-upload the local library copy of a file under the new key.
 
     This is the file-queue half of an archive rename that could not be
@@ -881,7 +885,10 @@ def rearchive_untouched_object(file_id, new_key):
     budget of the file queue is 6 hours.
 
     This reads the File record again. Thus, the uploaded path includes
-    a disk rename that the refresh did after the enqueue.
+    a disk rename that the refresh did after the enqueue. If the path
+    on the record has no file, the record may be behind a rename
+    that is not committed yet. Then the job waits 5 minutes and
+    reads the record again, up to MAX_REARCHIVE_PATH_RETRIES times.
     """
 
     with app.app_context():
@@ -927,6 +934,33 @@ def rearchive_untouched_object(file_id, new_key):
 
         local_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
         if not os.path.isfile(local_path):
+            if path_retries < MAX_REARCHIVE_PATH_RETRIES:
+                # The refresh that queued this job may still hold the
+                # path rename in an open transaction. Read the record
+                # again after the rename has time to land.
+                current_app.logger.warning(
+                    f"'{file.basename}' '{local_path}' isn't present locally, "
+                    f"returning the re-archive as '{new_key}' to the queue "
+                    f"to try again in 5 minutes (attempt "
+                    f"{path_retries + 1} of {MAX_REARCHIVE_PATH_RETRIES})"
+                )
+                current_app.file_queue.enqueue_in(
+                    timedelta(minutes=5),
+                    "app.videos.rearchive_untouched_object",
+                    file_id,
+                    new_key,
+                    path_retries=path_retries + 1,
+                    job_timeout=current_app.config["UPLOAD_TASK_TIMEOUT"],
+                    job_id=retry_job_id(
+                        "rearchive_untouched_object",
+                        f"'{file.basename}'",
+                        path_retries + 1,
+                    ),
+                    result_ttl=86400,
+                    description=f"'{file.basename}'",
+                )
+                return False
+
             # There is nothing to upload again. The record keeps the old
             # key. That key still names a real object. Thus, the invariant
             # holds.

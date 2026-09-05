@@ -1091,6 +1091,69 @@ def test_apply_tmdb_refresh_round_trips_payload(app):
         assert refreshed.tmdb_name == "Payload Show Canonical"
 
 
+def test_tmdb_apply_queues_the_archive_rename_after_the_path_commit(app, monkeypatch):
+    """Test that the archive rename is queued after the path commit.
+
+    The deferred re-archive reads the record path from its own session.
+    On 2026-09-05 it dequeued 11 ms after the disk rename, but before the
+    path commit. It saw the old path and gave up. Thus, the refresh must
+    rename the file, commit the path, and only then ask for the archive
+    move."""
+
+    from datetime import date
+
+    from app import db, tmdb_refresh
+    from app.models import File
+    from app.videos import apply_tmdb_refresh
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Desert Tune", 1943)
+        file = make_movie_file(movie, "HDTV-720p")
+        file.untouched_basename = file.basename
+        file.aws_untouched_key = f"untouched/{file.basename}"
+        movie.tmdb_title = "Desert Tune"
+        movie.tmdb_release_date = date(1944, 1, 1)
+        db.session.commit()
+        movie_id = movie.id
+        file_id = file.id
+
+        old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"payload")
+
+        seen = []
+
+        def fake_rename(f, new_key, defer_upload=False):
+            # Record what a deferred job on another worker sees: the
+            # committed path, and the file at that path.
+            committed = db.session.execute(
+                db.text("SELECT file_path FROM file WHERE id = :id"),
+                {"id": f.id},
+            ).scalar()
+            seen.append(
+                (
+                    new_key,
+                    committed,
+                    os.path.isfile(os.path.join(app.config["LIBRARY_DIR"], committed)),
+                )
+            )
+            return False
+
+        monkeypatch.setattr(tmdb_refresh, "rename_untouched_object", fake_rename)
+
+        assert apply_tmdb_refresh("Movies", movie_id) is True
+
+        new_relative = "Movies/Desert Tune (1944)/Desert Tune (1944) - [HDTV-720p].mkv"
+        assert seen == [
+            ("untouched/Desert Tune (1944) - [HDTV-720p].mkv", new_relative, True)
+        ]
+        db.session.expire_all()
+        assert db.session.get(File, file_id).file_path == new_relative
+        assert not os.path.exists(old_path)
+
+
 def test_tmdb_apply_defers_while_title_is_locked(app, held_lock):
     """Test that the TMDB apply defers when the title is locked.
 
