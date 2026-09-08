@@ -239,8 +239,9 @@
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
 	{# The file pages are admin tools (#186 follow-up). Thus, only admins
-	   get the door to them. #}
-	{% if current_user.admin %}
+	   get the door to them, and only when the film has files (Glenn,
+	   2026-09). #}
+	{% if current_user.admin and (films or features) %}
 	<div class="col-sm-3 col-md-2 my-1">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>

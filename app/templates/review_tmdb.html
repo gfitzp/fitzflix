@@ -29,56 +29,81 @@
 		{% endif %}
 	</div>
 	{# min-width: 0 lets this column shrink below the intrinsic width
-	   of the cast strip. Thus, the wide scroller cannot push the
-	   whole column down below the poster. #}
+	   of a long badge line. Thus, wide content cannot push the whole
+	   column down below the poster. #}
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ film_title }} ({{ year }})</h3>
-			<p>
-				{{ overview }}{% if runtime %} —&nbsp;{{ runtime }}&nbsp;minutes{% endif %}{% if genres %};&nbsp;{% for genre_id, name in genres %}{% if genre_id %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}&nbsp;&nbsp;<span style="display: inline-flex; white-space: nowrap; align-items: center; align-content: center; border: 1px solid black; padding: 0.06em 4px 0.15em 4px !important; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}
-			</p>
-			{% if directors %}
-				<p class="text-muted mb-2">Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+			{# The meta line comes first and the synopsis follows. This is
+			   the order of the movie page and the popover card. #}
+			{% if directors or runtime or genres or certification %}
+				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{% for genre_id, name in genres %}{% if genre_id %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
 			{% endif %}
-			{# The star row is the rating control of the page, the
-			   same as on the movie page. It shows the estimate of the
-			   engine in paler gold until the stars of the user exist.
-			   A tap logs a verdict without a date and creates the
-			   review-only record. The route then redirects to the
-			   movie page of the record. The ✕ rejects the film
-			   without a record. The control is not live. The redirect
-			   to the movie page IS the flow. #}
-			<form action="" method="post" class="mb-2 d-flex align-items-center">
-				{{ movie_review_form.csrf_token }}
-				{{ rating_ladder(estimated=estimated_rating) }}
-			</form>
-			{# Letterboxd-first logging, as on the movie page. A
-			   linked account logs dated watches on Letterboxd and
-			   lets the feed sync them back. The first tap here still
-			   creates the local record. #}
-			{% set letterboxd_logging = current_user.letterboxd_username %}
-			{% if letterboxd_logging %}
-				<a class="btn btn-sm btn-primary mb-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
+			{% if overview %}
+				<p>{{ overview }}</p>
 			{% endif %}
-			<details class="mb-2">
-				<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Letterboxd unavailable? Log a viewing here" if letterboxd_logging else "Log a viewing" }}</summary>
-				<form action="" method="post" class="mt-1" style="max-width: 25rem;">
+			{# The control row, as on the movie page: the stars and the
+			   watchlist toggle. There is no Play. This film has no local
+			   copy. The star row is the rating control of the page. It
+			   shows the estimate of the engine in paler gold until the
+			   stars of the user exist. A tap logs a verdict without a
+			   date and creates the review-only record. The route then
+			   redirects to the movie page of the record. The ✕ rejects
+			   the film without a record. The control is not live. The
+			   redirect to the movie page IS the flow. The toggle posts
+			   live (#187). A remove after that forwards to the movie
+			   route intact. The face of the toggle is the one signal of
+			   the list state. Thus, the page carries no watchlist badge
+			   and no Might-interest badge: the estimate says that. #}
+			<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 mb-3">
+				<form action="" method="post" class="d-flex align-items-center mb-0 star-row-inline">
 					{{ movie_review_form.csrf_token }}
-					<div class="mb-1">
-						{{ movie_review_form.date_watched.label(class_="form-label small mb-0") }}
-						{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
-					</div>
-					<div class="mb-1">
-						{{ movie_review_form.review.label(class_="form-label small mb-0") }}
-						{{ movie_review_form.review(class_="form-control form-control-sm", rows=3) }}
-					</div>
-					{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+					{{ rating_ladder(estimated=estimated_rating) }}
 				</form>
-			</details>
-			<p class="small text-muted">This film is not in the library. If you rate it, Fitzflix adds it as a title that you saw but do not own.</p>
-			{% include "_cast_scroller.html" %}
+				<form action="" method="post" class="mb-0" data-card-watchlist>
+					{{ watchlist_form.hidden_tag() }}
+					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary text-nowrap">Add to Watchlist</button>
+					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary text-nowrap d-none">Remove from Watchlist</button>
+				</form>
+			</div>
+			{# The availability strip follows the controls, as on the
+			   movie page. Its badges say where the film is: on a
+			   service, for rent, or "Not on your services". The page
+			   carries no separate not-in-library note (Glenn, 2026-09). #}
+			{% include "_streaming_strip.html" %}
 		</div>
 	</div>
+</div>
+{# The cast strip spans the page below the poster, between two
+   page-wide rules. This is the pattern of movie.html. #}
+<hr class="mt-3 mb-2">
+{% include "_cast_scroller.html" %}
+<hr class="mt-3 mb-3">
+{# Letterboxd-first logging, as on the movie page. A linked account logs
+   dated watches on Letterboxd and lets the feed sync them back. The
+   first tap here still creates the local record. The toggle sits to the
+   right of the button. The form opens below the row, left-aligned
+   under the button, as a collapse. #}
+{% set letterboxd_logging = current_user.letterboxd_username %}
+<div class="d-flex flex-wrap align-items-baseline gap-2 mb-2">
+	{% if letterboxd_logging %}
+		<a class="btn btn-sm btn-primary" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
+	{% endif %}
+	<a class="small log-fold-toggle collapsed" data-bs-toggle="collapse" href="#log-viewing" role="button" aria-expanded="false" aria-controls="log-viewing"><span class="log-fold-caret" aria-hidden="true"></span>{{ "Letterboxd unavailable? Log a viewing here" if letterboxd_logging else "Log a viewing" }}</a>
+</div>
+<div class="collapse mb-2" id="log-viewing">
+	<form action="" method="post" style="max-width: 25rem;">
+		{{ movie_review_form.csrf_token }}
+		<div class="mb-1">
+			{{ movie_review_form.date_watched.label(class_="form-label small mb-0") }}
+			{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+		</div>
+		<div class="mb-1">
+			{{ movie_review_form.review.label(class_="form-label small mb-0") }}
+			{{ movie_review_form.review(class_="form-control form-control-sm", rows=3) }}
+		</div>
+		{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+	</form>
 </div>
 <hr>
 {# This is the same store-search dropdown and the same external-site
@@ -102,28 +127,5 @@
 		<a href="https://www.themoviedb.org/movie/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='tmdb_logo.svg') }}" alt="TMDB" style="height: 30px;"></a>
 		<a href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='letterboxd_logo_button.svg') }}" alt="Letterboxd" style="height: 30px;"></a>
 	</div>
-</div>
-{% include "_streaming_strip.html" %}
-{# The personal funnel, as on the movie page. It shows only the states
-   that a film without a record can have: "Might interest you". Seen
-   or a standing watchlist row would mean that a record exists. The
-   route would then have redirected to the movie page of that record.
-   The badge and the toggle share the data-watchlist-scope. Thus, the
-   live add (#187) shows the badge without a reload. A remove after
-   that forwards to the movie route intact. #}
-<div data-watchlist-scope>
-<div class="mt-1">
-	<span class="badge text-bg-warning me-1 d-none" data-watchlist-badge>On your watchlist</span>
-	{% if might_interest %}
-	<span class="badge text-bg-info me-1">Might interest you</span>
-	{% endif %}
-</div>
-<div class="mt-2">
-	<form action="" method="post" class="d-inline" data-card-watchlist>
-		{{ watchlist_form.hidden_tag() }}
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary">Add to Watchlist</button>
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary d-none">Remove from Watchlist</button>
-	</form>
-</div>
 </div>
 {% endblock %}

@@ -789,7 +789,9 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Jaws 2 (1978)" in page
-    assert "is not in the library" in page
+    # The availability strip says where the film is. There is no
+    # separate not-in-library note (Glenn, 2026-09).
+    assert "is not in the library" not in page
     assert 'name="quick_rating"' in page
     # The runtime, the genres, and the US certification badge, as on the
     # movie page
@@ -811,7 +813,9 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "data-card-watchlist" in page
     assert 'name="add_watchlist_submit"' in page
     assert 'name="remove_watchlist_submit"' in page
-    assert "data-watchlist-badge" in page
+    # The face of the toggle is the one signal of the list state. The
+    # page carries no watchlist badge (Glenn, 2026-09).
+    assert "On your watchlist" not in page
     # The cast scroller shows every credited actor. Each actor links to a
     # filmography page. The page serves any TMDB person id. Thus, a
     # person without local credit rows browses the same as a known one.
@@ -870,7 +874,9 @@ def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monke
 
     page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
     assert "Estimated 3 for you" in page
-    assert "Might interest you" in page
+    # The estimate in the star row says it. Thus, the page carries no
+    # Might-interest badge (Glenn, 2026-09).
+    assert "Might interest you" not in page
 
 
 def test_review_tmdb_creates_movie_and_enqueues_refresh(app, admin_client, monkeypatch):
