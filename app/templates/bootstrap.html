@@ -142,6 +142,15 @@
 		.star-btn { background: none; border: 0; padding: 0 .12em; font-size: 1.7rem; line-height: 1; color: #c9c9c9; cursor: pointer; }
 		.star-btn:focus { outline: 0; }
 		.star-row.star-row-sm .star-btn { font-size: 1.15rem; }
+		/* The control row of the movie page centers the stars on the
+		   buttons beside them. Thus, the star row drops its own bottom
+		   margin there */
+		.star-row-inline .star-row { margin-bottom: 0; }
+		/* The log fold of the movie page: a caret that turns when the
+		   form is open, like the marker of a details element */
+		.log-fold-toggle { text-decoration: none; }
+		.log-fold-caret::before { content: "\25BE"; display: inline-block; margin-right: .25em; }
+		.log-fold-toggle.collapsed .log-fold-caret::before { content: "\25B8"; }
 		/* Each star is an outlined ☆ (the own text of the button)
 		   under a solid ★ overlay. The overlay is clipped to the filled
 		   percentage. A verdict paints the overlay gold (★★★☆☆). The
@@ -267,11 +276,16 @@
 		   carries a glyph. Thus, the pair never relies on color alone
 		   (the A-prime pick by Glenn from the overlay studies). The
 		   fold layer sizes itself to the 2:3 box of the poster from
-		   the top of the tile. It clips to the same radius. Thus, the
-		   folds hug the rounded corners of the artwork and never bleed
-		   past them. */
+		   the top of the tile. Every poster wears a 1 px border. The
+		   layer starts inside that border, and it clips to the inner
+		   radius of the artwork. Thus, the folds hug the artwork, not
+		   the border, and never bleed past the corners (Glenn,
+		   2026-09). The large posters of the movie and review pages
+		   have square corners. Their hosts carry poster-fold-host-square.
+		   Thus, the fold covers the corner in full there. */
 		.poster-fold-host { position: relative; display: block; }
-		.poster-folds { position: absolute; top: 0; left: 0; right: 0; aspect-ratio: 2 / 3; border-radius: var(--bs-border-radius); overflow: hidden; pointer-events: none; }
+		.poster-folds { position: absolute; top: var(--bs-border-width); left: var(--bs-border-width); right: var(--bs-border-width); aspect-ratio: 2 / 3; border-radius: calc(var(--bs-border-radius) - var(--bs-border-width)); overflow: hidden; pointer-events: none; }
+		.poster-fold-host-square .poster-folds { border-radius: 0; }
 		.poster-fold { position: absolute; top: 0; width: 30px; height: 30px; pointer-events: auto; }
 		/* Both folds show in the top-right corner. At most one paints
 		   per tile (red leaving outranks green newly-added) */

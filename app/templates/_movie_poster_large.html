@@ -4,7 +4,7 @@
    overlays like the badge of a gallery tile #}
 {% from "_poster_tile.html" import poster_fold_overlay %}
 {% if poster_fold is defined and poster_fold %}
-<div class="poster-fold-host mx-auto" style="width: 250px;">
+<div class="poster-fold-host poster-fold-host-square mx-auto" style="width: 250px;">
 {{ poster_fold_overlay(poster_fold) }}
 {% endif %}
 {% if file is defined and file.custom_poster %}

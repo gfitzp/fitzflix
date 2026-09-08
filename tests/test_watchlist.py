@@ -135,11 +135,9 @@ def test_movie_page_toggle_adds_and_removes(app, admin_client):
     assert "d-none" not in re.search(
         r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', page
     ).group(1)
-    # The funnel badge is also live. It is visible now. It was hidden
-    # before the add.
-    assert "d-none" not in re.search(
-        r'class="([^"]*)" data-watchlist-badge', page
-    ).group(1)
+    # The page carries no watchlist badge. The face of the toggle is
+    # the one signal of the list state (Glenn, 2026-09).
+    assert "On your watchlist" not in page
 
     response = admin_client.post(
         f"/movie/{unowned_id}",
@@ -184,8 +182,14 @@ def test_movie_page_funnel_badges(app, admin_client):
     )
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "On your watchlist" in page
-    assert "Might interest you" in page
+    # The toggle shows the Remove face. There is no watchlist badge. The
+    # star row shows the estimate of the engine. Thus, the page carries
+    # no Might-interest badge either (Glenn, 2026-09).
+    assert "On your watchlist" not in page
+    assert "d-none" not in re.search(
+        r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', page
+    ).group(1)
+    assert "Might interest you" not in page
     assert 'text-bg-info me-1">Seen' not in page
 
     with app.app_context():
@@ -202,13 +206,15 @@ def test_movie_page_funnel_badges(app, admin_client):
         )
         # The direct diary row bypasses the auto-remove of the log path.
         # Thus, the entry persists. This is the state that a re-add after
-        # a watch produces: the watchlist badge shows, and the page
+        # a watch produces: the toggle shows Remove, and the page
         # carries no Seen badge (the star row holds the verdict).
         db.session.commit()
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "Seen &mdash; rated 8" not in page
-    assert "On your watchlist" in page
+    assert "d-none" not in re.search(
+        r'name="remove_watchlist_submit"[^>]*class="([^"]*)"', page
+    ).group(1)
     assert "Might interest you" not in page
 
 

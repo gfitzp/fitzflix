@@ -14,7 +14,7 @@
 		{% include "_movie_poster_large.html" %}
 	</div>
 	{# min-width: 0 lets this column shrink to less than the intrinsic
-	   width of the cast strip. Thus, the wide scroller cannot push the
+	   width of a long badge line. Thus, wide content cannot push the
 	   whole column down below the poster. #}
 	<div class="col-md" style="min-width: 0;">
 		<div>
@@ -34,40 +34,8 @@
 			{% if movie.tmdb_overview %}
 				<p>{{ movie.tmdb_overview }}</p>
 			{% endif %}
-			{# The star row is the rating control of the page. It shows
-			   the verdict. Until there is a verdict, it shows the
-			   estimate of the engine in paler gold. A tap posts in the
-			   background. A tap creates a verdict row with no date. That
-			   row is a preference signal, not a diary entry. The liked
-			   heart follows a rating of 3 or more stars automatically. #}
-			<form action="" method="post" class="mb-2 d-flex align-items-center">
-				{{ movie_review_form.csrf_token }}
-				{{ rating_ladder(allow_not_interested=not review, current=(review.rating if review and review.rating is not none else none), flagged=refused, live=true, estimated=estimated_rating) }}
-			</form>
-			{# Letterboxd-first logging: with a linked account, dated
-			   watches and reviews belong on Letterboxd. The feed syncs
-			   them back on its own. The local log form is the demoted
-			   fallback for what the feed cannot carry (outages, and
-			   entries older than its window of approximately 50 items). #}
-			{% set letterboxd_logging = current_user.letterboxd_username and movie.tmdb_id %}
-			{% if letterboxd_logging %}
-				<a class="btn btn-sm btn-primary mb-1" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
-			{% endif %}
-			<details class="mb-2">
-				<summary class="small" style="cursor: pointer; color: var(--blue, #007bff);">{{ "Letterboxd unavailable? Log a viewing here" if letterboxd_logging else "Log a viewing" }}</summary>
-				<form action="" method="post" class="mt-1" style="max-width: 25rem;">
-					{{ movie_review_form.csrf_token }}
-					<div class="mb-1">
-						{{ movie_review_form.date_watched.label(class_="form-label small mb-0") }}
-						{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
-					</div>
-					<div class="mb-1">
-						{{ movie_review_form.review.label(class_="form-label small mb-0") }}
-						{{ movie_review_form.review(class_="form-control form-control-sm", rows=3) }}
-					</div>
-					{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
-				</form>
-			</details>
+			{# The Criterion note comes before the controls (Glenn,
+			   2026-09). Thus, the facts of the film read together. #}
 			{% if movie.criterion_spine_number and movie.criterion_set_title %}
 				<p>Criterion Collection spine #{{ movie.criterion_spine_number }}, part of the {{ movie.criterion_set_title }} collector's set.</p>
 			{% elif movie.criterion_spine_number %}
@@ -75,11 +43,117 @@
 			{% elif movie.criterion_set_title %}
 				<p>Part of the Criterion Collection's {{ movie.criterion_set_title }} collector's set.</p>
 			{% endif %}
+			{# The control row: the stars, Play, and the watchlist toggle
+			   (Glenn, 2026-09). The star row is the rating control of
+			   the page. It shows the verdict. Until there is a verdict,
+			   it shows the estimate of the engine in paler gold. A tap
+			   posts in the background. A tap creates a verdict row with
+			   no date. That row is a preference signal, not a diary
+			   entry. The liked heart follows a rating of 3 or more stars
+			   automatically. The wrapping data-watchlist-scope ties the
+			   stars to the toggle for the JS. Thus, a rating that clears
+			   the list entry syncs the face of the toggle. The face of
+			   the toggle is the one signal of the list state. Thus, the
+			   page carries no watchlist badge. #}
+			<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 mb-3">
+				<form action="" method="post" class="d-flex align-items-center mb-0 star-row-inline">
+					{{ movie_review_form.csrf_token }}
+					{{ rating_ladder(allow_not_interested=not review, current=(review.rating if review and review.rating is not none else none), flagged=refused, live=true, estimated=estimated_rating) }}
+				</form>
+				{# Watchlist: the user can want any film. An unowned film is
+				   in the funnel stage before the shopping list. An owned
+				   film tracks which of the many library films this user
+				   specifically means to watch. Both faces render, and
+				   data-card-watchlist swaps them in the background (#187).
+				   The card branch of the route answers JSON. Any fetch
+				   failure falls back to the full post. #}
+				<form action="" method="post" class="mb-0" data-card-watchlist>
+					{{ watchlist_form.hidden_tag() }}
+					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary text-nowrap{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
+					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary text-nowrap{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
+				</form>
+			{# Play comes last (Glenn, 2026-09): not every film has a local
+			   copy. Thus, the stars and the toggle keep their places on
+			   every page. Remote playback hand-off (owned film and a
+			   configured player). The background post uses the shared data-plex-play handler of
+			   base.html. It starts the film on the Apple TV through the Plex app
+			   (Plex Companion) or through Infuse (Apple Companion deep link,
+			   #192). Failures go into the small status line under the button.
+			   When both apps are configured, the default player of the user
+			   leads. Films with formats that only Infuse plays correctly carry a
+			   recommendation note. #}
+			{% set both_playable = plex_playable and infuse_playable %}
+			{% set targets = [] %}
+			{% if plex_playable %}{% set _ = targets.append(("plex", "Play (Plex)" if both_playable else "Play on Apple TV")) %}{% endif %}
+			{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
+			{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
+			{% if targets|length > 1 %}
+			{# One Play control (Glenn, 2026-08-31): the default player IS the
+			   button. The other player waits under the split dropdown, like the
+			   Find menu. Both forms post through the shared data-plex-play
+			   handler. The status line of the secondary form cannot live inside
+			   the menu, because the menu closes on click. Thus, both forms report
+			   into the shared line under the group through
+			   data-plex-play-status-ref. The form that wraps the main button
+			   keeps the group corner rules of Bootstrap away from it. Thus, the
+			   two halves flatten their meeting corners by hand. #}
+			<div>
+				<div class="btn-group">
+					<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post" class="d-grid">
+						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+						<input type="hidden" name="player" value="{{ targets[0][0] }}">
+						<button class="btn btn-success btn-sm rounded-end-0 text-nowrap" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
+					</form>
+					<button type="button" class="btn btn-success btn-sm dropdown-toggle dropdown-toggle-split rounded-start-0" data-bs-toggle="dropdown" aria-expanded="false">
+						<span class="visually-hidden">Other players</span>
+					</button>
+					<ul class="dropdown-menu dropdown-menu-end">
+						<li>
+							<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
+								<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+								<input type="hidden" name="player" value="{{ targets[1][0] }}">
+								<button class="dropdown-item" type="submit">&#9654;&#xFE0E; {{ targets[1][1] }}</button>
+							</form>
+						</li>
+					</ul>
+				</div>
+				{% if infuse_reasons %}
+				<div class="small text-muted">We recommend Infuse: {{ infuse_reasons|join(" and ") }} play correctly only in Infuse.</div>
+				{% endif %}
+				<div class="small" id="play-status-shared"></div>
+			</div>
+			{% elif targets %}
+			<div>
+				<form data-plex-play action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
+					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+					<input type="hidden" name="player" value="{{ targets[0][0] }}">
+					<button class="btn btn-success btn-sm text-nowrap" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
+					<div class="small" data-plex-play-status></div>
+				</form>
+			</div>
+			{% endif %}
+				{# Not interested (#45b, buttons removed per #184): the
+				   &#10005; toggle of the ladder is the one way to declare
+				   disinterest. The note only shows the standing verdict. #}
+				{% if refused %}
+				<span class="small text-muted">This film won't be recommended.</span>
+				{% endif %}
+			</div>
+			{# The availability strip follows the controls (Glenn,
+			   2026-09). Thus, the library copy and the streaming matches
+			   read next to Play and the watchlist toggle. The row above
+			   ends with the margin of a paragraph. Thus, the strip stands
+			   off from the controls the same way the controls stand off
+			   from the Criterion note. #}
+			{% include "_streaming_strip.html" %}
 			{% if awards %}
 				{# What Wikidata lists wins first. Wikidata is strong for
 				   major ceremonies and patchy for festivals. Thus, the
 				   strip never claims that it is complete. #}
-				<p class="mb-2">
+				{# The strip above ends with a 4 px gap. The margin here
+				   completes the 1 rem gap of a paragraph. Thus, the awards
+				   stand off from the availability the same way. #}
+				<p class="mb-0" style="margin-top: .75rem;">
 					{% for award in awards[:16] %}
 					<span class="badge text-bg-light border fw-normal me-1 mb-1 text-wrap text-start lh-sm">{% if award.win %}<svg width="1em" height="1em" viewBox="0 0 16 16" class="bi bi-trophy-fill mt-n1" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M2.5.5A.5.5 0 0 1 3 0h10a.5.5 0 0 1 .5.5c0 .538-.012 1.05-.034 1.536a3 3 0 1 1-1.133 5.89c-.79 1.865-1.878 2.777-2.833 3.011v2.173l1.425.356c.194.048.377.135.537.255L13.3 15.1a.5.5 0 0 1-.3.9H3a.5.5 0 0 1-.3-.9l1.838-1.379c.16-.12.343-.207.537-.255L6.5 13.11v-2.173c-.955-.234-2.043-1.146-2.833-3.012a3 3 0 1 1-1.132-5.89A33.076 33.076 0 0 1 2.5.5zm.099 2.54a2 2 0 0 0 .72 3.935c-.333-1.05-.588-2.346-.72-3.935zm10.083 3.935a2 2 0 0 0 .72-3.935c-.133 1.59-.388 2.885-.72 3.935z"/></svg> {% endif %}{{ award.award_name }}{% if award.year %} ({{ award.year }}){% endif %}{% if not award.win %} &mdash; nominated{% endif %}</span>
 					{% endfor %}
@@ -89,9 +163,46 @@
 				</p>
 				<p class="small text-muted">Award data from Wikidata</p>
 			{% endif %}
-			{% include "_cast_scroller.html" %}
 		</div>
 	</div>
+</div>
+{# The cast strip spans the page below the poster (Glenn, 2026-09).
+   Thus, the wide scroller has the full width, and the right column holds
+   only the facts and the controls. A page-wide rule stands on each side
+   of the strip. #}
+<hr class="mt-3 mb-2">
+{% include "_cast_scroller.html" %}
+<hr class="mt-3 mb-3">
+{# Letterboxd-first logging: with a linked account, dated watches and
+   reviews belong on Letterboxd. The feed syncs them back on its own.
+   The local log form is the demoted fallback for what the feed cannot
+   carry (outages, and entries older than its window of approximately
+   50 items). The logging sits below the cast (Glenn, 2026-09). Thus,
+   the facts of the film come first. #}
+{% set letterboxd_logging = current_user.letterboxd_username and movie.tmdb_id %}
+{# The toggle sits to the right of the button. The form opens below the
+   row, left-aligned under the button (Glenn, 2026-09). A Bootstrap
+   collapse does that. A details element cannot: its form stays inside
+   it, under its own summary. #}
+<div class="d-flex flex-wrap align-items-baseline gap-2 mb-2">
+	{% if letterboxd_logging %}
+		<a class="btn btn-sm btn-primary" target="_blank" rel="noreferrer" href="https://letterboxd.com/tmdb/{{ movie.tmdb_id }}/">Log it on Letterboxd</a>
+	{% endif %}
+	<a class="small log-fold-toggle collapsed" data-bs-toggle="collapse" href="#log-viewing" role="button" aria-expanded="false" aria-controls="log-viewing"><span class="log-fold-caret" aria-hidden="true"></span>{{ "Letterboxd unavailable? Log a viewing here" if letterboxd_logging else "Log a viewing" }}</a>
+</div>
+<div class="collapse mb-2" id="log-viewing">
+	<form action="" method="post" style="max-width: 25rem;">
+		{{ movie_review_form.csrf_token }}
+		<div class="mb-1">
+			{{ movie_review_form.date_watched.label(class_="form-label small mb-0") }}
+			{{ movie_review_form.date_watched(class_="form-control form-control-sm") }}
+		</div>
+		<div class="mb-1">
+			{{ movie_review_form.review.label(class_="form-label small mb-0") }}
+			{{ movie_review_form.review(class_="form-control form-control-sm", rows=3) }}
+		</div>
+		{{ movie_review_form.review_submit(class_="btn btn-sm btn-success") }}
+	</form>
 </div>
 {% if suggestions %}
 <hr>
@@ -127,64 +238,6 @@
    Radarr is configured, the film is unowned, and TMDB knows the film. #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
 <div class="row">
-	{# Remote playback hand-off (owned film and a configured player). The
-	   background post uses the shared data-plex-play handler of
-	   base.html. It starts the film on the Apple TV through the Plex app
-	   (Plex Companion) or through Infuse (Apple Companion deep link,
-	   #192). Failures go into the small status line under the button.
-	   When both apps are configured, the default player of the user
-	   leads. Films with formats that only Infuse plays correctly carry a
-	   recommendation note. #}
-	{% set both_playable = plex_playable and infuse_playable %}
-	{% set targets = [] %}
-	{% if plex_playable %}{% set _ = targets.append(("plex", "Play (Plex)" if both_playable else "Play on Apple TV")) %}{% endif %}
-	{% if infuse_playable %}{% set _ = targets.append(("infuse", "Play (Infuse)" if both_playable else "Play in Infuse")) %}{% endif %}
-	{% if default_player == "infuse" %}{% set targets = targets|reverse|list %}{% endif %}
-	{% if targets|length > 1 %}
-	{# One Play control (Glenn, 2026-08-31): the default player IS the
-	   button. The other player waits under the split dropdown, like the
-	   Find menu. Both forms post through the shared data-plex-play
-	   handler. The status line of the secondary form cannot live inside
-	   the menu, because the menu closes on click. Thus, both forms report
-	   into the shared line under the group through
-	   data-plex-play-status-ref. The form that wraps the main button
-	   keeps the group corner rules of Bootstrap away from it. Thus, the
-	   two halves flatten their meeting corners by hand. #}
-	<div class="col-sm-3 col-md-2 my-1">
-		<div class="btn-group w-100">
-			<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post" class="flex-fill d-grid">
-				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-				<input type="hidden" name="player" value="{{ targets[0][0] }}">
-				<button class="btn btn-success btn-sm rounded-end-0 text-nowrap px-1" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
-			</form>
-			<button type="button" class="btn btn-success btn-sm dropdown-toggle dropdown-toggle-split rounded-start-0" data-bs-toggle="dropdown" aria-expanded="false">
-				<span class="visually-hidden">Other players</span>
-			</button>
-			<ul class="dropdown-menu dropdown-menu-end">
-				<li>
-					<form data-plex-play data-plex-play-status-ref="play-status-shared" action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
-						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-						<input type="hidden" name="player" value="{{ targets[1][0] }}">
-						<button class="dropdown-item" type="submit">&#9654;&#xFE0E; {{ targets[1][1] }}</button>
-					</form>
-				</li>
-			</ul>
-		</div>
-		{% if infuse_reasons %}
-		<div class="small text-muted">We recommend Infuse: {{ infuse_reasons|join(" and ") }} play correctly only in Infuse.</div>
-		{% endif %}
-		<div class="small" id="play-status-shared"></div>
-	</div>
-	{% elif targets %}
-	<div class="col-sm-3 col-md-2 my-1">
-		<form data-plex-play action="{{ url_for('main.movie_play', movie_id=movie.id) }}" method="post">
-			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-			<input type="hidden" name="player" value="{{ targets[0][0] }}">
-			<button class="btn btn-success btn-sm container" type="submit">&#9654;&#xFE0E; {{ targets[0][1] }}</button>
-			<div class="small" data-plex-play-status></div>
-		</form>
-	</div>
-	{% endif %}
 	{# The file pages are admin tools (#186 follow-up). Thus, only admins
 	   get the door to them. #}
 	{% if current_user.admin %}
@@ -241,45 +294,13 @@
 		{% endif %}
 	</div>
 </div>
-{% include "_streaming_strip.html" %}
-{# The personal funnel: On your watchlist, and Might interest you. The
-   star row above already shows the verdict of the user. Thus, the page
-   carries no Seen badge (Glenn, 2026-09). The watchlist badge always
-   renders (d-none when off). Thus, the live toggle (#187) can show it
-   without a reload. The wrapping data-watchlist-scope ties the badge and
-   the toggle together for the JS. #}
-<div data-watchlist-scope>
+{# The ad-hoc Radarr hand-off lives on the Find menu. The badge stays
+   here so a standing request reads at a glance. #}
+{% if radarr_requestable and in_radarr %}
 <div class="mt-1">
-	<span class="badge text-bg-warning me-1{% if not on_watchlist %} d-none{% endif %}" data-watchlist-badge>On your watchlist</span>
-	{% if might_interest %}
-	<span class="badge text-bg-info me-1">Might interest you</span>
-	{% endif %}
+	<span class="badge text-bg-info" title="Radarr is monitoring this film">Requested via Radarr</span>
 </div>
-{# Watchlist: the user can want any film. An unowned film is in the funnel
-   stage before the shopping list. An owned film tracks which of the many
-   library films this user specifically means to watch. Both faces render,
-   and data-card-watchlist swaps them in the background (#187). The card
-   branch of the route answers JSON. Any fetch failure falls back to the
-   full post. #}
-<div class="mt-2">
-	<form action="" method="post" class="d-inline" data-card-watchlist>
-		{{ watchlist_form.hidden_tag() }}
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
-	</form>
-	{# Not interested (#45b, buttons removed per #184): the &#10005;
-	   toggle of the ladder is the one way to declare disinterest. The
-	   note only shows the standing verdict. #}
-	{% if refused %}
-	<span class="small text-muted ms-1">This film won't be recommended.</span>
-	{% endif %}
-	{# The ad-hoc Radarr hand-off now lives on the Find menu. The badge
-	   stays here so a standing request reads at a glance. #}
-	{% if radarr_requestable and in_radarr %}
-	<span class="badge text-bg-info align-text-bottom" title="Radarr is monitoring this film">Requested via Radarr</span>
-	{% endif %}
-</div>
-</div>
+{% endif %}
 {# Movie Data is an admin section (#186 follow-up). The route bounces
    stray posts from everyone else. Thus, to hide it here is presentation,
    not the protection. #}

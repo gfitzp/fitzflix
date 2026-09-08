@@ -13,7 +13,7 @@
 		{% if poster_path %}
 			{% if poster_fold is defined and poster_fold %}
 			{% from "_poster_tile.html" import poster_fold_overlay %}
-			<div class="poster-fold-host mx-auto" style="width: 250px;">
+			<div class="poster-fold-host poster-fold-host-square mx-auto" style="width: 250px;">
 			{{ poster_fold_overlay(poster_fold) }}
 			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="d-block border" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
 			</div>
