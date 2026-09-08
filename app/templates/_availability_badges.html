@@ -12,20 +12,20 @@
    must have an answer to give. A film asks library_upgradable. A
    series asks series_upgradable. A title with no copy shows no badge. #}
 {% macro library_badge(upgradable) -%}
-<span class="badge text-bg-{{ "warning" if upgradable else "success" }} align-middle me-1" title="In your Fitzflix library &mdash; {{ "worth upgrading" if upgradable else "settled" }}"><img src="{{ url_for('static', filename='fitzflix_logo_badge.svg') }}" alt="" style="height: 1.4em;" class="rounded me-1">In library</span>
+<span class="badge text-bg-{{ "warning" if upgradable else "success" }} align-middle me-1 mb-1" title="In your Fitzflix library &mdash; {{ "worth upgrading" if upgradable else "settled" }}"><img src="{{ url_for('static', filename='fitzflix_logo_badge.svg') }}" alt="" style="height: 1.4em;" class="rounded me-1">In library</span>
 {%- endmacro %}
 
 {% macro availability_badge(provider) -%}
 {%- set action = {"rent": "Rent from"}.get(provider.kind, "Streaming on") -%}
 {%- set suffix = {"ads": " (with ads)", "rent": " (rent)"}.get(provider.kind, "") -%}
 {%- if provider.leaving -%}
-<span class="badge text-bg-danger align-middle me-1" title="Leaving {{ provider.provider_name }} {{ provider.leaving }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; leaving {{ provider.leaving }}</span>
+<span class="badge text-bg-danger align-middle me-1 mb-1" title="Leaving {{ provider.provider_name }} {{ provider.leaving }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; leaving {{ provider.leaving }}</span>
 {%- elif provider.new_since -%}
 {# A recent arrival from the newly-added feed of the provider (#246).
    It is green like the newly-arrived corner fold. Thus, "new" reads
    the same color everywhere #}
-<span class="badge text-bg-success align-middle me-1" title="Added to {{ provider.provider_name }} {{ provider.new_since }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; added {{ provider.new_since }}</span>
+<span class="badge text-bg-success align-middle me-1 mb-1" title="Added to {{ provider.provider_name }} {{ provider.new_since }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }} &middot; added {{ provider.new_since }}</span>
 {%- else -%}
-<span class="badge text-bg-light border align-middle me-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
+<span class="badge text-bg-light border align-middle me-1 mb-1" title="{{ action }} {{ provider.provider_name }}">{% if provider.logo_path %}<img src="{{ config['TMDB_IMAGE_URL'] }}/w45{{ provider.logo_path }}" alt="" style="height: 1.4em;" class="rounded me-1">{% endif %}{{ provider.provider_name }}{{ suffix }}</span>
 {%- endif -%}
 {%- endmacro %}

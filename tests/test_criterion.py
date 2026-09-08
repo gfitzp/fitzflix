@@ -366,19 +366,19 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
     # tier badge is not on the card.
 
     assert (
-        'text-bg-success align-middle me-1" title="In your Fitzflix library'
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
         in criterion_card(settled_id)
     )
     assert (
-        'text-bg-warning align-middle me-1" title="In your Fitzflix library'
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
         in criterion_card(ripless_id)
     )
     assert (
-        'text-bg-warning align-middle me-1" title="In your Fitzflix library'
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
         in criterion_card(unowned_id)
     )
     assert (
-        'text-bg-success align-middle me-1" title="In your Fitzflix library'
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
         in criterion_card(good_enough_id)
     )
 
@@ -390,7 +390,8 @@ def test_criterion_page_row_grammar_and_badges(app, admin_client):
         as_text=True
     )
     assert (
-        'text-bg-success align-middle me-1" title="In your Fitzflix library' in generic
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in generic
     )
 
 

@@ -242,16 +242,14 @@
 	</div>
 </div>
 {% include "_streaming_strip.html" %}
-{# The personal funnel: Seen (the diary of this user), On your watchlist,
-   and Might interest you. Seen and might-interest never show together.
-   The watchlist badge always renders (d-none when off). Thus, the live
-   toggle (#187) can show it without a reload. The wrapping
-   data-watchlist-scope ties the badge and the toggle together for the JS. #}
+{# The personal funnel: On your watchlist, and Might interest you. The
+   star row above already shows the verdict of the user. Thus, the page
+   carries no Seen badge (Glenn, 2026-09). The watchlist badge always
+   renders (d-none when off). Thus, the live toggle (#187) can show it
+   without a reload. The wrapping data-watchlist-scope ties the badge and
+   the toggle together for the JS. #}
 <div data-watchlist-scope>
 <div class="mt-1">
-	{% if review %}
-	<span class="badge text-bg-info me-1">Seen{% if review.rating is not none %} &mdash; rated {{ review.rating }}{% endif %}</span>
-	{% endif %}
 	<span class="badge text-bg-warning me-1{% if not on_watchlist %} d-none{% endif %}" data-watchlist-badge>On your watchlist</span>
 	{% if might_interest %}
 	<span class="badge text-bg-info me-1">Might interest you</span>

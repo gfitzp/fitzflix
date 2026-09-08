@@ -202,11 +202,12 @@ def test_movie_page_funnel_badges(app, admin_client):
         )
         # The direct diary row bypasses the auto-remove of the log path.
         # Thus, the entry persists. This is the state that a re-add after
-        # a watch produces: Seen and the watchlist badge show together.
+        # a watch produces: the watchlist badge shows, and the page
+        # carries no Seen badge (the star row holds the verdict).
         db.session.commit()
 
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
-    assert "Seen &mdash; rated 8" in page
+    assert "Seen &mdash; rated 8" not in page
     assert "On your watchlist" in page
     assert "Might interest you" not in page
 

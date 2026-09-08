@@ -42,13 +42,23 @@
 	{% elif in_library %}
 		<div class="mt-1">{{ library_badge(library_upgradable) }}</div>
 	{% endif %}
-	{# The badge line shows the watchlist badge and the labels of the tile #}
-	<p class="mb-0 mt-1">
-		{% if on_watchlist %}
-		<span class="badge text-bg-warning fw-normal me-1 mb-1" title="On your watchlist">On your watchlist</span>
-		{% endif %}
-		<span data-card-reasons></span>
-	</p>
+	{# A rule divides the availability from the labels (Glenn,
+	   2026-09). The strip ends with a 4 px padding, or with the 4 px
+	   bottom margin of an inline badge. The rule adds 4 px above and
+	   8 px below. Thus, the rule sits 8 px from the content on both
+	   sides. The badge line shows the watchlist badge and the labels
+	   of the tile. The script of base.html fills the labels after the
+	   fetch. The stylesheet hides the whole block, rule included, while
+	   the line holds no badge #}
+	<div class="poster-card-labels">
+		<hr class="mt-1 mb-2">
+		<p class="mb-0">
+			{% if on_watchlist %}
+			<span class="badge text-bg-warning fw-normal me-1 mb-1" title="On your watchlist">On your watchlist</span>
+			{% endif %}
+			<span data-card-reasons></span>
+		</p>
+	</div>
 	{% if play_url %}
 	<form data-plex-play action="{{ play_url }}" method="post" class="mt-1 mb-0">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

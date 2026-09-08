@@ -601,14 +601,23 @@ def test_library_page_badges_quality_by_upgradability(app, admin_client):
     card = admin_client.get(f"/movie_card?movie_id={upgradable_id}").get_data(
         as_text=True
     )
-    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in card
+    assert (
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
+        in card
+    )
     card = admin_client.get(f"/movie_card?movie_id={final_id}").get_data(as_text=True)
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in card
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in card
+    )
     # The copy of an excluded movie counts as final, even below the bar
     card = admin_client.get(f"/movie_card?movie_id={excluded_id}").get_data(
         as_text=True
     )
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in card
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in card
+    )
 
 
 def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):

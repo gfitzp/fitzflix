@@ -62,7 +62,10 @@ def test_movie_card_for_a_library_film(app, admin_client):
     # In-library badge is green (the quality tier itself left the card in
     # 2026-08). The empty slot waits for the labels of the tile
 
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     assert "Bluray-1080p" not in page
     assert "data-card-reasons" in page
 
@@ -89,7 +92,10 @@ def test_movie_card_badges_watchlist_and_amber_library(app, admin_client):
         movie_id = movie.id
 
     page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     assert "On your watchlist" in page
 
     # The badge of an excluded film is green, also below the threshold.
@@ -99,7 +105,10 @@ def test_movie_card_badges_watchlist_and_amber_library(app, admin_client):
         db.session.get(Movie, movie_id).shopping_list_exclude = True
         db.session.commit()
     page = admin_client.get(f"/movie_card?movie_id={movie_id}").get_data(as_text=True)
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
 
 
 def test_movie_page_library_badge_wears_shopping_colors(app, admin_client):
@@ -127,11 +136,20 @@ def test_movie_page_library_badge_wears_shopping_colors(app, admin_client):
         lagging_id, settled_id, excluded_id = lagging.id, settled.id, excluded.id
 
     page = admin_client.get(f"/movie/{lagging_id}").get_data(as_text=True)
-    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     page = admin_client.get(f"/movie/{settled_id}").get_data(as_text=True)
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     page = admin_client.get(f"/movie/{excluded_id}").get_data(as_text=True)
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
 
 
 def test_movie_page_meta_line_leads_in_the_popup_order(app, admin_client):

@@ -76,8 +76,8 @@
 			<form action="{{ now_action }}" method="post" data-card-watchlist class="mb-1">
 				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 				<input type="hidden" name="from_card" value="1">
-				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
-				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
+				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
+				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
 			</form>
 		</div>
 		{% endif %}

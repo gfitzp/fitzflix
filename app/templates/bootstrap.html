@@ -241,6 +241,10 @@
 		/* A wrapped two-line badge as a full pill reads as a lozenge.
 		   Thus, the badges of the card take a softer rounding */
 		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; }
+		/* The label block of the film card shows only when it holds a
+		   badge. The rule above it goes with it. Thus, a card with no
+		   labels shows no empty group between 2 rules */
+		.poster-card .poster-card-labels:not(:has(.badge)) { display: none; }
 		/* Gallery tiles (variant 4 by Glenn): each cell is a flex
 		   column with its actions pinned to the bottom. The Bootstrap
 		   row already stretches the cells in a row to equal height.

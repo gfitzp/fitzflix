@@ -207,7 +207,10 @@ def test_tv_card_carries_the_series_facts(app, admin_client):
 
     # 2 Blu-ray episodes. They are settled, and the card counts them.
 
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     assert "1 season, 2 episodes in your library" in page
 
     # The card does not show facts that apply only to films.
@@ -233,9 +236,15 @@ def test_tv_card_badge_tracks_the_seasons(app, admin_client):
         lagging_id, settled_id = lagging.id, settled.id
 
     page = admin_client.get(f"/tv_card?series_id={lagging_id}").get_data(as_text=True)
-    assert 'text-bg-warning align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-warning align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
     page = admin_client.get(f"/tv_card?series_id={settled_id}").get_data(as_text=True)
-    assert 'text-bg-success align-middle me-1" title="In your Fitzflix library' in page
+    assert (
+        'text-bg-success align-middle me-1 mb-1" title="In your Fitzflix library'
+        in page
+    )
 
 
 def test_tv_card_renders_an_unowned_series_from_tmdb(app, admin_client, monkeypatch):

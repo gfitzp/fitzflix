@@ -19,14 +19,21 @@
 	{% endfor %}
 	{% if not streaming.local and not streaming.matches and not streaming.rentals %}
 		{% if streaming.known %}
-		<span class="badge text-bg-secondary align-middle me-1">Not on your services</span>
+		<span class="badge text-bg-secondary align-middle me-1 mb-1">Not on your services</span>
 		{% else %}
 		<span class="small text-muted me-1">Streaming availability unknown right now.</span>
 		{% endif %}
 	{% endif %}
 	{% if streaming.matches or streaming.rentals or not streaming.local %}
-		{% if streaming.link %}<a class="small me-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
-		<span class="small text-muted">Streaming data by JustWatch</span>
+	{# The link and the credit start below the last badge. Each one stays
+	   on one line. The credit follows the link when there is room. It
+	   moves to its own line when there is not. The tight line height
+	   keeps the gap above and below this row equal to the gap between
+	   the badges #}
+	<div class="lh-1 pb-1">
+		{% if streaming.link %}<a class="small text-nowrap me-1" href="{{ streaming.link }}" target="_blank" rel="noreferrer">All watch options</a>{% endif %}
+		<span class="small text-muted text-nowrap">Streaming data by JustWatch</span>
+	</div>
 	{% endif %}
 </div>
 {% endif %}
