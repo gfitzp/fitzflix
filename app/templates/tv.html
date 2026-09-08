@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_availability_badges.html" import library_badge %}
 
 {% block app_content %}
 <nav aria-label="breadcrumb">
@@ -26,6 +27,13 @@
 			{% endif %}
 			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>
+			{% endif %}
+			{# The library badge says that the series is on the shelf, in
+			   the colors of the TV card (Glenn, 2026-09). There is no
+			   streaming strip: the availability lookup covers films only,
+			   and the TV card carries none either. #}
+			{% if in_library %}
+			<div class="mb-3">{{ library_badge(upgradable) }}</div>
 			{% endif %}
 			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>
 		</div>

@@ -96,6 +96,7 @@ from app.main.helpers import (
     _same_day_rerate,
     _upgrade_threshold,
     library_upgradable,
+    series_upgradable,
     tv_meta_line,
     _watched_timestamp,
 )
@@ -2596,6 +2597,11 @@ def tv(series_id):
         title=title,
         tv=tv,
         seasons=seasons,
+        # The In-library badge of the page, in the colors of the TV card
+        # (#191): amber when a season is worth an upgrade, green when
+        # every season is settled. A series with no files shows none.
+        in_library=bool(seasons),
+        upgradable=series_upgradable([tv.id]).get(tv.id, False),
         cast=cast,
         meta_line=tv_meta_line(
             tv.tmdb_first_air_date.year if tv.tmdb_first_air_date else None,
