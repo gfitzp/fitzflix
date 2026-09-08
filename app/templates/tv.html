@@ -12,8 +12,8 @@
 		{% include "_tv_poster_large.html" %}
 	</div>
 	{# min-width: 0 lets this column shrink below the intrinsic width
-	   of the cast strip. Thus, the wide scroller cannot push the whole
-	   column down below the poster. This is the pattern of movie.html #}
+	   of a long line. Thus, wide content cannot push the whole column
+	   down below the poster. This is the pattern of movie.html #}
 	<div class="col-md" style="min-width: 0;">
 		<div>
 			<h3>{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</h3>
@@ -27,12 +27,15 @@
 			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>
 			{% endif %}
-			{% include "_cast_scroller.html" %}
 			<p><em>Added {{ moment(tv.date_created).format("LLL") }}{% if tv.date_updated %}, last updated {{ moment(tv.date_updated).format("LLL") }}{% endif %}</em></p>
 		</div>
 	</div>
 </div>
-<hr>
+{# The cast strip spans the page below the poster, between two
+   page-wide rules. This is the pattern of movie.html (Glenn, 2026-09). #}
+<hr class="mt-3 mb-2">
+{% include "_cast_scroller.html" %}
+<hr class="mt-3 mb-3">
 <div class="row">
 	{% if seasons %}
 	<div class="col-sm-3 col-md-2 mt-1 mb-1">
