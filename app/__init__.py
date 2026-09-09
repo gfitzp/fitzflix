@@ -199,7 +199,7 @@ def cron_table(config):
             3600,
             "Recomputing film recommendations",
         ),
-        # Criterion24/7 now-playing heartbeat. The poller schedules
+        # Criterion 24/7 now-playing heartbeat. The poller schedules
         # itself. It enqueues itself again at the end of each film under
         # a deterministic job id. Thus, the cron checks the pulse of the
         # chain and scrapes only when the chain has died. It never scans
@@ -208,7 +208,7 @@ def cron_table(config):
             "7,37 * * * *",
             "app.criterion_now.heartbeat_criterion_now",
             300,
-            "Checking the Criterion24/7 poller's pulse",
+            "Checking the Criterion 24/7 poller's pulse",
         ),
         # Refresh the leaving-Criterion set. The task tries daily. But
         # it does nothing while the departure of the stored set is still

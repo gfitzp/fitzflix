@@ -1,4 +1,4 @@
-"""The "On Criterion24/7 now" card of the landing page.
+"""The "On Criterion 24/7 now" card of the landing page.
 
 whatsonnow.criterionchannel.com is the public now-playing page of the
 Channel for its 24/7 feed. It shows the title of the current film and
@@ -190,7 +190,7 @@ def matched_film(title, info):
     if info["director"] and credited:
         if not any(_person_matches(info["director"], name) for name in credited):
             current_app.logger.warning(
-                f"Criterion24/7: TMDB {tmdb_id} credits "
+                f"Criterion 24/7: TMDB {tmdb_id} credits "
                 f"{', '.join(credited)} but the Channel says "
                 f"'{info['director']}' — treating as unmatched"
             )
@@ -200,7 +200,7 @@ def matched_film(title, info):
             _person_matches(scraped, name) for scraped in scraped_stars for name in cast
         ):
             current_app.logger.warning(
-                f"Criterion24/7: TMDB {tmdb_id} bills {', '.join(cast)} "
+                f"Criterion 24/7: TMDB {tmdb_id} bills {', '.join(cast)} "
                 f"but the Channel says '{info['starring']}' — "
                 f"treating as unmatched"
             )
@@ -271,13 +271,13 @@ def poll_criterion_now():
                     else "countdown unreadable"
                 )
                 current_app.logger.info(
-                    f"Criterion24/7 now: '{title}'{year_note}, {countdown_note}"
+                    f"Criterion 24/7 now: '{title}'{year_note}, {countdown_note}"
                 )
                 if minutes is not None:
                     next_poll_minutes = minutes
             else:
                 current_app.logger.warning(
-                    "Criterion24/7: no title found on the now-playing page"
+                    "Criterion 24/7: no title found on the now-playing page"
                 )
         except Exception:
             current_app.logger.warning(traceback.format_exc())
@@ -294,7 +294,7 @@ def poll_criterion_now():
             job_timeout=300,
             job_id=POLL_JOB_ID,
             result_ttl=86400,
-            description="Checking what's on Criterion24/7",
+            description="Checking what's on Criterion 24/7",
         )
         return True
 
@@ -326,7 +326,7 @@ def heartbeat_criterion_now():
         if alive:
             return True
         current_app.logger.warning(
-            "Criterion24/7 heartbeat: no poll booked, queued, or running — reviving"
+            "Criterion 24/7 heartbeat: no poll booked, queued, or running — reviving"
         )
         return poll_criterion_now()
 

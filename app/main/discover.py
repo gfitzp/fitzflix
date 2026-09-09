@@ -591,7 +591,7 @@ def index():
 @bp.route("/criterion-now")
 @login_required
 def criterion_now():
-    """Render the Criterion24/7 card fragment.
+    """Render the Criterion 24/7 card fragment.
 
     The home page fetches it again every minute while the page is
     visible. Thus, an open tab follows the feed. The film changes when

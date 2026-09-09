@@ -1,4 +1,4 @@
-"""Test the Criterion24/7 now-playing card.
+"""Test the Criterion 24/7 now-playing card.
 
 These tests cover the parse of the whatsonnow page (with its countdown
 typo) and the film info page. They also cover the self-scheduling
@@ -570,11 +570,11 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
 
     plant(timedelta(minutes=45))
     body = admin_client.get("/").get_data(as_text=True)
-    assert "On Criterion24/7 now" not in body
+    assert "On Criterion 24/7 now" not in body
 
     subscribe_criterion(app)
     body = admin_client.get("/").get_data(as_text=True)
-    assert "On Criterion24/7 now" in body
+    assert "On Criterion 24/7 now" in body
     assert "Shock Corridor (1963)" in body
     assert "Directed by Samuel Fuller" in body
     assert "Starring Peter Breck" in body
@@ -595,7 +595,7 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
 
     plant(timedelta(minutes=-30))
     body = admin_client.get("/").get_data(as_text=True)
-    assert "On Criterion24/7 now" not in body
+    assert "On Criterion 24/7 now" not in body
 
 
 def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
@@ -669,7 +669,7 @@ def test_card_watchlist_toggle_and_minutes_in(app, admin_client):
 
     seed_now(-5)
     body = admin_client.get("/").get_data(as_text=True)
-    assert "On Criterion24/7 now" in body
+    assert "On Criterion 24/7 now" in body
     assert "minutes in" not in body
     assert "Just started" not in body
 
@@ -749,5 +749,5 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     plant("The Naked Kiss", 33669, -30)
     body = admin_client.get("/").get_data(as_text=True)
     assert 'id="criterion-now"' in body
-    assert "On Criterion24/7 now" not in body
+    assert "On Criterion 24/7 now" not in body
     assert admin_client.get("/criterion-now").get_data(as_text=True).strip() == ""

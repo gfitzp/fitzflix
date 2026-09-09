@@ -1,6 +1,6 @@
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_availability_badges.html" import library_badge %}
-{# The Criterion24/7 now-playing card as a fragment. The home
+{# The Criterion 24/7 now-playing card as a fragment. The home
    page includes it at render time. It re-fetches the card from
    main.criterion_now one time a minute while visible. Thus, an open
    tab follows the feed. It does not freeze on the film it loaded
@@ -10,12 +10,12 @@
    mid-tap is never pulled away #}
 {% if now_playing %}
 <hr>
-{# The Criterion24/7 now-playing card: one film. The self-scheduling
+{# The Criterion 24/7 now-playing card: one film. The self-scheduling
    poller scrapes it from whatsonnow.criterionchannel.com. The
    poster is a direct TMDB link when the film matched. The card links
    into the log page on a match. Otherwise it links out to
    criterionchannel.com #}
-<h4>On Criterion24/7 now</h4>
+<h4>On Criterion 24/7 now</h4>
 <div class="d-flex mt-3 mb-2" data-now-film="{{ now_playing.signature }}" style="gap: 1rem; max-width: 40rem;">
 	<div style="flex: 0 0 7rem;">
 		{% set card_href = url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) if now_playing.tmdb_id else (now_playing.more_url or now_playing.watch_url) %}
@@ -97,7 +97,7 @@
 		{# The source credit has its own line (Glenn, 2026-09). The
 		   label is short. The full hostname wrapped to two lines on
 		   a phone (Glenn, 2026-09-08). #}
-		<p class="mb-0 small text-muted text-nowrap">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted" title="whatsonnow.criterionchannel.com">Criterion24/7</a></p>
+		<p class="mb-0 small text-muted text-nowrap">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted" title="whatsonnow.criterionchannel.com">Criterion 24/7</a></p>
 	</div>
 </div>
 {% endif %}
