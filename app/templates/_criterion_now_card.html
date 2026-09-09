@@ -94,8 +94,10 @@
 		{% if now_playing.minutes_in is not none or now_playing.next_at %}
 		<p class="mb-0 small text-muted" data-now-status>{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %}{% endif %}{% if now_playing.minutes_in is not none and now_playing.next_at %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }}{% endif %}</p>
 		{% endif %}
-		{# The source credit has its own line (Glenn, 2026-09) #}
-		<p class="mb-0 small text-muted">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted">whatsonnow.criterionchannel.com</a></p>
+		{# The source credit has its own line (Glenn, 2026-09). The
+		   label is short. The full hostname wrapped to two lines on
+		   a phone (Glenn, 2026-09-08). #}
+		<p class="mb-0 small text-muted text-nowrap">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted" title="whatsonnow.criterionchannel.com">Criterion Channel</a></p>
 	</div>
 </div>
 {% endif %}
