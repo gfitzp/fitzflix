@@ -49,12 +49,16 @@
 				   record-less add creates the record. The log route
 				   307-forwards the follow-up remove. #}
 				{% if match.record_id or match.year %}
-				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
+				{# One flex-wrap row with a gap, like the movie page. On
+				   a narrow screen the toggle wraps under the ladder and
+				   the margin keeps the badges below clear of it. #}
+				<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-flex align-items-center mb-0"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="from_card" value="1">
 					{{ rating_ladder(compact=true, live=true) }}
 				</form>
-				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-inline-flex align-items-center ms-2" data-card-watchlist>
+				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-flex align-items-center mb-0" data-card-watchlist>
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="from_card" value="1">
 					{# Outline on purpose, like the gallery tiles (Glenn,
@@ -63,7 +67,7 @@
 					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
 					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
 				</form>
-				<br/>
+				</div>
 				{% endif %}
 				{# Badges sit left-aligned under the title, like the local
 				   search rows, in the grammar of the movie-page strip.
