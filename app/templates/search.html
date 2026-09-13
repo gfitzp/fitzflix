@@ -54,13 +54,14 @@
 				{% if result.seasons %}
 				{# The worst quality among the best (rank=1) episode files of a
 				   season summarizes that season. Amber means that the season
-				   has at least 1 episode worth an upgrade #}
+				   has at least 1 episode worth an upgrade. The margins are
+				   the shared badge grammar. Thus, wrapped lines keep a gap #}
 				{% for season in result.seasons %}
-				<span class="badge text-bg-{{ "warning" if season.upgradable else "success" }}" title="{{ season.episode_count }} episode{{ "s" if season.episode_count != 1 }}">{{ "Specials" if season.season == 0 else "Season " ~ season.season }}: {{ season.worst_quality }}</span>
+				<span class="badge text-bg-{{ "warning" if season.upgradable else "success" }} me-1 mb-1" title="{{ season.episode_count }} episode{{ "s" if season.episode_count != 1 }}">{{ "Specials" if season.season == 0 else "Season " ~ season.season }}: {{ season.worst_quality }}</span>
 				{% endfor %}
-				<span class="badge text-bg-light">{{ result.file_count }} file{{ "s" if result.file_count != 1 }}</span>
+				<span class="badge text-bg-light me-1 mb-1">{{ result.file_count }} file{{ "s" if result.file_count != 1 }}</span>
 				{% else %}
-				<span class="badge text-bg-secondary">No episodes in library</span>
+				<span class="badge text-bg-secondary me-1 mb-1">No episodes in library</span>
 				{% endif %}
 				{% if tv.tmdb_overview %}
 				<p class="mb-1 mt-1 small text-muted">{{ tv.tmdb_overview|truncate(240) }}</p>
@@ -90,7 +91,7 @@
 			{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ person.name }}</h5>
-				<span class="badge text-bg-light">{% if person.role %}{{ person.role }} &middot; {% endif %}{{ person.film_count }} title{{ "s" if person.film_count != 1 }}</span>
+				<span class="badge text-bg-light me-1 mb-1">{% if person.role %}{{ person.role }} &middot; {% endif %}{{ person.film_count }} title{{ "s" if person.film_count != 1 }}</span>
 			</div>
 		</div>
 	</a>

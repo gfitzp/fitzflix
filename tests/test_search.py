@@ -425,8 +425,8 @@ def test_tv_seasons_summarized_by_worst_rank_one_quality(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=mixed+bag").get_data(as_text=True)
-    assert 'text-bg-warning" title="2 episodes">Season 1: Unknown' in page
-    assert 'text-bg-success" title="1 episode">Season 2: Bluray-1080p' in page
+    assert 'text-bg-warning me-1 mb-1" title="2 episodes">Season 1: Unknown' in page
+    assert 'text-bg-success me-1 mb-1" title="1 episode">Season 2: Bluray-1080p' in page
 
 
 def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
@@ -444,9 +444,9 @@ def test_physical_media_seasons_are_not_upgrade_candidates(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=disc+only").get_data(as_text=True)
-    assert 'text-bg-success" title="1 episode">Season 1: DVD' in page
-    assert 'text-bg-success" title="1 episode">Season 2: Bluray-480p' in page
-    assert 'text-bg-warning" title="1 episode">Season 3: WEBDL-480p' in page
+    assert 'text-bg-success me-1 mb-1" title="1 episode">Season 1: DVD' in page
+    assert 'text-bg-success me-1 mb-1" title="1 episode">Season 2: Bluray-480p' in page
+    assert 'text-bg-warning me-1 mb-1" title="1 episode">Season 3: WEBDL-480p' in page
 
     # The TV library page uses the same flag on its season badges
 
@@ -713,7 +713,7 @@ def test_episode_title_edition_does_not_split_tv_ranking(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/search?q=titled+episodes").get_data(as_text=True)
-    assert 'text-bg-success" title="1 episode">Season 1: Bluray-1080p' in page
+    assert 'text-bg-success me-1 mb-1" title="1 episode">Season 1: Bluray-1080p' in page
 
 
 def test_search_finds_people(app, admin_client):
