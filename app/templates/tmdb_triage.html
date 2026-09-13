@@ -17,7 +17,9 @@
 	<td class="text-nowrap">{{ record.date_created.strftime("%b %-d, %Y") if record.date_created }}</td>
 	<td><a href="{{ url_for('main.search_tmdb', q=record.title) }}">Search TMDB</a></td>
 	<td class="text-nowrap">
-		<form action="" method="post" class="d-inline-flex align-items-center" style="gap: .25rem;">
+		{# One flex-wrap row with a gap. Thus, the controls keep a gap
+		   when a narrow screen wraps them. #}
+		<form action="" method="post" class="d-flex flex-wrap align-items-center gap-1">
 			{{ triage_form.csrf_token }}
 			{% if kind == 'movie' %}
 			<input type="hidden" name="movie_id" value="{{ record.id }}">
@@ -39,6 +41,7 @@
 <p class="text-muted">There {{ "is" if (movies|length) + (series|length) == 1 else "are" }} {{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id that you enter and refreshes the record. <b>Flag as unmatchable</b> marks the record, so no refresh path guesses an id from its title again. If a record has zero files, the better option is possibly to delete it from its own page.</p>
 {% if movies %}
 <h4>Movies</h4>
+<div class="table-responsive">
 <table class="table table-sm mt-2 mb-4 align-middle">
 	<thead class="table-light">
 		<tr>
@@ -56,9 +59,11 @@
 		{% endfor %}
 	</tbody>
 </table>
+</div>
 {% endif %}
 {% if series %}
 <h4>TV series</h4>
+<div class="table-responsive">
 <table class="table table-sm mt-2 align-middle">
 	<thead class="table-light">
 		<tr>
@@ -76,6 +81,7 @@
 		{% endfor %}
 	</tbody>
 </table>
+</div>
 {% endif %}
 {% else %}
 <p class="lead">Each record is matched or flagged. There is nothing to triage.</p>

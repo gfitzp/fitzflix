@@ -30,8 +30,9 @@
 	<button class="btn btn-sm btn-warning" name="rebuild_submit" value="Rebuild lineups now" type="submit">Rebuild lineups now</button>
 </form>
 
+<div class="table-responsive">
 <table class="table table-sm mt-3 align-middle">
-	<thead>
+	<thead class="table-light">
 		<tr>
 			<th>#</th>
 			<th>Name</th>
@@ -61,6 +62,7 @@
 		{% endfor %}
 	</tbody>
 </table>
+</div>
 
 <h4 class="mt-4">New channel</h4>
 <form action="" method="post" class="mt-2" style="max-width: 40rem;">

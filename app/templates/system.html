@@ -75,6 +75,7 @@
 {% if failed_jobs %}
 <hr>
 <h3>Failed tasks</h3>
+<div class="table-responsive">
 <table class="table table-sm mt-3">
 	<thead class="table-light">
 		<tr>
@@ -97,13 +98,18 @@
 					{{ failed_job_form.csrf_token }}
 					{{ failed_job_form.failed_job_id(value=job.id) }}
 					{{ failed_job_form.failed_queue(value=job.queue) }}
-					{{ failed_job_form.requeue_submit(class_="btn btn-sm btn-warning me-1") }}
+					{# One flex-wrap row with a gap. Thus, the two buttons keep
+					   a gap when a narrow screen wraps them. #}
+					<div class="d-flex flex-wrap gap-2">
+					{{ failed_job_form.requeue_submit(class_="btn btn-sm btn-warning") }}
 					{{ failed_job_form.forget_submit(class_="btn btn-sm btn-danger") }}
+					</div>
 				</form>
 			</td>
 		</tr>
 		{% endfor %}
 	</tbody>
 </table>
+</div>
 {% endif %}
 {% endblock %}

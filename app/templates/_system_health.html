@@ -22,6 +22,7 @@
 </div>
 <div class="row my-2">
 	<div class="col-md-6">
+		<div class="table-responsive">
 		<table class="table table-sm mb-2">
 			<thead class="table-light">
 				<tr>
@@ -42,6 +43,7 @@
 				{% endfor %}
 			</tbody>
 		</table>
+		</div>
 	</div>
 	<div class="col-md-6">
 		{% for disk in health.disks %}
@@ -57,6 +59,7 @@
 </div>
 <hr>
 <h3>Scheduled tasks</h3>
+<div class="table-responsive">
 <table class="table table-sm mt-3">
 	<thead class="table-light">
 		<tr>
@@ -77,3 +80,4 @@
 		{% endfor %}
 	</tbody>
 </table>
+</div>

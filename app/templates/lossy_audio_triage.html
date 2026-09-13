@@ -52,6 +52,7 @@
 		<form action="" method="post">
 			{{ triage_form.csrf_token }}
 			{{ triage_form.file_id(value=file.id) }}
+			<div class="table-responsive">
 			<table class="table table-sm mb-0">
 				<thead class="table-light">
 					<tr>
@@ -88,6 +89,7 @@
 					{% endfor %}
 				</tbody>
 			</table>
+			</div>
 			{% if file.container == "Matroska" %}
 			{{ triage_form.promote_submit(class_="btn btn-sm btn-warning mt-2") }}
 			{% endif %}

@@ -9,10 +9,12 @@
 {# The runtime filter is a view on the rails that are already
    computed. The recommendations never consider the length. Films with
    an unknown runtime hide only while a limit is set. #}
-<form class="form-inline mb-3" action="{{ url_for('main.index') }}" method="get">
-	<label class="small text-muted me-2" for="minutes">Only films that fit your evening:</label>
-	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm me-2" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
-	<button type="submit" class="btn btn-sm btn-primary me-2">Filter</button>
+{# One flex-wrap row with a gap. Thus, the label, the box, and the
+   buttons keep a gap when a narrow screen wraps them. #}
+<form class="d-flex flex-wrap align-items-center gap-2 mb-3" action="{{ url_for('main.index') }}" method="get">
+	<label class="small text-muted mb-0" for="minutes">Only films that fit your evening:</label>
+	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
+	<button type="submit" class="btn btn-sm btn-primary">Filter</button>
 	{% if minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
 </form>
 {% if minutes %}

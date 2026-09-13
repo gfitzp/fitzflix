@@ -16,8 +16,12 @@
 		<form action="" method="post" class="d-inline">
 			{{ form.csrf_token() }}
 			<input type="hidden" name="file_path" value="{{ entry.path }}">
+			{# One flex-wrap row with a gap. Thus, the buttons keep a gap
+			   when a narrow screen wraps them. #}
+			<div class="d-flex flex-wrap gap-2">
 			<button class="btn btn-sm btn-primary" name="reimport_submit" value="Re-import" type="submit">Re-import</button>
 			<button class="btn btn-sm btn-danger" name="delete_submit" value="Delete" type="submit" onclick="return confirm('Permanently delete this file?');">Delete</button>
+			</div>
 		</form>
 	</div>
 	{% endfor %}

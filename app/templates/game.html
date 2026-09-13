@@ -193,6 +193,9 @@
 		<input type="text" name="guess" class="form-control" placeholder="Type the film's title&hellip;" aria-label="Your guess" autocomplete="off" autofocus>
 	</div>
 	{% endif %}
+	{# One flex-wrap row with a gap. Thus, the buttons keep a gap when
+	   a narrow screen wraps them. #}
+	<div class="d-flex flex-wrap gap-2">
 	<button type="submit" name="guess_submit" value="y" class="btn btn-primary">Guess</button>
 	{% if difficulty == "extra" and stage and stage < 3 %}
 	<button type="submit" name="zoom_out" value="y" class="btn btn-secondary">Zoom Out</button>
@@ -206,6 +209,7 @@
 	   live round explicitly. Only an untouched round can skip. #}
 	<a class="btn btn-secondary" href="{{ url_for('main.name_that_frame', difficulty=difficulty, skip=1 if difficulty == 'extra' else none) }}">Skip</a>
 	{% endif %}
+	</div>
 </form>
 {% endif %}
 {% elif pool_size %}

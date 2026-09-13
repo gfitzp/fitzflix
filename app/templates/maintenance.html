@@ -18,6 +18,7 @@
 <h3>Duplicate movies</h3>
 {% if duplicate_groups %}
 <p class="small text-muted">These movies have the same TMDB id. A merge moves the files and the reviews of each duplicate to the oldest record (marked kept). Then it deletes the duplicate.</p>
+<div class="table-responsive">
 <table class="table table-sm mt-3">
 	<thead class="table-light">
 		<tr>
@@ -48,6 +49,7 @@
 		{% endfor %}
 	</tbody>
 </table>
+</div>
 {% else %}
 <p class="small text-muted">No two movies have the same TMDB id.</p>
 {% endif %}
@@ -79,8 +81,12 @@
 <h3>Lossy-audio leads</h3>
 <p class="small text-muted">The files whose first audio track is lossy, with a lossless track after it. Remux the lossless track into the lead, or keep a commentary pair as it is.</p>
 {% if lossy_triage_count %}
+{# One flex-wrap row with a gap. Thus, the two buttons keep a gap when
+   a narrow screen wraps them. #}
+<div class="d-flex flex-wrap gap-2">
 <a class="btn btn-sm btn-warning" href="{{ url_for('main.lossy_audio_triage') }}" role="button">Triage lossy audio <span class="badge text-bg-light">{{ lossy_triage_count }}</span></a>
-<a class="btn btn-sm btn-secondary ms-1" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
+<a class="btn btn-sm btn-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
+</div>
 {% else %}
 <p class="small text-muted mb-2">Nothing to triage.</p>
 <a class="btn btn-sm btn-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>

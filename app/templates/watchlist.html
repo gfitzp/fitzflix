@@ -23,8 +23,12 @@
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
 			{% endfor %}
-			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
-			{% if q or minutes %}<a class="btn btn-sm btn-secondary mb-2" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			{# One flex-wrap row with a gap. Thus, the two buttons keep a
+			   gap when a narrow screen wraps them. #}
+			<div class="d-flex flex-wrap gap-2 mb-2">
+			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
+			{% if q or minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			</div>
 		</form>
 	</div>
 </div>

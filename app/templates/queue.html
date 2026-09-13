@@ -14,6 +14,7 @@
 	window.pipelineTrailLimit = 100;
 </script>
 <p class="small text-muted">Each row is one job. The chips show the path of its file through the pipeline, one chip for each stage: the staging copy, the localization, the library copy, the cataloging, the S3 archive, and the remuxes, transcodes, or restores. Blue is a stage that runs. Gray is a stage that waits. Amber is a deferred retry. Red is a failure, and it stays visible after a retry succeeds. A file whose last stage is not done, but has no job left, comes at the end of the list.</p>
+<div class="table-responsive">
 <table class="table table-striped">
 	<thead class="table-light">
 		<tr class="d-flex">
@@ -25,4 +26,5 @@
 	</thead>
 	<tbody id="all-tasks"></tbody>
 </table>
+</div>
 {% endblock %}
