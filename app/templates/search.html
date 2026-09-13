@@ -106,9 +106,13 @@
 {# The TMDB lookup understands the same y: modifiers as this page.
    Thus, it gets the full query. The filename search does not. Thus,
    it gets the bare text #}
+{# One flex-wrap row with a gap. Thus, the two buttons keep a gap
+   when a narrow screen wraps them. #}
+<div class="d-flex flex-wrap gap-2">
 <a class="btn btn-primary btn-sm" href="{{ url_for('main.search_tmdb', q=q) }}">Look up &ldquo;{{ q }}&rdquo; on TMDB</a>
 {% if current_user.admin %}
 <a class="btn btn-secondary btn-sm" href="{{ url_for('main.files', q=q_text) }}">Search filenames</a>
 {% endif %}
+</div>
 {% endif %}
 {% endblock %}

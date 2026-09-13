@@ -1033,13 +1033,6 @@
 			}).then(function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
 				invalidateCard(form.closest(".poster-actions"));
-				// A surface that pairs the toggle with an "On your
-				// watchlist" badge (the movie page, the TMDB results)
-				// marks their shared wrapper data-watchlist-scope. Then
-				// the badge follows (#187/#183)
-				var scope = form.closest("[data-watchlist-scope]");
-				var badge = scope && scope.querySelector("[data-watchlist-badge]");
-				if (badge) badge.classList.toggle("d-none", !state.on_watchlist);
 				// The own Remove of the watchlist page clears its tile
 				// in place and settles the filter counts. It uses the
 				// bucket that the cell rendered with (#187)

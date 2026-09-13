@@ -315,12 +315,15 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
 
     page = admin_client.get("/search/tmdb?q=funnel").get_data(as_text=True)
     assert page.count("Might interest you") == 0
-    assert page.count('text-bg-info me-1">Seen') == 1
-    # Each movie row keeps the badge in the DOM for the live toggle
-    # (#183). Only the badge of the watchlist row is visible (no d-none)
-    assert page.count('me-1" data-watchlist-badge') == 1
-    assert page.count('me-1 d-none" data-watchlist-badge') == 1
-    assert page.index("Funnel Wanted (1978)") < page.index('me-1" data-watchlist-badge')
+    assert page.count('text-bg-info me-1 mb-1">Seen') == 1
+    # The row carries no watchlist badge. The face of the toggle is
+    # the one signal of the list state (Glenn, 2026-09-13). Only the
+    # watchlist row shows its Remove face (no d-none)
+    assert "On your watchlist" not in page
+    assert page.count('btn-outline-secondary py-0">Remove from Watchlist') == 1
+    assert page.index("Funnel Wanted (1978)") < page.index(
+        'btn-outline-secondary py-0">Remove from Watchlist'
+    )
 
 
 def test_search_tmdb_badges_recommended_owned_films(app, admin_client, monkeypatch):
