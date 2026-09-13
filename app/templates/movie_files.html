@@ -4,7 +4,7 @@
 <nav aria-label="breadcrumb">
   <ol class="breadcrumb">
   	<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
-    <li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></li>
+    <li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></li>
     <li class="breadcrumb-item active" aria-current="page">Files</li>
   </ol>
 </nav>

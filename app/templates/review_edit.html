@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
 		<li class="breadcrumb-item"><a href="{{ url_for('main.history', page=page) }}">My History</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ movie.tmdb_title if movie.tmdb_title else movie.title }}</li>
+		<li class="breadcrumb-item active" aria-current="page">{{ movie|display_title }}</li>
 	</ol>
 </nav>
 <div class="row mb-n2">
@@ -13,7 +13,7 @@
 		{% include "_movie_poster_large.html" %}
 	</div>
 	<div class="col-md-8">
-		<h3><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime("%Y") if (movie.tmdb_title and movie.tmdb_release_date) else movie.year }})</a></h3>
+		<h3><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></h3>
 		<p class="text-muted">
 			{% if user_review.date_watched %}Viewing on {{ user_review.date_watched.strftime("%B %-d, %Y") }}{% else %}Undated viewing{% endif %}{% if user_review.rewatch %} &middot; rewatch{% endif %}
 		</p>

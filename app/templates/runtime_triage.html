@@ -22,7 +22,7 @@
 		{% set movie = entry.movie %}
 		{% set file = entry.file %}
 		<tr>
-			<td><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }})</a></td>
+			<td><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie.year }})</a></td>
 			<td class="text-break small"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
 			<td class="text-end">{{ movie.tmdb_runtime }}m</td>
 			<td class="text-end">&asymp;{{ entry.estimated_minutes|round|int }}m</td>

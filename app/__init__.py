@@ -627,6 +627,26 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.jinja_env.filters["review_html"] = review_html
 
+    # The display name of a film, and its year. TMDB wins when the film
+    # has a TMDB match. The year falls back to the local year when the
+    # match has no release date. Thus, no template calls strftime on
+    # None. Every template uses these two filters for the title line.
+
+    def display_title(movie):
+        """Return the TMDB title of a film, or its local title."""
+
+        return movie.tmdb_title if movie.tmdb_title else movie.title
+
+    def display_year(movie):
+        """Return the TMDB release year of a film, or its local year."""
+
+        if movie.tmdb_title and movie.tmdb_release_date:
+            return movie.tmdb_release_date.strftime("%Y")
+        return movie.year
+
+    app.jinja_env.filters["display_title"] = display_title
+    app.jinja_env.filters["display_year"] = display_year
+
     # The action forms of the poster tiles render their own csrf inputs.
     # They do not need a form object passed through every gallery route.
     # This is the same name that CSRFProtect would register, without its

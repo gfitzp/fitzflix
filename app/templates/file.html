@@ -5,7 +5,7 @@
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
 		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=file.movie_id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></li>
+		<li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=file.movie_id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></li>
 		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_files', movie_id=file.movie_id) }}">Files</a></li>
 		<li class="breadcrumb-item active" aria-current="page">{{ file.basename }}</li>
 	</ol>
@@ -27,7 +27,7 @@
 	<em>Added {{ moment(file.date_added).format("LLL") }}{% if file.date_updated %}, file details last updated {{ moment(file.date_updated).format("LLL") }}{% endif %}</em>
 </p>
 {% if file.media_library == "Movies" %}
-	<p>{% if file.feature_type_id %}Special feature{% else %}File{% endif %} for movie <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a></p>
+	<p>{% if file.feature_type_id %}Special feature{% else %}File{% endif %} for movie <a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></p>
 {% elif file.media_library == "TV Shows" %}
 	<p>{% if file.season == 0 %}<a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">Special</a> for{% else %}Episode from{% endif %} TV Series <a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>{% if file.season != 0 %}, <a href="{{ url_for('main.season', series_id=tv.id, season=file.season) }}">season {{ file.season }}</a>{% endif %}</p>
 {% endif %}

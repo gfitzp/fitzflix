@@ -92,7 +92,7 @@
 					<th scope="row" class="align-middle">{{ file.id }}</th>
 					<td class="align-middle">
 						{% if movie %}
-							<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.tmdb_release_date.strftime('%Y') if movie.tmdb_title else movie.year }})</a>
+							<a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a>
 						{% elif tv %}
 							<a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a>
 						{% endif %}

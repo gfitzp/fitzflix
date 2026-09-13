@@ -54,7 +54,7 @@
 			   hydration as the star ladders. Nothing on this page is
 			   tile-specific. #}
 			{{ poster_image(movie_poster_src(movie), movie.title ~ ' (' ~ movie.year ~ ')') }}
-			<p class="small mb-0">{{ movie.tmdb_title if movie.tmdb_title else movie.title }} ({{ movie.year }}){% if minutes %} <span class="text-muted">&middot; {{ movie.tmdb_runtime }} min</span>{% endif %}</p>
+			<p class="small mb-0">{{ movie|display_title }} ({{ movie.year }}){% if minutes %} <span class="text-muted">&middot; {{ movie.tmdb_runtime }} min</span>{% endif %}</p>
 		</a>
 		{# This page pins its whole action cluster (ladder, buttons,
 		   date) to the bottom of the cell as one .poster-bottom
@@ -77,8 +77,8 @@
 				{% if not row.owned %}
 				{% set in_radarr = row.in_radarr %}
 				{% set radarr_requestable = radarr_available and movie.tmdb_id %}
-				{% set find_title = movie.tmdb_title if movie.tmdb_title else movie.title %}
-				{% set find_year = movie.tmdb_release_date.strftime('%Y') if (movie.tmdb_title and movie.tmdb_release_date) else movie.year %}
+				{% set find_title = movie|display_title %}
+				{% set find_year = movie|display_year %}
 				<div class="btn-group">
 					{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
 						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ find_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
