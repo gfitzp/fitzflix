@@ -64,7 +64,9 @@
    pins to the cell bottom through margin-top: auto (variant 4 by Glenn).
    A Bootstrap margin with !important would defeat that. #}
 <div class="poster-actions pt-1"{% if movie_id %} data-state-movie="{{ movie_id }}"{% elif tmdb_id %} data-state-tmdb="{{ tmdb_id }}"{% endif %}>
-	<form action="{{ action }}" method="post" class="mb-1 d-flex align-items-center">
+	{# The star row drops its own bottom margin. The form margin
+	   alone spaces the toggle. #}
+	<form action="{{ action }}" method="post" class="mb-2 d-flex align-items-center star-row-inline">
 		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 		<input type="hidden" name="from_card" value="1">
 		{{ rating_ladder(compact=true, live=true) }}
