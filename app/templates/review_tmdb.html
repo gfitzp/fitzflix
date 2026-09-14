@@ -104,11 +104,13 @@
 {# This is the same store-search dropdown and the same external-site
    links as on the movie page. The Files button and the shopping-list
    toggle are absent. This film has no local record yet. #}
-<div class="row">
-	<div class="col-sm-3 col-md-2 my-1">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3">
+	<div class="col-sm-3 col-md-2">
 		{{ find_button(movie, block=true) }}
 	</div>
-	<div class="col-md mt-1 mb-1 ms-n3">
+	<div class="col-md ms-n3">
 		<hr class="d-block d-md-none">
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>

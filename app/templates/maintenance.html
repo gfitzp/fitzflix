@@ -134,7 +134,9 @@
 {% endif %}
 <hr>
 <h4 class="mt-4 mb-2">Bulk operations</h4>
-<div class="row my-2">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3 my-2">
     <div class="col-md-3">
     	<form action="" method="post">
     		{{ criterion_refresh_form.hidden_tag() }}
@@ -161,7 +163,9 @@
     </div>
 </div>
 <hr>
-<div class="row my-2">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3 my-2">
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ sync_form.hidden_tag() }}
