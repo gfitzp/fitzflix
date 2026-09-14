@@ -633,15 +633,20 @@ def create_app(config_class=Config, watch_import_dir=False):
     # None. Every template uses these two filters for the title line.
 
     def display_title(movie):
-        """Return the TMDB title of a film, or its local title."""
+        """Return the TMDB title of a film, or its local title.
 
-        return movie.tmdb_title if movie.tmdb_title else movie.title
+        The review page passes a plain namespace with no TMDB fields.
+        Thus, the lookups tolerate a missing attribute.
+        """
+
+        return getattr(movie, "tmdb_title", None) or movie.title
 
     def display_year(movie):
         """Return the TMDB release year of a film, or its local year."""
 
-        if movie.tmdb_title and movie.tmdb_release_date:
-            return movie.tmdb_release_date.strftime("%Y")
+        release_date = getattr(movie, "tmdb_release_date", None)
+        if getattr(movie, "tmdb_title", None) and release_date:
+            return release_date.strftime("%Y")
         return movie.year
 
     app.jinja_env.filters["display_title"] = display_title

@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "_poster_tile.html" import ladder_form %}
+{% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
@@ -54,6 +56,35 @@
 	</div>
 </div>
 <hr>
+{# One row of the shopping list: the poster, the title, the live star
+   ladder, the facts, and the shop buttons. The watchlist view passes
+   the watchers. The upgrade view passes the file. One row serves every
+   width. The 92-pixel poster and the text column fit a phone. #}
+{% macro shopping_row(movie, instruction, file=none, watchers=none) %}
+<div class="d-flex mb-3">
+	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
+		{% include "_movie_poster_small.html" %}
+	</a>
+	<div class="flex-grow-1" data-state-movie="{{ movie.id }}">
+		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
+		{% call ladder_form(url_for('main.movie', movie_id=movie.id)) %}
+			{{ rating_ladder(compact=true, live=true) }}
+		{% endcall %}
+		<p class="mb-1 text-muted">
+			{% if file and file.edition %}{{ file.edition }}<br>{% endif %}
+			{% if watchers %}Watchlisted by {{ watchers }}<br>{% endif %}
+			{% if file and movie.shopping_cart_priority %}Watched {{ movie.shopping_cart_priority }} time{% if movie.shopping_cart_priority > 1 %}s{% endif %}<br>{% endif %}
+			{{ instruction }}
+		</p>
+		{% if instruction != "Already owned" %}
+		<div class="d-flex flex-wrap gap-2">
+			{{ find_button(movie) }}
+			{{ cart_toggle(movie_shopping_exclude_form, movie) }}
+		</div>
+		{% endif %}
+	</div>
+</div>
+{% endmacro %}
 {% if watchlist_groups %}
 {# The watchlist view (#247): the watchlisted, unowned films of every
    user, grouped hardest-to-watch first. The worst case among the watchers
@@ -66,187 +97,15 @@
 <p class="text-muted">Nothing here.</p>
 {% endif %}
 {% for row in group.rows %}
-{% set movie = row.movie %}
-<div class="d-flex mb-3">
-	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-		{% include "_movie_poster_small.html" %}
-	</a>
-	<div class="flex-grow-1" data-state-movie="{{ movie.id }}" data-watchlist-scope>
-		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
-		<form action="{{ url_for('main.movie', movie_id=movie.id) }}" method="post" class="d-flex align-items-center">
-			<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-			<input type="hidden" name="from_card" value="1">
-			{{ rating_ladder(compact=true, live=true) }}
-		</form>
-		<p class="mt-n1">
-			<span class="text-muted">Watchlisted by {{ row.watchers }}</span><br>
-			<span class="text-muted">{{ row.instruction }}</span>
-		</p>
-		<div class="btn-group mt-n2">
-			{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ movie|display_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
-			{% elif movie.criterion_spine_number or movie.criterion_set_title %}
-				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ movie|display_title|urlencode }} {{ movie|display_year }} Criterion Collection" rel="noreferrer">Find</a>
-			{% else %}
-				<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie|display_title|urlencode }}&yearfrom={{ movie|display_year }}&yearto={{ movie|display_year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
-			{% endif %}
-			<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-bs-toggle="dropdown" aria-expanded="false">
-				<span class="visually-hidden">Toggle dropdown</span>
-			</button>
-			{% include "_shopping_search_dropdown.html" %}
-		</div>
-		<div class="btn-group mt-n2">
-			<form action="" method="post">
-				{{ movie_shopping_exclude_form.csrf_token() }}
-				{{ movie_shopping_exclude_form.movie_id(value=movie.id) }}
-				<button class="btn btn-sm btn-light" id="exclude_submit" name="exclude_submit" type="submit" value="Remove from List">
-					<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-x" viewBox="0 0 16 16">
-						<path d="M7.354 5.646a.5.5 0 1 0-.708.708L7.793 7.5 6.646 8.646a.5.5 0 1 0 .708.708L8.5 8.207l1.146 1.147a.5.5 0 0 0 .708-.708L9.207 7.5l1.147-1.146a.5.5 0 0 0-.708-.708L8.5 6.793 7.354 5.646z"/>
-						<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-					</svg>
-				</button>
-			</form>
-		</div>
-	</div>
-</div>
+{{ shopping_row(row.movie, row.instruction, watchers=row.watchers) }}
 {% endfor %}
 {% endfor %}
 {% endif %}
 {% if movies %}
-<div class="d-none d-sm-block">
-	{{ pagination(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url, compact=false) }}
-	{# Each row shows the gallery grammar (#45c). The poster anchor
-	   carries data-card-url for the popover (hover on a pointer, tap on
-	   touch). The title link is the way to the page of the film. The
-	   details column is the data-state-movie scope. The batched
-	   /movie_states fetch paints its blank star ladder. The ladder posts
-	   to the movie route of the film and repaints in place. A rating
-	   drops the cached card of the row, because the watchlist badge of
-	   the card went stale. The averaged rating columns of the route go
-	   with the row, unpacked but not drawn. The ladder shows the latest
-	   verdict, as every other surface does. #}
-	{% for file, movie, quality, rating, modified_rating, whole_stars, half_stars, instruction in movies %}
-	<div class="d-flex mb-3">
-		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-			{% include "_movie_poster_small.html" %}
-		</a>
-		<div class="flex-grow-1" data-state-movie="{{ movie.id }}" data-watchlist-scope>
-			<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
-			<form action="{{ url_for('main.movie', movie_id=movie.id) }}" method="post" class="d-flex align-items-center">
-				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-				<input type="hidden" name="from_card" value="1">
-				{{ rating_ladder(compact=true, live=true) }}
-			</form>
-			<p class="mt-n1">
-				{% if file.edition %}{{ file.edition }}<br>{% endif %}
-				{% if movie.shopping_cart_priority %}<span class="text-muted">Watched {{ movie.shopping_cart_priority }} time{% if movie.shopping_cart_priority > 1%}s{% endif %}</span><br>{% endif %}
-				<span class="text-muted">{{ instruction }}</span>
-			</p>
-			{% if instruction != "Already owned" %}
-			<div class="btn-group mt-n2">
-				{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ movie|display_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
-				{% elif movie.criterion_spine_number or movie.criterion_set_title %}
-					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ movie|display_title|urlencode }} {{ movie|display_year }} Criterion Collection" rel="noreferrer">Find</a>
-				{% else %}
-					<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie|display_title|urlencode }}&yearfrom={{ movie|display_year }}&yearto={{ movie|display_year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
-				{% endif %}
-				<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-bs-toggle="dropdown" aria-expanded="false">
-					<span class="visually-hidden">Toggle dropdown</span>
-				</button>
-				{% include "_shopping_search_dropdown.html" %}
-			</div>
-			<div class="btn-group mt-n2">
-				<form action="" method="post">
-					{{ movie_shopping_exclude_form.csrf_token() }}
-					{{ movie_shopping_exclude_form.movie_id(value=movie.id) }}
-					{% if not movie.shopping_list_exclude %}
-						<button class="btn btn-sm btn-light" id="exclude_submit" name="exclude_submit" type="submit" value="Remove from List">
-							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-x" viewBox="0 0 16 16">
-								<path d="M7.354 5.646a.5.5 0 1 0-.708.708L7.793 7.5 6.646 8.646a.5.5 0 1 0 .708.708L8.5 8.207l1.146 1.147a.5.5 0 0 0 .708-.708L9.207 7.5l1.147-1.146a.5.5 0 0 0-.708-.708L8.5 6.793 7.354 5.646z"/>
-								<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-							</svg>
-						</button>
-					{% else %}
-						<button class="btn btn-sm btn-light" id="add_submit" name="add_submit" type="submit" value="Add to List">
-							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-plus" viewBox="0 0 16 16">
-								<path d="M9 5.5a.5.5 0 0 0-1 0V7H6.5a.5.5 0 0 0 0 1H8v1.5a.5.5 0 0 0 1 0V8h1.5a.5.5 0 0 0 0-1H9V5.5z"/>
-								<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-							</svg>
-						</button>
-					{% endif %}
-				</form>
-			</div>
-			{% endif %}
-		</div>
-	</div>
-	{% endfor %}
-	{{ pagination(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url, compact=false) }}
-</div>
-
-<!-- This displays differently on a mobile device -->
-
-<div class="d-block d-sm-none mt-n2">
-	{{ pagination(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url, compact=true) }}
-	<ul class="list-group">
-		{% for file, movie, quality, rating, modified_rating, whole_stars, half_stars, instruction in movies %}
-			<li class="list-group-item">
-				<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
-					{% include "_movie_poster_small.html" %}
-				</a>
-				<div data-state-movie="{{ movie.id }}" data-watchlist-scope>
-					<h6 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}"><span class="text-body">{{ movie|display_title }} ({{ movie|display_year }})</span></a></h6>
-					<form action="{{ url_for('main.movie', movie_id=movie.id) }}" method="post" class="d-flex align-items-center">
-						<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-						<input type="hidden" name="from_card" value="1">
-						{{ rating_ladder(compact=true, live=true) }}
-					</form>
-					<p class="mt-n1">
-						{% if file.edition %}{{ file.edition }}<br>{% endif %}
-						{% if movie.shopping_cart_priority %}<span class="text-muted">Watched {{ movie.shopping_cart_priority }} time{% if movie.shopping_cart_priority > 1%}s{% endif %}</span><br>{% endif %}
-						<span class="text-muted">{{ instruction }}</span>
-					</p>
-					{% if instruction != "Already owned" %}
-						<div class="mt-n2">
-							<div class="btn-group mt-n2">
-								{% if movie.criterion_spine_number or movie.criterion_set_title %}
-									<a class="btn btn-primary btn-sm" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ movie|display_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
-								{% else %}
-									<a class="btn btn-primary btn-sm" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ movie|display_title|urlencode }}&yearfrom={{ movie|display_year }}&yearto={{ movie|display_year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
-								{% endif %}
-								<button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split btn-sm" data-bs-toggle="dropdown" aria-expanded="false">
-									<span class="visually-hidden">Toggle dropdown</span>
-								</button>
-								{% include "_shopping_search_dropdown.html" %}
-							</div>
-							<div class="btn-group mt-n2 mb-0">
-								<form action="" method="post">
-									{{ movie_shopping_exclude_form.csrf_token() }}
-									{{ movie_shopping_exclude_form.movie_id(value=movie.id) }}
-									{% if not movie.shopping_list_exclude %}
-										<button class="btn btn-sm btn-light" id="exclude_submit" name="exclude_submit" type="submit" value="Remove from List">
-											<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-x" viewBox="0 0 16 16">
-												<path d="M7.354 5.646a.5.5 0 1 0-.708.708L7.793 7.5 6.646 8.646a.5.5 0 1 0 .708.708L8.5 8.207l1.146 1.147a.5.5 0 0 0 .708-.708L9.207 7.5l1.147-1.146a.5.5 0 0 0-.708-.708L8.5 6.793 7.354 5.646z"/>
-												<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-											</svg>
-										</button>
-									{% else %}
-										<button class="btn btn-sm btn-light" id="add_submit" name="add_submit" type="submit" value="Add to List">
-											<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-plus" viewBox="0 0 16 16">
-												<path d="M9 5.5a.5.5 0 0 0-1 0V7H6.5a.5.5 0 0 0 0 1H8v1.5a.5.5 0 0 0 1 0V8h1.5a.5.5 0 0 0 0-1H9V5.5z"/>
-												<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
-											</svg>
-										</button>
-									{% endif %}
-								</form>
-							</div>
-						</div>
-					{% endif %}
-				</div>
-			</li>
-		{% endfor %}
-	</ul>
-	{{ pagination(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url, compact=true, nav_class="mt-2") }}
-</div>
+{{ pagination_pair(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url) }}
+{% for file, movie, quality, rating, modified_rating, whole_stars, half_stars, instruction in movies %}
+{{ shopping_row(movie, instruction, file=file) }}
+{% endfor %}
+{{ pagination_pair(pages, 'main.movie_shopping', {'q': request.args.get('q'), 'library': request.args.get('library'), 'media': request.args.get('media'), 'min_quality': request.args.get('min_quality'), 'max_quality': request.args.get('max_quality')}, prev_url, next_url) }}
 {% endif %}
 {% endblock %}

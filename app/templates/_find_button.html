@@ -1,0 +1,60 @@
+{# The Find split button of the shopping surfaces, and the cart toggle
+   of the shopping list. Import this file with context. The store menu
+   inside reads the request context: instruction, the Radarr state, and
+   the proxy URL. find_button decides the face once: a Criterion film
+   in print opens criterion.com, a Criterion film out of print searches
+   eBay, and every other film searches Blu-ray.com. A series searches
+   Blu-ray.com with the television flag. compact is the short button of
+   a tile. block fills the column of a standalone page. The two Radarr
+   flags come in as parameters. A loop-local set of the calling page is
+   not visible here, and the store menu reads them. #}
+{% macro find_button(movie=none, tv=none, compact=false, block=false, extra="", radarr_requestable=none, in_radarr=none) -%}
+{% set cls = "btn btn-sm btn-primary" ~ (" py-0" if compact else "") %}
+{% set radarr_requestable = radarr_requestable %}
+{% set in_radarr = in_radarr %}
+<div class="btn-group{% if block %} show w-100{% endif %}{% if extra %} {{ extra }}{% endif %}">
+	{% if movie %}
+	{% set title = movie|display_title %}
+	{% set year = movie|display_year %}
+	{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
+	<a class="{{ cls }}{% if block %} w-100{% endif %}" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
+	{% elif movie.criterion_spine_number or movie.criterion_set_title %}
+	<a class="{{ cls }}{% if block %} w-100{% endif %}" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ title|urlencode }} {{ year }} Criterion Collection" rel="noreferrer">Find</a>
+	{% else %}
+	<a class="{{ cls }}{% if block %} w-100{% endif %}" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ title|urlencode }}&yearfrom={{ year }}&yearto={{ year }}&sortby=releasetimestamp" rel="noreferrer">Find</a>
+	{% endif %}
+	{% else %}
+	<a class="{{ cls }}{% if block %} w-100{% endif %}" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?action=search&keyword={{ tv.tmdb_name|urlencode if tv.tmdb_name else tv.title|urlencode }}&television=on" rel="noreferrer">Find</a>
+	{% endif %}
+	<button type="button" class="{{ cls }} dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+		<span class="visually-hidden">Toggle dropdown</span>
+	</button>
+	{% include "_shopping_search_dropdown.html" %}
+</div>
+{%- endmacro %}
+
+{# The cart toggle: remove the film from the shopping list, or put it
+   back. form is the bound exclude form. light is the quiet face of a
+   list row. The standalone movie page uses the amber and green faces.
+   block fills the column of that page. #}
+{% macro cart_toggle(form, movie, light=true, block=false) -%}
+<form action="" method="post">
+	{{ form.csrf_token() }}
+	{{ form.movie_id(value=movie.id) }}
+	{% if not movie.shopping_list_exclude %}
+	<button class="btn btn-sm {{ 'btn-light' if light else 'btn-warning' }}{% if block %} container{% endif %}" id="exclude_submit" name="exclude_submit" type="submit" value="Remove from List" title="Remove from the shopping list">
+		<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-x" viewBox="0 0 16 16">
+			<path d="M7.354 5.646a.5.5 0 1 0-.708.708L7.793 7.5 6.646 8.646a.5.5 0 1 0 .708.708L8.5 8.207l1.146 1.147a.5.5 0 0 0 .708-.708L9.207 7.5l1.147-1.146a.5.5 0 0 0-.708-.708L8.5 6.793 7.354 5.646z"/>
+						<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+		</svg>
+	</button>
+	{% else %}
+	<button class="btn btn-sm {{ 'btn-light' if light else 'btn-success' }}{% if block %} container{% endif %}" id="add_submit" name="add_submit" type="submit" value="Add to List" title="Put back on the shopping list">
+		<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-cart-plus" viewBox="0 0 16 16">
+			<path d="M9 5.5a.5.5 0 0 0-1 0V7H6.5a.5.5 0 0 0 0 1H8v1.5a.5.5 0 0 0 1 0V8h1.5a.5.5 0 0 0 0-1H9V5.5z"/>
+						<path d="M.5 1a.5.5 0 0 0 0 1h1.11l.401 1.607 1.498 7.985A.5.5 0 0 0 4 12h1a2 2 0 1 0 0 4 2 2 0 0 0 0-4h7a2 2 0 1 0 0 4 2 2 0 0 0 0-4h1a.5.5 0 0 0 .491-.408l1.5-8A.5.5 0 0 0 14.5 3H2.89l-.405-1.621A.5.5 0 0 0 2 1H.5zm3.915 10L3.102 4h10.796l-1.313 7h-8.17zM6 14a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm7 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0z"/>
+		</svg>
+	</button>
+	{% endif %}
+</form>
+{%- endmacro %}

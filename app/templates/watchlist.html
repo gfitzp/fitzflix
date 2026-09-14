@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
@@ -81,21 +82,7 @@
 				{% if not row.owned %}
 				{% set in_radarr = row.in_radarr %}
 				{% set radarr_requestable = radarr_available and movie.tmdb_id %}
-				{% set find_title = movie|display_title %}
-				{% set find_year = movie|display_year %}
-				<div class="btn-group">
-					{% if (movie.criterion_spine_number or movie.criterion_set_title) and movie.criterion_in_print %}
-						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="{% if movie.criterion_film_id %}https://www.criterion.com/films/{{ movie.criterion_film_id }}{% else %}https://www.criterion.com/search?q={{ find_title|urlencode }}{% endif %}" rel="noreferrer">Find</a>
-					{% elif movie.criterion_spine_number or movie.criterion_set_title %}
-						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="https://www.ebay.com/sch/617/i.html?_nkw={{ find_title|urlencode }} {{ find_year }} Criterion Collection" rel="noreferrer">Find</a>
-					{% else %}
-						<a class="btn btn-sm btn-primary py-0" role="button" target="_blank" href="https://www.blu-ray.com/movies/search.php?keyword={{ find_title|urlencode }}&yearfrom={{ find_year }}&yearto={{ find_year }}&submit=Search&action=search" rel="noreferrer">Find</a>
-					{% endif %}
-					<button type="button" class="btn btn-sm btn-primary py-0 dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
-						<span class="visually-hidden">Toggle dropdown</span>
-					</button>
-					{% include "_shopping_search_dropdown.html" %}
-				</div>
+				{{ find_button(movie, compact=true, radarr_requestable=radarr_requestable, in_radarr=in_radarr) }}
 				{% endif %}
 				{# d-flex on the form removes its line-box strut.
 				   Without this, the strut stretches the adjacent Find

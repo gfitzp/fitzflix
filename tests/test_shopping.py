@@ -54,10 +54,9 @@ def test_liked_owned_movie_is_not_duplicated(app, admin_client):
         db.session.commit()
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
-    # The template renders the linked title of each movie one time for
-    # each responsive layout (2 layouts). Thus, a single listing shows the
-    # title 2 times
-    assert page.count("Liked and Owned (1990)") == 2
+    # One responsive list serves every width. Thus, a single listing
+    # shows the linked title one time
+    assert page.count("Liked and Owned (1990)") == 1
 
 
 def test_liked_unowned_movie_matches_shopping_search(app, admin_client):
@@ -241,8 +240,8 @@ def test_shopping_rows_carry_popover_anchor_and_live_ladder(app, admin_client):
 
     page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
     assert f'data-card-url="/movie_card?movie_id={movie_id}"' in page
-    # Both responsive layouts render the scope. One entry paints them
-    assert page.count(f'data-state-movie="{movie_id}"') == 2
+    # One responsive list renders the state hook once. One entry paints it
+    assert page.count(f'data-state-movie="{movie_id}"') == 1
     assert 'data-ladder-live="1"' in page
     assert f'action="/movie/{movie_id}"' in page
     assert "bi-star-fill" not in page
