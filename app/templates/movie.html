@@ -241,7 +241,9 @@
 		{{ cart_toggle(movie_shopping_exclude_form, movie, light=false, block=true) }}
 	</div>
 	<div class="col-md ms-n3">
-		<hr class="d-block d-md-none">
+		{# mt-0: the gutter of the row already gives 16 pixels above
+		   this rule when a phone stacks the columns. #}
+		<hr class="d-block d-md-none mt-0">
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>
 		{% endif %}
