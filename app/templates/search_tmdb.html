@@ -1,4 +1,4 @@
-{% from "_poster_tile.html" import poster_placeholder %}
+{% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 {% extends "base.html" %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
 {% from "_rating_ladder.html" import rating_ladder %}
@@ -33,7 +33,7 @@
 			{{ poster_placeholder("film", "me-3 poster-sm", "1.5em") }}
 			{% endif %}
 			{% if match_url %}</a>{% endif %}
-			<div class="flex-grow-1" data-watchlist-scope>
+			<div class="flex-grow-1">
 				<h5 class="mb-1">{% if match_url %}<a href="{{ match_url }}" class="text-decoration-none text-body">{{ match.title }}{% if match.year %} ({{ match.year }}){% endif %}</a>{% else %}{{ match.title }}{% endif %}</h5>
 				{# The live star ladder, like the history rows. The ladder
 				   of a record posts to its movie route. The ladder of a
@@ -51,22 +51,15 @@
 				   the margin keeps the badges below clear of it. The
 				   star row drops its own bottom margin. Thus, the gap
 				   alone spaces the wrapped toggle. #}
-				<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-flex align-items-center mb-0 star-row-inline"{% if match.record_id %} data-state-movie="{{ match.record_id }}"{% else %} data-state-tmdb="{{ match.tmdb_id }}"{% endif %}>
-					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-					<input type="hidden" name="from_card" value="1">
-					{{ rating_ladder(compact=true, live=true) }}
-				</form>
-				<form action="{{ url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) }}" method="post" class="d-flex align-items-center mb-0" data-card-watchlist>
-					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-					<input type="hidden" name="from_card" value="1">
-					{# Outline on purpose, like the gallery tiles (Glenn,
-					   2026-08-31). The toggle repeats on every result
-					   row. Thus, it stays quiet. #}
-					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0{% if match.watchlisted %} d-none{% endif %}">Add to Watchlist</button>
-					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0{% if not match.watchlisted %} d-none{% endif %}">Remove from Watchlist</button>
-				</form>
-				</div>
+				{% set match_action = url_for('main.movie', movie_id=match.record_id) if match.record_id else url_for('main.review_tmdb', tmdb_id=match.tmdb_id) %}
+				{% call control_row(state_movie=match.record_id, state_tmdb=match.tmdb_id) %}
+					{% call ladder_form(match_action) %}
+						{{ rating_ladder(compact=true, live=true) }}
+					{% endcall %}
+					{# Outline, like the gallery tiles (Glenn, 2026-08-31).
+					   The toggle repeats on every result row. #}
+					{{ watchlist_toggle(match_action, on_watchlist=match.watchlisted, outline=true, compact=true, nowrap=true) }}
+				{% endcall %}
 				{% endif %}
 				{# Badges sit left-aligned under the title, like the local
 				   search rows, in the grammar of the movie-page strip.

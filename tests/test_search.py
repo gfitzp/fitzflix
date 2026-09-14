@@ -320,9 +320,11 @@ def test_search_tmdb_funnel_badges(app, admin_client, monkeypatch):
     # the one signal of the list state (Glenn, 2026-09-13). Only the
     # watchlist row shows its Remove face (no d-none)
     assert "On your watchlist" not in page
-    assert page.count('btn-outline-secondary py-0">Remove from Watchlist') == 1
+    assert (
+        page.count('btn-outline-secondary py-0 text-nowrap">Remove from Watchlist') == 1
+    )
     assert page.index("Funnel Wanted (1978)") < page.index(
-        'btn-outline-secondary py-0">Remove from Watchlist'
+        'btn-outline-secondary py-0 text-nowrap">Remove from Watchlist'
     )
 
 

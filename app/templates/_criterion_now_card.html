@@ -1,4 +1,4 @@
-{% from "_poster_tile.html" import poster_placeholder %}
+{% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_availability_badges.html" import library_badge %}
 {# The Criterion 24/7 now-playing card as a fragment. The home
@@ -69,25 +69,19 @@
 		{# One control row, as on the movie page (Glenn, 2026-09): the
 		   stars, the watchlist toggle, Watch live, and More, centered on
 		   each other. The buttons are the short buttons of the tiles. #}
-		<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 mb-1">
+		{% call control_row(spacing="mb-1") %}
 			{% if now_playing.tmdb_id %}
-			<form action="{{ now_action }}" method="post" class="d-flex align-items-center mb-0 star-row-inline">
-				{{ review_form.csrf_token }}
+			{% call ladder_form(now_action) %}
 				{{ rating_ladder(compact=true, allow_not_interested=not now_playing.ladder.has_review, current=now_playing.ladder.rating, flagged=now_playing.ladder.flagged, live=true, estimated=now_playing.ladder.estimated) }}
-			</form>
-			<form action="{{ now_action }}" method="post" data-card-watchlist class="d-flex mb-0">
-				<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-				<input type="hidden" name="from_card" value="1">
-				<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0 text-nowrap{{ ' d-none' if now_playing.ladder.on_watchlist }}">Add to Watchlist</button>
-				<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0 text-nowrap{{ ' d-none' if not now_playing.ladder.on_watchlist }}">Remove from Watchlist</button>
-			</form>
+			{% endcall %}
+			{{ watchlist_toggle(now_action, on_watchlist=now_playing.ladder.on_watchlist, outline=true, compact=true, nowrap=true) }}
 			{% endif %}
 			{# Green, like every other play control (Glenn, 2026-08-31) #}
 			<a href="{{ now_playing.watch_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-success py-0 text-nowrap">&#9654;&nbsp;Watch live</a>
 			{% if now_playing.more_url %}
 			<a href="{{ now_playing.more_url }}" target="_blank" rel="noreferrer" class="btn btn-sm btn-secondary py-0">More</a>
 			{% endif %}
-		</div>
+		{% endcall %}
 		{# The status line and the source credit share one paragraph
 		   (Glenn, 2026-09-09). On a desktop the time, the next film, and
 		   the credit fit on one line. On a phone the nowrap credit drops

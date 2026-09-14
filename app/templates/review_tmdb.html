@@ -2,7 +2,7 @@
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
-{% from "_poster_tile.html" import poster_placeholder %}
+{% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 <nav aria-label="breadcrumb">
 	<ol class="breadcrumb">
 		<li class="breadcrumb-item"><a href="{{ url_for('main.history') }}">My History</a></li>
@@ -52,17 +52,16 @@
 			   route intact. The face of the toggle is the one signal of
 			   the list state. Thus, the page carries no watchlist badge
 			   and no Might-interest badge: the estimate says that. #}
-			<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 mb-3">
-				<form action="" method="post" class="d-flex align-items-center mb-0 star-row-inline">
-					{{ movie_review_form.csrf_token }}
+			{% call control_row(spacing="mb-3") %}
+				{% call ladder_form(card=false) %}
 					{{ rating_ladder(estimated=estimated_rating) }}
-				</form>
-				<form action="" method="post" class="mb-0" data-card-watchlist>
-					{{ watchlist_form.hidden_tag() }}
-					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary text-nowrap">Add to Watchlist</button>
-					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary text-nowrap d-none">Remove from Watchlist</button>
-				</form>
-			</div>
+				{% endcall %}
+				{# Add first, always. A film with a record, and so a film
+				   that can be on the watchlist, redirects to its movie
+				   page before this template renders. Filled: a standalone
+				   page shows the toggle once. #}
+				{{ watchlist_toggle(outline=false, compact=false, nowrap=true, form=watchlist_form) }}
+			{% endcall %}
 			{# The availability strip follows the controls, as on the
 			   movie page. Its badges say where the film is: on a
 			   service, for rent, or "Not on your services". The page

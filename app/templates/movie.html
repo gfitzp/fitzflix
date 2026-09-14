@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_rating_ladder.html" import rating_ladder %}
-{% from "_poster_tile.html" import tile_actions, poster_image, movie_poster_src %}
+{% from "_poster_tile.html" import tile_actions, poster_image, movie_poster_src, control_row, ladder_form, watchlist_toggle %}
 
 {% block app_content %}
 <nav aria-label="breadcrumb">
@@ -55,11 +55,10 @@
 			   the list entry syncs the face of the toggle. The face of
 			   the toggle is the one signal of the list state. Thus, the
 			   page carries no watchlist badge. #}
-			<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 mb-3">
-				<form action="" method="post" class="d-flex align-items-center mb-0 star-row-inline">
-					{{ movie_review_form.csrf_token }}
+			{% call control_row(spacing="mb-3") %}
+				{% call ladder_form(card=false) %}
 					{{ rating_ladder(allow_not_interested=not review, current=(review.rating if review and review.rating is not none else none), flagged=refused, live=true, estimated=estimated_rating) }}
-				</form>
+				{% endcall %}
 				{# Watchlist: the user can want any film. An unowned film is
 				   in the funnel stage before the shopping list. An owned
 				   film tracks which of the many library films this user
@@ -67,11 +66,8 @@
 				   data-card-watchlist swaps them in the background (#187).
 				   The card branch of the route answers JSON. Any fetch
 				   failure falls back to the full post. #}
-				<form action="" method="post" class="mb-0" data-card-watchlist>
-					{{ watchlist_form.hidden_tag() }}
-					<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary text-nowrap{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
-					<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary text-nowrap{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
-				</form>
+				{# Filled: a standalone page shows the toggle once. #}
+				{{ watchlist_toggle(on_watchlist=on_watchlist, outline=false, compact=false, nowrap=true, form=watchlist_form) }}
 			{# Play comes last (Glenn, 2026-09): not every film has a local
 			   copy. Thus, the stars and the toggle keep their places on
 			   every page. Remote playback hand-off (owned film and a
@@ -138,7 +134,7 @@
 				{% if refused %}
 				<span class="small text-muted">This film won't be recommended.</span>
 				{% endif %}
-			</div>
+			{% endcall %}
 			{# The availability strip follows the controls (Glenn,
 			   2026-09). Thus, the library copy and the streaming matches
 			   read next to Play and the watchlist toggle. The row above

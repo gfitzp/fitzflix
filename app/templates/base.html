@@ -1032,7 +1032,9 @@
 				return response.json();
 			}).then(function(state) {
 				syncWatchlistForm(form, state.on_watchlist);
-				invalidateCard(form.closest(".poster-actions"));
+				// The same scope as the ladder tap. Thus, a toggle tap on
+				// a control row refreshes its cached card too
+				invalidateCard(form.closest(".poster-actions, [data-watchlist-scope]"));
 				// The own Remove of the watchlist page clears its tile
 				// in place and settles the filter counts. It uses the
 				// bucket that the cell rendered with (#187)

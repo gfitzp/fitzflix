@@ -34,6 +34,58 @@
 {% endif %}
 {%- endmacro %}
 
+{# The hidden fields of every live card post: the csrf token and the
+   from_card flag. from_card keeps a gallery post from moving the anchor
+   of the rating drive. A surface that forgets it changes the server
+   behavior. Thus, every card form draws the pair here. #}
+{% macro card_post_fields() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="from_card" value="1">
+{%- endmacro %}
+
+{# The control row of a film: the star ladder, the watchlist toggle,
+   and, on some surfaces, a play or watch button. One flex-wrap row
+   with a gap. On a narrow screen the toggle wraps under the ladder and
+   the gap alone spaces it. spacing is the margin under the row.
+   state_movie or state_tmdb arms the row for the batched /movie_states
+   hydration, which looks inside this element for the star row and the
+   toggle. The row also carries data-watchlist-scope. Thus, a ladder tap
+   finds the toggle beside it. #}
+{% macro control_row(spacing="mb-2", state_movie=none, state_tmdb=none) -%}
+<div data-watchlist-scope class="d-flex flex-wrap align-items-center gap-2 {{ spacing }}"{% if state_movie %} data-state-movie="{{ state_movie }}"{% elif state_tmdb %} data-state-tmdb="{{ state_tmdb }}"{% endif %}>
+{{ caller() }}
+</div>
+{%- endmacro %}
+
+{# The form around a star ladder in a control row. The star row drops
+   its own bottom margin here. Thus, the row gap alone spaces the
+   toggle beside it. card adds the from_card flag of a live card post.
+   The caller renders the ladder. #}
+{% macro ladder_form(action="", card=true) -%}
+<form action="{{ action }}" method="post" class="d-flex align-items-center mb-0 star-row-inline">
+	{% if card %}{{ card_post_fields() }}{% else %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+	{{ caller() }}
+</form>
+{%- endmacro %}
+
+{# The watchlist toggle: two faces, Add and Remove, and the script of
+   base.html swaps them after a background post (#187). on_watchlist
+   none renders Add first and lets the hydration paint the real face.
+   outline is for the surfaces that repeat the toggle: a gallery of
+   solid buttons shouts (Glenn, 2026-08-31). Standalone pages pass
+   outline=false and stay filled. compact is the short button of a tile
+   or a row. nowrap keeps the label on one line inside a wrapping row.
+   form is a bound WTForms object, whose hidden_tag carries the csrf
+   token. Without one, the card fields go in. #}
+{% macro watchlist_toggle(action="", on_watchlist=none, outline=true, compact=true, nowrap=false, form=none) -%}
+{% set extra = (" py-0" if compact else "") ~ (" text-nowrap" if nowrap else "") %}
+<form action="{{ action }}" method="post" class="d-flex align-items-center mb-0" data-card-watchlist>
+	{% if form %}{{ form.hidden_tag() }}{% else %}{{ card_post_fields() }}{% endif %}
+	<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-{{ 'outline-' if outline }}primary{{ extra }}{% if on_watchlist %} d-none{% endif %}">Add to Watchlist</button>
+	<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-{{ 'outline-' if outline }}secondary{{ extra }}{% if not on_watchlist %} d-none{% endif %}">Remove from Watchlist</button>
+</form>
+{%- endmacro %}
+
 {# The server-rendered corner fold for a standalone poster (the large
    artwork of the movie and log pages). This is the same markup that the
    script of base.html builds for gallery tiles. The route computes a
@@ -79,21 +131,13 @@
 	{# The star row drops its own bottom margin. The form margin
 	   alone spaces the toggle. #}
 	<form action="{{ action }}" method="post" class="mb-2 d-flex align-items-center star-row-inline">
-		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-		<input type="hidden" name="from_card" value="1">
+		{{ card_post_fields() }}
 		{{ rating_ladder(compact=true, live=true) }}
 	</form>
 	{% if watchlist %}
-	{# The one deliberate outline exception (Glenn, 2026-08-31). A gallery
-	   repeats this toggle under every poster. A page of solid-filled
-	   buttons shouts. The quiet outline of the tile is the point.
-	   Standalone page buttons stay filled. #}
-	<form action="{{ action }}" method="post" data-card-watchlist>
-		<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-		<input type="hidden" name="from_card" value="1">
-		<button type="submit" name="add_watchlist_submit" value="Add to Watchlist" class="btn btn-sm btn-outline-primary py-0">Add to Watchlist</button>
-		<button type="submit" name="remove_watchlist_submit" value="Remove from Watchlist" class="btn btn-sm btn-outline-secondary py-0 d-none">Remove from Watchlist</button>
-	</form>
+	{# Outline: a gallery repeats this toggle under every poster
+	   (Glenn, 2026-08-31). #}
+	{{ watchlist_toggle(action, outline=true, compact=true) }}
 	{% endif %}
 </div>
 {% endmacro %}
