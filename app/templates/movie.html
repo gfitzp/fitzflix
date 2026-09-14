@@ -6,7 +6,7 @@
 
 {% block app_content %}
 {{ breadcrumb([('Movies', url_for('main.movie_library')), (title, none)]) }}
-<div class="row mb-n2">
+<div class="row">
 	{# The gap under the poster on a phone, where the column stacks
 	   above the title. On a wide screen the columns sit side by side. #}
 	<div class="col-md-auto mb-3 mb-md-0">
@@ -15,7 +15,7 @@
 	{# min-width: 0 lets this column shrink to less than the intrinsic
 	   width of a long badge line. Thus, wide content cannot push the
 	   whole column down below the poster. #}
-	<div class="col-md" style="min-width: 0;">
+	<div class="col-md detail-text" style="min-width: 0;">
 		<div>
 			<h3>{{ title }}</h3>
 			{# The meta line comes first and the synopsis follows. This is
@@ -165,9 +165,9 @@
    Thus, the wide scroller has the full width, and the right column holds
    only the facts and the controls. A page-wide rule stands on each side
    of the strip. #}
-<hr class="mt-3 mb-2">
+<hr>
 {% include "_cast_scroller.html" %}
-<hr class="mt-3 mb-3">
+<hr>
 {# Letterboxd-first logging: with a linked account, dated watches and
    reviews belong on Letterboxd. The feed syncs them back on its own.
    The local log form is the demoted fallback for what the feed cannot
@@ -204,7 +204,7 @@
 {# Enjoyment picks that the positive rating just logged earned. The
    actions sit under each poster: rate it, bank it, or wave it off. Tile
    posts never move the anchor of the strip. #}
-<h4 class="mt-4 mb-2">Since you liked {{ title }}&hellip;</h4>
+<h4 class="mt-3 mb-2">Since you liked {{ title }}&hellip;</h4>
 <p class="small text-muted">These films from your library have features in common with it. You did not see them, and they fit your taste profile.</p>
 <div class="row">
 	{% for suggestion in suggestions %}
@@ -265,7 +265,7 @@
    not the protection. #}
 {% if current_user.admin %}
 <hr>
-<h4 class="mt-4 mb-2">Movie Data</h4>
+<h4 class="mt-3 mb-2">Movie Data</h4>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>
 <div class="row">
 	<div class="col-sm-4">

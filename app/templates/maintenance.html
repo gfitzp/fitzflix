@@ -3,7 +3,7 @@
 
 {% block app_content %}
 {{ page_header('Library Maintenance') }}
-<h4 class="mt-4 mb-2">Rejected files</h4>
+<h4 class="mt-3 mb-2">Rejected files</h4>
 <p class="small text-muted">The files that Fitzflix could not import, sorted by the cause of the rejection.</p>
 {% if rejected_count %}
 <a class="btn btn-sm btn-warning" href="{{ url_for('main.rejects') }}" role="button">Triage rejected files <span class="badge text-bg-light">{{ rejected_count }}</span></a>
@@ -11,11 +11,11 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Pipeline activity</h4>
+<h4 class="mt-3 mb-2">Pipeline activity</h4>
 <p class="small text-muted">The path of each recent file through the import, as a status chip for each stage. The chips show the current stage of each file, the scheduled retries, and the failures.</p>
 <a class="btn btn-sm btn-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>
 <hr>
-<h4 class="mt-4 mb-2">Duplicate movies</h4>
+<h4 class="mt-3 mb-2">Duplicate movies</h4>
 {% if duplicate_groups %}
 <p class="small text-muted">These movies have the same TMDB id. A merge moves the files and the reviews of each duplicate to the oldest record (marked kept). Then it deletes the duplicate.</p>
 <div class="table-responsive">
@@ -54,7 +54,7 @@
 <p class="small text-muted">No two movies have the same TMDB id.</p>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Unmatched TMDB records</h4>
+<h4 class="mt-3 mb-2">Unmatched TMDB records</h4>
 <p class="small text-muted">The movies and series that have no TMDB id and no decision. Match each one by hand, or flag it as unmatchable. A flagged record never gets a blind title search from a refresh.</p>
 {% if tmdb_triage_count %}
 <a class="btn btn-sm btn-warning" href="{{ url_for('main.tmdb_triage') }}" role="button">Triage TMDB matches <span class="badge text-bg-light">{{ tmdb_triage_count }}</span></a>
@@ -62,7 +62,7 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Runtime mismatches</h4>
+<h4 class="mt-3 mb-2">Runtime mismatches</h4>
 <p class="small text-muted">The files whose estimated length is very different from the TMDB runtime of the film. The usual causes are a recording with the wrong label, or a truncated download.</p>
 {% if runtime_mismatch_count %}
 <a class="btn btn-sm btn-warning" href="{{ url_for('main.runtime_triage') }}" role="button">Triage runtime mismatches <span class="badge text-bg-light">{{ runtime_mismatch_count }}</span></a>
@@ -70,7 +70,7 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Possibly-forced subtitles</h4>
+<h4 class="mt-3 mb-2">Possibly-forced subtitles</h4>
 <p class="small text-muted">The subtitle tracks without the forced flag that are much smaller than an other track in the same language in the same file. Such a track is possibly a forced track that covers only the foreign parts.</p>
 {% if subtitle_triage_count %}
 <a class="btn btn-sm btn-warning" href="{{ url_for('main.subtitle_triage') }}" role="button">Triage subtitle tracks <span class="badge text-bg-light">{{ subtitle_triage_count }}</span></a>
@@ -78,7 +78,7 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Lossy-audio leads</h4>
+<h4 class="mt-3 mb-2">Lossy-audio leads</h4>
 <p class="small text-muted">The files whose first audio track is lossy, with a lossless track after it. Remux the lossless track into the lead, or keep a commentary pair as it is.</p>
 {% if lossy_triage_count %}
 {# One flex-wrap row with a gap. Thus, the two buttons keep a gap when
@@ -92,10 +92,10 @@
 <a class="btn btn-sm btn-secondary" href="{{ url_for('main.files', audio='lossy') }}" role="button">View report</a>
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">TV episode titles</h4>
+<h4 class="mt-3 mb-2">TV episode titles</h4>
 <p class="small text-muted">This shows how well the TMDB episode titles of each series agree with the titles that Plex gave the same files. Fitzflix flags a series with different numbers, so the episode titles are never wrong.</p>
 <hr>
-<h4 class="mt-4 mb-2">Filename tester</h4>
+<h4 class="mt-3 mb-2">Filename tester</h4>
 <p class="small text-muted">See how Fitzflix parses and files a filename at import. The tester does not import the file.</p>
 {# One flex-wrap row with a gap. The box is wide on a desktop and
    never wider than the screen. Thus, a phone wraps the button under
@@ -133,10 +133,10 @@
 	{% endif %}
 {% endif %}
 <hr>
-<h4 class="mt-4 mb-2">Bulk operations</h4>
+<h4 class="mt-3 mb-2">Bulk operations</h4>
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, the buttons never touch. #}
-<div class="row g-3 my-2">
+<div class="row g-3">
     <div class="col-md-3">
     	<form action="" method="post">
     		{{ criterion_refresh_form.hidden_tag() }}
@@ -165,7 +165,7 @@
 <hr>
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, the buttons never touch. #}
-<div class="row g-3 my-2">
+<div class="row g-3">
     <div class="col-md-4">
     	<form action="" method="post">
     		{{ sync_form.hidden_tag() }}

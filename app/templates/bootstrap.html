@@ -294,6 +294,11 @@
 		/* The certification chip of a film or a series: a thin box
 		   around the rating, inline with the facts line */
 		.cert-box { display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px; }
+		/* The text column of a detail page. Its last block drops its
+		   bottom margin. The column is a flex item. Thus, that margin never
+		   collapses with the rule below, and every rule keeps the same gap
+		   above and below */
+		.detail-text > :last-child, .detail-text > :last-child > :last-child { margin-bottom: 0 !important; }
 		.poster-lg { width: 250px; }
 		.poster-sm { width: 92px; flex-shrink: 0; }
 		.poster-xs { width: 46px; flex-shrink: 0; }

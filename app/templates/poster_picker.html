@@ -4,7 +4,7 @@
 
 {% block app_content %}
 {{ breadcrumb([(back_label, back_url), ('Poster', none)]) }}
-<div class="row mb-n2">
+<div class="row">
 	{# The gap under the poster on a phone, where the column stacks
 	   above the title. On a wide screen the columns sit side by side. #}
 	<div class="col-md-auto mb-3 mb-md-0">
@@ -43,7 +43,7 @@
 	</div>
 </div>
 <hr>
-<h4 class="mt-4 mb-2">Posters from TMDB</h4>
+<h4 class="mt-3 mb-2">Posters from TMDB</h4>
 {% if posters is none %}
 	<p class="small text-muted">No TMDB gallery is available{% if movie and not movie.tmdb_id %} — this movie has no TMDB id{% endif %}.</p>
 {% else %}

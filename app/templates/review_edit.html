@@ -4,7 +4,7 @@
 
 {% block app_content %}
 {{ breadcrumb([('My History', url_for('main.history', page=page)), (movie|display_title, none)]) }}
-<div class="row mb-n2">
+<div class="row">
 	{# The gap under the poster on a phone, where the column stacks
 	   above the title. On a wide screen the columns sit side by side. #}
 	<div class="col-md-auto mb-3 mb-md-0">

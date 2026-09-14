@@ -6,7 +6,7 @@
 {% block app_content %}
 {% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 {{ breadcrumb([('My History', url_for('main.history')), (film_title ~ ' (' ~ year ~ ')', none)]) }}
-<div class="row mb-n2">
+<div class="row">
 	{# The gap under the poster on a phone, where the column stacks
 	   above the title. On a wide screen the columns sit side by side. #}
 	<div class="col-md-auto mb-3 mb-md-0">
@@ -27,7 +27,7 @@
 	{# min-width: 0 lets this column shrink below the intrinsic width
 	   of a long badge line. Thus, wide content cannot push the whole
 	   column down below the poster. #}
-	<div class="col-md" style="min-width: 0;">
+	<div class="col-md detail-text" style="min-width: 0;">
 		<div>
 			<h3>{{ film_title }} ({{ year }})</h3>
 			{# The meta line comes first and the synopsis follows. This is
@@ -71,9 +71,9 @@
 </div>
 {# The cast strip spans the page below the poster, between two
    page-wide rules. This is the pattern of movie.html. #}
-<hr class="mt-3 mb-2">
+<hr>
 {% include "_cast_scroller.html" %}
-<hr class="mt-3 mb-3">
+<hr>
 {# Letterboxd-first logging, as on the movie page. A linked account logs
    dated watches on Letterboxd and lets the feed sync them back. The
    first tap here still creates the local record. The toggle sits to the

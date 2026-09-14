@@ -16,10 +16,10 @@
 	   show the plain line. #}
 	{% set common = shelf.shared_genres | join(' · ') %}
 	{% if shelf.anchors | length == 1 %}
-	<h4 class="mt-4 mb-2">More like this one</h4>
+	<h4 class="mt-3 mb-2">More like this one</h4>
 	<p class="small text-muted mb-2">The people who loved it also loved these. The source is thirty-two million MovieLens ratings, not shared features.{% if common %} It is a {{ common }} film.{% endif %}</p>
 	{% else %}
-	<h4 class="mt-4 mb-2">More like these two</h4>
+	<h4 class="mt-3 mb-2">More like these two</h4>
 	<p class="small text-muted mb-2">The people who loved the two films also loved these. The source is thirty-two million MovieLens ratings, not shared features.{% if common %} The two films have this in common: {{ common }}.{% endif %}</p>
 	{% endif %}
 	{% else %}
@@ -27,7 +27,7 @@
 	   filter would lowercase the names in "films directed by Sidney
 	   Lumet". #}
 	{% set heading = shelf.labels | join(' · ') %}
-	<h4 class="mt-4 mb-2">{{ heading[:1] | upper }}{{ heading[1:] }}</h4>
+	<h4 class="mt-3 mb-2">{{ heading[:1] | upper }}{{ heading[1:] }}</h4>
 	{% endif %}
 	<div class="row">
 		{# The anchor slot (the fanned-pair choice of Glenn,

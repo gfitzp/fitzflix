@@ -27,7 +27,7 @@
    in urgency order. Each shelf below this one is discovery, and it
    excludes the watchlist. #}
 {% if watchlist_items or watchlist_filtered_out %}
-<div><h4 id="watchlist-shelf" class="mt-4 mb-2" style="display: inline;">From your watchlist</h4>&nbsp;<span><a href="{{ url_for('main.watchlist') }}" class="small">See more&hellip;</a></span></div>
+<div><h4 id="watchlist-shelf" class="mt-3 mb-2" style="display: inline;">From your watchlist</h4>&nbsp;<span><a href="{{ url_for('main.watchlist') }}" class="small">See more&hellip;</a></span></div>
 {% if watchlist_filtered_out %}
 <p class="text-muted mt-3">Nothing on your watchlist fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
@@ -47,7 +47,7 @@
 <hr>
 {% endif %}
 {% if recs %}
-<h4 class="mt-4 mb-2">From your library</h4>
+<h4 class="mt-3 mb-2">From your library</h4>
 <div class="row mt-3">
 	{% for rec in recs %}
 	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-4 poster-cell">
@@ -156,7 +156,7 @@
 {# "See more…" opens the in-app departure inventory. That is the
    complete set with the library, Seen, and watchlist badges. The
    criterionchannel.com source link is on that page. #}
-<div><h4 id="leaving-shelf" class="mt-4 mb-2" style="display: inline;">Leaving the Criterion Channel {{ shelf_departs }}</h4>&nbsp;<span><a href="{{ url_for('main.leaving') }}" class="small">See more&hellip;</a></span></div>
+<div><h4 id="leaving-shelf" class="mt-3 mb-2" style="display: inline;">Leaving the Criterion Channel {{ shelf_departs }}</h4>&nbsp;<span><a href="{{ url_for('main.leaving') }}" class="small">See more&hellip;</a></span></div>
 {% if shelf_filtered_out %}
 {# The runtime filter emptied the shelf. The shelf is not empty. The
    header stays. Thus, the departure date and the link to the full
@@ -187,7 +187,7 @@
    watchlist badges. The source link of the provider is on that page. #}
 {% for ns in new_shelves %}
 <hr>
-<div><h4 id="newly-added-shelf-{{ ns.provider_id }}" class="mt-4 mb-2" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ url_for('main.newly_added') }}#newly-added-{{ ns.provider_id }}" class="small">See more&hellip;</a></span></div>
+<div><h4 id="newly-added-shelf-{{ ns.provider_id }}" class="mt-3 mb-2" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ url_for('main.newly_added') }}#newly-added-{{ ns.provider_id }}" class="small">See more&hellip;</a></span></div>
 {% if ns.filtered_out %}
 <p class="text-muted mt-3">Nothing newly added fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
@@ -210,7 +210,7 @@
 {% endfor %}
 {% if rail or rail_filtered_out %}
 <hr>
-<h4 class="mt-4 mb-2">Streaming on your services</h4>
+<h4 class="mt-3 mb-2">Streaming on your services</h4>
 {% if rail_filtered_out %}
 <p class="text-muted mt-3">Nothing streaming on your services fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
@@ -237,7 +237,7 @@
 {# The rewatch shelf: liked films with a last watch that is long past.
    This is the complement of the recommendation rails. Those rails
    never show logged films. #}
-<h4 class="mt-4 mb-2">Watch it again</h4>
+<h4 class="mt-3 mb-2">Watch it again</h4>
 {% if again_filtered_out %}
 <p class="text-muted mt-3">No film that you can watch again fits in {{ minutes }} minutes. Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
