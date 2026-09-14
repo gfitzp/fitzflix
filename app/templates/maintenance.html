@@ -1,8 +1,8 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">Library Maintenance</h2>
-<hr>
+{{ page_header('Library Maintenance') }}
 <h3>Rejected files</h3>
 <p class="small text-muted">The files that Fitzflix could not import, sorted by the cause of the rejection.</p>
 {% if rejected_count %}

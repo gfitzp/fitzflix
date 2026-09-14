@@ -315,7 +315,7 @@ def test_tv_library_posters_open_the_series_popover(app, admin_client):
         series_id = series.id
 
     page = admin_client.get("/library/tv").get_data(as_text=True)
-    block = page[page.index(f'id="{series_id}" style="scroll-margin-top') :]
+    block = page[page.index(f'class="d-flex anchor-under-nav" id="{series_id}"') :]
     block = block[: block.index("<hr>")]
 
     # The block of the series has exactly 1 armed element: the anchor

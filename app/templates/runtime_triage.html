@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-<hr>
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{{ page_header(title) }}
 {% if candidates %}
 <p class="text-muted">There {{ "is" if candidates|length == 1 else "are" }} {{ candidates|length }} file{{ "s" if candidates|length != 1 }} whose estimated length is very different from the TMDB runtime of the film. The usual causes are a recording with the wrong label, or a truncated download. The estimate is the file size divided by the sum of the track bitrates. Thus, it is approximate: <b>verify a flagged file with ffprobe before you act on it</b>. Acknowledge accepts a known-benign mismatch until the file is replaced. Examples are a full-disc rip, or a short film recorded in a longer slot.</p>
 <div class="table-responsive">

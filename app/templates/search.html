@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_search_form.html" import global_search_form %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions, poster_placeholder %}
 
@@ -7,13 +8,9 @@
    right-aligned on the heading row, like the log-a-film form of the
    index page. The user can rework a fruitless search here and not
    through the navbar #}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
-	<div class="col-12 col-sm-auto mt-2">
-		{{ global_search_form("float-sm-right mb-2", value=q, width="min(20rem, 100%)", typeahead=False) }}
-	</div>
-</div>
-<hr>
+{% call page_header(title) %}
+	{{ global_search_form("mb-0", value=q, width="min(20rem, 100%)", typeahead=False) }}
+{% endcall %}
 {% if not q %}
 <p class="text-muted">Enter the title of a movie or a TV series, or the name of a person, in the search box. The results show if it is in the library.</p>
 {% else %}

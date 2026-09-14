@@ -1,13 +1,9 @@
 {% from "_poster_tile.html" import poster_placeholder %}
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ back_url }}">{{ back_label }}</a></li>
-		<li class="breadcrumb-item active" aria-current="page">Poster</li>
-	</ol>
-</nav>
+{{ breadcrumb([(back_label, back_url), ('Poster', none)]) }}
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% if movie or (file is defined and file and file.custom_poster) %}

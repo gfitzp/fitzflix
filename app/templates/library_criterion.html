@@ -1,24 +1,21 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_pagination.html" import pagination %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 
 {% block app_content %}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
-	<div class="col-12 col-sm-auto mt-2">
-		<form class="float-sm-right mb-2" action="{{ url_for('main.criterion_collection') }}" method="get">
+{% call page_header(title) %}
+		<form class="d-flex flex-wrap align-items-center gap-2" action="{{ url_for('main.criterion_collection') }}" method="get">
 			{% for value, label in [("all", "All releases"), ("library", "In library"), ("settled", "Owned & settled")] %}
 			<div class="form-check form-check-inline">
 				<input class="form-check-input" type="radio" name="filter" id="criterion-filter-{{ value }}" value="{{ value }}"{% if filter_status == value %} checked{% endif %}>
 				<label class="form-check-label" for="criterion-filter-{{ value }}">{{ label }} ({{ counts[value] }})</label>
 			</div>
 			{% endfor %}
-			<button type="submit" class="btn btn-sm btn-primary mb-2">Filter</button>
+			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
 		</form>
-	</div>
-</div>
-<hr>
+{% endcall %}
 {% if rows %}
 {% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
 {# The catalog as a poster wall (#45d). This is how Criterion itself

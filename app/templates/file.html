@@ -1,26 +1,13 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
 {% if file.movie_id %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=file.movie_id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_files', movie_id=file.movie_id) }}">Files</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ file.basename }}</li>
-	</ol>
-</nav>
+{{ breadcrumb([("Movies", url_for('main.movie_library')), (movie|display_title ~ " (" ~ movie|display_year ~ ")", url_for('main.movie', movie_id=file.movie_id)), ("Files", url_for('main.movie_files', movie_id=file.movie_id)), (file.basename, none)]) }}
 {% elif file.series_id %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}">TV Shows</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.season', series_id=file.series_id, season=file.season) }}">{% if file.season|int == 0 %}Specials{% else %}Season {{ file.season }}{% endif %}</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ file.basename }}</li>
-	</ol>
-</nav>
+{{ breadcrumb([("TV Shows", url_for('main.tv_library')), (tv.tmdb_name if tv.tmdb_name else tv.title, url_for('main.tv', series_id=file.series_id)), ("Specials" if file.season|int == 0 else "Season " ~ file.season, url_for('main.season', series_id=file.series_id, season=file.season)), (file.basename, none)]) }}
 {% endif %}
-<h2 class="mt-n2">{{ file.basename }}</h2>
+{{ page_header(file.basename, hr=false) }}
 <p>
 	<em>Originally imported as '{{ file.untouched_basename }}'</em><br>
 	<em>{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }} as '{{ file.aws_untouched_key }}'{% else %}Not uploaded to AWS.{% endif %}</em><br>

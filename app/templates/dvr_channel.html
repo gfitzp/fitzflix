@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
-<h2 class="mt-n2">Channel {{ channel.number }} &middot; {{ channel.name }}</h2>
+{{ breadcrumb([("DVR channels", url_for('main.dvr_channels')), ("Channel " ~ channel.number, none)]) }}
+{{ page_header('Channel ' ~ channel.number ~ ' · ' ~ channel.name, hr=false) }}
 <p class="text-muted small mb-2">
 	Stream id <code>{{ channel.slug }}</code> (frozen &mdash; Plex maps the channel by it)
 	&middot; {{ program_count }} program{{ "s" if program_count != 1 }} in the current lineup

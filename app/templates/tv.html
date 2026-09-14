@@ -1,14 +1,10 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_availability_badges.html" import library_badge %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}#{{ tv.id }}">TV Shows</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</li>
-	</ol>
-</nav>
+{{ breadcrumb([('TV Shows', url_for('main.tv_library') ~ '#' ~ tv.id), (tv.tmdb_name if tv.tmdb_name else tv.title, none)]) }}
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% include "_tv_poster_large.html" %}
@@ -24,7 +20,7 @@
 			   read the same. The US content rating closes the line in the
 			   bordered box of the card #}
 			{% if meta_line or tv.tmdb_content_rating %}
-			<p class="text-muted mb-2">{{ meta_line }}{% if tv.tmdb_content_rating %}{% if meta_line %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ tv.tmdb_content_rating }}</span>{% endif %}</p>
+			<p class="text-muted mb-2">{{ meta_line }}{% if tv.tmdb_content_rating %}{% if meta_line %} &middot; {% endif %}<span class="cert-box">{{ tv.tmdb_content_rating }}</span>{% endif %}</p>
 			{% endif %}
 			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>

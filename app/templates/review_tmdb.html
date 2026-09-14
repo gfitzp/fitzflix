@@ -1,15 +1,11 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
 {% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.history') }}">My History</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ film_title }} ({{ year }})</li>
-	</ol>
-</nav>
+{{ breadcrumb([('My History', url_for('main.history')), (film_title ~ ' (' ~ year ~ ')', none)]) }}
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% if poster_path %}
@@ -35,7 +31,7 @@
 			{# The meta line comes first and the synopsis follows. This is
 			   the order of the movie page and the popover card. #}
 			{% if directors or runtime or genres or certification %}
-				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{% for genre_id, name in genres %}{% if genre_id %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
+				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{% for genre_id, name in genres %}{% if genre_id %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% else %}{{ name }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}<span class="cert-box">{{ certification }}</span>{% endif %}</p>
 			{% endif %}
 			{% if overview %}
 				<p>{{ overview }}</p>

@@ -1,10 +1,10 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_poster_tile.html" import tile_actions, poster_image, movie_poster_src %}
 
 {% block app_content %}
-<h2 class="mt-n2">Pick something to watch</h2>
-<hr>
+{{ page_header('Pick something to watch') }}
 {% if watchlist_items or recs or rail or minutes %}
 {# The runtime filter is a view on the rails that are already
    computed. The recommendations never consider the length. Films with

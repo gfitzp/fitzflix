@@ -1,34 +1,12 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, quality_filter, library_search %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 
 {% block app_content %}
-<div class="mt-2 mb-n2">
-	<h2>{{ title }}</h2>
-</div>
-<div class="row align-items-end">
-	<div class="col-sm-12 col-md-7 col-lg-8 mb-md-n4">
-		<form action="" method="post">
-			{{ filter_form.hidden_tag() }}
-			<div class="row g-2">
-				<div class="col-12 col-sm-11 col-md-11">
-					<div class="mb-3 form-inline">
-						{{ filter_form.quality.label(class_="me-2") }}
-						{{ filter_form.quality(class_="form-select form-select-sm col-5 col-md-6 col-lg-5 me-2") }}
-						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col col-md-2") }}
-					</div>
-				</div>
-			</div>
-		</form>
-	</div>
-	<div class="col-sm-12 col-md-5 col-lg-4 mb-md-n3">
-		<form class="form-inline float-sm-right mb-2" action="" method="post">
-			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
-		</form>
-	</div>
-</div>
-<hr>
+{% call page_header(title) %}
+	{{ quality_filter(filter_form) }}
+	{{ library_search(library_search_form) }}
+{% endcall %}
 {% if files %}
 	{{ pagination_pair(pages, 'main.files', {'quality': request.args.get('quality'), 'q': request.args.get('q')}, prev_url, next_url) }}
 	<div class="table-responsive">

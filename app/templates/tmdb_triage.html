@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% macro triage_row(record, kind) %}
 {# This is the row of 1 unmatched record. It shows enough to decide
@@ -35,8 +36,8 @@
 {% endmacro %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-<hr>
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{{ page_header(title) }}
 {% if movies or series %}
 <p class="text-muted">There {{ "is" if (movies|length) + (series|length) == 1 else "are" }} {{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id that you enter and refreshes the record. <b>Flag as unmatchable</b> marks the record, so no refresh path guesses an id from its title again. If a record has zero files, the better option is possibly to delete it from its own page.</p>
 {% if movies %}

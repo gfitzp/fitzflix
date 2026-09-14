@@ -1,9 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_poster_tile.html" import movie_poster_src %}
 
 {% block app_content %}
-<h2 class="mt-n2">Recommendations</h2>
-<hr>
+{{ page_header('Recommendations') }}
 {% if shelves %}
 <p class="small text-muted">These shelves show films that you did not see. You own them, or they stream on your services. Your diary and your watchlist select them. Rate a film, add it to your watchlist, or reject it with the &#10005;. Its position then fills again. Reload the page for a new set of shelves.</p>
 {% for shelf in shelves %}

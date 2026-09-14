@@ -1,11 +1,10 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">My Watchlist</h2>
-	<div class="col-12 col-sm-auto mt-2">
+{% call page_header("My Watchlist") %}
 		{# The availability filter: all films by default, or one
 		   exclusive bucket (owned, streaming, rent-only, or nowhere).
 		   This is the radio grammar of the criterion page, with
@@ -13,27 +12,19 @@
 		   one Filter applies all 3. The counts show
 		   data-watchlist-count. Thus, a live tile removal (#187)
 		   keeps them correct without a reload. #}
-		<form class="float-sm-right mb-2" action="{{ url_for('main.watchlist') }}" method="get">
-			<div class="d-inline-flex align-items-center me-2 mb-2">
-				<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm me-2" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
-				<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
-			</div>
+		<form class="d-flex flex-wrap align-items-center gap-2" action="{{ url_for('main.watchlist') }}" method="get">
+			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
+			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
 			<div class="form-check form-check-inline">
 				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
 			{% endfor %}
-			{# One flex-wrap row with a gap. Thus, the two buttons keep a
-			   gap when a narrow screen wraps them. #}
-			<div class="d-flex flex-wrap gap-2 mb-2">
 			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
 			{% if q or minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
-			</div>
 		</form>
-	</div>
-</div>
-<hr>
+{% endcall %}
 {% if minutes %}
 <p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
 {% endif %}

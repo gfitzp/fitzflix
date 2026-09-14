@@ -1,22 +1,15 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, library_search %}
 
 {% block app_content %}
-<div class="row mt-n2 mb-n2 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto mb-n1">{{ title }}</h2>
-	<div class="col-12 col-sm-auto mt-2">
-		{# This is the own search of the TV library (#210). It searches
-		   this library only, with the grammar of the movie library. The
-		   series matches and the episode matches render as separate
-		   sections, like the main search page. A matched episode never
-		   pulls its series into the series list #}
-		<form class="form-inline float-sm-right mb-2 d-flex" action="" method="post">
-			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
-		</form>
-	</div>
-</div>
-<hr>
+{# The own search of the TV library (#210) searches this library
+   only, with the grammar of the movie library. The series matches and
+   the episode matches render as separate sections, like the main
+   search page. A matched episode never pulls its series into the
+   series list #}
+{% call page_header(title) %}
+	{{ library_search(library_search_form) }}
+{% endcall %}
 {% if q and not series %}
 <p class="lead">No TV series match &lsquo;<strong>{{ q }}</strong>&rsquo;.</p>
 <p class="text-muted"><a href="{{ url_for('main.tv_library') }}">Show the whole TV library</a> instead.</p>
@@ -25,13 +18,13 @@
 {% endif %}
 {% if series %}
 {% for tv in series %}
-<div class="d-flex" id="{{ tv.id }}" style="scroll-margin-top: 60px;">
+<div class="d-flex anchor-under-nav" id="{{ tv.id }}">
 	{# The poster carries the series popover. It is the same card that
 	   the TV tiles of the filmography show. It has the synopsis, the
 	   cast, and the In-library badge. The season list of this page says
 	   none of these. Only the poster is armed, never the row. Posters
 	   toggle cards. Rows navigate #}
-	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
+	<div class="sticky-under-nav pt-1 align-self-start">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}" data-card-url="{{ url_for('main.tv_card', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>

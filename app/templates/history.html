@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
@@ -6,10 +7,7 @@
 {# The header carries only the title since #215. The Log a film box sits
    just above the diary rows. The import and export forms moved to the
    Profile page with the rest of the account plumbing. #}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 mb-n1">My History</h2>
-</div>
-<hr>
+{{ page_header('My History') }}
 {% if rated_count %}
 {# Letterboxd-style rating distribution: 5 whole-star bins rendered
    locally as CSS bars. No charting library and no external requests. This

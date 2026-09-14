@@ -23,7 +23,7 @@
 <div class="poster-card">
 	<h6 class="mb-1">{% if href %}<a href="{{ href }}" class="text-body">{{ display_title }}</a>{% else %}{{ display_title }}{% endif %}</h6>
 	{% if meta_line or content_rating %}
-	<p class="small text-muted mb-1">{{ meta_line }}{% if content_rating %}{% if meta_line %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ content_rating }}</span>{% endif %}</p>
+	<p class="small text-muted mb-1">{{ meta_line }}{% if content_rating %}{% if meta_line %} &middot; {% endif %}<span class="cert-box">{{ content_rating }}</span>{% endif %}</p>
 	{% endif %}
 	{% if overview %}
 	<p class="small mb-1 poster-card-overview">{{ overview }}</p>

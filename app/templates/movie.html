@@ -1,15 +1,11 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_rating_ladder.html" import rating_ladder %}
 {% from "_poster_tile.html" import tile_actions, poster_image, movie_poster_src, control_row, ladder_form, watchlist_toggle %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ title }}</li>
-	</ol>
-</nav>
+{{ breadcrumb([('Movies', url_for('main.movie_library')), (title, none)]) }}
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% include "_movie_poster_large.html" %}
@@ -27,7 +23,7 @@
 			   library-filter links. The genres of the card are plain
 			   text. #}
 			{% if directors or movie.tmdb_runtime or genres or certification %}
-				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if movie.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or movie.tmdb_runtime %} &middot; {% endif %}{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or movie.tmdb_runtime or genres %} &middot; {% endif %}<span style="display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px;">{{ certification }}</span>{% endif %}</p>
+				<p class="text-muted mb-2">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if movie.tmdb_runtime %}{% if directors %} &middot; {% endif %}{{ movie.tmdb_runtime }}&nbsp;minutes{% endif %}{% if genres %}{% if directors or movie.tmdb_runtime %} &middot; {% endif %}{% for genre_id, name in genres %}<a href="{{ url_for('main.movie_library', genre=genre_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if certification %}{% if directors or movie.tmdb_runtime or genres %} &middot; {% endif %}<span class="cert-box">{{ certification }}</span>{% endif %}</p>
 			{% endif %}
 			{# This is gated on the overview, not on the refresh stamp.
 			   The primed fields of a just-created record render while the

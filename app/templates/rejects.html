@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-<hr>
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{{ page_header(title) }}
 {% if rejected %}
 <p class="text-muted">There {{ "is" if rejected|length == 1 else "are" }} {{ rejected|length }} file{{ "s" if rejected|length != 1 }} in the rejects directory. The folder name gives the cause of the rejection. An import moves a file back to the import directory, where Fitzflix finds it automatically.</p>
 <div class="list-group">

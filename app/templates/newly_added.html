@@ -1,10 +1,12 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 {% from "_poster_tile.html" import poster_image, tile_actions %}
 
 {% block app_content %}
+{{ breadcrumb([("Home", url_for('main.index')), ("Newly added to streaming", none)]) }}
 {% if sections %}
 {% for section in sections %}
-<h2 class="mt-n2" id="newly-added-{{ section.provider_id }}">Newly added to {{ section.label }}</h2>
+{{ page_header('Newly added to ' ~ section.label, hr=false, id='newly-added-' ~ section.provider_id) }}
 <p class="small text-muted">These are all the films that arrived in the last month. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because you do not need to stream them. Source: <a href="{{ section.source }}" target="_blank" rel="noreferrer">{{ section.source | replace("https://www.", "") }}</a>.</p>
 <hr>
 {# The arrival set as a poster gallery, with the grammar of the
@@ -48,8 +50,7 @@
 {% endif %}
 {% endfor %}
 {% else %}
-<h2 class="mt-n2">Newly added to streaming</h2>
-<hr>
+{{ page_header('Newly added to streaming') }}
 <p class="lead">There is nothing new now.</p>
 <p class="text-muted">Fitzflix checks the newly-added collection of each service each day. For the Criterion Channel, the source is <a href="https://www.criterionchannel.com/newly-added" target="_blank" rel="noreferrer">criterionchannel.com</a>. The arrivals stay on this list for one month.</p>
 {% endif %}

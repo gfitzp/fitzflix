@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 {% from "_poster_tile.html" import poster_image, tile_actions, poster_placeholder %}
 
 {% block app_content %}
+{{ breadcrumb([("People", url_for('main.people')), (title, none)]) }}
 {# Portrait on the left. Lifespan and biography in a column to its right.
    The title renders in that right-hand column on wider screens. On phones
    it moves above the portrait. There are 2 copies, and exactly 1 is

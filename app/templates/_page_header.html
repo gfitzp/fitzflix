@@ -1,0 +1,48 @@
+{# The chrome of a page: the breadcrumb, the title row, and the two
+   list-page forms. Every page draws them here. Thus, the margins of a
+   title and the shape of a filter row are decided once. #}
+
+{# crumbs is a list of (label, url) pairs. The last pair has no url.
+   It is the current page. #}
+{% macro breadcrumb(crumbs) -%}
+<nav aria-label="breadcrumb">
+	<ol class="breadcrumb">
+		{% for label, url in crumbs %}
+		{% if url %}<li class="breadcrumb-item"><a href="{{ url }}">{{ label }}</a></li>{% else %}<li class="breadcrumb-item active" aria-current="page">{{ label }}</li>{% endif %}
+		{% endfor %}
+	</ol>
+</nav>
+{%- endmacro %}
+
+{# The title row. A call block puts a filter or a search box on the
+   right of the title. The row wraps on a phone, and the gap keeps the
+   pieces apart. hr draws the rule under the row. id names the heading
+   for an in-page link. #}
+{% macro page_header(title, hr=true, id=none) -%}
+<div class="d-flex flex-wrap align-items-center gap-2 mt-n2 mb-0">
+	<h2 class="mb-0 me-auto"{% if id %} id="{{ id }}"{% endif %}>{{ title }}</h2>
+	{% if caller %}<div class="d-flex flex-wrap align-items-center gap-2">{{ caller() }}</div>{% endif %}
+</div>
+{% if hr %}<hr>{% endif %}
+{%- endmacro %}
+
+{# The search box of a library list. One flex-wrap row with a gap.
+   Thus, the box and the button keep a gap when a phone wraps them. #}
+{% macro library_search(form) -%}
+<form class="d-flex flex-wrap align-items-center gap-2" action="" method="post">
+	{{ form.hidden_tag() }}
+	{{ form.search_query(class_="form-control form-control-sm", style="width: 14rem;") }}
+	{{ form.search_submit(class_="btn btn-sm btn-primary") }}
+</form>
+{%- endmacro %}
+
+{# The quality filter of a library list: a label, a select, and the
+   Filter button, in the same row grammar as the search box. #}
+{% macro quality_filter(form) -%}
+<form class="d-flex flex-wrap align-items-center gap-2" action="" method="post">
+	{{ form.hidden_tag() }}
+	{{ form.quality.label(class_="mb-0 small text-muted") }}
+	{{ form.quality(class_="form-select form-select-sm w-auto") }}
+	{{ form.filter_submit(class_="btn btn-sm btn-primary") }}
+</form>
+{%- endmacro %}

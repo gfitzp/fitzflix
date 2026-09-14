@@ -1,13 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import breadcrumb %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.history', page=page) }}">My History</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{{ movie|display_title }}</li>
-	</ol>
-</nav>
+{{ breadcrumb([('My History', url_for('main.history', page=page)), (movie|display_title, none)]) }}
 <div class="row mb-n2">
 	<div class="col-md-auto">
 		{% include "_movie_poster_large.html" %}

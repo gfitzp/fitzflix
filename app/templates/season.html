@@ -1,14 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-	<ol class="breadcrumb">
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv_library') }}">TV Shows</a></li>
-		<li class="breadcrumb-item"><a href="{{ url_for('main.tv', series_id=tv.id) }}">{{ tv.tmdb_name if tv.tmdb_name else tv.title }}</a></li>
-		<li class="breadcrumb-item active" aria-current="page">{% if season|int == 0 %}Specials{% else %}Season {{ season }}{% endif %}</li>
-	</ol>
-</nav>
-<h2 class="mt-n2">{{ title }}</h2>
+{{ breadcrumb([("TV Shows", url_for('main.tv_library')), (tv.tmdb_name if tv.tmdb_name else tv.title, url_for('main.tv', series_id=tv.id)), ("Specials" if season|int == 0 else "Season " ~ season, none)]) }}
+{{ page_header(title, hr=false) }}
 {# The restore is an admin tool, the same as on the series page (#186
    follow-up). The episode list below stays for all users. #}
 {% if current_user.admin %}

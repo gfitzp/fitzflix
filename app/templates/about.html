@@ -1,8 +1,8 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">About Fitzflix</h2>
-<hr>
+{{ page_header('About Fitzflix') }}
 <img src="{{ url_for('static', filename='fitzflix_logo.svg') }}" width="128px" class="float-start me-1">
 <p><strong><a href="https://github.com/gfitzp/fitzflix" rel="noreferrer">Fitzflix</a></strong> was created by <a href="https://glennfitzpatrick.com/" rel="noreferrer">Glenn Fitzpatrick</a> so he would know what was in his family's library when browsing for movies at thrift shops, and to keep track of his <a href="https://letterboxd.com/gfitzp/reviews/" rel="noreferrer">movie reviews</a>.</p>
 <p>

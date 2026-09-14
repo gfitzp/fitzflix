@@ -1,15 +1,16 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, library_search %}
 {% from "_poster_tile.html" import ladder_form %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 {% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
-<div class="mt-n2">
-	<h2>{{ title }}</h2>
-</div>
-<div class="row align-items-end">
-	<div class="col-md-7 mb-n4 me-auto">
+{% call page_header(title, hr=false) %}
+	{{ library_search(library_search_form) }}
+{% endcall %}
+<div class="row">
+	<div class="col-md-7">
 		<form action="" method="post">
 			{{ filter_form.hidden_tag() }}
 			<div class="row g-2 mb-1">
@@ -32,26 +33,17 @@
 					</div>
 				{% endfor %}
 			</div>
-			<div class="row g-2">
-				<div class="col-12 col-sm-11 col-md-11">
-					<div class="mb-3 form-inline mb-2">
-						{{ filter_form.min_quality.label(class_="me-2") }}
-						{{ filter_form.min_quality(class_="form-select form-select-sm col-5 col-md-6 col-lg-5 me-2") }}
-					</div>
-					<div class="mb-3 form-inline">
-						{{ filter_form.max_quality.label(class_="me-2") }}
-						{{ filter_form.max_quality(class_="form-select form-select-sm col-5 col-md-6 col-lg-5 me-2") }}
-						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col col-md-2") }}
-					</div>
-				</div>
+			{# One flex-wrap row per control. Thus, a phone wraps the
+			   label, the select, and the button with a gap. #}
+			<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+				{{ filter_form.min_quality.label(class_="mb-0 small text-muted") }}
+				{{ filter_form.min_quality(class_="form-select form-select-sm w-auto") }}
 			</div>
-		</form>
-	</div>
-	<div class="col-md-5 col-lg-4 mt-3 mb-n2">
-		<form class="form-inline" action="" method="post">
-			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
+			<div class="d-flex flex-wrap align-items-center gap-2">
+				{{ filter_form.max_quality.label(class_="mb-0 small text-muted") }}
+				{{ filter_form.max_quality(class_="form-select form-select-sm w-auto") }}
+				{{ filter_form.filter_submit(class_="btn btn-sm btn-primary") }}
+			</div>
 		</form>
 	</div>
 </div>

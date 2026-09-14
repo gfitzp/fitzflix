@@ -1,14 +1,15 @@
 {% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 {% from "_availability_badges.html" import availability_badge, library_badge %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
+{{ breadcrumb([("Search", url_for('main.search', q=q)), ("TMDB", none)]) }}
 {# This page has no search box of its own (#188). A new search starts from
    the Search library field in the navbar. Its results page offers the
    "Look up on TMDB" hand-off that arrives here. #}
-<h2 class="mt-n2">{{ title }}</h2>
-<hr>
+{{ page_header(title) }}
 {% if error %}
 <div class="alert alert-warning" role="alert">{{ error }}</div>
 {% endif %}
@@ -138,5 +139,4 @@
 {% if streaming_attribution %}
 <p class="small text-muted">Streaming data by JustWatch</p>
 {% endif %}
-<a class="btn btn-secondary btn-sm" href="{{ url_for('main.search', q=q) }}">&laquo; Back to library search</a>
 {% endblock %}

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 
 {% block app_content %}
-<h2 class="mt-2 mb-n2">System</h2>
-<hr>
+{{ page_header('System') }}
 <h3>System health</h3>
 <div id="system-health">
 	{% include "_system_health.html" %}

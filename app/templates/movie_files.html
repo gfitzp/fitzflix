@@ -1,14 +1,9 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 
 {% block app_content %}
-<nav aria-label="breadcrumb">
-  <ol class="breadcrumb">
-  	<li class="breadcrumb-item"><a href="{{ url_for('main.movie_library') }}">Movies</a></li>
-    <li class="breadcrumb-item"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></li>
-    <li class="breadcrumb-item active" aria-current="page">Files</li>
-  </ol>
-</nav>
-<h2 class="mt-n2">{{ title }}</h2>
+{{ breadcrumb([('Movies', url_for('main.movie_library')), (movie|display_title ~ ' (' ~ movie|display_year ~ ')', url_for('main.movie', movie_id=movie.id)), ('Files', none)]) }}
+{{ page_header(title, hr=false) }}
 <div class="table-responsive">
 	<table class="table table-striped">
 		<thead class="table-light">

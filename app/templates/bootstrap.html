@@ -286,6 +286,14 @@
 		/* The three poster scales of the site: large (a page), small
 		   (a row), extra small (a people row). A blank slot keeps the 2/3
 		   ratio of a poster. flex-shrink keeps a row from squashing it */
+		/* The height of the fixed navbar. The body offset, a sticky
+		   column, and an in-page anchor all read it here */
+		:root { --nav-height: 60px; }
+		.sticky-under-nav { position: sticky; top: var(--nav-height); z-index: 100; }
+		.anchor-under-nav { scroll-margin-top: var(--nav-height); }
+		/* The certification chip of a film or a series: a thin box
+		   around the rating, inline with the facts line */
+		.cert-box { display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px; }
 		.poster-lg { width: 250px; }
 		.poster-sm { width: 92px; flex-shrink: 0; }
 		.poster-xs { width: 46px; flex-shrink: 0; }
@@ -387,7 +395,7 @@
     <title>{% block title %}{{title|default}}{% endblock title %}</title>
     {%- endblock head %}
   </head>
-  <body{% block body_attribs %}{% endblock body_attribs %} style="padding-top: 60px;">
+  <body{% block body_attribs %}{% endblock body_attribs %} style="padding-top: var(--nav-height);">
     {% block body -%}
     {% block navbar %}
     {%- endblock navbar %}

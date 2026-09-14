@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
@@ -6,7 +7,7 @@
    #203). The score rows and the URLs store the slugs themselves.
    Thus, the slugs do not change. #}
 {% set difficulty_labels = {"easy": "Easy", "difficult": "Hard", "siracusa": "Difficult", "extra": "Extra Difficult"} %}
-<h2 class="mt-n2">Name That Frame</h2>
+{{ page_header('Name That Frame', hr=false) }}
 <p class="small text-muted">This is one random frame from one film in the library. Can you identify the film? The pool refreshes each night, so the frames change.</p>
 {# The difficulty picker is a radio button group (requested by Glenn,
    2026-08-27). A selection of a level submits the GET and deals a new

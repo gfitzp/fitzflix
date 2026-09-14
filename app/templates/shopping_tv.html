@@ -1,39 +1,17 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, quality_filter, library_search %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
 
 {% block app_content %}
-<div class="mt-n2">
-	<h2>{{ title }}</h2>
-</div>
-<div class="row align-items-end mt-n2">
-	<div class="col-md-6 mb-n4 me-auto">
-		<form action="" method="post">
-			{{ filter_form.hidden_tag() }}
-			<div class="row g-2">
-				<div class="col-12 col-sm-11">
-					<div class="mb-3 form-inline">
-						{{ filter_form.quality.label(class_="me-2") }}
-						{{ filter_form.quality(class_="form-select form-select-sm col-5 me-2") }}
-						{{ filter_form.filter_submit(class_="btn btn-sm btn-primary col") }}
-					</div>
-				</div>
-			</div>
-		</form>
-	</div>
-	<div class="col-md-6 col-lg-4 mt-4 mb-n2">
-		<form class="form-inline" action="" method="post">
-			{{ library_search_form.hidden_tag() }}
-			{{ library_search_form.search_query(class_="form-control form-control-sm me-2 col-8") }}
-			{{ library_search_form.search_submit(class_="btn btn-sm btn-primary ms-2 col") }}
-		</form>
-	</div>
-</div>
-<hr>
+{% call page_header(title) %}
+	{{ quality_filter(filter_form) }}
+	{{ library_search(library_search_form) }}
+{% endcall %}
 {% if series %}
 {% for tv in series %}
 {# Stacked on phones (poster above the seasons). Side-by-side from sm up. #}
 <div class="d-flex flex-column flex-sm-row">
-	<div class="sticky-top pt-1 mt-n1 align-self-start" style="z-index: 100; top: 60px;">
+	<div class="sticky-under-nav pt-1 align-self-start">
 		<a href="{{ url_for('main.tv', series_id=tv.id) }}">
 			{% include "_tv_poster_small.html" %}
 		</a>

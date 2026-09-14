@@ -1,10 +1,8 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 
 {% block app_content %}
-<div class="row mt-n2 mb-n3 d-flex">
-	<h2 class="col-12 col-sm-auto me-auto">{{ title }}</h2>
-</div>
-<hr>
+{{ page_header(title) }}
 {# Every job that runs, waits, or is booked for a deferred retry, each
    with the pipeline trail of its file as stage chips. The 5-second poll
    in base.html (renderAll) keeps the rows live. The poll asks for the

@@ -1,8 +1,8 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
 
 {% block app_content %}
-<h2 class="mt-n2">{{ title }}</h2>
-<hr>
+{{ page_header(title) }}
 <p class="text-muted">This is the virtual DVR dial. Each channel plays the owned media that its rules and its explicit picks select. When you edit a channel, Fitzflix rebuilds the lineups automatically. Plex shows the new dial after its next guide refresh.</p>
 
 {% if setup %}

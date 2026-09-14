@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
 {% from "_poster_tile.html" import poster_image, tile_actions %}
 
 {% block app_content %}
+{{ breadcrumb([("Home", url_for('main.index')), ("Leaving the Criterion Channel", none)]) }}
 {% if inventory %}
-<h2 class="mt-n2">Leaving the Criterion Channel {{ inventory.departs.strftime("%B %-d") }}</h2>
+{{ page_header('Leaving the Criterion Channel ' ~ inventory.departs.strftime("%B %-d"), hr=false) }}
 <p class="small text-muted">This is the full set of films that leave. Your taste profile ranks them. The films on your watchlist come first. The films that you own come last, because they stay in your library. Source: <a href="{{ inventory.url }}" target="_blank" rel="noreferrer">criterionchannel.com</a>.</p>
 <hr>
 {# The departure set as a poster gallery (#45d), in the grammar of
@@ -45,8 +47,7 @@
 </div>
 {% endif %}
 {% else %}
-<h2 class="mt-n2">Leaving the Criterion Channel</h2>
-<hr>
+{{ page_header('Leaving the Criterion Channel') }}
 <p class="lead">No film is scheduled to leave now.</p>
 <p class="text-muted">Fitzflix refreshes the leaving collection each month from <a href="https://www.criterionchannel.com" target="_blank" rel="noreferrer">criterionchannel.com</a>. When the departure date passes, the set is empty until the next page appears.</p>
 {% endif %}
