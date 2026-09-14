@@ -283,6 +283,13 @@
 		   2026-09). The large posters of the movie and review pages
 		   have square corners. Their hosts carry poster-fold-host-square.
 		   Thus, the fold covers the corner in full there. */
+		/* The three poster scales of the site: large (a page), small
+		   (a row), extra small (a people row). A blank slot keeps the 2/3
+		   ratio of a poster. flex-shrink keeps a row from squashing it */
+		.poster-lg { width: 250px; }
+		.poster-sm { width: 92px; flex-shrink: 0; }
+		.poster-xs { width: 46px; flex-shrink: 0; }
+		.poster-blank { aspect-ratio: 2 / 3; }
 		.poster-fold-host { position: relative; display: block; }
 		.poster-folds { position: absolute; top: var(--bs-border-width); left: var(--bs-border-width); right: var(--bs-border-width); aspect-ratio: 2 / 3; border-radius: calc(var(--bs-border-radius) - var(--bs-border-width)); overflow: hidden; pointer-events: none; }
 		.poster-fold-host-square .poster-folds { border-radius: 0; }

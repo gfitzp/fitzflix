@@ -10,15 +10,27 @@
    fetch per page paints them. Thus, gallery routes never compute per-film
    state. #}
 
-{% macro poster_image(src, alt) -%}
-{% if src %}
-<img src="{{ src }}" loading="lazy" class="img-fluid border rounded mb-1 w-100" alt="{{ alt }}">
-{% else %}
-<div class="border rounded mb-1 d-flex justify-content-center align-items-center text-secondary" style="aspect-ratio: 2 / 3;">
-	<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-film" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-		<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>
+{# The one placeholder for missing artwork. kind is film, tv, or
+   person. classes carries the size class (poster-lg, poster-sm,
+   poster-xs) and the margins of the slot. The box keeps the 2/3 ratio
+   of a poster through .poster-blank. Thus, a row never jumps when the
+   real image arrives. Every surface draws its placeholder here. #}
+{% macro poster_placeholder(kind="film", classes="", size="2em", label="") -%}
+<div class="poster-blank border rounded d-flex justify-content-center align-items-center text-secondary{% if classes %} {{ classes }}{% endif %}"{% if label %} role="img" aria-label="{{ label }}"{% endif %}>
+	<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 16 16" class="bi bi-{{ 'person-fill' if kind == 'person' else kind }}" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+		{% if kind == 'tv' %}<path fill-rule="evenodd" d="M2.5 13.5A.5.5 0 0 1 3 13h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zM13.991 3H2c-.325 0-.502.078-.602.145a.758.758 0 0 0-.254.302A1.46 1.46 0 0 0 1 4.01V10c0 .325.078.502.145.602.07.105.17.188.302.254a1.464 1.464 0 0 0 .538.143L2.01 11H14c.325 0 .502-.078.602-.145a.758.758 0 0 0 .254-.302 1.464 1.464 0 0 0 .143-.538L15 9.99V4c0-.325-.078-.502-.145-.602a.757.757 0 0 0-.302-.254A1.46 1.46 0 0 0 13.99 3zM14 2H2C0 2 0 4 0 4v6c0 2 2 2 2 2h12c2 0 2-2 2-2V4c0-2-2-2-2-2z"/>{% elif kind == 'person' %}<path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>{% else %}<path fill-rule="evenodd" d="M0 1a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1V1zm4 0h8v6H4V1zm8 8H4v6h8V9zM1 1h2v2H1V1zm2 3H1v2h2V4zM1 7h2v2H1V7zm2 3H1v2h2v-2zm-2 3h2v2H1v-2zM15 1h-2v2h2V1zm-2 3h2v2h-2V4zm2 3h-2v2h2V7zm-2 3h2v2h-2v-2zm2 3h-2v2h2v-2z"/>{% endif %}
 	</svg>
 </div>
+{%- endmacro %}
+
+{# spacing is the gap under the artwork. The galleries use mb-1. The
+   shelves of the landing page use mb-2. #}
+{% macro poster_image(src, alt, spacing="mb-1") -%}
+{% if src %}
+<img src="{{ src }}" loading="lazy" class="img-fluid border rounded {{ spacing }} w-100" alt="{{ alt }}">
+{% else %}
+{# No label. The caption under the tile names the film. #}
+{{ poster_placeholder("film", spacing, "2em") }}
 {% endif %}
 {%- endmacro %}
 

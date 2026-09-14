@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_poster_tile.html" import poster_image, tile_actions %}
+{% from "_poster_tile.html" import poster_image, tile_actions, poster_placeholder %}
 
 {% block app_content %}
 {# Portrait on the left. Lifespan and biography in a column to its right.
@@ -11,9 +11,7 @@
 	{% if profile_path %}
 		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border me-3 align-self-start" style="width: 92px; flex-shrink: 0;">
 	{% else %}
-		<div class="border rounded d-flex justify-content-center align-items-center text-secondary me-3 align-self-start" style="height: 138px; width: 92px; flex-shrink: 0;">
-			<svg width="2em" height="2em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/></svg>
-		</div>
+		{{ poster_placeholder("person", "me-3 align-self-start poster-sm") }}
 	{% endif %}
 	<div style="min-width: 0;">
 		<h2 class="d-none d-sm-block mb-0">{{ title }}</h2>

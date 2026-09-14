@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_search_form.html" import global_search_form %}
-{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
+{% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions, poster_placeholder %}
 
 {% block app_content %}
 {# This is the search box of the navbar again. It is pre-filled and
@@ -83,11 +83,7 @@
 			{% if person.tmdb_profile_path %}
 			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded me-3 align-self-start" style="width: 46px;">
 			{% else %}
-			<div class="rounded me-3 border d-flex justify-content-center align-items-center text-secondary" style="width: 46px; height: 69px;">
-				<svg width="1.5em" height="1.5em" viewBox="0 0 16 16" class="bi bi-person-fill" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-					<path fill-rule="evenodd" d="M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
-				</svg>
-			</div>
+			{{ poster_placeholder("person", "me-3 poster-xs", "1.5em") }}
 			{% endif %}
 			<div class="flex-grow-1">
 				<h5 class="mb-1">{{ person.name }}</h5>
