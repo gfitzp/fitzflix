@@ -1,0 +1,35 @@
+{# The one pagination strip of the site. pages is the Flask-SQLAlchemy
+   pager. endpoint and args build each page link, and a None value in
+   args drops out of the link. compact trims iter_pages so the strip
+   fits a phone, and sets the breakpoint class of the nav. compact none
+   renders one strip with no breakpoint. A page that pages a list by
+   hand passes numbers and current instead of pages. The ellipsis of a
+   trimmed strip is a disabled item. #}
+{% macro pagination(pages, endpoint, args={}, prev_url=none, next_url=none, compact=none, nav_class="", numbers=none, current=none) -%}
+{% set items = numbers if numbers is not none else (pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) if compact else pages.iter_pages()) %}
+{% set current = current if numbers is not none else pages.page %}
+<nav class="{% if compact is none %}{% elif compact %}d-block d-sm-none{% else %}d-none d-sm-block{% endif %}{% if nav_class %} {{ nav_class }}{% endif %}" aria-label="Pages">
+	<ul class="pagination">
+		<li class="page-item{% if not prev_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
+		</li>
+		{% for page in items %}
+			{% if page %}
+				<li class="page-item{% if page == current %} active{% endif %}"><a class="page-link" href="{{ url_for(endpoint, page=page, **args) }}">{{ page }}</a></li>
+			{% else %}
+				<li class="page-item disabled align-middle"><span class="page-link">&hellip;</span></li>
+			{% endif %}
+		{% endfor %}
+		<li class="page-item{% if not next_url %} disabled{% endif %}">
+			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
+		</li>
+	</ul>
+</nav>
+{%- endmacro %}
+
+{# A wide strip and a narrow strip at one position. Exactly one shows
+   per breakpoint. #}
+{% macro pagination_pair(pages, endpoint, args={}, prev_url=none, next_url=none, nav_class="") -%}
+{{ pagination(pages, endpoint, args, prev_url, next_url, compact=false) }}
+{{ pagination(pages, endpoint, args, prev_url, next_url, compact=true, nav_class=nav_class) }}
+{%- endmacro %}

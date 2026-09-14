@@ -1,27 +1,7 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
-{% macro pagination_nav() %}
-{% if page_numbers|length > 1 %}
-<nav aria-label="Criterion catalog pages">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% for number in page_numbers %}
-			{% if number %}
-			<li class="page-item{% if number == current_page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.criterion_collection', filter=filter_status, page=number) }}">{{ number }}</a></li>
-			{% else %}
-			<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-{% endif %}
-{% endmacro %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-n3 d-flex">
@@ -40,7 +20,7 @@
 </div>
 <hr>
 {% if rows %}
-{{ pagination_nav() }}
+{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
 {# The catalog as a poster wall (#45d). This is how Criterion itself
    shows spines. The popover shows the synopsis and the badges of each
    film. The card URL passes context=criterion. Thus, the SETTLED rule
@@ -104,7 +84,7 @@
 	</div>
 	{% endfor %}
 </div>
-{{ pagination_nav() }}
+{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
 {% else %}
 <h5>There are no Criterion Collection films to show.</h5>
 {% endif %}

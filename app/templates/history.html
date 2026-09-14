@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_rating_ladder.html" import rating_ladder %}
 
 {% block app_content %}
@@ -49,29 +50,7 @@
 	<button type="submit" class="btn btn-sm btn-primary">Search</button>
 </form>
 {% if reviews %}
-<nav aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.history', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.history', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
+{{ pagination(pages, 'main.history', {}, prev_url, next_url, compact=none) }}
 {% for review in reviews %}
 {% set movie = review.movie %}
 <div class="d-flex mb-2">
@@ -139,28 +118,6 @@
 	</div>
 </div>
 {% endfor %}
-<nav aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.history', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.history', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
+{{ pagination(pages, 'main.history', {}, prev_url, next_url, compact=none) }}
 {% endif %}
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination, pagination_pair %}
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
@@ -29,32 +30,8 @@
 	</div>
 </div>
 <hr>
-{# Each nav position renders a wide variant and a narrow variant. The
-   narrow variant trims iter_pages so the strip fits a phone #}
-{% macro pagination_nav(compact=false) %}
-<nav class="{{ 'd-block d-sm-none' if compact else 'd-none d-sm-block' }}" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in (pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) if compact else pages.iter_pages()) %}
-			{% if page %}
-				<li class="page-item{% if page == pages.page %} active{% endif %}"><a class="page-link" href="{{ url_for('main.movie_library', page=page, quality=request.args.get('quality'), credit=request.args.get('credit'), q=request.args.get('q')) }}">{{ page }}</a></li>
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-{% endmacro %}
 {% if movies %}
-{{ pagination_nav() }}
-{{ pagination_nav(compact=true) }}
+{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q')}, prev_url, next_url) }}
 {# One gallery serves every breakpoint (#45d, the separate mobile list
    is gone). The posters carry the popover. The tiles keep the edition
    and the actions. The green/amber shopping answer moved into the
@@ -71,7 +48,6 @@
 	</div>
 	{% endfor %}
 </div>
-{{ pagination_nav() }}
-{{ pagination_nav(compact=true) }}
+{{ pagination_pair(pages, 'main.movie_library', {'quality': request.args.get('quality'), 'credit': request.args.get('credit'), 'q': request.args.get('q')}, prev_url, next_url) }}
 {% endif %}
 {% endblock %}

@@ -1,31 +1,7 @@
 {% from "_poster_tile.html" import poster_placeholder %}
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination %}
 
-{% macro pagination_nav() %}
-<nav aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None, role=role_param) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.people', page=page, q=query_text or None, role=role_param) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-{% endmacro %}
 
 {% block app_content %}
 <div class="row mt-n2 mb-2 d-flex">
@@ -50,7 +26,7 @@
 <p class="small text-muted">Each {{ noun }} with credits in more than one film or series in the library{% if pages %} ({{ pages.total }} people){% endif %}. The persons with the most titles come first. Use the search to find a person, including a person with one title.</p>
 {% endif %}
 {% if people %}
-{{ pagination_nav() }}
+{{ pagination(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
 <div class="d-flex flex-wrap" style="gap: 16px;">
 	{% for person in people %}
 	<figure class="figure text-center mb-2" style="flex: 0 0 92px;">
@@ -70,7 +46,7 @@
 	</figure>
 	{% endfor %}
 </div>
-{{ pagination_nav() }}
+{{ pagination(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
 {% else %}
 <p class="text-muted">No people found{% if query_text %} for &ldquo;{{ query_text }}&rdquo;{% endif %}.</p>
 {% endif %}

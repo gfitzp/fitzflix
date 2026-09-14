@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import pagination, pagination_pair %}
 
 {# The File Activity dashboard: the old Recently Added page and the
    Pipeline Activity trails, merged (Glenn, 2026-08). Files that
@@ -45,52 +46,7 @@
 </script>
 {% endif %}
 {% if recently_added %}
-<nav class="d-none d-sm-block" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-<nav class="d-block d-sm-none" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
+{{ pagination_pair(pages, 'main.file_activity', {}, prev_url, next_url) }}
 {% endif %}
 
 {# The poll inserts the card of a newly arrived file at the top of
@@ -103,51 +59,7 @@
 </div>
 
 {% if recently_added %}
-<nav class="d-block d-sm-none" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages(left_edge=1, left_current=1, right_current=2, right_edge=1) %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
-<nav class="d-none d-sm-block" aria-label="...">
-	<ul class="pagination">
-		<li class="page-item{% if not prev_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ prev_url or '#' }}" tabindex="-1">&laquo;</a>
-		</li>
-		{% if pages %}
-		{% for page in pages.iter_pages() %}
-			{% if page %}
-				{% if page == pages.page %}
-					<li class="page-item active"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% else %}
-					<li class="page-item"><a class="page-link" href="{{ url_for('main.file_activity', page=page) }}">{{ page }}</a></li>
-				{% endif %}
-			{% else %}
-				<li class="page-item disabled align-middle"><span class="page-link">…</span></li>
-			{% endif %}
-		{% endfor %}
-		{% endif %}
-		<li class="page-item{% if not next_url %} disabled{% endif %}">
-			<a class="page-link" href="{{ next_url or '#' }}" tabindex="-1">&raquo;</a>
-		</li>
-	</ul>
-</nav>
+{{ pagination(pages, 'main.file_activity', {}, prev_url, next_url, compact=true) }}
+{{ pagination(pages, 'main.file_activity', {}, prev_url, next_url, compact=false) }}
 {% endif %}
 {% endblock %}
