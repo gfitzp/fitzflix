@@ -3,21 +3,21 @@
    server-side with ago(), because the scripts of flask-moment do not run
    again inside swapped-in HTML. #}
 <div class="mb-2">
-	<span class="badge text-bg-success me-1">Database {{ health.db_ms }} ms</span>
-	<span class="badge text-bg-success me-1">Redis {{ health.redis_ms }} ms</span>
-	<span class="badge text-bg-{{ 'success' if health.scheduler.ok else 'danger' }} me-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
-	<span class="badge text-bg-{{ 'success' if health.observer.ok else 'danger' }} me-1">Import watcher {{ health.observer.watchers }} / {{ health.observer.expected }}</span>
-	<span class="badge text-bg-{{ 'success' if health.backup.ok else 'danger' }} me-1">DB backup {% if health.backup.last %}{{ relative_time(health.backup.last) }}{% else %}never{% endif %}</span>
+	<span class="badge text-bg-success me-1 mb-1">Database {{ health.db_ms }} ms</span>
+	<span class="badge text-bg-success me-1 mb-1">Redis {{ health.redis_ms }} ms</span>
+	<span class="badge text-bg-{{ 'success' if health.scheduler.ok else 'danger' }} me-1 mb-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
+	<span class="badge text-bg-{{ 'success' if health.observer.ok else 'danger' }} me-1 mb-1">Import watcher {{ health.observer.watchers }} / {{ health.observer.expected }}</span>
+	<span class="badge text-bg-{{ 'success' if health.backup.ok else 'danger' }} me-1 mb-1">DB backup {% if health.backup.last %}{{ relative_time(health.backup.last) }}{% else %}never{% endif %}</span>
 	{% for mount in health.missing_mounts %}
-	<span class="badge text-bg-danger me-1">{{ mount }} not mounted</span>
+	<span class="badge text-bg-danger me-1 mb-1">{{ mount }} not mounted</span>
 	{% endfor %}
 	{% for probe in health.probes %}
-	<span class="badge text-bg-{{ 'success' if probe.ok else 'danger' }} me-1" title="{{ probe.detail }}">{{ probe.service }} {{ probe.latency_ms }} ms</span>
+	<span class="badge text-bg-{{ 'success' if probe.ok else 'danger' }} me-1 mb-1" title="{{ probe.detail }}">{{ probe.service }} {{ probe.latency_ms }} ms</span>
 	{% endfor %}
 	{% if health.probes %}
 	<div><span class="small text-muted">external services probed {{ relative_time(health.probes[0].checked) }}</span></div>
 	{% else %}
-	<span class="badge text-bg-secondary me-1" title="Results appear after the first scheduled probe runs">External probes pending</span>
+	<span class="badge text-bg-secondary me-1 mb-1" title="Results appear after the first scheduled probe runs">External probes pending</span>
 	{% endif %}
 </div>
 <div class="row my-2">
@@ -58,7 +58,7 @@
 	</div>
 </div>
 <hr>
-<h3>Scheduled tasks</h3>
+<h4 class="mt-4 mb-2">Scheduled tasks</h4>
 <div class="table-responsive">
 <table class="table table-sm mt-3">
 	<thead class="table-light">

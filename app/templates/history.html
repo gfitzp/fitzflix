@@ -56,7 +56,7 @@
 		{% include "_movie_poster_small.html" %}
 	</a>
 	<div class="flex-grow-1">
-		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}">{{ review.movie|display_title }} ({{ review.movie|display_year }})</a></h5>
+		<h5 class="mt-0 mb-0"><a href="{{ url_for('main.movie', movie_id=review.movie.id) }}" class="text-decoration-none text-body">{{ review.movie|display_title }} ({{ review.movie|display_year }})</a></h5>
 		{# Each viewing carries its own live star row that posts to
 		   review_edit. Stars only, never the ✕: the floor of a logged
 		   film is 1 star. The typed text goes with a star tap, because

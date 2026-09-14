@@ -27,19 +27,19 @@
 			   same as on the search and library pages. Extras are not
 			   upgrade candidates. Thus, they stay neutral. #}
 			{% if file.feature_type_id %}
-			<span class="badge text-bg-light">{{ file.quality.quality_title }}</span><br/>
+			<span class="badge text-bg-light me-1 mb-1">{{ file.quality.quality_title }}</span><br/>
 			{% else %}
 			<span class="badge text-bg-{{ 'success' if (movie.shopping_list_exclude or (not file.fullscreen and file.quality.preference >= upgrade_threshold)) else 'warning' }}">{% if file.fullscreen %}Full&nbsp;Screen&nbsp;{% endif %}{{ file.quality.quality_title }}</span><br/>
 			{% endif %}
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning">
-				{% elif track.default == 1 %}<span class="badge text-bg-success">
-				{% else %}<span class="badge text-bg-light">
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
+				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
+				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
-				{% if track.default == 1 %}<span class="badge text-bg-success">
-				{% elif track.forced == 1 %}<span class="badge text-bg-warning">
-				{% else %}<span class="badge text-bg-light">
+				{% if track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
+				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
+				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 			<div class="mt-1" data-trail hidden></div>
 		</div>
@@ -59,14 +59,14 @@
 			   the DVD-green rule of the search page. #}
 			<span class="badge text-bg-{{ 'success' if (file.quality.physical_media or file.quality.preference >= upgrade_threshold) else 'warning' }}">{{ file.quality.quality_title }}</span><br/>
 			{% if file.audiotrack %}Audio tracks: {% for track in file.audiotrack %}
-				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning">
-				{% elif track.default == 1 %}<span class="badge text-bg-success">
-				{% else %}<span class="badge text-bg-light">
+				{% if track.default == 1 and track.language not in native_language %}<span class="badge text-bg-warning me-1 mb-1">
+				{% elif track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
+				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 and track.language not in native_language %} (foreign){% endif %}</span> {% endfor %}<br/>{% endif %}
 			{% if file.subtrack|length > 0 %}Subtitle tracks: {% for track in file.subtrack %}
-				{% if track.default == 1 %}<span class="badge text-bg-success">
-				{% elif track.forced == 1 %}<span class="badge text-bg-warning">
-				{% else %}<span class="badge text-bg-light">
+				{% if track.default == 1 %}<span class="badge text-bg-success me-1 mb-1">
+				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
+				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
 			<div class="mt-1" data-trail hidden></div>
 		</div>

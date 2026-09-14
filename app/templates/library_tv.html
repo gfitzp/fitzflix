@@ -35,7 +35,7 @@
 		   and only the year tells them apart. A series that TMDB does
 		   not know keeps its folder title. That title already carries
 		   the disambiguation that it has #}
-		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}">{% if tv.tmdb_name %}{{ tv.tmdb_name }}{% if tv.first_air_year %} ({{ tv.first_air_year }}){% endif %}{% else %}{{ tv.title }}{% endif %}</a></h5>
+		<h5><a href="{{ url_for('main.tv', series_id=tv.id) }}" class="text-decoration-none text-body">{% if tv.tmdb_name %}{{ tv.tmdb_name }}{% if tv.first_air_year %} ({{ tv.first_air_year }}){% endif %}{% else %}{{ tv.title }}{% endif %}</a></h5>
 		{% if tv.seasons %}
 		<div class="list-group col-12 col-md-8 col-lg-4">
 			{% for season in tv.seasons %}

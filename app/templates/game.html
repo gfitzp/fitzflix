@@ -24,10 +24,10 @@
 	</form>
 	{% if streak or best or seen or (difficulty == "extra" and points) %}
 	<div class="ms-auto">
-		{% if difficulty == "extra" and points %}<span class="badge text-bg-primary" title="Your Extra Difficult points total">Points: {{ points }}</span>{% endif %}
-		{% if streak %}<span class="badge text-bg-success">Streak: {{ streak }}</span>{% endif %}
-		{% if best %}<span class="badge text-bg-light border" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
-		{% if seen %}<span class="badge text-bg-light border" title="{{ won }} of the {{ seen }} frames dealt to you, skips included">Win rate: {{ ((100 * won / seen) | round) | int }}%</span>{% endif %}
+		{% if difficulty == "extra" and points %}<span class="badge text-bg-primary me-1 mb-1" title="Your Extra Difficult points total">Points: {{ points }}</span>{% endif %}
+		{% if streak %}<span class="badge text-bg-success me-1 mb-1">Streak: {{ streak }}</span>{% endif %}
+		{% if best %}<span class="badge text-bg-light border me-1 mb-1" title="Your best {{ difficulty_labels[difficulty] }} streak">Best: {{ best }}</span>{% endif %}
+		{% if seen %}<span class="badge text-bg-light border me-1 mb-1" title="{{ won }} of the {{ seen }} frames dealt to you, skips included">Win rate: {{ ((100 * won / seen) | round) | int }}%</span>{% endif %}
 	</div>
 	{% endif %}
 </div>

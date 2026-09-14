@@ -202,7 +202,7 @@
 {# Enjoyment picks that the positive rating just logged earned. The
    actions sit under each poster: rate it, bank it, or wave it off. Tile
    posts never move the anchor of the strip. #}
-<h5>Since you liked {{ title }}&hellip;</h5>
+<h4 class="mt-4 mb-2">Since you liked {{ title }}&hellip;</h4>
 <p class="small text-muted">These films from your library have features in common with it. You did not see them, and they fit your taste profile.</p>
 <div class="row">
 	{% for suggestion in suggestions %}
@@ -261,7 +261,7 @@
    not the protection. #}
 {% if current_user.admin %}
 <hr>
-<h5>Movie Data</h5>
+<h4 class="mt-4 mb-2">Movie Data</h4>
 <p><em>Added {{ moment(movie.date_created).format("LLL") }}{% if movie.date_updated %}, last updated {{ moment(movie.date_updated).format("LLL") }}{% endif %}</em></p>
 <div class="row">
 	<div class="col-sm-4">

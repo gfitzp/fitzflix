@@ -38,7 +38,7 @@
 				<button type="submit" name="radarr_request_submit" value="Request via Radarr" class="dropdown-item">Request via Radarr</button>
 			</form>
 		{% elif radarr_proxy_url %}
-			<a class="dropdown-item" target="_blank" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}"{% if in_radarr %} title="Radarr is monitoring this film"{% endif %}>Radarr</a>
+			<a class="dropdown-item" target="_blank" rel="noreferrer" href="{{ radarr_proxy_url }}/movie/{{ movie.tmdb_id }}"{% if in_radarr %} title="Radarr is monitoring this film"{% endif %}>Radarr</a>
 		{% endif %}
 		<a class="dropdown-item" target="_blank" href="https://omgwtfnzbs.org/browse.php?search={{ title|urlencode }}&cat=35" rel="noreferrer">omgwtfnzbs</a>
 	</div>

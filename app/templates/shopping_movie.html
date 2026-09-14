@@ -58,7 +58,7 @@
 		{% include "_movie_poster_small.html" %}
 	</a>
 	<div class="flex-grow-1" data-state-movie="{{ movie.id }}">
-		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
+		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
 		{% call ladder_form(url_for('main.movie', movie_id=movie.id)) %}
 			{{ rating_ladder(compact=true, live=true) }}
 		{% endcall %}
@@ -84,9 +84,9 @@
    stream or rent leads, even if a different watcher could stream it. #}
 <p class="small text-muted">These are the films on the watchlist of each user that have no copy in the library. The films that are the most difficult to watch come first: the films that no service has, then the rentals, then the films that stream now. A film goes in the group of its worst case across its watchers. Streaming data by JustWatch.</p>
 {% for group in watchlist_groups %}
-<h4 class="mt-4">{{ group.heading }} <span class="text-muted fs-6 fw-normal">&middot; {{ group.rows | length }} film{% if group.rows | length != 1 %}s{% endif %}</span></h4>
+<h4 class="mt-4 mb-2">{{ group.heading }} <span class="text-muted fs-6 fw-normal">&middot; {{ group.rows | length }} film{% if group.rows | length != 1 %}s{% endif %}</span></h4>
 {% if not group.rows %}
-<p class="text-muted">Nothing here.</p>
+<p class="small text-muted mb-0">Nothing here.</p>
 {% endif %}
 {% for row in group.rows %}
 {{ shopping_row(row.movie, row.instruction, watchers=row.watchers) }}

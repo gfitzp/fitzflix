@@ -10,11 +10,11 @@
     		{{ email_form.hidden_tag() }}
     		<div class="mb-3">
 				{{ email_form.email.label }}
-				{{ email_form.email(size=32, class_="form-control") }}
+				{{ email_form.email(size=32, class_="form-control form-control-sm") }}
 			</div>
 			<div class="mb-3">
 				{{ email_form.email2.label }}
-				{{ email_form.email2(size=32, class_="form-control") }}
+				{{ email_form.email2(size=32, class_="form-control form-control-sm") }}
 			</div>
 			{{ email_form.submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -32,7 +32,7 @@
     		{{ plex_form.hidden_tag() }}
     		<div class="mb-3">
     			{{ plex_form.plex_username.label }}
-    			{{ plex_form.plex_username(size=32, class_="form-control", value=current_user.plex_username or "") }}
+    			{{ plex_form.plex_username(size=32, class_="form-control form-control-sm", value=current_user.plex_username or "") }}
     		</div>
     		{{ plex_form.plex_submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -44,7 +44,7 @@
     		{{ letterboxd_form.hidden_tag() }}
     		<div class="mb-3">
     			{{ letterboxd_form.letterboxd_username.label }}
-    			{{ letterboxd_form.letterboxd_username(size=32, class_="form-control", value=current_user.letterboxd_username or "") }}
+    			{{ letterboxd_form.letterboxd_username(size=32, class_="form-control form-control-sm", value=current_user.letterboxd_username or "") }}
     		</div>
     		{{ letterboxd_form.letterboxd_submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -57,7 +57,7 @@
     		{{ plex_player_form.hidden_tag() }}
     		<div class="mb-3">
     			{{ plex_player_form.plex_player_address.label }}
-    			{{ plex_player_form.plex_player_address(size=32, class_="form-control", value=current_user.plex_player_address or "", placeholder="192.168.1.x") }}
+    			{{ plex_player_form.plex_player_address(size=32, class_="form-control form-control-sm", value=current_user.plex_player_address or "", placeholder="192.168.1.x") }}
     		</div>
     		{{ plex_player_form.plex_player_submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -71,7 +71,7 @@
     		{{ infuse_pin_form.hidden_tag() }}
     		<div class="mb-3">
     			{{ infuse_pin_form.infuse_pin.label }}
-    			{{ infuse_pin_form.infuse_pin(size=8, class_="form-control", autocomplete="off") }}
+    			{{ infuse_pin_form.infuse_pin(size=8, class_="form-control form-control-sm", autocomplete="off") }}
     		</div>
     		{{ infuse_pin_form.infuse_pin_submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -81,7 +81,7 @@
     		{{ infuse_form.hidden_tag() }}
     		<div class="mb-3">
     			{{ infuse_form.infuse_player_address.label }}
-    			{{ infuse_form.infuse_player_address(size=32, class_="form-control", value=current_user.infuse_player_address or "", placeholder="192.168.1.x:49153") }}
+    			{{ infuse_form.infuse_player_address(size=32, class_="form-control form-control-sm", value=current_user.infuse_player_address or "", placeholder="192.168.1.x:49153") }}
     		</div>
     		{{ infuse_form.infuse_player_submit(class_="btn btn-sm btn-warning") }}
     	</form>
@@ -108,7 +108,7 @@
     {% endif %}
 </div>
 <hr>
-<h5>Streaming Services</h5>
+<h4 class="mt-4 mb-2">Streaming Services</h4>
 <p class="small text-muted">Select the services that you subscribe to. The movie pages and the TMDB search results then show when a film streams on them. This setting is yours only, not the setting of the household. Streaming data by JustWatch.</p>
 {% if streaming_form.providers.choices %}
 <form action="" method="post">
@@ -133,7 +133,7 @@
 <p class="text-muted">Fitzflix could not load the provider list from TMDB now. Try again later.</p>
 {% endif %}
 <hr>
-<h5>Watchlist Alerts</h5>
+<h4 class="mt-4 mb-2">Watchlist Alerts</h4>
 <p class="small text-muted">A nightly email digest tells you when the films on your watchlist become available. A film becomes available when it is added to the library, or when it starts to stream on one of your services above. If you subscribe to the Criterion Channel, the digest also tells you when a film leaves it soon. Rentals are a separate option, because a rental has a fee in addition to your subscriptions.</p>
 <form action="" method="post">
 	{{ alerts_form.hidden_tag() }}
@@ -150,7 +150,7 @@
 <hr>
 {# The review import and export forms moved here from History (#215).
    They are account-level plumbing, not part of the diary reading #}
-<h5>Review Import &amp; Export</h5>
+<h4 class="mt-4 mb-2">Review Import &amp; Export</h4>
 <div class="row my-2">
 	<div class="col-md-4">
 		<p class="mb-1">Import reviews</p>
@@ -177,7 +177,7 @@
 	</div>
 </div>
 <hr>
-<h5>Name That Frame</h5>
+<h4 class="mt-4 mb-2">Name That Frame</h4>
 <form action="" method="post">
 	{{ reset_frames_form.hidden_tag() }}
 	{{ reset_frames_form.reset_frames_submit(class_="btn btn-sm btn-warning") }}

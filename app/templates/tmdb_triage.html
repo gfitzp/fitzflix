@@ -41,7 +41,7 @@
 {% if movies or series %}
 <p class="text-muted">There {{ "is" if (movies|length) + (series|length) == 1 else "are" }} {{ (movies|length) + (series|length) }} record{{ "s" if (movies|length) + (series|length) != 1 }} with no TMDB id and no answer yet. <b>Match</b> attaches the id that you enter and refreshes the record. <b>Flag as unmatchable</b> marks the record, so no refresh path guesses an id from its title again. If a record has zero files, the better option is possibly to delete it from its own page.</p>
 {% if movies %}
-<h4>Movies</h4>
+<h4 class="mt-4 mb-2">Movies</h4>
 <div class="table-responsive">
 <table class="table table-sm mt-2 mb-4 align-middle">
 	<thead class="table-light">
@@ -63,7 +63,7 @@
 </div>
 {% endif %}
 {% if series %}
-<h4>TV series</h4>
+<h4 class="mt-4 mb-2">TV series</h4>
 <div class="table-responsive">
 <table class="table table-sm mt-2 align-middle">
 	<thead class="table-light">
