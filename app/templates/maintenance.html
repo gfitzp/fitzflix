@@ -97,9 +97,12 @@
 <hr>
 <h4 class="mt-4 mb-2">Filename tester</h4>
 <p class="small text-muted">See how Fitzflix parses and files a filename at import. The tester does not import the file.</p>
-<form action="" method="post" class="form-inline">
+{# One flex-wrap row with a gap. The box is wide on a desktop and
+   never wider than the screen. Thus, a phone wraps the button under
+   it and the page never scrolls sideways. #}
+<form action="" method="post" class="d-flex flex-wrap align-items-center gap-2">
 	{{ filename_test_form.hidden_tag() }}
-	{{ filename_test_form.test_filename(class_="form-control form-control-sm me-2", size=60, placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
+	{{ filename_test_form.test_filename(class_="form-control form-control-sm", style="width: 32rem; max-width: 100%;", placeholder="Jaws (1975) - [Bluray-1080p].mkv") }}
 	{{ filename_test_form.filename_test_submit(class_="btn btn-sm btn-primary") }}
 </form>
 {% if filename_test_result %}
