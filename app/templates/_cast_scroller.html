@@ -9,9 +9,10 @@
 {% if cast %}
 {# No top margin. The rule above spaces the strip. The scroller keeps
    a 4-pixel bottom padding. It holds the scrollbar off the captions.
-   The wrapper takes that padding back. Thus, the rule below sits at
-   the same gap as every other rule. #}
-<div class="mb-n1">
+   The wrapper takes that padding back with an inline margin. This
+   Bootstrap build has no negative margin classes. Thus, the rule
+   below sits at the same gap as every other rule. #}
+<div style="margin-bottom: -4px;">
 	<div class="d-flex align-items-center mb-1">
 		<span class="small text-muted me-auto">Starring</span>
 		<button type="button" class="btn btn-sm btn-secondary py-0 px-2 me-1 cast-scroll-prev" aria-label="Scroll cast left">&lsaquo;</button>

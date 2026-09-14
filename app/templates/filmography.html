@@ -8,7 +8,7 @@
    The title renders in that right-hand column on wider screens. On phones
    it moves above the portrait. There are 2 copies, and exactly 1 is
    displayed per breakpoint. #}
-<h2 class="d-sm-none mt-n2">{{ title }}</h2>
+<h2 class="d-sm-none">{{ title }}</h2>
 <div class="d-flex mt-0 mt-sm-n2">
 	{% if profile_path %}
 		<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ profile_path }}" loading="lazy" alt="{{ person_name }}" class="rounded border me-3 align-self-start" style="width: 92px; flex-shrink: 0;">

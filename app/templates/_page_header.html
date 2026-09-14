@@ -19,7 +19,7 @@
    pieces apart. hr draws the rule under the row. id names the heading
    for an in-page link. #}
 {% macro page_header(title, hr=true, id=none) -%}
-<div class="d-flex flex-wrap align-items-center gap-2 mt-n2 mb-0">
+<div class="d-flex flex-wrap align-items-center gap-2 mb-0">
 	<h2 class="mb-0 me-auto"{% if id %} id="{{ id }}"{% endif %}>{{ title }}</h2>
 	{% if caller %}<div class="d-flex flex-wrap align-items-center gap-2">{{ caller() }}</div>{% endif %}
 </div>

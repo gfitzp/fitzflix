@@ -5,7 +5,7 @@
 {% set crumbs = [("Library Maintenance", url_for('main.maintenance'))] %}
 {% if focus_file %}{% set crumbs = crumbs + [("Possibly-forced subtitles", url_for('main.subtitle_triage')), (focus_file.basename, none)] %}{% else %}{% set crumbs = crumbs + [("Possibly-forced subtitles", none)] %}{% endif %}
 {{ breadcrumb(crumbs) }}
-<h2 class="mt-n2">Possibly-forced subtitles{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
+<h2>Possibly-forced subtitles{% if focus_file %} <small class="text-muted">in one file</small>{% endif %}</h2>
 <hr>
 {% if not focus_file %}
 {# The worklist: only the pending files. Each file opens its own triage
