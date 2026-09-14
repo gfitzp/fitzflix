@@ -15,10 +15,10 @@
 			{% from "_poster_tile.html" import poster_fold_overlay %}
 			<div class="poster-fold-host poster-fold-host-square mx-auto" style="width: 250px;">
 			{{ poster_fold_overlay(poster_fold) }}
-			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="d-block border" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="d-block border poster-lg" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
 			</div>
 			{% else %}
-			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="mx-auto d-block border" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ poster_path }}" loading="lazy" class="mx-auto d-block border poster-lg" alt="{{ film_title }} ({{ year }})" style="width: 250px;">
 			{% endif %}
 		{% else %}
 			{{ poster_placeholder("film", "mx-auto poster-lg", "3em") }}

@@ -1,6 +1,6 @@
 {% from "_poster_tile.html" import poster_placeholder %}
 {% if tv.tmdb_poster_path %}
-	<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ tv.tmdb_poster_path }}" loading="lazy" class="mx-auto d-block border" alt="{{ title }}" style="width: 250px;">
+	<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ tv.tmdb_poster_path }}" loading="lazy" class="mx-auto d-block border poster-lg" alt="{{ title }}" style="width: 250px;">
 {% else %}
 	{{ poster_placeholder("tv", "mx-auto poster-lg", "3em") }}
 {% endif %}

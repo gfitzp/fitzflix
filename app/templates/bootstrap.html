@@ -303,6 +303,11 @@
 		.poster-sm { width: 92px; flex-shrink: 0; }
 		.poster-xs { width: 46px; flex-shrink: 0; }
 		.poster-blank { aspect-ratio: 2 / 3; }
+		/* An image with a size class keeps the 2/3 box before the file
+		   arrives. Safari sizes a lazy image from its alt text otherwise,
+		   then paints the picture cropped inside that box. cover trims a
+		   portrait that is not exactly 2/3 */
+		img.poster-lg, img.poster-sm, img.poster-xs { aspect-ratio: 2 / 3; object-fit: cover; display: block; }
 		.poster-fold-host { position: relative; display: block; }
 		.poster-folds { position: absolute; top: var(--bs-border-width); left: var(--bs-border-width); right: var(--bs-border-width); aspect-ratio: 2 / 3; border-radius: calc(var(--bs-border-radius) - var(--bs-border-width)); overflow: hidden; pointer-events: none; }
 		.poster-fold-host-square .poster-folds { border-radius: 0; }

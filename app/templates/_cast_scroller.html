@@ -24,8 +24,12 @@
 				{# The portrait carries the name as a tooltip. The caption
 				   truncates long names. The hover never does #}
 				<a href="{{ url_for('main.movie_library', credit=person.id) }}" title="{{ person.name }}{% if person.character %} as {{ person.character }}{% endif %}">
+				{# Eager, not lazy. Safari defers a lazy image inside a
+				   horizontal scroller until the strip scrolls, and shows
+				   the alt text in a short box until then. The strip
+				   holds some small files. #}
 				{% if person.profile_path %}
-					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded" style="width: 92px;">
+					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.profile_path }}" alt="{{ person.name }}" class="rounded poster-sm" style="width: 92px;">
 				{% else %}
 					{{ poster_placeholder("person", "poster-sm") }}
 				{% endif %}

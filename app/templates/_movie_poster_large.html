@@ -8,11 +8,11 @@
 {{ poster_fold_overlay(poster_fold) }}
 {% endif %}
 {% if file is defined and file.custom_poster %}
-	<img src="{{ url_for('static', filename='custom/file/' + file.id|string + '/w500/' + file.custom_poster )}}" loading="lazy" class="mx-auto d-block border" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
+	<img src="{{ url_for('static', filename='custom/file/' + file.id|string + '/w500/' + file.custom_poster )}}" loading="lazy" class="mx-auto d-block border poster-lg" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
 {% elif movie.custom_poster %}
-	<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w500/' + movie.custom_poster )}}" loading="lazy" class="mx-auto d-block border" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
+	<img src="{{ url_for('static', filename='custom/movie/' + movie.id|string + '/w500/' + movie.custom_poster )}}" loading="lazy" class="mx-auto d-block border poster-lg" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
 {% elif movie.tmdb_poster_path %}
-	<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ movie.tmdb_poster_path }}" loading="lazy" class="mx-auto d-block border" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
+	<img src="{{ config['TMDB_IMAGE_URL'] }}/w500{{ movie.tmdb_poster_path }}" loading="lazy" class="mx-auto d-block border poster-lg" alt="{{ movie|display_title }} ({{ movie|display_year }})" style="width: 250px;">
 {% else %}
 	{{ poster_placeholder("film", "mx-auto poster-lg", "3em") }}
 {% endif %}

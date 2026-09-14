@@ -78,7 +78,7 @@
 	<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="list-group-item list-group-item-action">
 		<div class="d-flex">
 			{% if person.tmdb_profile_path %}
-			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded me-3 align-self-start" style="width: 46px;">
+			<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ person.tmdb_profile_path }}" loading="lazy" alt="{{ person.name }}" class="rounded me-3 align-self-start poster-xs" style="width: 46px;">
 			{% else %}
 			{{ poster_placeholder("person", "me-3 poster-xs", "1.5em") }}
 			{% endif %}
