@@ -7,7 +7,9 @@
 {% from "_poster_tile.html" import poster_placeholder, control_row, ladder_form, watchlist_toggle %}
 {{ breadcrumb([('My History', url_for('main.history')), (film_title ~ ' (' ~ year ~ ')', none)]) }}
 <div class="row mb-n2">
-	<div class="col-md-auto">
+	{# The gap under the poster on a phone, where the column stacks
+	   above the title. On a wide screen the columns sit side by side. #}
+	<div class="col-md-auto mb-3 mb-md-0">
 		{% if poster_path %}
 			{% if poster_fold is defined and poster_fold %}
 			{% from "_poster_tile.html" import poster_fold_overlay %}

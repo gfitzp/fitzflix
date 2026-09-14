@@ -5,7 +5,9 @@
 {% block app_content %}
 {{ breadcrumb([(back_label, back_url), ('Poster', none)]) }}
 <div class="row mb-n2">
-	<div class="col-md-auto">
+	{# The gap under the poster on a phone, where the column stacks
+	   above the title. On a wide screen the columns sit side by side. #}
+	<div class="col-md-auto mb-3 mb-md-0">
 		{% if movie or (file is defined and file and file.custom_poster) %}
 			{% include "_movie_poster_large.html" %}
 		{% else %}
