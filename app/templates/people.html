@@ -1,7 +1,7 @@
 {% from "_poster_tile.html" import poster_placeholder %}
 {% extends "base.html" %}
 {% from "_page_header.html" import page_header %}
-{% from "_pagination.html" import pagination %}
+{% from "_pagination.html" import pagination, pagination_pair %}
 
 
 {% block app_content %}
@@ -24,7 +24,7 @@
 <p class="small text-muted">Each {{ noun }} with credits in more than one film or series in the library{% if pages %} ({{ pages.total }} people){% endif %}. The persons with the most titles come first. Use the search to find a person, including a person with one title.</p>
 {% endif %}
 {% if people %}
-{{ pagination(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
+{{ pagination_pair(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
 <div class="d-flex flex-wrap" style="gap: 16px;">
 	{% for person in people %}
 	<figure class="figure text-center mb-2" style="flex: 0 0 92px;">
@@ -44,7 +44,7 @@
 	</figure>
 	{% endfor %}
 </div>
-{{ pagination(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
+{{ pagination_pair(pages, 'main.people', {'q': query_text or None, 'role': role_param}, prev_url, next_url) }}
 {% else %}
 <p class="text-muted">No people found{% if query_text %} for &ldquo;{{ query_text }}&rdquo;{% endif %}.</p>
 {% endif %}
