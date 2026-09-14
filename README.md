@@ -373,7 +373,7 @@ TMDB_API_KEY=<your TMDB API key>
 
 | Setting | Function |
 | --- | --- |
-| `MEDIA_LOCATION` | The root of the media folders. `IMPORT_DIR`, `LIBRARY_DIR`, `REJECTS_DIR`, and `TRANSCODES_DIR` default to `import`, `library`, `rejects`, and `transcoded` in this root. You can set each one separately. |
+| `MEDIA_LOCATION` | The root of the media folders. `IMPORT_DIR`, `LIBRARY_DIR`, `REJECTS_DIR`, and `TRANSCODES_DIR` default to `import`, `library`, `rejects`, and `transcoded` in this root. You can set each one separately. Fitzflix creates the `import`, `staging`, `rejects`, and `transcoded` directories at startup when they are missing. It does not create a directory on a volume that is not mounted. The library directories are never created, because an empty library folder would hide a lost volume. |
 | `ISO_639_2_NATIVE_LANGUAGE` | The three-letter code of *your* language (default `eng`). The import removes the audio tracks and the subtitle tracks in other languages. Foreign-language films are an exception. |
 | `SERVER_NAME`, `PREFERRED_URL_SCHEME` | The hostname and the scheme for the links in emails |
 | `PREVENT_ACCOUNT_CREATION` | Disables the registration page when an admin account exists |
@@ -616,7 +616,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
 
    Then run `flask db upgrade` to update the schema to the current code. If the code is not newer than the dump, this command changes nothing.
 5. **Restore the custom posters.** Copy the `custom-posters/` prefix of the bucket back to `app/static/custom/`. For example, run `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`. The TMDB artwork does not need a restore. The pages link to the TMDB image CDN, and Fitzflix never stores the artwork locally.
-6. **Mount the NAS volumes.** Refer to the SMB notes: put the NAS hostname in `/etc/hosts`, and set `protocol_vers_map` and the signing settings in `/etc/nsmb.conf`. Make the staging directory on the local disk again.
+6. **Mount the NAS volumes.** Refer to the SMB notes: put the NAS hostname in `/etc/hosts`, and set `protocol_vers_map` and the signing settings in `/etc/nsmb.conf`. Fitzflix makes the import, staging, rejects, and transcoded directories again at the next startup.
 7. **Start the workers** with supervisor. Make sure that the health card on the System page is green. The scheduled jobs register themselves again at startup. Redis needs no restore. The only important data in Redis is the recommendation rankings and the availability caches. This data rebuilds itself in one day, or immediately with the `flask recs` commands.
 8. **Only if the NAS is also lost:** you can rebuild the localized library from the untouched archives. The S3 sync task queues a Bulk restore for each rank-1 file that is not on the local disk. The file `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of all files at the same time.
 

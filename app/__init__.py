@@ -449,6 +449,37 @@ def get_app(watch_import_dir=False):
     return _app
 
 
+def create_work_directory(app, key):
+    """Create the directory that a config setting names, and return True on success.
+
+    A missing directory must not stop the app. Localization processes
+    the files in place when the staging volume is absent. Thus, a
+    failure only writes a warning.
+
+    A path under /Volumes must be on a mounted volume. When a volume
+    is absent, macOS has no directory at its mountpoint. A makedirs
+    call would then create the tree on the boot disk. Then the volume
+    mounts under a new name, and every config path points at the boot
+    disk (#227). Thus, the function refuses to create a directory on an
+    unmounted volume, and it writes a warning instead.
+    """
+
+    path = app.config[key]
+    if path.startswith("/Volumes/"):
+        mountpoint = "/".join(path.split("/")[:3])
+        if not os.path.ismount(mountpoint):
+            app.logger.warning(
+                f"{key} '{path}' was not created, volume '{mountpoint}' is not mounted"
+            )
+            return False
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        app.logger.warning(f"{key} '{path}' could not be created ({e})")
+        return False
+    return True
+
+
 def check_config(app):
     """Warn at startup about config values that would make tasks fail later.
 
@@ -782,22 +813,18 @@ def create_app(config_class=Config, watch_import_dir=False):
         app.logger.setLevel(logging.INFO)
         app.logger.info("Fitzflix startup")
 
+    # Create the work directories that Fitzflix writes to. The library
+    # directories are not in the list. A missing library is a fault
+    # that the health checks report, and an empty library folder would
+    # hide it.
+
+    for key in ("IMPORT_DIR", "STAGING_DIR", "REJECTS_DIR", "TRANSCODES_DIR"):
+        create_work_directory(app, key)
+
     # Warn about the configuration problems that would make tasks fail
     # later.
 
     check_config(app)
-
-    # Create the import directory and the local staging directory.
-
-    os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
-    try:
-        os.makedirs(app.config["STAGING_DIR"], exist_ok=True)
-    except OSError:
-        # An unavailable staging volume must not stop the app. Then the
-        # localization processes the files in place.
-        app.logger.warning(
-            f"STAGING_DIR '{app.config['STAGING_DIR']}' could not be created"
-        )
 
     # Watch the import directory for file changes, but only when asked.
     # supervisor.py enables this for the import-program workers only.

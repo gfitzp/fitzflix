@@ -397,3 +397,35 @@ def test_backup_health_reads_newest_backup(app, tmp_path, monkeypatch):
     health = maintenance.backup_health(app.config)
     assert health["ok"]
     assert health["last"] is not None
+
+
+def test_create_work_directory_makes_missing_directories(app, tmp_path, monkeypatch):
+    """A fresh media disk gets its work directories back at startup."""
+
+    import os
+
+    from app import create_work_directory
+
+    for name in ("import", "rejects", "staging", "transcoded"):
+        monkeypatch.setitem(app.config, "TEST_WORK_DIR", str(tmp_path / name))
+        assert create_work_directory(app, "TEST_WORK_DIR") is True
+        assert os.path.isdir(tmp_path / name)
+
+
+def test_create_work_directory_refuses_an_unmounted_volume(app, monkeypatch, caplog):
+    """No directory is created at a mountpoint that has no volume (#227)."""
+
+    import os
+
+    from app import create_work_directory
+
+    monkeypatch.setitem(
+        app.config, "TEST_WORK_DIR", "/Volumes/fitzflix-test-absent/rejects"
+    )
+    monkeypatch.setattr(os.path, "ismount", lambda path: False)
+    made = []
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: made.append(a))
+    with caplog.at_level("WARNING"):
+        assert create_work_directory(app, "TEST_WORK_DIR") is False
+    assert made == []
+    assert "is not mounted" in caplog.text
