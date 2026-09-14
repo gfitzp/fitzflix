@@ -222,23 +222,25 @@
 {# Radarr request eligibility for the Find menu: the user is an admin,
    Radarr is configured, the film is unowned, and TMDB knows the film. #}
 {% set radarr_requestable = current_user.admin and radarr_available and not films and movie.tmdb_id %}
-<div class="row">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3">
 	{# The file pages are admin tools (#186 follow-up). Thus, only admins
 	   get the door to them, and only when the film has files (Glenn,
 	   2026-09). #}
 	{% if current_user.admin and (films or features) %}
-	<div class="col-sm-3 col-md-2 my-1">
+	<div class="col-sm-3 col-md-2">
 		<a class="btn btn-primary btn-sm container" href="{{ url_for('main.movie_files', movie_id=movie.id) }}" role="button">Files</a>
 	</div>
 	{% endif %}
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		{{ find_button(movie, block=true, radarr_requestable=radarr_requestable, in_radarr=in_radarr) }}
 
 	</div>
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		{{ cart_toggle(movie_shopping_exclude_form, movie, light=false, block=true) }}
 	</div>
-	<div class="col-md mt-1 mb-1 ms-n3">
+	<div class="col-md ms-n3">
 		<hr class="d-block d-md-none">
 		{% if movie.imdb_id %}
 		<a href="https://www.imdb.com/title/{{ movie.imdb_id }}" rel="noreferrer" class="px-3" target="_blank"><img src="{{ url_for('static', filename='imdb_logo.png') }}" alt="IMDb" style="height: 30px;"></a>

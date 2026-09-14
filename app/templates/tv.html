@@ -43,16 +43,18 @@
 <hr class="mt-3 mb-2">
 {% include "_cast_scroller.html" %}
 <hr class="mt-3 mb-3">
-<div class="row">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3">
 	{% if seasons %}
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		<div class="dropdown show">
 			<a class="btn btn-primary btn-sm dropdown-toggle container" href="#" role="button" id="dropdownMenuLink" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Seasons</a>
 			{% include "_tv_season_dropdown.html" %}
 		</div>
 	</div>
 	{% endif %}
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		{{ find_button(tv=tv, block=true) }}
 	</div>
 	{# The series management tools are admin tools. These are transcode,
@@ -61,13 +63,13 @@
 	   stray posts from all other users. Thus, to hide the tools here is
 	   presentation, not the protection #}
 	{% if current_user.admin %}
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		<form action="" method="post">
 			{{ transcode_form.hidden_tag() }}
 			{{ transcode_form.transcode_all(class_="btn btn-sm btn-success container") }}
 		</form>
 	</div>
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		<form action="" method="post">
 			{{ series_restore_form.hidden_tag() }}
 			{{ series_restore_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
@@ -79,7 +81,7 @@
 		<em class="small text-muted">No archived files to restore</em>
 		{% endif %}
 	</div>
-	<div class="col-sm-3 col-md-2 mt-1 mb-1">
+	<div class="col-sm-3 col-md-2">
 		<form action="" method="post">
 			{{ series_delete_form.hidden_tag() }}
 			{{ series_delete_form.delete_submit(class_="btn btn-sm btn-danger container") }}

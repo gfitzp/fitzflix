@@ -180,7 +180,9 @@
 	</div>
 </div>
 <hr>
-<div class="row">
+{# g-3: the gutters keep a gap between the columns when a phone
+   stacks them. Thus, the buttons never touch. #}
+<div class="row g-3">
 	<div class="col-sm-4">
 		<form action="" method="post">
 			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
@@ -203,8 +205,7 @@
 			</fieldset>
 		</form>
 		<em class="small">{% if file.aws_untouched_date_uploaded %}Archived offsite {{ moment(file.aws_untouched_date_uploaded).format("LLL") }}{% else %}Not uploaded to AWS.{% endif %}</em>
-		<p/>
-		<form action="" method="post">
+		<form action="" method="post" class="mt-3">
 			<fieldset {% if not best_file %}disabled{% endif %}>
 				{{ download_form.hidden_tag() }}
 				{{ download_form.password(class_="form-control form-control-sm mb-1", placeholder="Password") }}
