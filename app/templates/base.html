@@ -597,7 +597,9 @@
 						target.appendChild(document.createTextNode(" → "));
 					}
 					var chip = document.createElement("span");
-					chip.className = "badge fw-normal "
+					// mb-1: a trail that wraps on a phone keeps a gap
+					// between its lines, like every other badge run
+					chip.className = "badge fw-normal mb-1 "
 						+ (chipClass[entry.status] || "text-bg-light");
 					var label = entry.status === "done"
 						? (chipPastTense[entry.stage] || entry.stage)
