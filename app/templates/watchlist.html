@@ -45,8 +45,12 @@
 			</div>
 			{% endif %}
 			{% endfor %}
-			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
-			{% if q or minutes or provider %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			{# Filter and Clear are one block. Thus, a phone never
+			   wraps Clear onto a line of its own. #}
+			<div class="d-inline-flex gap-2">
+				<button type="submit" class="btn btn-sm btn-primary">Filter</button>
+				{% if q or minutes or provider %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			</div>
 		</form>
 {% endcall %}
 {% if minutes %}
