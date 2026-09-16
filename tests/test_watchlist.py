@@ -955,6 +955,113 @@ def test_watchlist_availability_filter(app, admin_client):
     assert "availability=local" in response.headers["Location"]
 
 
+def test_watchlist_service_filter(app, admin_client):
+    """Test the service dropdown of the On my services view (2026-09-15).
+
+    The dropdown lists the subscribed services of the user with the
+    count of the bucket that each one carries. A chosen service shows
+    only its films and implies the services pill. An unknown service id
+    falls back to any service. The removal redirect keeps the choice."""
+
+    from app import db
+    from app.models import UserStreamingProvider, UserWatchlist
+
+    criterion = {
+        "provider_id": 258,
+        "provider_name": "Criterion Channel",
+        "logo_path": "/c.jpg",
+    }
+    user_id = admin_id(app)
+    with app.app_context():
+        db.session.add(
+            UserStreamingProvider(
+                user_id=user_id, provider_id=8, name="Netflix", logo_path="/n.jpg"
+            )
+        )
+        db.session.add(
+            UserStreamingProvider(
+                user_id=user_id,
+                provider_id=258,
+                name="The Criterion Channel",
+                logo_path="/c.jpg",
+            )
+        )
+        netflix_only = make_movie("Service Netflix Film", 1991, tmdb_id=9501)
+        criterion_only = make_movie("Service Criterion Film", 1992, tmdb_id=9502)
+        both = make_movie("Service Both Film", 1993, tmdb_id=9503)
+        # Owned: the service of this film never counts. Owned wins.
+        owned = make_movie("Service Owned Film", 1994, tmdb_id=9504)
+        make_movie_file(owned, "Bluray-1080p")
+        for movie in (netflix_only, criterion_only, both, owned):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        criterion_only_id = criterion_only.id
+
+    def cache(tmdb_id, flatrate):
+        app.redis.set(
+            f"fitzflix:tmdb:watch-providers:movie:{tmdb_id}",
+            json.dumps(
+                {
+                    "link": None,
+                    "flatrate": list(flatrate),
+                    "ads": [],
+                    "rent": [],
+                    "buy": [],
+                }
+            ),
+        )
+
+    cache(9501, [NETFLIX])
+    cache(9502, [criterion])
+    cache(9503, [NETFLIX, criterion])
+    cache(9504, [criterion])
+
+    page = admin_client.get("/watchlist?availability=services").get_data(as_text=True)
+    assert '<option value="">Any service</option>' in page
+    # The options sort by name. Each one carries its bucket count.
+    assert page.index("Netflix (2)") < page.index("The Criterion Channel (2)")
+    assert 'data-watchlist-service-count="2"' in page
+    assert "Service Netflix Film" in page
+    assert "Service Criterion Film" in page
+
+    chosen = admin_client.get("/watchlist?availability=services&provider=258").get_data(
+        as_text=True
+    )
+    assert "Service Criterion Film" in chosen
+    assert "Service Both Film" in chosen
+    assert "Service Netflix Film" not in chosen
+    assert "Service Owned Film" not in chosen
+    assert 'value="258" data-watchlist-service-count="2" selected' in chosen
+    assert 'data-services="258"' in chosen
+
+    # A service alone implies the services pill.
+    implied = admin_client.get("/watchlist?provider=8").get_data(as_text=True)
+    assert 'id="watchlist-filter-services" value="services" checked' in implied
+    assert "Service Netflix Film" in implied
+    assert "Service Criterion Film" not in implied
+
+    # An unknown service falls back to any service. The list stays whole.
+    unknown = admin_client.get("/watchlist?provider=999").get_data(as_text=True)
+    assert "Service Owned Film" in unknown
+    assert (
+        " selected"
+        not in unknown.split("data-watchlist-service>")[1].split("</select>")[0]
+    )
+
+    # The removal redirect keeps the service.
+    response = admin_client.post(
+        "/watchlist?provider=258",
+        data={
+            "csrf_token": csrf_token_from(chosen),
+            "movie_id": criterion_only_id,
+            "remove_watchlist_submit": "Remove",
+        },
+    )
+    assert response.status_code == 302
+    assert "provider=258" in response.headers["Location"]
+    assert "availability=services" in response.headers["Location"]
+
+
 def test_watchlist_title_and_runtime_filters(app, admin_client):
     """Test the title search (#216) and the duration filter (#195).
 

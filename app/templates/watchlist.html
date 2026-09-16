@@ -21,8 +21,23 @@
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
 			{% endfor %}
+			{# The service dropdown (requested by Glenn, 2026-09-15):
+			   it narrows On my services to one subscribed service.
+			   The count of each option is also in its
+			   data-watchlist-service-count. Thus, a live tile removal
+			   (#187) keeps the options correct too. A chosen
+			   service checks the services pill. A different pill
+			   resets the dropdown. The route applies the same rule. #}
+			{% if services %}
+			<select name="provider" class="form-select form-select-sm w-auto" aria-label="Limit to one service" data-watchlist-service>
+				<option value="">Any service</option>
+				{% for service in services %}
+				<option value="{{ service.provider_id }}" data-watchlist-service-count="{{ service.count }}"{% if provider == service.provider_id %} selected{% endif %}>{{ service.name }} ({{ service.count }})</option>
+				{% endfor %}
+			</select>
+			{% endif %}
 			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
-			{% if q or minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+			{% if q or minutes or provider %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
 		</form>
 {% endcall %}
 {% if minutes %}
@@ -43,7 +58,7 @@
 	{% set movie = row.movie %}
 	{# data-bucket feeds the count bookkeeping of the live removal
 	   (#187) #}
-	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell" data-bucket="{{ row.bucket or '' }}">
+	<div class="col-6 col-sm-4 col-md-3 col-lg-2 mb-3 poster-cell" data-bucket="{{ row.bucket or '' }}" data-services="{{ row.streaming_ids|join(',') }}">
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
 			{# The corner folds (#197, and the badge of #156/#230)
 			   paint here through the same batched /movie_states
@@ -99,4 +114,31 @@
 <p class="lead">Your watchlist is empty.</p>
 <p class="text-muted">Add films from their pages. Search TMDB for each film that you want to watch, owned or not. When you watch a film, Fitzflix removes it from the list automatically.</p>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+	{{ super() }}
+	<script>
+		// The service dropdown and the availability pills agree with
+		// each other. A chosen service checks On my services. A
+		// different pill puts the dropdown back to Any service. The
+		// route applies the same rule on the server. Thus, the page
+		// never submits a service under a different bucket
+		(function() {
+			var select = document.querySelector("[data-watchlist-service]");
+			if (!select) return;
+			var pills = document.querySelectorAll('input[name="availability"]');
+			select.addEventListener("change", function() {
+				if (!select.value) return;
+				pills.forEach(function(pill) {
+					pill.checked = pill.value === "services";
+				});
+			});
+			pills.forEach(function(pill) {
+				pill.addEventListener("change", function() {
+					if (pill.checked && pill.value !== "services") select.value = "";
+				});
+			});
+		})();
+	</script>
 {% endblock %}

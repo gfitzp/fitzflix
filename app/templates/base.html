@@ -1047,6 +1047,17 @@
 							var count = name && document.querySelector('[data-watchlist-count="' + name + '"]');
 							if (count) count.textContent = Math.max(0, parseInt(count.textContent, 10) - 1);
 						});
+						// The per-service counts of the dropdown settle
+						// the same way, from the services of the cell
+						if (cell.getAttribute("data-bucket") === "services") {
+							(cell.getAttribute("data-services") || "").split(",").forEach(function(id) {
+								var option = id && document.querySelector('[data-watchlist-service] option[value="' + id + '"]');
+								if (!option) return;
+								var left = Math.max(0, parseInt(option.getAttribute("data-watchlist-service-count"), 10) - 1);
+								option.setAttribute("data-watchlist-service-count", left);
+								option.textContent = option.textContent.replace(/\(\d+\)$/, "(" + left + ")");
+							});
+						}
 						cell.remove();
 					}
 				}

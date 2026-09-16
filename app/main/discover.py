@@ -1515,6 +1515,23 @@ def watchlist():
     availability_filter = request.args.get("availability", "all")
     if availability_filter not in WATCHLIST_BUCKETS:
         availability_filter = "all"
+    # The service filter (requested by Glenn, 2026-09-15): one of the
+    # subscribed services of the user. It narrows the ON MY SERVICES
+    # bucket to the films that this one service carries. A chosen
+    # service implies that bucket. Thus, the pills follow the dropdown.
+    # An unknown id (a service the user dropped) falls back to any.
+    provider_filter = request.args.get("provider", type=int)
+    services = sorted(
+        (
+            {"provider_id": row.provider_id, "name": row.name or ""}
+            for row in current_user.streaming_providers
+        ),
+        key=lambda service: service["name"].lower(),
+    )
+    if provider_filter not in {service["provider_id"] for service in services}:
+        provider_filter = None
+    if provider_filter is not None:
+        availability_filter = "services"
     q = (request.args.get("q") or "").strip()
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
@@ -1539,6 +1556,7 @@ def watchlist():
                 availability=(
                     availability_filter if availability_filter != "all" else None
                 ),
+                provider=provider_filter,
                 q=q or None,
                 minutes=minutes,
             )
@@ -1681,14 +1699,33 @@ def watchlist():
         for chosen in WATCHLIST_BUCKETS
     }
     pending = sum(1 for row in rows if row["availability_pending"])
+
+    # The per-service counts of the dropdown. They count inside the ON
+    # MY SERVICES bucket of the current search. A film on 2 services
+    # counts once for each. Thus, the options say how much each service
+    # holds before the user picks one.
+
+    for row in rows:
+        row["streaming_ids"] = [match["provider_id"] for match in row["streaming"]]
+    for service in services:
+        service["count"] = sum(
+            1
+            for row in rows
+            if row["bucket"] == "services"
+            and service["provider_id"] in row["streaming_ids"]
+        )
     if availability_filter != "all":
         rows = [row for row in rows if row["bucket"] == availability_filter]
+    if provider_filter is not None:
+        rows = [row for row in rows if provider_filter in row["streaming_ids"]]
 
     return render_template(
         "watchlist.html",
         title="My Watchlist",
         rows=rows,
         availability=availability_filter,
+        provider=provider_filter,
+        services=services,
         q=q,
         minutes=minutes,
         total=total,
