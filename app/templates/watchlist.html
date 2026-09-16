@@ -12,30 +12,39 @@
 		   one Filter applies all 3. The counts show
 		   data-watchlist-count. Thus, a live tile removal (#187)
 		   keeps them correct without a reload. #}
-		<form class="d-flex flex-wrap align-items-center gap-2" action="{{ url_for('main.watchlist') }}" method="get">
+		{# The row aligns on the text baseline, not the center. The
+		   services pill is a 2-line block (pill, then dropdown). The
+		   baseline of that block is its first line. Thus, the other
+		   pills stay level with the pill, not with the dropdown. #}
+		<form class="d-flex flex-wrap align-items-baseline gap-2" action="{{ url_for('main.watchlist') }}" method="get">
 			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
 			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
-			<div class="form-check form-check-inline">
+			{# The service dropdown (requested by Glenn, 2026-09-15)
+			   sits under the services pill, as one block. Thus, it
+			   stays next to its pill wherever a phone wraps the row.
+			   It narrows On my services to one subscribed service.
+			   The count of each option is also in its
+			   data-watchlist-service-count. Thus, a live tile removal
+			   (#187) keeps the options correct too. A chosen service
+			   checks the services pill. A different pill resets the
+			   dropdown. The route applies the same rule. #}
+			{% set with_services = value == "services" and services %}
+			{% if with_services %}<div class="d-inline-flex flex-column">{% endif %}
+			<div class="form-check form-check-inline{% if with_services %} me-0{% endif %}">
 				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
-			{% endfor %}
-			{# The service dropdown (requested by Glenn, 2026-09-15):
-			   it narrows On my services to one subscribed service.
-			   The count of each option is also in its
-			   data-watchlist-service-count. Thus, a live tile removal
-			   (#187) keeps the options correct too. A chosen
-			   service checks the services pill. A different pill
-			   resets the dropdown. The route applies the same rule. #}
-			{% if services %}
-			<select name="provider" class="form-select form-select-sm w-auto" aria-label="Limit to one service" data-watchlist-service>
+			{% if with_services %}
+			<select name="provider" class="form-select form-select-sm w-auto mt-1" aria-label="Limit to one service" data-watchlist-service>
 				<option value="">Any service</option>
 				{% for service in services %}
 				<option value="{{ service.provider_id }}" data-watchlist-service-count="{{ service.count }}"{% if provider == service.provider_id %} selected{% endif %}>{{ service.name }} ({{ service.count }})</option>
 				{% endfor %}
 			</select>
+			</div>
 			{% endif %}
+			{% endfor %}
 			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
 			{% if q or minutes or provider %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
 		</form>
