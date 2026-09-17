@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% from "_page_header.html" import breadcrumb %}
 {% from "_find_button.html" import find_button, cart_toggle with context %}
+{% from "_cert_chip.html" import cert_chip %}
 {% from "_availability_badges.html" import library_badge %}
 
 {% block app_content %}
@@ -22,7 +23,7 @@
 			   read the same. The US content rating closes the line in the
 			   bordered box of the card #}
 			{% if meta_line or tv.tmdb_content_rating %}
-			<p class="text-muted mb-2">{{ meta_line }}{% if tv.tmdb_content_rating %}{% if meta_line %} &middot; {% endif %}<span class="cert-box">{{ tv.tmdb_content_rating }}</span>{% endif %}</p>
+			<p class="text-muted mb-2">{{ meta_line }}{% if tv.tmdb_content_rating %}{% if meta_line %} &middot; {% endif %}{{ cert_chip(tv.tmdb_content_rating) }}{% endif %}</p>
 			{% endif %}
 			{% if tv.tmdb_overview %}
 			<p>{{ tv.tmdb_overview }}</p>

@@ -1,0 +1,13 @@
+{# This is the shared certification chip: the rating of a film or a
+   series in a thin box at the end of its facts line. The mpaa flag
+   turns on the MPAA look. That look is a black box with heavy white
+   letters, as on the rating block of a theatrical film (requested by
+   Glenn, 2026-09). Only the 6 marks of the MPAA get that look. A
+   different value (NR, TV-MA, a foreign rating) keeps the plain box
+   even when the flag is on. Only the movie templates set the flag. A
+   television caller cannot opt in by accident. The MPAA never rates
+   a series. The chip renders on the movie page, the TMDB review page,
+   the poster card, the series page, and the series card. #}
+{% macro cert_chip(value, mpaa=False) -%}
+<span class="cert-box{% if mpaa and value in ("G", "PG", "PG-13", "R", "NC-17", "X") %} cert-mpaa{% endif %}">{{ value }}</span>
+{%- endmacro %}

@@ -22,11 +22,12 @@
    (requested by Glenn, 2026-08). The user can send an owned film to
    the living-room player from any poster, through the shared
    data-plex-play handler in base.html. #}
+{% from "_cert_chip.html" import cert_chip %}
 {% from "_availability_badges.html" import library_badge %}
 <div class="poster-card">
 	<h6 class="mb-1"><a href="{{ href }}" class="text-body">{{ display_title }}</a></h6>
 	{% if directors or runtime or genres or certification %}
-	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{{ genres|join(", ") }}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}<span class="cert-box">{{ certification }}</span>{% endif %}</p>
+	<p class="small text-muted mb-1">{% if directors %}Directed by {% for credit_id, name in directors %}<a href="{{ url_for('main.movie_library', credit=credit_id) }}" class="link-secondary text-secondary">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}{% if runtime %}{% if directors %} &middot; {% endif %}{{ runtime }} min{% endif %}{% if genres %}{% if directors or runtime %} &middot; {% endif %}{{ genres|join(", ") }}{% endif %}{% if certification %}{% if directors or runtime or genres %} &middot; {% endif %}{{ cert_chip(certification, mpaa=True) }}{% endif %}</p>
 	{% endif %}
 	{% if overview %}
 	<p class="small mb-1 poster-card-overview">{{ overview }}</p>

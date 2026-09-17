@@ -54,6 +54,8 @@ def test_movie_card_for_a_library_film(app, admin_client):
     assert "101 min" in page
     assert "Card Drama, Card Mystery" in page
     assert ">PG-13</span>" in page
+    # An MPAA rating gets the black-box look of the rating block
+    assert 'class="cert-box cert-mpaa">PG-13</span>' in page
     assert ">15</span>" not in page
     assert "A film about cards." in page
     assert "In library" in page
@@ -186,6 +188,28 @@ def test_movie_page_meta_line_leads_in_the_popup_order(app, admin_client):
         < page.index(">R</span>")
         < page.index("A film about ordering.")
     )
+    assert 'class="cert-box cert-mpaa">R</span>' in page
+
+
+def test_movie_page_keeps_the_plain_chip_for_a_non_mpaa_rating(app, admin_client):
+    """Keep the plain box for a rating that is not 1 of the 6 MPAA marks.
+
+    Only G, PG, PG-13, R, NC-17, and X get the black-box look. NR and
+    the other values TMDB records stay in the thin box."""
+
+    from app.models import RefTMDBCertification
+
+    with app.app_context():
+        movie = make_candidate("Page Unrated", 1970)
+        movie.certifications.append(
+            RefTMDBCertification(country="US", certification="NR")
+        )
+        db.session.commit()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert 'class="cert-box">NR</span>' in page
+    assert "cert-box cert-mpaa" not in page
 
 
 def test_movie_states_batch_hydration_payload(app, admin_client):

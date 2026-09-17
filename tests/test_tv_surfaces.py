@@ -501,6 +501,24 @@ def test_tv_page_meta_line(app, admin_client):
     assert page.index("26 seasons") < page.index("A Time Lord wanders")
 
 
+def test_tv_page_never_gives_a_content_rating_the_mpaa_look(app, admin_client):
+    """Keep the plain box on a series even when TMDB stores an MPAA value.
+
+    The MPAA never rates a series. The series templates call the chip
+    without the mpaa flag. Thus, a PG-13 on a series stays plain."""
+
+    with app.app_context():
+        series = make_tv_series(
+            "Rated Miniseries", tmdb_id=122, tmdb_content_rating="PG-13"
+        )
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    assert 'class="cert-box">PG-13</span>' in page
+    assert "cert-box cert-mpaa" not in page
+
+
 def test_series_upgradable_reads_physical_from_the_files_own_tier(app):
     """Read the verdict from the quality row of the file itself (#238).
 
