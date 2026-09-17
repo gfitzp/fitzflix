@@ -294,17 +294,21 @@
 		/* The certification chip of a film or a series: a thin box
 		   around the rating, inline with the facts line */
 		.cert-box { display: inline-flex; white-space: nowrap; align-items: center; border: 1px solid currentColor; padding: 0.06em 4px 0.15em 4px; line-height: 1; border-radius: 2px; }
-		/* The MPAA look of the chip (_cert_chip.html sets the class).
-		   The rating block of a theatrical film sets its letters in
-		   heavy white caps on a black box. The MPAA letters are custom
-		   lettering, close to Franklin Gothic Heavy. Libre Franklin at
-		   weight 900 is the open revival, and the head loads it from
-		   Google Fonts next to the October font. The tight tracking is
-		   part of the look. The font is heavier than the body text.
-		   Thus, the size drops a little to keep the chip on the line */
-		.cert-mpaa { background: #000; color: #fff; border-color: #000; font-family: "Libre Franklin", "Franklin Gothic Heavy", "Arial Black", sans-serif; font-weight: 900; font-size: .88em; letter-spacing: -.03em; padding: .18em .3em .2em .28em; }
-		/* In dark mode a black box on the dark page needs an edge */
-		[data-bs-theme="dark"] .cert-mpaa { border-color: var(--bs-secondary-color); }
+		/* The MPAA look of the chip (_cert_chip.html sets the class and
+		   the data-rating attribute). The letter box of the rating block
+		   is a white box with a black frame. Its letters are heavy
+		   Clarendon-style slab serifs in the color of the rating. The
+		   Black weight of Superclarendon ships
+		   with macOS and iOS. Besley at weight 900 is the open Clarendon
+		   revival, and the head loads it from Google Fonts next to the
+		   October font. The box stays white in dark mode, as the printed
+		   block does. The colors are the ones of the MPA rating block */
+		.cert-mpaa { background: #fff; color: #000; border: 1.5px solid #000; font-family: "Superclarendon", "Besley", "Clarendon", "Rockwell Extra Bold", serif; font-weight: 900; font-size: .9em; letter-spacing: -.02em; padding: .1em .28em .14em .26em; }
+		.cert-mpaa[data-rating="G"] { color: #006838; }
+		.cert-mpaa[data-rating="PG"] { color: #f15a29; }
+		.cert-mpaa[data-rating="PG-13"] { color: #7f3f98; }
+		.cert-mpaa[data-rating="R"] { color: #d71920; }
+		.cert-mpaa[data-rating="NC-17"] { color: #21409a; }
 		/* The text column of a detail page. Its last block drops its
 		   bottom margin. The column is a flex item. Thus, that margin never
 		   collapses with the rule below, and every rule keeps the same gap
@@ -407,11 +411,11 @@
 	<meta name="theme-color" content="#f8f9fa" media="(prefers-color-scheme: light)">
 	<meta name="theme-color" content="#212529" media="(prefers-color-scheme: dark)">
 
-	<!-- The webfonts: Creepster for the October styling, and Libre
-	     Franklin 900 for the MPAA look of the certification chip -->
+	<!-- The webfonts: Creepster for the October styling, and Besley
+	     900 for the MPAA look of the certification chip -->
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Libre+Franklin:wght@900&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Besley:wght@900&display=swap" rel="stylesheet">
 
 
     <title>{% block title %}{{title|default}}{% endblock title %}</title>
