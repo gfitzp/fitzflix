@@ -841,6 +841,36 @@ def test_review_tmdb_renders_form_for_unowned_film(app, admin_client, monkeypatc
     assert "Might interest you" not in page
 
 
+def test_review_tmdb_hides_the_chip_for_a_non_mpaa_rating(
+    app, admin_client, monkeypatch
+):
+    """Show no certification chip when the US value is not an MPA mark.
+
+    TMDB records NR, Unrated, and television values for some films. The
+    chip means an MPA rating. Thus, those films show no chip, the same
+    as they do once they are cataloged (Glenn, 2026-09-17)."""
+
+    import copy
+
+    import app.main.discover as discover
+
+    details = copy.deepcopy(JAWS_2_DETAILS)
+    details["release_dates"]["results"][0]["release_dates"] = [
+        {"certification": "NR"},
+        {"certification": ""},
+    ]
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(discover, "tmdb_get", lambda *a, **k: FakeTMDBDetails(details))
+
+    page = admin_client.get("/review/tmdb/579").get_data(as_text=True)
+    assert "116&nbsp;minutes" in page
+    assert 'class="cert-box' not in page
+
+    card = admin_client.get("/movie_card?tmdb_id=579").get_data(as_text=True)
+    assert "Jaws 2 (1978)" in card
+    assert 'class="cert-box' not in card
+
+
 def test_review_tmdb_shows_estimate_and_interest_marker(app, admin_client, monkeypatch):
     """Test that the page without a record shows the engine as the movie
     page does (#186).

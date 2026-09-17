@@ -127,6 +127,15 @@ from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 
 WATCHLIST_SHELF_SIZE = 18
 
+# The 6 marks of the MPA rating system. The certification chip of a
+# film shows only these (Glenn, 2026-09-17). The reference table holds
+# only these US values, so a library record never carries another one.
+# The 2 live TMDB paths (the review page and the card of a bare TMDB
+# id) filter through this set. Thus, an NR or an Unrated film shows no
+# chip, the same as it does once it is cataloged.
+
+MPAA_RATINGS = frozenset({"G", "PG", "PG-13", "R", "NC-17", "X"})
+
 
 def _fits(movie, minutes):
     """Return True when the film fits the runtime filter of the evening."""
@@ -976,14 +985,15 @@ def movie_card():
     ]
 
     # The US rating. The first certified release wins. This is the same
-    # answer that the cataloger stores for library records.
+    # answer that the cataloger stores for library records. A value
+    # outside the MPA marks shows no chip.
     certification = next(
         (
             date.get("certification")
             for country in (details.get("release_dates") or {}).get("results") or []
             if country.get("iso_3166_1") == "US"
             for date in country.get("release_dates") or []
-            if date.get("certification")
+            if date.get("certification") in MPAA_RATINGS
         ),
         None,
     )
@@ -1968,7 +1978,7 @@ def review_tmdb(tmdb_id):
     for country_release in (details.get("release_dates") or {}).get("results") or []:
         if country_release.get("iso_3166_1") == "US":
             for release in country_release.get("release_dates") or []:
-                if release.get("certification"):
+                if release.get("certification") in MPAA_RATINGS:
                     certification = release["certification"]
                     break
             break
