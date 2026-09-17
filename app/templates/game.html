@@ -45,7 +45,7 @@
 	<input type="hidden" name="unrated" value="0">
 	<div class="form-check form-switch">
 		<input class="form-check-input" type="checkbox" name="unrated" value="1" id="include-unrated"{% if include_unrated %} checked{% endif %} onchange="this.form.submit()">
-		<label class="form-check-label small" for="include-unrated">Include films I haven&rsquo;t rated{% if difficulty == "extra" %} <span class="text-muted">(2x point bonus)</span>{% endif %}</label>
+		<label class="form-check-label small" for="include-unrated">Include films I haven&rsquo;t rated{% if difficulty == "extra" %} <span class="text-muted">(2&times; point bonus)</span>{% endif %}</label>
 	</div>
 	<noscript><button type="submit" class="btn btn-sm btn-secondary mt-1">Apply</button></noscript>
 </form>
@@ -75,7 +75,7 @@
 <div class="alert alert-light border" role="status">Which film is this frame from?</div>
 {% endif %}
 {% elif result.correct %}
-<div class="alert alert-success" role="alert">Correct. It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}{% if result.doubled %}, with the 2x bonus for an unrated film{% endif %}){% endif %}{% if streak > 1 %}. That is {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %}. This is a new personal best{% endif %}.</div>
+<div class="alert alert-success" role="alert">Correct. It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>{% if result.points_won %} (+{{ result.points_won }} point{{ 's' if result.points_won > 1 }}{% if result.doubled %}, with the 2&times; bonus for an unrated film{% endif %}){% endif %}{% if streak > 1 %}. That is {{ streak }} in a row{% endif %}{% if result.new_best and streak > 1 %}. This is a new personal best{% endif %}.</div>
 {% else %}
 <div class="alert alert-danger" role="alert">{% if result.guess %}Not <em>{{ result.guess }}</em>. {% endif %}It is <a href="{{ url_for('main.movie', movie_id=result.movie_id) }}" class="alert-link">{{ result.answer }}</a>.</div>
 {% endif %}
