@@ -1962,7 +1962,7 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
 
     token = seed_image_frame(app, movie_id)
     page = admin_client.get("/game?difficulty=extra&unrated=1").get_data(as_text=True)
-    assert "(2x point bonus)" in page  # the toggle label may say so
+    assert "(2&times; point bonus)" in page  # the toggle label may say so
     assert "3 points" in page  # the prompt shows base points only
     assert "6 points" not in page
     csrf = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', page).group(1)
@@ -1977,7 +1977,7 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
     # page say why
 
     body = post({"guess": "Bonus Secret Film", "guess_submit": "y"})
-    assert "(+6 points, with the 2x bonus for an unrated film)" in body
+    assert "(+6 points, with the 2&times; bonus for an unrated film)" in body
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert (score.points, score.current_streak) == (6, 1)
@@ -1988,7 +1988,7 @@ def test_extra_unrated_hit_earns_a_hidden_double_bonus(app, admin_client):
     assert "3 points" in page and "6 points" not in page  # no leak
     post({"zoom_out": "y"})
     body = post({"guess": "bonus secret film", "guess_submit": "y"})
-    assert "(+4 points, with the 2x bonus for an unrated film)" in body
+    assert "(+4 points, with the 2&times; bonus for an unrated film)" in body
     with app.app_context():
         score = UserFrameScore.query.filter_by(difficulty="extra").one()
         assert (score.points, score.current_streak) == (10, 2)
