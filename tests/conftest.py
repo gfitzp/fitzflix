@@ -119,6 +119,10 @@ class TestConfig(Config):
     SONARR_API_KEY = "sonarr-test-key"
     RADARR_URL = "http://127.0.0.1:1"
     RADARR_API_KEY = "radarr-test-key"
+    # The base config computes these from the real library. A test must
+    # never write there.
+    RADARR_ROOT_FOLDERS = [MOVIE_LIBRARY]
+    SONARR_ROOT_FOLDERS = [TV_LIBRARY]
     RADARR_PROXY_URL = "http://127.0.0.1:1"
     WIKIDATA_SPARQL_URL = "http://127.0.0.1:1"
     HANDBRAKE_PRESET_FILE = None

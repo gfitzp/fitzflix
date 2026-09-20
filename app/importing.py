@@ -1243,6 +1243,36 @@ def move_localized_file(
         return True
 
 
+def _report_import_move_to_radarr(source_directory, output_directory):
+    """Tell Radarr when an import left its folder for a different one.
+
+    The source must be below a Radarr root folder, and the output must
+    be a different folder. Then Radarr gets the new path and a rescan,
+    and the empty folder of the download goes away. A Radarr failure is
+    logged. It does not fail the import. The file is already in place."""
+
+    from app.maintenance import clear_leftover_directory
+    from app.radarr_push import follow_import_move, radarr_configured
+
+    source = os.path.realpath(source_directory)
+    output = os.path.realpath(output_directory)
+    if source == output or not radarr_configured():
+        return
+    roots = [os.path.realpath(r) for r in current_app.config["RADARR_ROOT_FOLDERS"]]
+    if not any(os.path.commonpath([source, root]) == root for root in roots):
+        return
+    try:
+        follow_import_move(source, os.path.basename(output))
+    except Exception:
+        current_app.logger.warning(
+            f"Radarr path update for {source!r} failed: " + traceback.format_exc()
+        )
+    try:
+        clear_leftover_directory(source)
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+
+
 def finalize_localization(
     file_path, file_details, lock, hidden_output_file=None, inspection=None
 ):
@@ -1630,6 +1660,11 @@ def finalize_localization(
 
                 except FileNotFoundError:
                     pass
+
+            if file.movie_id:
+                _report_import_move_to_radarr(
+                    os.path.dirname(file_path), output_directory
+                )
 
             # TMDB enrichment runs as its own task after the commit. Thus, this
             # task never waits on the network. The enrichment sends an email

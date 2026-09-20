@@ -360,3 +360,83 @@ def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
             "Brazil (1985) {edition-Love Conquers All Version}"
         )
         assert _movie_folder([]) is None
+
+
+def import_move_fixture(app, tmp_path, source_name, output_name):
+    """Make an emptied Radarr folder and a Fitzflix output folder."""
+
+    import os
+
+    root = app.config["RADARR_ROOT_FOLDERS"][0]
+    assert root.startswith(app.config["LIBRARY_DIR"]), "test root is not temporary"
+    source = os.path.join(root, source_name)
+    os.makedirs(source, exist_ok=True)
+    output = os.path.join(app.config["LIBRARY_DIR"], "Movies", output_name)
+    os.makedirs(output, exist_ok=True)
+    return source, output
+
+
+def test_import_move_points_radarr_at_the_fitzflix_folder(app, monkeypatch, tmp_path):
+    """The import of a slash title leaves the Radarr folder. Radarr follows."""
+
+    import os
+
+    from app.importing import _report_import_move_to_radarr
+
+    fake = wire(app, monkeypatch)
+    source, output = import_move_fixture(
+        app, tmp_path, "Victor+Victoria (1982)", "VictorVictoria (1982)"
+    )
+    fake.movies[3] = {"id": 3, "tmdbId": 12614, "path": source}
+    with app.app_context():
+        _report_import_move_to_radarr(source, output)
+
+    assert [(i, m["path"]) for i, _, m in fake.updated] == [
+        (3, os.path.join(os.path.dirname(source), "VictorVictoria (1982)"))
+    ]
+    assert fake.commands == [{"name": "RefreshMovie", "movieIds": [3]}]
+    assert not os.path.isdir(source)
+
+
+def test_import_in_place_leaves_radarr_alone(app, monkeypatch, tmp_path):
+    from app.importing import _report_import_move_to_radarr
+
+    fake = wire(app, monkeypatch)
+    source, output = import_move_fixture(app, tmp_path, "Heat (1995)", "Heat (1995)")
+    fake.movies[4] = {"id": 4, "tmdbId": 949, "path": source}
+    with app.app_context():
+        _report_import_move_to_radarr(source, source)
+
+    assert fake.updated == []
+    assert fake.commands == []
+
+
+def test_import_from_outside_radarr_roots_leaves_radarr_alone(
+    app, monkeypatch, tmp_path
+):
+    """A file from the import directory was never a Radarr download."""
+
+    from app.importing import _report_import_move_to_radarr
+
+    fake = wire(app, monkeypatch)
+    _, output = import_move_fixture(app, tmp_path, "Unused (2000)", "Heat (1995)")
+    with app.app_context():
+        _report_import_move_to_radarr(str(tmp_path / "import"), output)
+
+    assert fake.updated == []
+    assert fake.commands == []
+
+
+def test_import_move_survives_a_radarr_outage(app, monkeypatch, tmp_path):
+    import app.radarr_push as radarr_push
+    from app.importing import _report_import_move_to_radarr
+
+    def down(*args, **kwargs):
+        raise ConnectionError("radarr is down")
+
+    monkeypatch.setattr(radarr_push, "_radarr", down)
+    source, output = import_move_fixture(
+        app, tmp_path, "La Jetée (1962)", "La Jetee (1962)"
+    )
+    with app.app_context():
+        _report_import_move_to_radarr(source, output)

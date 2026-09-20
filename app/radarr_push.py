@@ -163,7 +163,31 @@ def follow_rename(tmdb_id, new_folder):
             f"Radarr does not manage tmdb {tmdb_id}, no path to follow"
         )
         return False
-    entry = listing[0]
+    return _point_entry_at(listing[0], new_folder)
+
+
+def follow_import_move(source_folder, new_folder):
+    """Point the Radarr movie that owns source_folder at new_folder.
+
+    An import takes the download out of the folder of Radarr and puts
+    the localized file at the Fitzflix path. Usually the 2 folders are
+    the same. They differ when the naming rules differ, for example a
+    slash or an accented letter in the title. Then Radarr sees an empty
+    folder and searches again. This function finds the Radarr movie by
+    the name of its folder. A TMDB id is not always known at import
+    time. This function returns True if Radarr manages the folder."""
+
+    wanted = os.path.basename(source_folder.rstrip("/"))
+    for entry in _radarr("GET", "/api/v3/movie"):
+        if os.path.basename((entry.get("path") or "").rstrip("/")) == wanted:
+            return _point_entry_at(entry, new_folder)
+    current_app.logger.info(f"Radarr does not manage folder {wanted!r}, skipping")
+    return False
+
+
+def _point_entry_at(entry, new_folder):
+    """Rewrite the path of one Radarr movie, then request a rescan."""
+
     old_path = (entry.get("path") or "").rstrip("/")
     new_path = os.path.join(os.path.dirname(old_path), new_folder)
     if old_path and old_path != new_path:
