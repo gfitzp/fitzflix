@@ -12,12 +12,19 @@ The root folder of Radarr is the library volume itself. Thus, a
 granted request downloads, renames, and comes back in through the
 existing Radarr webhook. No other connection is necessary.
 
+The shared root folder has one consequence. A TMDB refresh can rename
+a movie folder. Radarr then holds a path that no longer exists, sees
+no file, and downloads the film again. Thus, the refresh reports each
+rename to Radarr with follow_rename. On a change of the TMDB id, the
+refresh withdraws the entry of the old id with withdraw_movie.
+
 House settings (specified by Glenn): monitor the movie only, minimum
 availability Released, and the "Fitzflix" quality profile. Fitzflix
 finds the profile by name, never by a hardcoded id.
 """
 
 import json
+import os
 
 import requests
 
@@ -138,3 +145,32 @@ def withdraw_movie(tmdb_id):
         "?deleteFiles=false&addImportExclusion=false",
     )
     radarr_tmdb_ids(refresh=True)
+
+
+def follow_rename(tmdb_id, new_folder):
+    """Point the Radarr movie at its renamed folder, then request a rescan.
+
+    Radarr matches the movie by TMDB id, its native key. The new path
+    keeps the parent of the old Radarr path. Thus, a Radarr host with a
+    different mount point still sees the correct folder. The PUT does
+    not move files. Fitzflix moved them already. The RefreshMovie
+    command makes Radarr adopt the renamed file at once. This function
+    returns True if Radarr manages the film."""
+
+    listing = _radarr("GET", f"/api/v3/movie?tmdbId={int(tmdb_id)}")
+    if not listing:
+        current_app.logger.info(
+            f"Radarr does not manage tmdb {tmdb_id}, no path to follow"
+        )
+        return False
+    entry = listing[0]
+    old_path = (entry.get("path") or "").rstrip("/")
+    new_path = os.path.join(os.path.dirname(old_path), new_folder)
+    if old_path and old_path != new_path:
+        entry["path"] = new_path
+        _radarr("PUT", f"/api/v3/movie/{entry['id']}?moveFiles=false", entry)
+        current_app.logger.info(f"Radarr path {old_path!r} -> {new_path!r}")
+    _radarr(
+        "POST", "/api/v3/command", {"name": "RefreshMovie", "movieIds": [entry["id"]]}
+    )
+    return True

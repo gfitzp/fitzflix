@@ -235,6 +235,56 @@ def save_failed_payload(library, id, tmdb_payload):
     return path
 
 
+def _movie_folder(files):
+    """Return the folder name of a movie from its file rows.
+
+    A dirname is "Movies/<folder>" or "Movies/<folder>/<feature type>".
+    Thus, the second component is the folder."""
+
+    for f in files:
+        parts = os.path.normpath(f.dirname or "").split(os.sep)
+        if len(parts) >= 2:
+            return parts[1]
+    return None
+
+
+def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
+    """Report a movie rename to Radarr. Log a failure. Do not raise.
+
+    If the TMDB id changed, the file belongs to a different film now.
+    Thus, the entry of the old id leaves Radarr, with its files kept on
+    the disk. Then the entry of the new id, if Radarr has one, points
+    at the new folder."""
+
+    from app.radarr_push import RadarrError, follow_rename, radarr_configured
+    from app.radarr_push import withdraw_movie
+
+    if not radarr_configured():
+        return
+    if old_tmdb_id and old_tmdb_id != new_tmdb_id:
+        try:
+            withdraw_movie(old_tmdb_id)
+            current_app.logger.info(
+                f"Radarr entry for tmdb {old_tmdb_id} withdrawn after the "
+                f"record moved to tmdb {new_tmdb_id}"
+            )
+        except RadarrError:
+            pass
+        except Exception:
+            current_app.logger.warning(
+                f"Radarr withdrawal of tmdb {old_tmdb_id} failed: "
+                + traceback.format_exc()
+            )
+    if new_tmdb_id and new_folder:
+        try:
+            follow_rename(new_tmdb_id, new_folder)
+        except Exception:
+            current_app.logger.warning(
+                f"Radarr path update for tmdb {new_tmdb_id} failed: "
+                + traceback.format_exc()
+            )
+
+
 def apply_tmdb_refresh(
     library, id, tmdb_id=None, tmdb_payload=None, notify_if_missing=False
 ):
@@ -282,9 +332,11 @@ def apply_tmdb_refresh(
                     )
                     return False
 
-                # Keep the original movie_id field.
+                # Keep the original movie_id field, and the TMDB id
+                # before the apply. Radarr keys its entries by TMDB id.
 
                 original_movie_id = movie.id
+                original_tmdb_id = movie.tmdb_id
 
                 # Check if the requested tmdb_id already exists in the Movie
                 # table. If it does, use that existing Movie record.
@@ -406,6 +458,7 @@ def apply_tmdb_refresh(
                 # Create new directories and move the files if necessary.
 
                 files = File.query.filter_by(movie_id=updated_movie_id).all()
+                renamed = False
 
                 for f in files:
                     if tmdb_id != None:
@@ -511,6 +564,7 @@ def apply_tmdb_refresh(
                                     f"Renaming '{old_file}' to '{new_file}'"
                                 )
                                 os.rename(old_file, new_file)
+                                renamed = True
                     except Exception:
                         current_app.logger.error(traceback.format_exc())
                         continue
@@ -630,6 +684,14 @@ def apply_tmdb_refresh(
                 except Exception:
                     current_app.logger.error(traceback.format_exc())
                     db.session.rollback()
+
+                # Radarr shares the library root. Thus, it must learn the
+                # new folder, or it downloads the film again.
+
+                if renamed or original_tmdb_id != movie.tmdb_id:
+                    _follow_rename_in_radarr(
+                        original_tmdb_id, movie.tmdb_id, _movie_folder(files)
+                    )
 
                 if updated_movie_id != original_movie_id:
 

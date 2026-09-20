@@ -25,6 +25,8 @@ class FakeRadarr:
         self.next_id = 100
         self.added = []
         self.deleted = []
+        self.updated = []
+        self.commands = []
 
     def call(self, method, path, payload=None):
         if method == "GET" and "/qualityprofile" in path:
@@ -45,6 +47,14 @@ class FakeRadarr:
             self.movies[self.next_id] = payload
             self.added.append(payload)
             self.next_id += 1
+            return payload
+        if method == "PUT" and "/movie/" in path:
+            radarr_id = int(path.split("/movie/")[1].split("?")[0])
+            self.movies[radarr_id] = dict(payload)
+            self.updated.append((radarr_id, path, dict(payload)))
+            return payload
+        if method == "POST" and path.endswith("/command"):
+            self.commands.append(dict(payload))
             return payload
         if method == "DELETE" and "/movie/" in path:
             radarr_id = int(path.split("/movie/")[1].split("?")[0])
@@ -202,3 +212,129 @@ def test_request_refuses_owned_films_and_non_admins(
 
     # The route refuses all non-admins
     assert user_client.post("/radarr", data={}).status_code == 302
+
+
+def refresh_rename_fixture(app, monkeypatch, title, year, tmdb_id, new_year):
+    """Make a movie whose TMDB refresh moves its file to a new folder."""
+
+    import os
+    from datetime import date
+
+    from app import tmdb_refresh
+    from tests.factories import make_movie, make_movie_file
+
+    movie = make_movie(title, year, tmdb_id=tmdb_id)
+    file = make_movie_file(movie, "HDTV-720p")
+    file.untouched_basename = file.basename
+    movie.tmdb_title = title
+    movie.tmdb_release_date = date(new_year, 1, 1)
+    db.session.commit()
+    old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+    os.makedirs(os.path.dirname(old_path), exist_ok=True)
+    with open(old_path, "wb") as handle:
+        handle.write(b"payload")
+    monkeypatch.setattr(tmdb_refresh, "rename_untouched_object", lambda *a, **k: False)
+    return movie.id
+
+
+def test_refresh_rename_points_radarr_at_the_new_folder(app, monkeypatch):
+    """A folder rename must reach Radarr, or Radarr downloads the film again."""
+
+    from app.videos import apply_tmdb_refresh
+
+    fake = wire(app, monkeypatch)
+    fake.movies[5] = {
+        "id": 5,
+        "tmdbId": 777,
+        "path": "/Volumes/Movies/Radarr Tune (1943)",
+    }
+    with app.app_context():
+        movie_id = refresh_rename_fixture(
+            app, monkeypatch, "Radarr Tune", 1943, 777, 1944
+        )
+        assert apply_tmdb_refresh("Movies", movie_id) is True
+
+    assert [(i, p, m["path"]) for i, p, m in fake.updated] == [
+        (5, "/api/v3/movie/5?moveFiles=false", "/Volumes/Movies/Radarr Tune (1944)")
+    ]
+    assert fake.commands == [{"name": "RefreshMovie", "movieIds": [5]}]
+    assert fake.deleted == []
+
+
+def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
+    """A record that moves to an other TMDB id leaves Radarr under the old id.
+
+    The file belongs to the other film now. Radarr keeps the files on
+    the disk. The entry of the new id gets a rescan."""
+
+    import os
+    from datetime import date
+
+    from app import tmdb_refresh
+    from app.videos import apply_tmdb_refresh
+    from tests.factories import make_movie, make_movie_file
+
+    fake = wire(app, monkeypatch)
+    monkeypatch.setattr(tmdb_refresh, "rename_untouched_object", lambda *a, **k: False)
+    fake.movies[8] = {
+        "id": 8,
+        "tmdbId": 1111,
+        "path": "/Volumes/Movies/Duplicate Entry (2001)",
+    }
+    fake.movies[9] = {
+        "id": 9,
+        "tmdbId": 4242,
+        "path": "/Volumes/Movies/Canonical Entry (2001)",
+    }
+    with app.app_context():
+        source = make_movie("Duplicate Entry", 2001, tmdb_id=1111)
+        file = make_movie_file(source, "DVD")
+        file.untouched_basename = file.basename
+        target = make_movie("Canonical Entry", 2001, tmdb_id=4242)
+        target.tmdb_title = "Canonical Entry"
+        target.tmdb_release_date = date(2001, 6, 1)
+        db.session.commit()
+        source_id = source.id
+        old_path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(old_path), exist_ok=True)
+        with open(old_path, "wb") as handle:
+            handle.write(b"payload")
+
+        assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is True
+
+    assert [radarr_id for radarr_id, _ in fake.deleted] == [8]
+    assert fake.deleted[0][1].endswith("?deleteFiles=false&addImportExclusion=false")
+    assert fake.updated == []
+    assert fake.commands == [{"name": "RefreshMovie", "movieIds": [9]}]
+
+
+def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
+    from app.videos import apply_tmdb_refresh
+
+    fake = wire(app, monkeypatch)
+    with app.app_context():
+        movie_id = refresh_rename_fixture(
+            app, monkeypatch, "Quiet Film", 1950, 888, 1951
+        )
+        assert apply_tmdb_refresh("Movies", movie_id) is True
+
+    assert fake.updated == []
+    assert fake.commands == []
+    assert fake.deleted == []
+
+
+def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
+    """A Radarr failure must not fail the refresh. The rename already happened."""
+
+    import app.radarr_push as radarr_push
+    from app.videos import apply_tmdb_refresh
+
+    def down(*args, **kwargs):
+        raise ConnectionError("radarr is down")
+
+    monkeypatch.setattr(radarr_push, "_radarr", down)
+    with app.app_context():
+        movie_id = refresh_rename_fixture(
+            app, monkeypatch, "Storm Film", 1960, 999, 1961
+        )
+        assert apply_tmdb_refresh("Movies", movie_id) is True
