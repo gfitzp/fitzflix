@@ -338,3 +338,25 @@ def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
             app, monkeypatch, "Storm Film", 1960, 999, 1961
         )
         assert apply_tmdb_refresh("Movies", movie_id) is True
+
+
+def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
+    """Radarr downloads go to the plain folder, not to an edition folder."""
+
+    from app.tmdb_refresh import _movie_folder
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Brazil", 1985)
+        edition = make_movie_file(movie, "Bluray-1080p")
+        edition.dirname = "Movies/Brazil (1985) {edition-Love Conquers All Version}"
+        extra = make_movie_file(movie, "Bluray-1080p", feature_type_name="Featurettes")
+        plain = make_movie_file(movie, "DVD")
+        db.session.commit()
+
+        assert _movie_folder([edition, extra, plain]) == "Brazil (1985)"
+        assert _movie_folder([edition, extra]) == "Brazil (1985)"
+        assert _movie_folder([edition]) == (
+            "Brazil (1985) {edition-Love Conquers All Version}"
+        )
+        assert _movie_folder([]) is None

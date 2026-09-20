@@ -239,13 +239,24 @@ def _movie_folder(files):
     """Return the folder name of a movie from its file rows.
 
     A dirname is "Movies/<folder>" or "Movies/<folder>/<feature type>".
-    Thus, the second component is the folder."""
+    Thus, the second component is the folder. A film can own a plain
+    folder and edition folders (Brazil, 1985). Radarr downloads go to
+    the plain folder. Thus, that folder wins. A main feature outranks a
+    special feature. The rows come in a stable order, so the choice is
+    the same on each call."""
 
+    candidates = []
     for f in files:
         parts = os.path.normpath(f.dirname or "").split(os.sep)
-        if len(parts) >= 2:
-            return parts[1]
-    return None
+        if len(parts) < 2:
+            continue
+        folder = parts[1]
+        candidates.append(
+            ("{edition-" in folder, f.feature_type_id is not None, folder)
+        )
+    if not candidates:
+        return None
+    return min(candidates)[2]
 
 
 def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
