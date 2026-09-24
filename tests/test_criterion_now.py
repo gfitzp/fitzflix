@@ -1,7 +1,8 @@
 """Test the Criterion 24/7 now-playing card.
 
-These tests cover the parse of the whatsonnow page (with its countdown
-typo) and the film info page. They also cover the self-scheduling
+These tests cover the parse of the whatsonnow page and of the film
+page. The whatsonnow page is a Next.js app since 2026-09-24. It
+embeds the schedule as data. The film page has a schema.org block. They also cover the self-scheduling
 poller and the card on the landing page. For the card they cover the
 gating, the staleness, the star row, and the credits with filmography
 links."""
@@ -9,7 +10,7 @@ links."""
 import json
 import re
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def csrf_token_from(page_html):
@@ -18,25 +19,48 @@ def csrf_token_from(page_html):
     return match.group(1)
 
 
-WHATSON_HTML = """
-<div class="whatson__container--desktop">
-    <p class="whatson__eyebrow">What's on <span class="whatson__eyebrow--bold">now:</span></p>
-    <h2 class="whatson__title">Shock Corridor</h2>
-    <div class="whatson__channel-buttons">
-        <a href="https://www.criterionchannel.com/events/criterion-24-7" class="whatson__channel-link whatson__channel-link--live">
-            <span class="whatson__channel-link-text whatson__channel-link-text--live">Watch Live</span>
-        </a>
-        <a href="https://www.criterionchannel.com/shock-corridor" class="whatson__channel-link whatson__channel-link--more">
-            <span class="whatson__channel-link-text">More</span>
-        </a>
-    </div>
-    <p class="whatson__eyebrow">Next film starts in: <span class="whatson__eyebrow--bold">1 hour 23 minutes</snap></p>
-</div>
+def whatson_html(title="Shock Corridor", minutes_left=83, guid="8rWb21ax"):
+    """Return a now-playing page in the shape of the Next.js app.
+
+    The schedule sits in the data of the app. There, each quotation mark
+    is escaped. The current entry ends minutes_left from now. A
+    previous entry and a next entry surround it."""
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    end = now + timedelta(minutes=minutes_left)
+    start = end - timedelta(minutes=101)
+    stamp = "%Y-%m-%dT%H:%M:%SZ"
+
+    def entry(start, end, title, guid):
+        return (
+            f'{{\\"startTime\\":\\"{start.strftime(stamp)}\\",'
+            f'\\"endTime\\":\\"{end.strftime(stamp)}\\",'
+            f'\\"episodeTitle\\":\\"{title}\\",'
+            f'\\"shortDescription\\":\\"Film\\",'
+            f'\\"longDescription\\":\\"A film \\\\\\"quoted\\\\\\" here.\\",'
+            f'\\"guid\\":\\"{guid}\\",\\"duration\\":6060}}'
+        )
+
+    schedule = ",".join(
+        [
+            entry(start - timedelta(minutes=90), start, "Black Girl", "aaaa0000"),
+            entry(start, end, title, guid),
+            entry(end, end + timedelta(minutes=95), "Stagecoach", "bbbb1111"),
+        ]
+    )
+    return f"""
+<h1 class="Hero-module-less-module__epcjfa__title">{title}</h1>
+<a href="https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7">Watch Live</a>
+<a href="/films/{guid}/shock-corridor">Film Page</a>
+<script>self.__next_f.push([1,"{{\\"deeplink\\":\\"https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7\\",\\"schedule\\":[{schedule}]}}"])</script>
 """
 
+
+WHATSON_HTML = whatson_html()
+
 INFO_HTML = """
-<p>Directed by Samuel Fuller • 1963 • United States
-<br>Starring Peter Breck, Constance Towers, Gene Evans</p>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoObject","name":"Shock Corridor","director":[{"@type":"Person","name":"Samuel Fuller"}],"actor":[{"@type":"Person","name":"Peter Breck"},{"@type":"Person","name":"Constance Towers"},{"@type":"Person","name":"Gene Evans"}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Movie","name":"Shock Corridor","datePublished":"1963-09-11","actor":[{"@type":"Person","name":"Peter Breck"},{"@type":"Person","name":"Constance Towers"},{"@type":"Person","name":"Gene Evans"}],"countryOfOrigin":[{"@type":"Country","name":"United States"}]}</script>
 """
 
 
@@ -61,31 +85,54 @@ def subscribe_criterion(app):
         return user.id
 
 
-def test_parse_whatson_page_reads_title_more_and_countdown(app):
-    from app.criterion_now import parse_whatson_page
+def test_parse_whatson_page_reads_title_link_and_end_time(app):
+    from app.criterion_now import parse_watch_live_url, parse_whatson_page
 
     title, more_url, minutes = parse_whatson_page(WHATSON_HTML)
     assert title == "Shock Corridor"
-    assert more_url == "https://www.criterionchannel.com/shock-corridor"
+    assert more_url == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
     assert minutes == 83
 
-    # A minutes-only countdown. It is still behind the literal </snap>
-    # typo
-    title, _, minutes = parse_whatson_page(
-        WHATSON_HTML.replace("1 hour 23 minutes", "2 minutes")
+    assert (
+        parse_watch_live_url(WHATSON_HTML)
+        == "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
     )
-    assert minutes == 2
 
-    # An unreadable countdown parses as None. Fitzflix never guesses
-    _, _, minutes = parse_whatson_page(
-        WHATSON_HTML.replace("1 hour 23 minutes", "moments")
+    # The title comes from the heading. The end time comes from the
+    # schedule entry with that title. At a film boundary, the heading
+    # can name the next film before the clock enters its window. Then
+    # the end time of that next entry wins
+    title, more_url, minutes = parse_whatson_page(
+        whatson_html(minutes_left=83).replace(
+            '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
+            '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
+        )
     )
+    assert title == "Stagecoach"
+    assert minutes == 83 + 95
+
+    # A heading that is in no schedule entry gives no end time. Fitzflix
+    # never guesses. The 1st film link on the page is still the film
+    title, more_url, minutes = parse_whatson_page(
+        whatson_html().replace(
+            '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
+            '<h1 class="Hero-module-less-module__epcjfa__title">Mystery Film',
+        )
+    )
+    assert title == "Mystery Film"
+    assert more_url == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
     assert minutes is None
 
     assert parse_whatson_page("<html>redesigned</html>") == (None, None, None)
 
 
-def test_parse_film_info_reads_the_meta_lines(app):
+def test_parse_film_info_reads_the_schema_block(app):
+    """Test that the film info merges the Movie and VideoObject blocks.
+
+    The live page of The Great Dictator (2026-09-24) names the director
+    only in the VideoObject block. The Movie block has the date and the
+    country. Each field takes the 1st block that has it."""
+
     from app.criterion_now import parse_film_info
 
     info = parse_film_info(INFO_HTML)
@@ -101,25 +148,6 @@ def test_parse_film_info_reads_the_meta_lines(app):
         "country": None,
         "starring": None,
     }
-
-
-def test_parse_film_info_flattens_nonbreaking_spaces(app):
-    """Test that all 3 forms of a non-breaking space read as plain spaces.
-
-    The Channel writes non-breaking spaces raw, as &nbsp;, and sometimes
-    double-escaped (&amp;nbsp;). The shelf showed a literal "&nbsp;Hong
-    Kong" one time."""
-
-    from app.criterion_now import parse_film_info
-
-    for nbsp in ("\xa0", "&nbsp;", "&amp;nbsp;"):
-        info = parse_film_info(
-            "<p>Directed by Wong Kar-wai • 2000 •"
-            f"{nbsp}Hong{nbsp}Kong\n"
-            f"<br>Starring Tony{nbsp}Leung, Maggie Cheung</p>"
-        )
-        assert info["country"] == "Hong Kong", repr(nbsp)
-        assert info["starring"] == "Tony Leung, Maggie Cheung", repr(nbsp)
 
 
 def test_parse_whatson_page_flattens_nonbreaking_spaces(app):
@@ -580,7 +608,7 @@ def test_card_gates_on_subscription_and_staleness(app, admin_client):
     assert "Starring Peter Breck" in body
     assert "/shock.jpg" in body
     assert "Next film around" in body
-    assert "criterionchannel.com/events/criterion-24-7" in body
+    assert "criterionchannel.com/live/1emmgvqX/criterion-24-7" in body
 
     # A film a short time after its end still shows (the poller will
     # replace it soon). But the card removes the countdown line

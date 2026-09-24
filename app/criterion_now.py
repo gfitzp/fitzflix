@@ -1,18 +1,18 @@
 """The "On Criterion 24/7 now" card of the landing page.
 
 whatsonnow.criterionchannel.com is the public now-playing page of the
-Channel for its 24/7 feed. It shows the title of the current film and
-a More link to the info page of the film. It also shows a
-server-rendered countdown to the next film. The countdown has a
-literal </snap> typo. Thus, the
-parser stays lenient. A poller scrapes the page. It follows the More
-link for the "Directed by X • YYYY • Country" and "Starring …" lines.
-It matches the film to TMDB by title and year for a direct poster link.
-Then it stores all of this in Redis.
+Channel for its 24/7 feed. Since 2026-09-24 it is a Next.js app. The
+title of the current film is the page heading. The page also embeds
+the schedule of the feed as data. Each entry has a start time and an
+end time. The page has a Film Page link. A poller scrapes the page. It
+follows the Film Page link for the schema.org block of the film. That
+block names the director, the release date, the country, and the top
+billing. The poller matches the film to TMDB by title and year for a
+direct poster link. Then it stores all of this in Redis.
 
 The poller schedules itself. Each run enqueues itself again for a time
-just after the countdown expires. It uses a deterministic job id. Thus,
-the chains never accumulate. If the countdown is unreadable, the poller
+just after the current film ends. It uses a deterministic job id. Thus,
+the chains never accumulate. If the end time is unreadable, the poller
 tries again in 30 minutes. A cron heartbeat runs every 30 minutes. It
 checks that the chain is alive. It polls ONLY if the chain is dead.
 While a poll is booked for the end of the current film, the heartbeat
@@ -27,7 +27,8 @@ import json
 import re
 import traceback
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from math import ceil
 
 import requests
 
@@ -41,7 +42,13 @@ from app.streaming_rail import enriched_movie
 app = LocalProxy(get_app)
 
 WHATSON_URL = "https://whatsonnow.criterionchannel.com"
-WATCH_LIVE_URL = "https://www.criterionchannel.com/events/criterion-24-7"
+CHANNEL_ORIGIN = "https://www.criterionchannel.com"
+
+# The fallback for the Watch Live link. The page carries the current
+# link. The poller stores that one. This constant serves only while no
+# poll has stored a link yet.
+
+WATCH_LIVE_URL = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
 NOW_KEY = "fitzflix:criterion:now"
 POLL_JOB_ID = "fitzflix-criterion-now-poll"
 
@@ -52,24 +59,66 @@ POLL_JOB_ID = "fitzflix-criterion-now-poll"
 
 STALE_GRACE = timedelta(minutes=15)
 
-TITLE_RE = re.compile(r'class="whatson__title"[^>]*>\s*(.*?)\s*</h2>', re.S)
-MORE_RE = re.compile(
-    r'<a href="(https://www\.criterionchannel\.com/[^"]+)"[^>]*'
-    r'class="[^"]*whatson__channel-link--more'
-)
+TITLE_RE = re.compile(r'<h1 class="[^"]*__title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.S)
 
-# The closing tag of the countdown is literally </snap> today. Capture
-# up to any tag and read the units out of the text.
+# The schedule of the feed sits in the data of the Next.js app. There,
+# each quotation mark is escaped as \". The same regex must also read
+# plain JSON. Thus, the quotation mark is optional-backslash-quote.
 
-COUNTDOWN_RE = re.compile(
-    r"Next film starts in:.*?whatson__eyebrow--bold[^>]*>\s*([^<]*)", re.S
-)
+_Q = r'\\?"'
 
-INFO_META_RE = re.compile(
-    r"Directed by\s+(?P<director>[^•<]+?)\s*•\s*(?P<year>\d{4})\s*•\s*"
-    r"(?P<country>[^<\r\n]+)"
+# Each field stops at the next quotation mark that is not escaped. A
+# match never crosses into the next entry. The tempered dot below
+# refuses to step over the start of the next entry.
+
+_FIELD = r"(?:[^\"\\]|\\.)*?"
+_WITHIN_ENTRY = r"(?:(?!startTime).)*?"
+SCHEDULE_RE = re.compile(
+    _Q
+    + r"startTime"
+    + _Q
+    + r":"
+    + _Q
+    + r"(?P<start>"
+    + _FIELD
+    + r")"
+    + _Q
+    + r","
+    + _Q
+    + r"endTime"
+    + _Q
+    + r":"
+    + _Q
+    + r"(?P<end>"
+    + _FIELD
+    + r")"
+    + _Q
+    + r","
+    + _Q
+    + r"episodeTitle"
+    + _Q
+    + r":"
+    + _Q
+    + r"(?P<title>"
+    + _FIELD
+    + r")"
+    + _Q
+    + r","
+    + _WITHIN_ENTRY
+    + _Q
+    + r"guid"
+    + _Q
+    + r":"
+    + _Q
+    + r"(?P<guid>"
+    + _FIELD
+    + r")"
+    + _Q,
+    re.S,
 )
-INFO_STARRING_RE = re.compile(r"Starring\s+(?P<starring>[^<\r\n]+)")
+FILM_LINK_RE = re.compile(r'href="(/films/[^"]+)"')
+LIVE_LINK_RE = re.compile(r'href="(https://www\.criterionchannel\.com/live/[^"]+)"')
+JSON_LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 
 
 def _clean_text(text, collapse=True):
@@ -85,51 +134,135 @@ def _clean_text(text, collapse=True):
     return text.strip() if collapse else text
 
 
-def parse_whatson_page(page_html):
+def _parse_utc(stamp):
+    """Return an aware datetime from a schedule stamp, or None."""
+
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _current_slot(page_html, title, now):
+    """Return the schedule entry of the film with this title, or None.
+
+    An entry is (start, end, title, guid). The schedule covers 2 days.
+    The entry whose window contains now wins if its title agrees with
+    the heading. At a film boundary the heading and the clock can
+    disagree. Then the next entry with this title wins. A title that is
+    in no entry gives None. Fitzflix never guesses an end time."""
+
+    wanted = title.casefold()
+    fallback = None
+    for match in SCHEDULE_RE.finditer(page_html):
+        start = _parse_utc(match.group("start"))
+        end = _parse_utc(match.group("end"))
+        if not (start and end) or end <= now:
+            continue
+        entry_title = _clean_text(re.sub(r"\\+(.)", r"\1", match.group("title")))
+        if entry_title.casefold() != wanted:
+            continue
+        entry = (start, end, entry_title, match.group("guid"))
+        if start <= now:
+            return entry
+        if fallback is None or start < fallback[0]:
+            fallback = entry
+    return fallback
+
+
+def parse_whatson_page(page_html, now=None):
     """Return (title, more_url, minutes-until-next) from the now-playing page.
 
-    The result is (None, None, None) if the title is not found. A
-    countdown that does not parse comes back as None. Then the poller
-    does a short retry. It does not trust a guess."""
+    The result is (None, None, None) if the title is not found. The
+    minutes come from the end time of the current entry of the embedded
+    schedule. Minutes that do not parse come back as None. Then the
+    poller does a short retry. It does not trust a guess."""
 
     title_match = TITLE_RE.search(page_html)
     if not title_match:
         return None, None, None
     title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
 
-    more_match = MORE_RE.search(page_html)
-    more_url = more_match.group(1) if more_match else None
+    now = now or datetime.now(timezone.utc)
+    slot = _current_slot(page_html, title, now)
 
     minutes = None
-    countdown_match = COUNTDOWN_RE.search(page_html)
-    if countdown_match:
-        text = countdown_match.group(1)
-        hours_match = re.search(r"(\d+)\s*hour", text)
-        minutes_match = re.search(r"(\d+)\s*min", text)
-        if hours_match or minutes_match:
-            minutes = int(hours_match.group(1) if hours_match else 0) * 60 + int(
-                minutes_match.group(1) if minutes_match else 0
-            )
+    guid = None
+    if slot:
+        _, end, _, guid = slot
+        minutes = max(0, ceil((end - now).total_seconds() / 60))
+
+    # The Film Page link of the current film. The link that carries the
+    # id of the schedule entry wins. Otherwise the 1st film link on the
+    # page is the current film.
+
+    more_url = None
+    links = FILM_LINK_RE.findall(page_html)
+    for link in links:
+        if guid and f"/films/{guid}/" in link:
+            more_url = CHANNEL_ORIGIN + link
+            break
+    if more_url is None and links:
+        more_url = CHANNEL_ORIGIN + links[0]
     return title, more_url, minutes
+
+
+def parse_watch_live_url(page_html):
+    """Return the Watch Live link of the page, or None."""
+
+    match = LIVE_LINK_RE.search(page_html)
+    return match.group(1) if match else None
+
+
+def _names(people):
+    """Return the names of a schema.org person list, joined by commas."""
+
+    if isinstance(people, dict):
+        people = [people]
+    names = [
+        person.get("name", "").strip()
+        for person in people or []
+        if isinstance(person, dict) and person.get("name")
+    ]
+    return ", ".join(names) or None
 
 
 def parse_film_info(page_html):
     """Return {director, year, country, starring} from a film page.
 
-    The page is on criterionchannel.com. This is the same "Directed by X
-    • YYYY • Country" line that the leaving tooltips carry, plus the
-    Starring line. A value is None if it is absent."""
+    The page is on criterionchannel.com. It carries a schema.org Movie
+    block with the director, the release date, the country, and the
+    top billing. A value is None if it is absent."""
 
-    text = _clean_text(page_html, collapse=False)
     info = {"director": None, "year": None, "country": None, "starring": None}
-    meta = INFO_META_RE.search(text)
-    if meta:
-        info["director"] = meta.group("director").strip()
-        info["year"] = int(meta.group("year"))
-        info["country"] = meta.group("country").strip()
-    starring = INFO_STARRING_RE.search(text)
-    if starring:
-        info["starring"] = starring.group("starring").strip()
+    blocks = []
+    for block in JSON_LD_RE.findall(page_html):
+        try:
+            data = json.loads(html.unescape(block))
+        except ValueError:
+            continue
+        if data.get("@type") in ("Movie", "VideoObject"):
+            blocks.append(data)
+    if not blocks:
+        return info
+
+    # The Movie block and the VideoObject block share most fields. Each
+    # field takes the 1st block that has it. Thus, the director of the
+    # VideoObject block fills a Movie block without 1.
+
+    blocks.sort(key=lambda data: data.get("@type") != "Movie")
+    movie = {}
+    for data in reversed(blocks):
+        movie.update({key: value for key, value in data.items() if value})
+
+    info["director"] = _names(movie.get("director"))
+    info["starring"] = _names(movie.get("actor"))
+    info["country"] = _names(movie.get("countryOfOrigin"))
+    year_match = re.match(r"(\d{4})", str(movie.get("datePublished") or ""))
+    if year_match:
+        info["year"] = int(year_match.group(1))
     return info
 
 
@@ -220,6 +353,7 @@ def poll_criterion_now():
             r = requests.get(WHATSON_URL, timeout=15)
             r.raise_for_status()
             title, more_url, minutes = parse_whatson_page(r.text)
+            watch_url = parse_watch_live_url(r.text) or WATCH_LIVE_URL
 
             if title:
                 info = {
@@ -255,6 +389,7 @@ def poll_criterion_now():
                         {
                             "title": title,
                             "more_url": more_url,
+                            "watch_url": watch_url,
                             "tmdb_id": tmdb_id,
                             "poster_path": poster_path,
                             "ends_at": ends_at,
@@ -283,7 +418,7 @@ def poll_criterion_now():
             current_app.logger.warning(traceback.format_exc())
 
         # Always schedule again. A broken run repairs itself on the next
-        # attempt. The time is just after the countdown, clamped to a safe
+        # attempt. The time is just after the end of the film, clamped to a safe
         # range. The deterministic job id keeps the chain to 1 job, even
         # when the cron heartbeat also runs.
 
@@ -396,7 +531,7 @@ def criterion_now_card(user):
         "tmdb_id": tmdb_id,
         "poster_path": stored.get("poster_path"),
         "more_url": stored.get("more_url"),
-        "watch_url": WATCH_LIVE_URL,
+        "watch_url": stored.get("watch_url") or WATCH_LIVE_URL,
         "next_at": next_at,
         "minutes_in": minutes_in,
         # The live refresh of the home page compares this fingerprint
