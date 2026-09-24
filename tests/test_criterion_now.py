@@ -85,13 +85,27 @@ def subscribe_criterion(app):
         return user.id
 
 
-def test_parse_whatson_page_reads_title_link_and_end_time(app):
+def test_parse_whatson_page_reads_title_link_and_schedule(app):
     from app.criterion_now import parse_watch_live_url, parse_whatson_page
 
-    title, more_url, minutes = parse_whatson_page(WHATSON_HTML)
-    assert title == "Shock Corridor"
-    assert more_url == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
-    assert minutes == 83
+    parsed = parse_whatson_page(WHATSON_HTML)
+    assert parsed["title"] == "Shock Corridor"
+    assert (
+        parsed["more_url"]
+        == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
+    )
+    left = parsed["ends_at"] - datetime.now(timezone.utc)
+    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
+    assert parsed["ends_at"] - parsed["starts_at"] == timedelta(minutes=101)
+
+    # The films after the current 1, with the short film link by id
+    assert [entry["title"] for entry in parsed["upcoming"]] == ["Stagecoach"]
+    assert parsed["upcoming"][0]["more_url"] == (
+        "https://www.criterionchannel.com/films/bbbb1111"
+    )
+    assert parsed["upcoming"][0]["starts_at"] == parsed[
+        "ends_at"
+    ].astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
     assert (
         parse_watch_live_url(WHATSON_HTML)
@@ -102,28 +116,35 @@ def test_parse_whatson_page_reads_title_link_and_end_time(app):
     # schedule entry with that title. At a film boundary, the heading
     # can name the next film before the clock enters its window. Then
     # the end time of that next entry wins
-    title, more_url, minutes = parse_whatson_page(
+    parsed = parse_whatson_page(
         whatson_html(minutes_left=83).replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
         )
     )
-    assert title == "Stagecoach"
-    assert minutes == 83 + 95
+    assert parsed["title"] == "Stagecoach"
+    left = parsed["ends_at"] - datetime.now(timezone.utc)
+    assert timedelta(minutes=177) < left <= timedelta(minutes=178)
+    assert parsed["upcoming"] == []
 
     # A heading that is in no schedule entry gives no end time. Fitzflix
-    # never guesses. The 1st film link on the page is still the film
-    title, more_url, minutes = parse_whatson_page(
+    # never guesses. The 1st film link on the page is still the film.
+    # The upcoming films are the films that start after now
+    parsed = parse_whatson_page(
         whatson_html().replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Mystery Film',
         )
     )
-    assert title == "Mystery Film"
-    assert more_url == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
-    assert minutes is None
+    assert parsed["title"] == "Mystery Film"
+    assert (
+        parsed["more_url"]
+        == "https://www.criterionchannel.com/films/8rWb21ax/shock-corridor"
+    )
+    assert parsed["ends_at"] is None
+    assert [entry["title"] for entry in parsed["upcoming"]] == ["Stagecoach"]
 
-    assert parse_whatson_page("<html>redesigned</html>") == (None, None, None)
+    assert parse_whatson_page("<html>redesigned</html>") is None
 
 
 def test_parse_film_info_reads_the_schema_block(app):
@@ -153,10 +174,10 @@ def test_parse_film_info_reads_the_schema_block(app):
 def test_parse_whatson_page_flattens_nonbreaking_spaces(app):
     from app.criterion_now import parse_whatson_page
 
-    title, _, _ = parse_whatson_page(
+    parsed = parse_whatson_page(
         WHATSON_HTML.replace("Shock Corridor", "Shock&amp;nbsp;Corridor")
     )
-    assert title == "Shock Corridor"
+    assert parsed["title"] == "Shock Corridor"
 
 
 def test_poller_stores_film_and_reschedules(app, monkeypatch):
@@ -194,14 +215,26 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
     assert stored["tmdb_id"] == 33667
     assert stored["poster_path"] == "/shock.jpg"
     ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%d %H:%M:%S")
-    assert timedelta(minutes=80) < ends_at - datetime.now() < timedelta(minutes=85)
+    assert timedelta(minutes=82) < ends_at - datetime.now() <= timedelta(minutes=83)
+    starts_at = datetime.strptime(stored["starts_at"], "%Y-%m-%d %H:%M:%S")
+    assert ends_at - starts_at == timedelta(minutes=101)
 
-    # Fitzflix schedules the next poll a short time after the countdown.
-    # There is only 1 poll, under the deterministic job id
+    # The next film is stored with the same enrichment as the current 1
+    schedule = json.loads(app.redis.get(criterion_now.SCHEDULE_KEY))
+    assert [entry["title"] for entry in schedule["upcoming"]] == ["Stagecoach"]
+    assert schedule["upcoming"][0]["tmdb_id"] == 33667
+    assert schedule["upcoming"][0]["director"] == "Samuel Fuller"
+    assert schedule["upcoming"][0]["starts_at"] == stored["ends_at"]
+
+    # Fitzflix schedules the next poll POLL_CUSHION after the end time,
+    # to the second. There is only 1 poll, under the deterministic job id
 
     with app.app_context():
         registry = app.maintenance_queue.scheduled_job_registry
         assert criterion_now.POLL_JOB_ID in registry.get_job_ids()
+        booked = registry.get_scheduled_time(criterion_now.POLL_JOB_ID)
+        expected = ends_at.astimezone() + criterion_now.POLL_CUSHION
+        assert abs((booked.astimezone() - expected).total_seconds()) < 2
 
         # A second run replaces the scheduled poll. It does not add a
         # second poll
@@ -779,3 +812,83 @@ def test_card_fragment_follows_the_feed(app, admin_client):
     assert 'id="criterion-now"' in body
     assert "On Criterion 24/7 now" not in body
     assert admin_client.get("/criterion-now").get_data(as_text=True).strip() == ""
+
+
+def test_card_turns_over_from_the_stored_schedule(app, admin_client):
+    """Test that the card shows the next film at its start time.
+
+    The poller stores the upcoming films with the current 1. After the
+    end time of the current film, the card takes the upcoming entry
+    whose window contains now. It does not wait for the next poll. The
+    entry after that 1 becomes the preview. A schedule older than
+    SCHEDULE_TRUST is not used. Then the card hides, as before."""
+
+    import app.criterion_now as criterion_now
+
+    subscribe_criterion(app)
+    stamp = "%Y-%m-%d %H:%M:%S"
+
+    def at(minutes):
+        return (datetime.now() + timedelta(minutes=minutes)).strftime(stamp)
+
+    app.redis.set(
+        criterion_now.NOW_KEY,
+        json.dumps(
+            {
+                "title": "Shock Corridor",
+                "year": 1963,
+                "tmdb_id": 33667,
+                "poster_path": "/shock.jpg",
+                "watch_url": "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7",
+                "starts_at": at(-103),
+                "ends_at": at(-2),
+            }
+        ),
+    )
+    upcoming = [
+        {
+            "title": "Stagecoach",
+            "year": 1939,
+            "director": "John Ford",
+            "tmdb_id": None,
+            "poster_path": None,
+            "more_url": "https://www.criterionchannel.com/films/bbbb1111",
+            "starts_at": at(-2),
+            "ends_at": at(93),
+        },
+        {
+            "title": "The Hero",
+            "more_url": "https://www.criterionchannel.com/films/cccc2222",
+            "starts_at": at(93),
+            "ends_at": at(200),
+        },
+    ]
+    app.redis.set(
+        criterion_now.SCHEDULE_KEY,
+        json.dumps({"fetched_at": at(-60), "upcoming": upcoming}),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Stagecoach (1939)" in body
+    assert "Directed by John Ford" in body
+    assert "Shock Corridor" not in body
+    assert "About 2 minutes in" in body
+    assert "Up next" in body
+    assert "The Hero" in body
+    assert "criterionchannel.com/films/cccc2222" in body
+    assert "data-now-next" in body
+    assert 'data-now-ends="' in body
+
+    # The fragment carries the same turned-over film
+    fragment = admin_client.get("/criterion-now").get_data(as_text=True)
+    assert "Stagecoach (1939)" in fragment
+
+    # An old schedule is not trusted. The stored film is over. Thus,
+    # within STALE_GRACE the old film still shows, and no preview
+    app.redis.set(
+        criterion_now.SCHEDULE_KEY,
+        json.dumps({"fetched_at": at(-7 * 60), "upcoming": upcoming}),
+    )
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Shock Corridor (1963)" in body
+    assert "Up next" not in body

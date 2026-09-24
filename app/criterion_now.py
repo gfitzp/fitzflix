@@ -28,7 +28,6 @@ import re
 import traceback
 
 from datetime import datetime, timedelta, timezone
-from math import ceil
 
 import requests
 
@@ -50,7 +49,28 @@ CHANNEL_ORIGIN = "https://www.criterionchannel.com"
 
 WATCH_LIVE_URL = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
 NOW_KEY = "fitzflix:criterion:now"
+SCHEDULE_KEY = "fitzflix:criterion:schedule"
 POLL_JOB_ID = "fitzflix-criterion-now-poll"
+
+# The poll runs this long after the end time of the current film. The
+# schedule of the page has times to the second. The feed can drift
+# from them by some seconds. A poll that runs before the switch reads
+# the old film again.
+
+POLL_CUSHION = timedelta(seconds=15)
+
+# The number of upcoming films that the poller stores. The card turns
+# over from this list at the end time of the current film. Thus, the
+# next film shows before the poll that enriches it.
+
+UPCOMING_COUNT = 6
+
+# The card turns over only from a schedule that a poll stored this
+# recently. An older schedule means that the poller is broken. Then
+# the card must hide, as before.
+
+SCHEDULE_TRUST = timedelta(hours=6)
+STAMP = "%Y-%m-%d %H:%M:%S"
 
 # The time after the expected end. The card continues to show the film
 # during this time. The next poll normally arrives exactly at the end.
@@ -145,10 +165,26 @@ def _parse_utc(stamp):
         return None
 
 
-def _current_slot(page_html, title, now):
+def _schedule_entries(page_html):
+    """Return the schedule entries of the page as (start, end, title, guid).
+
+    The entries are in the order of the page. An entry with a time that
+    does not parse is left out."""
+
+    entries = []
+    for match in SCHEDULE_RE.finditer(page_html):
+        start = _parse_utc(match.group("start"))
+        end = _parse_utc(match.group("end"))
+        if not (start and end):
+            continue
+        title = _clean_text(re.sub(r"\\+(.)", r"\1", match.group("title")))
+        entries.append((start, end, title, match.group("guid")))
+    return entries
+
+
+def _current_slot(entries, title, now):
     """Return the schedule entry of the film with this title, or None.
 
-    An entry is (start, end, title, guid). The schedule covers 2 days.
     The entry whose window contains now wins if its title agrees with
     the heading. At a film boundary the heading and the clock can
     disagree. Then the next entry with this title wins. A title that is
@@ -156,15 +192,10 @@ def _current_slot(page_html, title, now):
 
     wanted = title.casefold()
     fallback = None
-    for match in SCHEDULE_RE.finditer(page_html):
-        start = _parse_utc(match.group("start"))
-        end = _parse_utc(match.group("end"))
-        if not (start and end) or end <= now:
+    for entry in entries:
+        start, end, entry_title, _ = entry
+        if end <= now or entry_title.casefold() != wanted:
             continue
-        entry_title = _clean_text(re.sub(r"\\+(.)", r"\1", match.group("title")))
-        if entry_title.casefold() != wanted:
-            continue
-        entry = (start, end, entry_title, match.group("guid"))
         if start <= now:
             return entry
         if fallback is None or start < fallback[0]:
@@ -172,27 +203,34 @@ def _current_slot(page_html, title, now):
     return fallback
 
 
-def parse_whatson_page(page_html, now=None):
-    """Return (title, more_url, minutes-until-next) from the now-playing page.
+def _local_stamp(moment):
+    """Return an aware datetime as the local wall-clock string of Fitzflix."""
 
-    The result is (None, None, None) if the title is not found. The
-    minutes come from the end time of the current entry of the embedded
-    schedule. Minutes that do not parse come back as None. Then the
+    return moment.astimezone().strftime(STAMP)
+
+
+def parse_whatson_page(page_html, now=None):
+    """Return the current film and the upcoming films of the now-playing page.
+
+    The result is a dict with title, more_url, starts_at, ends_at, and
+    upcoming. The times are aware datetimes, or None. Upcoming is a
+    list of dicts with title, more_url, starts_at, and ends_at as local
+    wall-clock strings. The result is None if the title is not found.
+    An end time that does not parse comes back as None. Then the
     poller does a short retry. It does not trust a guess."""
 
     title_match = TITLE_RE.search(page_html)
     if not title_match:
-        return None, None, None
+        return None
     title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
 
     now = now or datetime.now(timezone.utc)
-    slot = _current_slot(page_html, title, now)
+    entries = _schedule_entries(page_html)
+    slot = _current_slot(entries, title, now)
 
-    minutes = None
-    guid = None
+    starts_at = ends_at = guid = None
     if slot:
-        _, end, _, guid = slot
-        minutes = max(0, ceil((end - now).total_seconds() / 60))
+        starts_at, ends_at, _, guid = slot
 
     # The Film Page link of the current film. The link that carries the
     # id of the schedule entry wins. Otherwise the 1st film link on the
@@ -206,7 +244,30 @@ def parse_whatson_page(page_html, now=None):
             break
     if more_url is None and links:
         more_url = CHANNEL_ORIGIN + links[0]
-    return title, more_url, minutes
+
+    # The films after the current 1, in order. Without a current entry,
+    # the films that start after now. The short film link by id
+    # redirects to the full film page.
+
+    horizon = ends_at or now
+    upcoming = [
+        {
+            "title": entry_title,
+            "more_url": f"{CHANNEL_ORIGIN}/films/{entry_guid}",
+            "starts_at": _local_stamp(start),
+            "ends_at": _local_stamp(end),
+        }
+        for start, end, entry_title, entry_guid in sorted(entries)
+        if start >= horizon
+    ][:UPCOMING_COUNT]
+
+    return {
+        "title": title,
+        "more_url": more_url,
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "upcoming": upcoming,
+    }
 
 
 def parse_watch_live_url(page_html):
@@ -341,75 +402,98 @@ def matched_film(title, info):
     return tmdb_id, payload.get("poster_path")
 
 
-def poll_criterion_now():
-    """Scrape the now-playing page, store the current film, and schedule again.
+def _film_info_from(more_url):
+    """Return the parsed film info of a film page, or the empty info."""
 
-    This is a task. It enriches the current film. It schedules itself
-    again for a time just after the film ends."""
+    info = {"director": None, "year": None, "country": None, "starring": None}
+    if more_url:
+        try:
+            info_page = requests.get(more_url, timeout=15)
+            info_page.raise_for_status()
+            info = parse_film_info(info_page.text)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+    return info
+
+
+def _enriched_entry(title, more_url):
+    """Return {info fields, tmdb_id, poster_path} for a film of the feed.
+
+    A year is sufficient to try TMDB. The poster comes as a direct TMDB
+    link on a verified match. Otherwise the card renders plain. It
+    never shows a guess."""
+
+    info = _film_info_from(more_url)
+    tmdb_id, poster_path = matched_film(title, info)
+    return {"tmdb_id": tmdb_id, "poster_path": poster_path, **info}
+
+
+def poll_criterion_now():
+    """Scrape the now-playing page, store the film and the schedule, and poll again.
+
+    This is a task. It enriches the current film and the next film. It
+    schedules itself again for a time just after the current film
+    ends."""
 
     with app.app_context():
-        next_poll_minutes = 30
+        next_delay = timedelta(minutes=30)
         try:
             r = requests.get(WHATSON_URL, timeout=15)
             r.raise_for_status()
-            title, more_url, minutes = parse_whatson_page(r.text)
+            now = datetime.now(timezone.utc)
+            parsed = parse_whatson_page(r.text, now)
             watch_url = parse_watch_live_url(r.text) or WATCH_LIVE_URL
 
-            if title:
-                info = {
-                    "director": None,
-                    "year": None,
-                    "country": None,
-                    "starring": None,
-                }
-                if more_url:
-                    try:
-                        info_page = requests.get(more_url, timeout=15)
-                        info_page.raise_for_status()
-                        info = parse_film_info(info_page.text)
-                    except Exception:
-                        current_app.logger.warning(traceback.format_exc())
-
-                # A year is sufficient to try TMDB. The poster comes as a
-                # direct TMDB link on a verified match. Otherwise the card
-                # renders plain. It never shows a guess.
-
-                tmdb_id, poster_path = matched_film(title, info)
-
-                ends_at = (
-                    (datetime.now() + timedelta(minutes=minutes)).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    if minutes is not None
-                    else None
-                )
+            if parsed:
+                title = parsed["title"]
+                ends_at = parsed["ends_at"]
+                fetched_at = datetime.now().strftime(STAMP)
                 current_app.redis.set(
                     NOW_KEY,
                     json.dumps(
                         {
                             "title": title,
-                            "more_url": more_url,
+                            "more_url": parsed["more_url"],
                             "watch_url": watch_url,
-                            "tmdb_id": tmdb_id,
-                            "poster_path": poster_path,
-                            "ends_at": ends_at,
-                            "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            **info,
+                            "starts_at": (
+                                _local_stamp(parsed["starts_at"])
+                                if parsed["starts_at"]
+                                else None
+                            ),
+                            "ends_at": _local_stamp(ends_at) if ends_at else None,
+                            "fetched_at": fetched_at,
+                            **_enriched_entry(title, parsed["more_url"]),
                         }
                     ),
                     ex=86400,
                 )
-                year_note = f" ({info['year']})" if info["year"] else ""
-                countdown_note = (
-                    f"next film in {minutes} minutes"
-                    if minutes is not None
-                    else "countdown unreadable"
+
+                # The upcoming films. The 1st gets the same enrichment as
+                # the current film. Thus, the card can turn over to it
+                # with a poster and credits before the next poll.
+
+                upcoming = parsed["upcoming"]
+                if upcoming:
+                    upcoming[0].update(
+                        _enriched_entry(upcoming[0]["title"], upcoming[0]["more_url"])
+                    )
+                current_app.redis.set(
+                    SCHEDULE_KEY,
+                    json.dumps({"fetched_at": fetched_at, "upcoming": upcoming}),
+                    ex=86400,
+                )
+
+                end_note = (
+                    f"next film at {_local_stamp(ends_at)}"
+                    if ends_at
+                    else "end time unreadable"
                 )
                 current_app.logger.info(
-                    f"Criterion 24/7 now: '{title}'{year_note}, {countdown_note}"
+                    f"Criterion 24/7 now: '{title}', {end_note}, "
+                    f"{len(upcoming)} upcoming"
                 )
-                if minutes is not None:
-                    next_poll_minutes = minutes
+                if ends_at:
+                    next_delay = ends_at - now + POLL_CUSHION
             else:
                 current_app.logger.warning(
                     "Criterion 24/7: no title found on the now-playing page"
@@ -418,11 +502,11 @@ def poll_criterion_now():
             current_app.logger.warning(traceback.format_exc())
 
         # Always schedule again. A broken run repairs itself on the next
-        # attempt. The time is just after the end of the film, clamped to a safe
-        # range. The deterministic job id keeps the chain to 1 job, even
-        # when the cron heartbeat also runs.
+        # attempt. The time is just after the end of the film, clamped
+        # to a safe range. The deterministic job id keeps the chain to 1
+        # job, even when the cron heartbeat also runs.
 
-        delay = timedelta(minutes=max(1, min(next_poll_minutes, 240)), seconds=90)
+        delay = max(timedelta(seconds=30), min(next_delay, timedelta(hours=4)))
         current_app.maintenance_queue.enqueue_in(
             delay,
             "app.criterion_now.poll_criterion_now",
@@ -478,49 +562,114 @@ def is_criterion_subscriber(user):
     }
 
 
+def _stored_schedule():
+    """Return the upcoming films of the last poll, or an empty list.
+
+    A schedule older than SCHEDULE_TRUST is not returned. Then the
+    poller is broken, and the card must not turn over from old data."""
+
+    payload = current_app.redis.get(SCHEDULE_KEY)
+    if not payload:
+        return []
+    stored = json.loads(payload)
+    try:
+        fetched_at = datetime.strptime(stored.get("fetched_at") or "", STAMP)
+    except ValueError:
+        return []
+    if fetched_at < datetime.now() - SCHEDULE_TRUST:
+        return []
+    return stored.get("upcoming") or []
+
+
+def _turned_over(stored, upcoming, now):
+    """Return (film, upcoming) after the end of the stored film.
+
+    The stored film is the film of the last poll. When its end time has
+    passed, the upcoming entry whose window contains now is the film.
+    The entries after it are the new upcoming list. Before the end
+    time, or without a matching entry, the stored film stays."""
+
+    ends_at = stored.get("ends_at")
+    if not ends_at or datetime.strptime(ends_at, STAMP) > now:
+        return stored, upcoming
+    for index, entry in enumerate(upcoming):
+        starts = datetime.strptime(entry["starts_at"], STAMP)
+        ends = datetime.strptime(entry["ends_at"], STAMP)
+        if starts <= now < ends + STALE_GRACE:
+            film = {**entry, "watch_url": stored.get("watch_url")}
+            return film, upcoming[index + 1 :]
+    return stored, upcoming
+
+
+def _up_next(upcoming):
+    """Return the preview of the next film of the feed, or None."""
+
+    if not upcoming:
+        return None
+    entry = upcoming[0]
+    starts_at = datetime.strptime(entry["starts_at"], STAMP)
+    payload = enriched_movie(entry["tmdb_id"]) if entry.get("tmdb_id") else None
+    return {
+        "title": entry["title"],
+        "year": entry.get("year"),
+        "director": entry.get("director"),
+        "tmdb_id": entry.get("tmdb_id"),
+        "poster_path": entry.get("poster_path"),
+        "more_url": entry.get("more_url"),
+        "starts_at": starts_at.strftime("%-I:%M %p"),
+        "directors": _credited_people(payload)["directors"],
+    }
+
+
 def criterion_now_card(user):
     """Return the now-playing card for one user, or None.
 
     Only Criterion subscribers get a card, and only while the stored
-    film is fresh."""
+    film is fresh. After the end time of the stored film, the card
+    turns over to the upcoming film of the stored schedule. Thus, the
+    next film shows at its start time, before the poll that stores it."""
 
     if not is_criterion_subscriber(user):
         return None
     payload = current_app.redis.get(NOW_KEY)
     if not payload:
         return None
-    stored = json.loads(payload)
+    now = datetime.now()
+    stored, upcoming = _turned_over(json.loads(payload), _stored_schedule(), now)
 
     next_at = None
     ends_at = None
     if stored.get("ends_at"):
-        ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%d %H:%M:%S")
-        if ends_at < datetime.now() - STALE_GRACE:
+        ends_at = datetime.strptime(stored["ends_at"], STAMP)
+        if ends_at < now - STALE_GRACE:
             return None
-        if ends_at > datetime.now():
+        if ends_at > now:
             next_at = ends_at.strftime("%-I:%M %p")
 
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
 
-    # The elapsed time of the film. Fitzflix derives it WITHOUT STATE as
-    # the predicted end minus the TMDB runtime. Thus, it is correct even
-    # when the heartbeat started a dead chain again during the film and
-    # nobody saw the start. An unknown runtime (or an unmatched film)
-    # shows nothing. It never shows a guess. The line says "About"
-    # because Criterion adds padding between films. The runtime bounds
-    # the value. After the predicted end (the card stays through
-    # STALE_GRACE) the film is over. "About 110 minutes in" on a
-    # 101-minute film would be the guess that this line refuses to make.
+    # The elapsed time of the film. The start time of the schedule
+    # gives it directly. Without 1, Fitzflix derives it as the predicted
+    # end minus the TMDB runtime. Thus, it is correct even when the
+    # heartbeat started a dead chain again during the film and nobody
+    # saw the start. An unknown runtime (or an unmatched film) shows
+    # nothing. It never shows a guess. The line says "About" because
+    # Criterion adds padding between films. After the predicted end
+    # (the card stays through STALE_GRACE) the film is over. Then the
+    # line disappears.
 
     minutes_in = None
     runtime = (payload or {}).get("runtime")
-    if ends_at is not None and runtime:
-        elapsed = (
-            datetime.now() - (ends_at - timedelta(minutes=runtime))
-        ).total_seconds() // 60
-        if 0 <= elapsed <= runtime:
-            minutes_in = int(elapsed)
+    if ends_at is not None and now <= ends_at:
+        if stored.get("starts_at"):
+            started = datetime.strptime(stored["starts_at"], STAMP)
+        elif runtime:
+            started = ends_at - timedelta(minutes=runtime)
+        else:
+            started = None
+        if started is not None and started <= now:
+            minutes_in = int((now - started).total_seconds() // 60)
 
     return {
         "title": stored.get("title"),
@@ -533,10 +682,12 @@ def criterion_now_card(user):
         "more_url": stored.get("more_url"),
         "watch_url": stored.get("watch_url") or WATCH_LIVE_URL,
         "next_at": next_at,
+        "ends_at_epoch_ms": int(ends_at.timestamp() * 1000) if ends_at else None,
         "minutes_in": minutes_in,
+        "up_next": _up_next(upcoming),
         # The live refresh of the home page compares this fingerprint
         # between fetches. A changed film replaces the full card. An
-        # unchanged film repaints only the status line.
+        # unchanged film repaints only the status line and the preview.
         "signature": f"{stored.get('title')}|{tmdb_id}|{stored.get('ends_at')}",
         "overview": (payload or {}).get("overview"),
         "ladder": _ladder_state_for(user, tmdb_id, payload),

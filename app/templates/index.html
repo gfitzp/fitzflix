@@ -107,13 +107,28 @@
 			return card ? card.getAttribute("data-now-film") : "";
 		}
 
+		// The end time of the film that shows, as epoch milliseconds.
+		// The next fetch lands some seconds after it. Thus, the card
+		// turns over within seconds, not at the next minute.
+		function endsOf(root) {
+			var card = root.querySelector("[data-now-ends]");
+			var ends = card ? parseInt(card.getAttribute("data-now-ends"), 10) : NaN;
+			return isNaN(ends) ? null : ends;
+		}
+
 		// Use setTimeout chaining, never setInterval. A slow answer must
 		// not stack requests. A hidden tab stops the polling fully. The
 		// visibilitychange handler polls immediately when the tab returns.
 		function schedule() {
 			window.clearTimeout(timer);
 			if (document.hidden) return;
-			timer = window.setTimeout(poll, POLL_MS);
+			var delay = POLL_MS;
+			var ends = endsOf(holder);
+			if (ends !== null) {
+				var untilEnd = ends - Date.now() + 3000;
+				if (untilEnd > 1000 && untilEnd < delay) delay = untilEnd;
+			}
+			timer = window.setTimeout(poll, delay);
 		}
 
 		function poll() {
@@ -138,6 +153,9 @@
 					var status = holder.querySelector("[data-now-status]");
 					var latest = fresh.querySelector("[data-now-status]");
 					if (status && latest) status.innerHTML = latest.innerHTML;
+					var next = holder.querySelector("[data-now-next]");
+					var freshNext = fresh.querySelector("[data-now-next]");
+					if (next && freshNext) next.innerHTML = freshNext.innerHTML;
 				})
 				.catch(function() {})
 				.finally(schedule);
