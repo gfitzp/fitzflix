@@ -874,7 +874,7 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     assert "Directed by John Ford" in body
     assert "Shock Corridor" not in body
     assert "About 2 minutes in" in body
-    assert "Up next" in body
+    assert ">Up next<" in body
     assert "The Hero" in body
     assert "criterionchannel.com/films/cccc2222" in body
     assert 'title="The Hero"' in body
@@ -893,4 +893,4 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     )
     body = admin_client.get("/").get_data(as_text=True)
     assert "Shock Corridor (1963)" in body
-    assert "Up next" not in body
+    assert ">Up next<" not in body

@@ -22,8 +22,10 @@
 <h4>On Criterion 24/7 now</h4>
 {# Two halves of equal width (Glenn, 2026-09-24): the film that is on,
    and the Up next row. Each half has a basis wider than a phone. Thus,
-   on a phone the halves stack, and on a desktop they share the row #}
-<div class="d-flex flex-wrap mt-3 mb-2" data-now-film="{{ now_playing.signature }}"{% if now_playing.ends_at_epoch_ms %} data-now-ends="{{ now_playing.ends_at_epoch_ms }}"{% endif %} style="gap: 1rem; max-width: 72rem;">
+   on a phone the halves stack, and on a desktop they share the full
+   row. The divider of the Up next half is in the stylesheet. It goes
+   when the halves stack #}
+<div class="d-flex flex-wrap mt-3 mb-2 criterion-now-row" data-now-film="{{ now_playing.signature }}"{% if now_playing.ends_at_epoch_ms %} data-now-ends="{{ now_playing.ends_at_epoch_ms }}"{% endif %} style="gap: 1rem;">
 	<div class="d-flex" style="flex: 1 1 24rem; min-width: 0; gap: 1rem;">
 	<div style="flex: 0 0 7rem;">
 		{% set card_href = url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) if now_playing.tmdb_id else (now_playing.more_url or now_playing.watch_url) %}
@@ -108,7 +110,7 @@
 	   so the posters do not flash each minute #}
 	<div data-now-next style="flex: 1 1 24rem; min-width: 0;">
 	{% if now_playing.up_next %}
-	<div class="border-start ps-3">
+	<div class="criterion-next-half">
 		<p class="mb-2 text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Up next</p>
 		<div class="d-flex flex-nowrap" style="gap: 0.75rem; overflow-x: auto;">
 			{% for next in now_playing.up_next %}

@@ -396,6 +396,19 @@
 		@media (max-width: 767.98px) {
 			.game-frame-box { height: auto; aspect-ratio: 16 / 9; }
 		}
+		/* The Criterion 24/7 card: the film that is on and the Up next
+		   row share the row as 2 equal halves. Each half has a basis of
+		   24rem. Below 2 halves plus the gap, the halves stack. Then
+		   the divider of the Up next half must go. On its own row it
+		   was a stray line at the left edge (reported by Glenn,
+		   2026-09-24). The container query reads the width of the card,
+		   not of the viewport. Thus, the divider follows the stacking
+		   exactly */
+		.criterion-now-row { container-type: inline-size; }
+		.criterion-next-half { border-left: 1px solid var(--bs-border-color); padding-left: 1rem; }
+		@container (max-width: 48.99rem) {
+			.criterion-next-half { border-left: 0; padding-left: 0; }
+		}
     </style>
 	{%- endblock styles %}
 
