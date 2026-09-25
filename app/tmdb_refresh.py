@@ -262,40 +262,24 @@ def _movie_folder(files):
 
 
 def _follow_rename_in_radarr(old_tmdb_id, new_tmdb_id, new_folder):
-    """Report a movie rename to Radarr. Log a failure. Do not raise.
+    """Queue the report of a movie rename to Radarr.
 
-    If the TMDB id changed, the file belongs to a different film now.
-    Thus, the entry of the old id leaves Radarr, with its files kept on
-    the disk. Then the entry of the new id, if Radarr has one, points
-    at the new folder."""
+    The report runs as its own job on the request queue. Thus, the
+    refresh on the sql queue never waits on Radarr (#268). The job
+    withdraws the entry of an old TMDB id and points the entry of the
+    new id at the new folder."""
 
-    from app.radarr_push import RadarrError, follow_rename, radarr_configured
-    from app.radarr_push import withdraw_movie
+    from app.radarr_push import enqueue_radarr_push, radarr_configured
 
     if not radarr_configured():
         return
-    if old_tmdb_id and old_tmdb_id != new_tmdb_id:
-        try:
-            withdraw_movie(old_tmdb_id)
-            current_app.logger.info(
-                f"Radarr entry for tmdb {old_tmdb_id} withdrawn after the "
-                f"record moved to tmdb {new_tmdb_id}"
-            )
-        except RadarrError:
-            pass
-        except Exception:
-            current_app.logger.warning(
-                f"Radarr withdrawal of tmdb {old_tmdb_id} failed: "
-                + traceback.format_exc()
-            )
-    if new_tmdb_id and new_folder:
-        try:
-            follow_rename(new_tmdb_id, new_folder)
-        except Exception:
-            current_app.logger.warning(
-                f"Radarr path update for tmdb {new_tmdb_id} failed: "
-                + traceback.format_exc()
-            )
+    enqueue_radarr_push(
+        "app.radarr_push.follow_rename_task",
+        old_tmdb_id,
+        new_tmdb_id,
+        new_folder,
+        description=f"Reporting a rename to Radarr (tmdb {new_tmdb_id})",
+    )
 
 
 def apply_tmdb_refresh(

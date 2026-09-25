@@ -1443,11 +1443,13 @@ def _report_import_move_to_radarr(source_directory, output_directory):
 
     The source must be below a Radarr root folder, and the output must
     be a different folder. Then Radarr gets the new path and a rescan,
-    and the empty folder of the download goes away. A Radarr failure is
-    logged. It does not fail the import. The file is already in place."""
+    and the empty folder of the download goes away. The Radarr update
+    runs as its own job on the request queue. Thus, the sql queue never
+    waits on Radarr (#268). A Radarr failure is logged. It does not
+    fail the import. The file is already in place."""
 
     from app.maintenance import clear_leftover_directory
-    from app.radarr_push import follow_import_move, radarr_configured
+    from app.radarr_push import enqueue_radarr_push, radarr_configured
 
     source = os.path.realpath(source_directory)
     output = os.path.realpath(output_directory)
@@ -1456,12 +1458,12 @@ def _report_import_move_to_radarr(source_directory, output_directory):
     roots = [os.path.realpath(r) for r in current_app.config["RADARR_ROOT_FOLDERS"]]
     if not any(os.path.commonpath([source, root]) == root for root in roots):
         return
-    try:
-        follow_import_move(source, os.path.basename(output))
-    except Exception:
-        current_app.logger.warning(
-            f"Radarr path update for {source!r} failed: " + traceback.format_exc()
-        )
+    enqueue_radarr_push(
+        "app.radarr_push.follow_import_move_task",
+        source,
+        os.path.basename(output),
+        description=f"Reporting an import move to Radarr ({os.path.basename(output)})",
+    )
     try:
         clear_leftover_directory(source)
     except Exception:

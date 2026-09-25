@@ -66,6 +66,20 @@ class FakeRadarr:
         raise AssertionError(f"unexpected {method} {path}")
 
 
+def run_radarr_pushes(app):
+    """Run the Radarr pushes that wait on the request queue (#268).
+
+    A refresh and an import queue their Radarr push as its own job.
+    Return the results of the jobs, in order."""
+
+    results = []
+    for job in app.request_queue.jobs:
+        if job.func_name.startswith("app.radarr_push."):
+            results.append(job.func(*job.args, **job.kwargs))
+            app.request_queue.remove(job)
+    return results
+
+
 def wire(app, monkeypatch):
     import app.radarr_push as radarr_push
 
@@ -256,6 +270,10 @@ def test_refresh_rename_points_radarr_at_the_new_folder(app, monkeypatch):
         )
         assert apply_tmdb_refresh("Movies", movie_id) is True
 
+    # The refresh did not call Radarr. It queued the push.
+    assert fake.updated == []
+    assert run_radarr_pushes(app) == [True]
+
     assert [(i, p, m["path"]) for i, p, m in fake.updated] == [
         (5, "/api/v3/movie/5?moveFiles=false", "/Volumes/Movies/Radarr Tune (1944)")
     ]
@@ -303,6 +321,7 @@ def test_refresh_merge_withdraws_the_old_radarr_entry(app, monkeypatch):
             handle.write(b"payload")
 
         assert apply_tmdb_refresh("Movies", source_id, tmdb_id=4242) is True
+    assert run_radarr_pushes(app) == [True]
 
     assert [radarr_id for radarr_id, _ in fake.deleted] == [8]
     assert fake.deleted[0][1].endswith("?deleteFiles=false&addImportExclusion=false")
@@ -320,6 +339,7 @@ def test_refresh_rename_skips_a_film_radarr_lacks(app, monkeypatch):
         )
         assert apply_tmdb_refresh("Movies", movie_id) is True
 
+    assert run_radarr_pushes(app) == [True]
     assert fake.updated == []
     assert fake.commands == []
     assert fake.deleted == []
@@ -340,6 +360,9 @@ def test_refresh_rename_survives_a_radarr_outage(app, monkeypatch):
             app, monkeypatch, "Storm Film", 1960, 999, 1961
         )
         assert apply_tmdb_refresh("Movies", movie_id) is True
+
+    # The queued push meets the outage. It logs it and does not raise.
+    assert run_radarr_pushes(app) == [True]
 
 
 def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
@@ -399,6 +422,11 @@ def test_import_move_points_radarr_at_the_fitzflix_folder(app, monkeypatch, tmp_
     with app.app_context():
         _report_import_move_to_radarr(source, output)
 
+    # The import cleared the empty folder at once. The push is queued.
+    assert not os.path.isdir(source)
+    assert fake.updated == []
+    assert run_radarr_pushes(app) == [True]
+
     assert [(i, m["path"]) for i, _, m in fake.updated] == [
         (3, os.path.join(os.path.dirname(source), "VictorVictoria (1982)"))
     ]
@@ -415,6 +443,7 @@ def test_import_in_place_leaves_radarr_alone(app, monkeypatch, tmp_path):
     with app.app_context():
         _report_import_move_to_radarr(source, source)
 
+    assert run_radarr_pushes(app) == []
     assert fake.updated == []
     assert fake.commands == []
 
@@ -431,6 +460,7 @@ def test_import_from_outside_radarr_roots_leaves_radarr_alone(
     with app.app_context():
         _report_import_move_to_radarr(str(tmp_path / "import"), output)
 
+    assert run_radarr_pushes(app) == []
     assert fake.updated == []
     assert fake.commands == []
 
@@ -448,6 +478,7 @@ def test_import_move_survives_a_radarr_outage(app, monkeypatch, tmp_path):
     )
     with app.app_context():
         _report_import_move_to_radarr(source, output)
+    assert run_radarr_pushes(app) == [False]
 
 
 @pytest.fixture
@@ -570,3 +601,32 @@ def test_path_check_survives_a_radarr_outage(app, monkeypatch):
 
     monkeypatch.setattr(radarr_push, "_radarr", down)
     assert radarr_push.reconcile_radarr_paths() == "Radarr unreachable"
+
+
+def test_radarr_calls_fail_fast_on_connect(app, monkeypatch):
+    """Test that a Radarr call has a short connect timeout (#268).
+
+    A host that is down fails at the connect in 5 seconds. The read
+    timeout stays long for the full movie list."""
+
+    import app.radarr_push as radarr_push
+
+    seen = {}
+
+    class Response:
+        content = b"[]"
+
+        def raise_for_status(self):
+            """Never an HTTP error."""
+
+        def json(self):
+            return []
+
+    def fake_request(method, url, **kwargs):
+        seen.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(radarr_push.requests, "request", fake_request)
+    with app.app_context():
+        radarr_push._radarr("GET", "/api/v3/movie")
+    assert seen["timeout"] == (5, 30)

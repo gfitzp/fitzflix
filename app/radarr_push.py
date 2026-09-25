@@ -39,6 +39,12 @@ RADARR_IDS_TTL = 3600
 
 QUALITY_PROFILE_NAME = "Fitzflix"
 
+# The connect and read timeouts of a Radarr call, in seconds. A host
+# that is down fails at the connect. Thus, it costs 5 seconds, not 30.
+# The read stays long for the full movie list (#268).
+
+RADARR_TIMEOUT = (5, 30)
+
 
 class RadarrError(Exception):
     """A Radarr request failed in a way that the user must know about.
@@ -63,7 +69,7 @@ def _radarr(method, path, payload=None):
         current_app.config["RADARR_URL"] + path,
         json=payload,
         headers={"X-Api-Key": current_app.config["RADARR_API_KEY"]},
-        timeout=30,
+        timeout=RADARR_TIMEOUT,
     )
     r.raise_for_status()
     return r.json() if r.content else None
@@ -183,6 +189,84 @@ def follow_import_move(source_folder, new_folder):
             return _point_entry_at(entry, new_folder)
     current_app.logger.info(f"Radarr does not manage folder {wanted!r}, skipping")
     return False
+
+
+def enqueue_radarr_push(func, *args, description):
+    """Queue a Radarr push as its own job on the request queue (#268).
+
+    A TMDB refresh and an import run on the single sql worker. A push
+    there made that queue wait while Radarr did not answer. Now the
+    push runs after the commit, on its own. A failed push is logged.
+    The nightly path check repairs what it left behind."""
+
+    current_app.request_queue.enqueue(
+        func,
+        args=args,
+        job_timeout=300,
+        result_ttl=86400,
+        description=description,
+    )
+
+
+def follow_rename_task(old_tmdb_id, new_tmdb_id, new_folder):
+    """Report a movie rename to Radarr. Log a failure. Do not raise.
+
+    This is a task. If the TMDB id changed, the file belongs to a
+    different film now. Thus, the entry of the old id leaves Radarr,
+    with its files kept on the disk. Then the entry of the new id, if
+    Radarr has one, points at the new folder."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        if not radarr_configured():
+            return False
+        if old_tmdb_id and old_tmdb_id != new_tmdb_id:
+            try:
+                withdraw_movie(old_tmdb_id)
+                current_app.logger.info(
+                    f"Radarr entry for tmdb {old_tmdb_id} withdrawn after the "
+                    f"record moved to tmdb {new_tmdb_id}"
+                )
+            except RadarrError:
+                pass
+            except Exception:
+                current_app.logger.warning(
+                    f"Radarr withdrawal of tmdb {old_tmdb_id} failed: "
+                    + traceback.format_exc()
+                )
+        if new_tmdb_id and new_folder:
+            try:
+                follow_rename(new_tmdb_id, new_folder)
+            except Exception:
+                current_app.logger.warning(
+                    f"Radarr path update for tmdb {new_tmdb_id} failed: "
+                    + traceback.format_exc()
+                )
+        return True
+
+
+def follow_import_move_task(source_folder, new_folder):
+    """Point the Radarr movie of an import at its Fitzflix folder.
+
+    This is a task. A failure is logged. It does not raise. The file is
+    already in place."""
+
+    import traceback
+
+    from app import get_app
+
+    with get_app().app_context():
+        try:
+            return follow_import_move(source_folder, new_folder)
+        except Exception:
+            current_app.logger.warning(
+                f"Radarr path update for {source_folder!r} failed: "
+                + traceback.format_exc()
+            )
+            return False
 
 
 def _point_entry_at(entry, new_folder):
