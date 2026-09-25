@@ -111,8 +111,8 @@
 	<div data-now-next style="flex: 1 1 24rem; min-width: 0;">
 	{% if now_playing.up_next %}
 	<div class="criterion-next-half">
-		<p class="mb-2 text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Up next</p>
-		<div class="d-flex flex-nowrap" style="gap: 0.75rem; overflow-x: auto;">
+		<p class="mb-2 text-muted text-uppercase criterion-next-label" style="font-size: 0.75rem; letter-spacing: 0.05em;">Up next</p>
+		<div class="d-flex flex-nowrap criterion-next-row" style="gap: 0.75rem; overflow-x: auto;">
 			{% for next in now_playing.up_next %}
 			{% set next_href = url_for('main.review_tmdb', tmdb_id=next.tmdb_id) if next.tmdb_id else next.more_url %}
 			{% set next_label = next.title ~ (" (" ~ next.year ~ ")" if next.year else "") %}

@@ -408,6 +408,13 @@
 		.criterion-next-half { border-left: 1px solid var(--bs-border-color); padding-left: 1rem; }
 		@container (max-width: 48.99rem) {
 			.criterion-next-half { border-left: 0; padding-left: 0; }
+			/* The stacked row of posters is centered (Glenn,
+			   2026-09-24). The auto margins on the 2 end tiles center
+			   the row without a clip. justify-content: center would
+			   clip the left tiles on a phone too narrow for the row */
+			.criterion-next-half .criterion-next-label { text-align: center; }
+			.criterion-next-row > :first-child { margin-left: auto; }
+			.criterion-next-row > :last-child { margin-right: auto; }
 		}
     </style>
 	{%- endblock styles %}
