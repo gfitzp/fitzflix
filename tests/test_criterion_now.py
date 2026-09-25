@@ -219,7 +219,8 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
     starts_at = datetime.strptime(stored["starts_at"], "%Y-%m-%d %H:%M:%S")
     assert ends_at - starts_at == timedelta(minutes=101)
 
-    # The next film is stored with the same enrichment as the current 1
+    # The upcoming films are stored with the same enrichment as the
+    # current 1
     schedule = json.loads(app.redis.get(criterion_now.SCHEDULE_KEY))
     assert [entry["title"] for entry in schedule["upcoming"]] == ["Stagecoach"]
     assert schedule["upcoming"][0]["tmdb_id"] == 33667
@@ -876,6 +877,7 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     assert "Up next" in body
     assert "The Hero" in body
     assert "criterionchannel.com/films/cccc2222" in body
+    assert 'title="The Hero"' in body
     assert "data-now-next" in body
     assert 'data-now-ends="' in body
 

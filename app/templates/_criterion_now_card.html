@@ -20,7 +20,7 @@
    into the log page on a match. Otherwise it links out to
    criterionchannel.com #}
 <h4>On Criterion 24/7 now</h4>
-<div class="d-flex flex-wrap mt-3 mb-2" data-now-film="{{ now_playing.signature }}"{% if now_playing.ends_at_epoch_ms %} data-now-ends="{{ now_playing.ends_at_epoch_ms }}"{% endif %} style="gap: 1rem; max-width: 56rem;">
+<div class="d-flex flex-wrap mt-3 mb-2" data-now-film="{{ now_playing.signature }}"{% if now_playing.ends_at_epoch_ms %} data-now-ends="{{ now_playing.ends_at_epoch_ms }}"{% endif %} style="gap: 1rem; max-width: 72rem;">
 	<div style="flex: 0 0 7rem;">
 		{% set card_href = url_for('main.review_tmdb', tmdb_id=now_playing.tmdb_id) if now_playing.tmdb_id else (now_playing.more_url or now_playing.watch_url) %}
 		<a href="{{ card_href }}" class="text-decoration-none text-body">
@@ -92,34 +92,34 @@
 		   the credit lives inside it and survives each refresh #}
 		<p class="mb-0 small text-muted" data-now-status>{% if now_playing.minutes_in is not none %}{% if now_playing.minutes_in < 2 %}Just started{% else %}About {{ now_playing.minutes_in }} minutes in{% endif %}{% endif %}{% if now_playing.minutes_in is not none and now_playing.next_at %} &middot; {% endif %}{% if now_playing.next_at %}Next film around {{ now_playing.next_at }}{% endif %}{% if now_playing.minutes_in is not none or now_playing.next_at %} &middot; {% endif %}<span class="text-nowrap">From <a href="https://whatsonnow.criterionchannel.com" target="_blank" rel="noreferrer" class="text-muted" title="whatsonnow.criterionchannel.com">Criterion 24/7</a></span></p>
 	</div>
-	{# The preview of the next film of the feed (Glenn, 2026-09-24). It
-	   sits to the right of the card on a desktop. On a phone it wraps
-	   below. The poller stores it from the schedule of the page, with
-	   the same enrichment as the current film. The block is inside its
-	   own region, so the refresh repaints it without a swap of the
-	   whole card #}
-	<div data-now-next style="flex: 0 1 16rem;">
+	{# The previews of the next films of the feed (Glenn, 2026-09-24): a
+	   row of posters with their start times. It sits to the right of
+	   the card on a desktop. On a phone it wraps below, and the row
+	   scrolls sideways. The poller
+	   stores the films from the schedule of the page, with the same
+	   enrichment as the current film. The block is inside its own
+	   region. The refresh repaints it only when its content changes,
+	   so the posters do not flash each minute #}
+	<div data-now-next style="flex: 0 1 auto;">
 	{% if now_playing.up_next %}
-	{% set next = now_playing.up_next %}
-	{% set next_href = url_for('main.review_tmdb', tmdb_id=next.tmdb_id) if next.tmdb_id else next.more_url %}
-	<div class="d-flex border-start ps-3" style="gap: 0.75rem;">
-		<div style="flex: 0 0 4.5rem;">
-			<a href="{{ next_href }}" class="text-decoration-none text-body">
-				{% if next.poster_path %}
-					<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ next.poster_path }}" loading="lazy" class="img-fluid border rounded w-100" alt="{{ next.title }}{% if next.year %} ({{ next.year }}){% endif %}">
-				{% else %}
-					{{ poster_placeholder("film") }}
-				{% endif %}
-			</a>
-		</div>
-		<div class="small">
-			<p class="mb-1 text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Up next &middot; {{ next.starts_at }}</p>
-			<p class="mb-1"><a href="{{ next_href }}" class="text-decoration-none text-body fw-semibold">{{ next.title }}{% if next.year %} ({{ next.year }}){% endif %}</a></p>
-			{% if next.directors %}
-			<p class="mb-0 text-muted">{% for person in next.directors %}<a href="{{ url_for('main.movie_library', credit=person.id) }}" class="link-secondary text-secondary">{{ person.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
-			{% elif next.director %}
-			<p class="mb-0 text-muted">{{ next.director }}</p>
-			{% endif %}
+	<div class="border-start ps-3">
+		<p class="mb-2 text-muted text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.05em;">Up next</p>
+		<div class="d-flex flex-nowrap" style="gap: 0.75rem; overflow-x: auto;">
+			{% for next in now_playing.up_next %}
+			{% set next_href = url_for('main.review_tmdb', tmdb_id=next.tmdb_id) if next.tmdb_id else next.more_url %}
+			{% set next_label = next.title ~ (" (" ~ next.year ~ ")" if next.year else "") %}
+			<div style="flex: 0 0 5rem;">
+				<a href="{{ next_href }}" class="text-decoration-none text-body" title="{{ next_label }}">
+					{% if next.poster_path %}
+						<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ next.poster_path }}" loading="lazy" class="img-fluid border rounded w-100" alt="{{ next_label }}">
+					{% else %}
+						{{ poster_placeholder("film") }}
+					{% endif %}
+				</a>
+				<p class="mb-0 small fw-semibold mt-1">{{ next.starts_at }}</p>
+				<p class="mb-0 text-muted" style="font-size: 0.75rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;"><a href="{{ next_href }}" class="text-decoration-none text-muted">{{ next.title }}</a></p>
+			</div>
+			{% endfor %}
 		</div>
 	</div>
 	{% endif %}

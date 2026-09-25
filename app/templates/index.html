@@ -153,9 +153,14 @@
 					var status = holder.querySelector("[data-now-status]");
 					var latest = fresh.querySelector("[data-now-status]");
 					if (status && latest) status.innerHTML = latest.innerHTML;
+					// The preview holds images. A rewrite of unchanged
+					// markup recreates them, and the posters flash. Thus,
+					// the repaint happens only when the markup differs.
 					var next = holder.querySelector("[data-now-next]");
 					var freshNext = fresh.querySelector("[data-now-next]");
-					if (next && freshNext) next.innerHTML = freshNext.innerHTML;
+					if (next && freshNext && next.innerHTML !== freshNext.innerHTML) {
+						next.innerHTML = freshNext.innerHTML;
+					}
 				})
 				.catch(function() {})
 				.finally(schedule);

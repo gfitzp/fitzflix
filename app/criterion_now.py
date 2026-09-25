@@ -61,9 +61,11 @@ POLL_CUSHION = timedelta(seconds=15)
 
 # The number of upcoming films that the poller stores. The card turns
 # over from this list at the end time of the current film. Thus, the
-# next film shows before the poll that enriches it.
+# next film shows before the poll that enriches it. The card shows
+# the first UP_NEXT_SHOWN of them as a row of posters.
 
 UPCOMING_COUNT = 6
+UP_NEXT_SHOWN = 4
 
 # The card turns over only from a schedule that a poll stored this
 # recently. An older schedule means that the poller is broken. Then
@@ -468,15 +470,14 @@ def poll_criterion_now():
                     ex=86400,
                 )
 
-                # The upcoming films. The 1st gets the same enrichment as
-                # the current film. Thus, the card can turn over to it
-                # with a poster and credits before the next poll.
+                # The upcoming films. Each gets the same enrichment as
+                # the current film. Thus, the card shows their posters,
+                # and it can turn over to the 1st with its credits
+                # before the next poll.
 
                 upcoming = parsed["upcoming"]
-                if upcoming:
-                    upcoming[0].update(
-                        _enriched_entry(upcoming[0]["title"], upcoming[0]["more_url"])
-                    )
+                for entry in upcoming:
+                    entry.update(_enriched_entry(entry["title"], entry["more_url"]))
                 current_app.redis.set(
                     SCHEDULE_KEY,
                     json.dumps({"fetched_at": fetched_at, "upcoming": upcoming}),
@@ -602,23 +603,25 @@ def _turned_over(stored, upcoming, now):
 
 
 def _up_next(upcoming):
-    """Return the preview of the next film of the feed, or None."""
+    """Return the previews of the next films of the feed, as a list.
 
-    if not upcoming:
-        return None
-    entry = upcoming[0]
-    starts_at = datetime.strptime(entry["starts_at"], STAMP)
-    payload = enriched_movie(entry["tmdb_id"]) if entry.get("tmdb_id") else None
-    return {
-        "title": entry["title"],
-        "year": entry.get("year"),
-        "director": entry.get("director"),
-        "tmdb_id": entry.get("tmdb_id"),
-        "poster_path": entry.get("poster_path"),
-        "more_url": entry.get("more_url"),
-        "starts_at": starts_at.strftime("%-I:%M %p"),
-        "directors": _credited_people(payload)["directors"],
-    }
+    Each preview has the title, the year, the poster, the link, and the
+    start time. The list is empty when there is no stored schedule."""
+
+    previews = []
+    for entry in upcoming[:UP_NEXT_SHOWN]:
+        starts_at = datetime.strptime(entry["starts_at"], STAMP)
+        previews.append(
+            {
+                "title": entry["title"],
+                "year": entry.get("year"),
+                "tmdb_id": entry.get("tmdb_id"),
+                "poster_path": entry.get("poster_path"),
+                "more_url": entry.get("more_url"),
+                "starts_at": starts_at.strftime("%-I:%M %p"),
+            }
+        )
+    return previews
 
 
 def criterion_now_card(user):
