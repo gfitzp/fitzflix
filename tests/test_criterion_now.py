@@ -1027,3 +1027,91 @@ def test_turnover_prefers_the_film_that_is_on(app):
     # through the grace.
     film, rest = _turned_over(stored, upcoming[:1], now)
     assert film["title"] == "Stagecoach"
+
+
+def fake_feed(monkeypatch, criterion_now, fetched):
+    """Serve the now-playing page and the film pages. Record each film fetch."""
+
+    def fake_requests_get(url, timeout=None):
+        if "whatsonnow" not in url:
+            fetched.append(url)
+
+        class FakeResponse:
+            text = WHATSON_HTML if "whatsonnow" in url else INFO_HTML
+
+            def raise_for_status(self):
+                """Never an HTTP error."""
+
+        return FakeResponse()
+
+    monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
+    monkeypatch.setattr(
+        criterion_now, "match_tmdb_id", lambda title, year, director=None: 33667
+    )
+    monkeypatch.setattr(
+        criterion_now,
+        "enriched_movie",
+        lambda tmdb_id: {
+            "poster_path": "/shock.jpg",
+            "runtime": 101,
+            "crew": [{"id": 8556, "name": "Samuel Fuller", "job": "Director"}],
+        },
+    )
+
+
+def test_poll_books_the_next_poll_before_the_lookups(app, monkeypatch):
+    """Test that a run that dies in the enrichment keeps the chain (#267).
+
+    The next poll is booked for the end of the film before any film
+    page is fetched. A failure after that point does not lose it."""
+
+    import app.criterion_now as criterion_now
+
+    fake_feed(monkeypatch, criterion_now, [])
+    booked_first = []
+
+    def dies(title, more_url, known=None):
+        registry = app.maintenance_queue.scheduled_job_registry
+        booked_first.append(criterion_now.POLL_JOB_ID in registry.get_job_ids())
+        raise RuntimeError("the job ran out of time")
+
+    monkeypatch.setattr(criterion_now, "_enriched_entry", dies)
+    assert criterion_now.poll_criterion_now() is True
+    assert booked_first == [True]
+
+    with app.app_context():
+        registry = app.maintenance_queue.scheduled_job_registry
+        booked = registry.get_scheduled_time(criterion_now.POLL_JOB_ID)
+    wait = booked.astimezone() - datetime.now(timezone.utc)
+    # The film ends in 83 minutes. The booking is not the 30-minute retry.
+    assert timedelta(minutes=82) < wait <= timedelta(minutes=84)
+    assert registry.get_job_ids().count(criterion_now.POLL_JOB_ID) == 1
+
+
+def test_poll_reuses_the_enrichment_of_the_last_poll(app, monkeypatch):
+    """Test that a film enriched by the last poll is not fetched again.
+
+    The first poll fetches the film page of the current film and of the
+    upcoming film. The second poll fetches none. A stored enrichment
+    that holds nothing is tried again."""
+
+    import app.criterion_now as criterion_now
+
+    fetched = []
+    fake_feed(monkeypatch, criterion_now, fetched)
+    assert criterion_now.poll_criterion_now() is True
+    assert len(fetched) == 2
+
+    fetched.clear()
+    assert criterion_now.poll_criterion_now() is True
+    assert fetched == []
+    stored = json.loads(app.redis.get(criterion_now.NOW_KEY))
+    assert stored["director"] == "Samuel Fuller"
+    assert stored["tmdb_id"] == 33667
+
+    # An empty enrichment is a failure. The next poll fetches it again.
+    stored.update({field: None for field in criterion_now.ENRICHED_FIELDS})
+    app.redis.set(criterion_now.NOW_KEY, json.dumps(stored))
+    app.redis.delete(criterion_now.SCHEDULE_KEY)
+    assert criterion_now.poll_criterion_now() is True
+    assert len(fetched) == 2

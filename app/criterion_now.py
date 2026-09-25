@@ -458,13 +458,58 @@ def _film_info_from(more_url):
     return info
 
 
-def _enriched_entry(title, more_url):
+# The fields that the enrichment of a film adds. A later poll reuses
+# them for the same film and does not fetch its film page again.
+
+ENRICHED_FIELDS = ("tmdb_id", "poster_path", "director", "year", "country", "starring")
+FILM_ID_RE = re.compile(r"/films/([^/?#]+)")
+
+
+def _enrichment_key(title, more_url):
+    """Return the key of a film for the reuse of its enrichment.
+
+    The film id of the Channel is the key. The current film has a long
+    link and an upcoming film has a short link, but both hold the id. A
+    film with no link uses its title."""
+
+    match = FILM_ID_RE.search(more_url or "")
+    return f"id:{match.group(1)}" if match else f"title:{title.casefold()}"
+
+
+def _known_enrichments():
+    """Return {key: enrichment} from the film and the schedule of the last poll.
+
+    An enrichment with no year, no director, and no TMDB id is not kept.
+    The film page or TMDB failed then, and the next poll tries again."""
+
+    entries = []
+    now_payload = current_app.redis.get(NOW_KEY)
+    if now_payload:
+        entries.append(json.loads(now_payload))
+    schedule_payload = current_app.redis.get(SCHEDULE_KEY)
+    if schedule_payload:
+        entries.extend(json.loads(schedule_payload).get("upcoming") or [])
+
+    known = {}
+    for entry in entries:
+        if not any(entry.get(field) for field in ("tmdb_id", "year", "director")):
+            continue
+        key = _enrichment_key(entry.get("title") or "", entry.get("more_url"))
+        known[key] = {field: entry.get(field) for field in ENRICHED_FIELDS}
+    return known
+
+
+def _enriched_entry(title, more_url, known=None):
     """Return {info fields, tmdb_id, poster_path} for a film of the feed.
 
     A year is sufficient to try TMDB. The poster comes as a direct TMDB
     link on a verified match. Otherwise the card renders plain. It
-    never shows a guess."""
+    never shows a guess. A film in known reuses its stored enrichment
+    and fetches nothing."""
 
+    cached = (known or {}).get(_enrichment_key(title, more_url))
+    if cached:
+        return dict(cached)
     info = _film_info_from(more_url)
     tmdb_id, poster_path = matched_film(title, info)
     return {"tmdb_id": tmdb_id, "poster_path": poster_path, **info}
@@ -473,13 +518,17 @@ def _enriched_entry(title, more_url):
 def poll_criterion_now():
     """Scrape the now-playing page, store the film and the schedule, and poll again.
 
-    This is a task. It enriches the current film and the upcoming
-    films. It schedules itself again for a time just after the current
-    film ends. A stale page changes nothing in Redis. Then the task
-    tries again after STALE_RETRY."""
+    This is a task. It schedules itself again for a time just after
+    the current film ends. It books that poll as soon as it reads the
+    page, before the film pages and TMDB. Thus, a run that times out
+    during the enrichment does not break the chain (#267). It enriches
+    the current film and the upcoming films. A film that the last poll
+    enriched reuses that result. A stale page changes nothing in Redis.
+    Then the task tries again after STALE_RETRY."""
 
     with app.app_context():
         next_delay = timedelta(minutes=30)
+        booked = False
         try:
             r = requests.get(WHATSON_URL, timeout=15)
             r.raise_for_status()
@@ -497,6 +546,11 @@ def poll_criterion_now():
                 title = parsed["title"]
                 ends_at = parsed["ends_at"]
                 fetched_at = _stamp(now)
+                if ends_at:
+                    next_delay = ends_at - now + POLL_CUSHION
+                _book_next_poll(next_delay)
+                booked = True
+                known = _known_enrichments()
                 current_app.redis.set(
                     NOW_KEY,
                     json.dumps(
@@ -511,7 +565,7 @@ def poll_criterion_now():
                             ),
                             "ends_at": _stamp(ends_at) if ends_at else None,
                             "fetched_at": fetched_at,
-                            **_enriched_entry(title, parsed["more_url"]),
+                            **_enriched_entry(title, parsed["more_url"], known),
                         }
                     ),
                     ex=86400,
@@ -524,7 +578,9 @@ def poll_criterion_now():
 
                 upcoming = parsed["upcoming"]
                 for entry in upcoming:
-                    entry.update(_enriched_entry(entry["title"], entry["more_url"]))
+                    entry.update(
+                        _enriched_entry(entry["title"], entry["more_url"], known)
+                    )
                 current_app.redis.set(
                     SCHEDULE_KEY,
                     json.dumps({"fetched_at": fetched_at, "upcoming": upcoming}),
@@ -540,8 +596,6 @@ def poll_criterion_now():
                     f"Criterion 24/7 now: '{title}', {end_note}, "
                     f"{len(upcoming)} upcoming"
                 )
-                if ends_at:
-                    next_delay = ends_at - now + POLL_CUSHION
             else:
                 current_app.logger.warning(
                     "Criterion 24/7: no title found on the now-playing page"
@@ -550,20 +604,31 @@ def poll_criterion_now():
             current_app.logger.warning(traceback.format_exc())
 
         # Always schedule again. A broken run repairs itself on the next
-        # attempt. The time is just after the end of the film, clamped
-        # to a safe range. The deterministic job id keeps the chain to 1
-        # job, even when the cron heartbeat also runs.
+        # attempt.
 
-        delay = max(timedelta(seconds=30), min(next_delay, timedelta(hours=4)))
-        current_app.maintenance_queue.enqueue_in(
-            delay,
-            "app.criterion_now.poll_criterion_now",
-            job_timeout=300,
-            job_id=POLL_JOB_ID,
-            result_ttl=86400,
-            description="Checking what's on Criterion 24/7",
-        )
+        if not booked:
+            _book_next_poll(next_delay)
         return True
+
+
+def _book_next_poll(delay):
+    """Book the next poll after delay, clamped to a safe range.
+
+    The deterministic job id keeps the chain to 1 job, even when the
+    cron heartbeat or a manual poll also runs. A new booking replaces
+    the old one. The poll takes no arguments, and its result lives for
+    1 day. That is longer than the longest delay. Thus, the reuse of the
+    id while a poll runs is safe here."""
+
+    delay = max(timedelta(seconds=30), min(delay, timedelta(hours=4)))
+    current_app.maintenance_queue.enqueue_in(
+        delay,
+        "app.criterion_now.poll_criterion_now",
+        job_timeout=300,
+        job_id=POLL_JOB_ID,
+        result_ttl=86400,
+        description="Checking what's on Criterion 24/7",
+    )
 
 
 def heartbeat_criterion_now():
