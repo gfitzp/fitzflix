@@ -95,6 +95,15 @@ STALE_GRACE = timedelta(minutes=15)
 
 STALE_RETRY = timedelta(seconds=45)
 
+# A page can stay stale for longer than STALE_GRACE, for example when
+# its cache does not revalidate. After STALE_GRACE, the retries slow to
+# STALE_BACKOFF. The old film is never stored. A heading of a film that
+# ended more than STALE_LIMIT ago is no longer read as stale. Then it
+# counts as a title that is in no entry, as before.
+
+STALE_BACKOFF = timedelta(minutes=5)
+STALE_LIMIT = timedelta(hours=3)
+
 # The heading can also be ahead of the clock by some seconds. A later
 # entry with the title of the heading is the current film only if it
 # starts within this time. A rerun days later is a different showing.
@@ -191,34 +200,35 @@ def _schedule_entries(page_html):
 
 
 def _current_slot(entries, title, now):
-    """Return (entry, stale) for the film with this title.
+    """Return (entry, stale end) for the film with this title.
 
     The entry whose window contains now wins if its title agrees with
     the heading. At a film boundary the heading and the clock can
     disagree. A heading ahead of the clock gets the entry that starts
     within EARLY_START. A rerun later in the schedule does not count.
     A heading behind the clock names a film that ended within
-    STALE_GRACE. Then the page is stale. The result is (None, True),
-    and the poller tries again soon. A title that is in no entry gives
-    (None, False). Fitzflix never guesses an end time."""
+    STALE_LIMIT. Then the page is stale. The result is (None, the end
+    of that film), and the poller tries again. A title that is in no
+    entry gives (None, None). Fitzflix never guesses an end time."""
 
     wanted = title.casefold()
     early = None
-    stale = False
+    stale_end = None
     for entry in entries:
         start, end, entry_title, _ = entry
         if entry_title.casefold() != wanted:
             continue
         if start <= now < end:
-            return entry, False
+            return entry, None
         if now < start <= now + EARLY_START:
             if early is None or start < early[0]:
                 early = entry
-        elif end <= now < end + STALE_GRACE:
-            stale = True
+        elif end <= now < end + STALE_LIMIT:
+            if stale_end is None or end > stale_end:
+                stale_end = end
     if early is not None:
-        return early, False
-    return None, stale
+        return early, None
+    return None, stale_end
 
 
 def _stamp(moment):
@@ -264,7 +274,7 @@ def parse_whatson_page(page_html, now=None):
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
-    slot, stale = _current_slot(entries, title, now)
+    slot, stale_end = _current_slot(entries, title, now)
 
     starts_at = ends_at = guid = None
     if slot:
@@ -308,7 +318,8 @@ def parse_whatson_page(page_html, now=None):
         "starts_at": starts_at,
         "ends_at": ends_at,
         "upcoming": upcoming,
-        "stale": stale,
+        "stale": stale_end is not None,
+        "stale_since": stale_end,
     }
 
 
@@ -388,7 +399,7 @@ def _person_matches(scraped, credited_name):
     return len(scraped_tokens & name_tokens) >= 2
 
 
-def matched_film(title, info):
+def matched_film(title, info, failures=None):
     """Return (tmdb_id, poster_path) for the film that is on, or (None, None).
 
     This function searches by title and year. Then it verifies the match
@@ -399,7 +410,10 @@ def matched_film(title, info):
     verifier. Then a minimum of 1 scraped name must appear in the top
     billing on TMDB. The director is the only verifier if it is
     available. The enriched cast stops at TOP_BILLING_CUTOFF. Thus, a
-    cast miss alone must never veto a film whose director agrees."""
+    cast miss alone must never veto a film whose director agrees.
+
+    A TMDB call that fails adds "tmdb" to failures, if given. Thus, the
+    caller can tell a failure from a film with no match."""
 
     if not info["year"]:
         return None, None
@@ -408,6 +422,8 @@ def matched_film(title, info):
         return None, None
     payload = enriched_movie(tmdb_id)
     if not payload:
+        if failures is not None:
+            failures.append("tmdb")
         return None, None
 
     credited = [
@@ -480,7 +496,8 @@ def _known_enrichments():
     """Return {key: enrichment} from the film and the schedule of the last poll.
 
     An enrichment with no year, no director, and no TMDB id is not kept.
-    The film page or TMDB failed then, and the next poll tries again."""
+    The film page failed then. An enrichment marked retry is not kept.
+    A TMDB call failed then. The next poll tries both again."""
 
     entries = []
     now_payload = current_app.redis.get(NOW_KEY)
@@ -492,6 +509,8 @@ def _known_enrichments():
 
     known = {}
     for entry in entries:
+        if entry.get("retry"):
+            continue
         if not any(entry.get(field) for field in ("tmdb_id", "year", "director")):
             continue
         key = _enrichment_key(entry.get("title") or "", entry.get("more_url"))
@@ -511,8 +530,16 @@ def _enriched_entry(title, more_url, known=None):
     if cached:
         return dict(cached)
     info = _film_info_from(more_url)
-    tmdb_id, poster_path = matched_film(title, info)
-    return {"tmdb_id": tmdb_id, "poster_path": poster_path, **info}
+    failures = []
+    tmdb_id, poster_path = matched_film(title, info, failures)
+
+    # A failed TMDB call marks the entry. The next poll then enriches it
+    # again. It does not reuse an entry with no poster for hours.
+
+    entry = {"tmdb_id": tmdb_id, "poster_path": poster_path, **info}
+    if failures:
+        entry["retry"] = True
+    return entry
 
 
 def poll_criterion_now():
@@ -524,7 +551,8 @@ def poll_criterion_now():
     during the enrichment does not break the chain (#267). It enriches
     the current film and the upcoming films. A film that the last poll
     enriched reuses that result. A stale page changes nothing in Redis.
-    Then the task tries again after STALE_RETRY."""
+    Then the task tries again after STALE_RETRY, or after STALE_BACKOFF
+    when the page stays stale for longer than STALE_GRACE."""
 
     with app.app_context():
         next_delay = timedelta(minutes=30)
@@ -537,11 +565,14 @@ def poll_criterion_now():
             watch_url = parse_watch_live_url(r.text) or WATCH_LIVE_URL
 
             if parsed and parsed["stale"]:
+                late = now - parsed["stale_since"]
+                next_delay = STALE_RETRY if late < STALE_GRACE else STALE_BACKOFF
                 current_app.logger.info(
                     f"Criterion 24/7 now: the page still shows "
-                    f"'{parsed['title']}', which ended. Trying again soon."
+                    f"'{parsed['title']}', which ended "
+                    f"{int(late.total_seconds() // 60)} minutes ago. Trying "
+                    f"again in {int(next_delay.total_seconds())} seconds."
                 )
-                next_delay = STALE_RETRY
             elif parsed:
                 title = parsed["title"]
                 ends_at = parsed["ends_at"]

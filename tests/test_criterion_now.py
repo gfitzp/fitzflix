@@ -1167,4 +1167,78 @@ def test_up_next_posters_carry_the_poster_popover(app, admin_client):
     assert 'aria-label="Stagecoach (1939)"' in body
     assert 'title="The Hero"' in body
     assert body.count('addEventListener("fitzflix:card-hide"') == 1
-    assert body.count('new Event("fitzflix:card-hide")') == 1
+    # The refresh names its own card. A card open on another shelf stays.
+    assert (
+        body.count('new CustomEvent("fitzflix:card-hide", {detail: {within: holder}})')
+        == 1
+    )
+    assert "within.contains(anchor)" in body
+
+
+def test_page_stale_past_the_grace_never_stores_the_old_film(app, monkeypatch):
+    """Test a page that stays stale for longer than STALE_GRACE.
+
+    The old heading must not become the current film with no end time.
+    The poll keeps waiting, at the slower STALE_BACKOFF. A heading of a
+    film that ended more than STALE_LIMIT ago is not read as stale."""
+
+    import app.criterion_now as criterion_now
+
+    # Black Girl ended 21 minutes ago. Shock Corridor is on.
+    page = whatson_html(minutes_left=80).replace(
+        '__title">Shock Corridor', '__title">Black Girl'
+    )
+    parsed = criterion_now.parse_whatson_page(page)
+    assert parsed["stale"] is True and parsed["ends_at"] is None
+
+    def fake_requests_get(url, timeout=None):
+        class FakeResponse:
+            text = page
+
+            def raise_for_status(self):
+                """Never an HTTP error."""
+
+        return FakeResponse()
+
+    monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
+    with app.app_context():
+        app.redis.set(criterion_now.NOW_KEY, json.dumps({"title": "Kept Film"}))
+        assert criterion_now.poll_criterion_now() is True
+        assert json.loads(app.redis.get(criterion_now.NOW_KEY)) == {
+            "title": "Kept Film"
+        }
+        booked = app.maintenance_queue.scheduled_job_registry.get_scheduled_time(
+            criterion_now.POLL_JOB_ID
+        )
+    wait = booked.astimezone() - datetime.now(timezone.utc)
+    assert criterion_now.STALE_RETRY < wait <= criterion_now.STALE_BACKOFF
+
+    # Past STALE_LIMIT, the heading counts as a title in no entry.
+    later = datetime.now(timezone.utc) + criterion_now.STALE_LIMIT
+    parsed = criterion_now.parse_whatson_page(page, later)
+    assert parsed["stale"] is False
+
+
+def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
+    """Test that a transient TMDB failure is not kept by the reuse.
+
+    The film page gave a year and a director, but the TMDB details
+    failed. The entry is marked retry. The next poll enriches it again
+    and gets the poster."""
+
+    import app.criterion_now as criterion_now
+
+    fetched = []
+    fake_feed(monkeypatch, criterion_now, fetched)
+    good = criterion_now.enriched_movie
+    monkeypatch.setattr(criterion_now, "enriched_movie", lambda tmdb_id: None)
+    assert criterion_now.poll_criterion_now() is True
+    stored = json.loads(app.redis.get(criterion_now.NOW_KEY))
+    assert stored["tmdb_id"] is None and stored["retry"] is True
+
+    fetched.clear()
+    monkeypatch.setattr(criterion_now, "enriched_movie", good)
+    assert criterion_now.poll_criterion_now() is True
+    assert len(fetched) == 2
+    stored = json.loads(app.redis.get(criterion_now.NOW_KEY))
+    assert stored["tmdb_id"] == 33667 and "retry" not in stored

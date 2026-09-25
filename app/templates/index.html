@@ -145,9 +145,10 @@
 					var fresh = document.createElement("div");
 					fresh.innerHTML = html;
 					// A replacement removes the Up next posters. Thus, an
-					// open poster card closes first.
+					// open poster card of this card closes first. A card
+					// that is open on another shelf stays.
 					function closeCard() {
-						document.dispatchEvent(new Event("fitzflix:card-hide"));
+						document.dispatchEvent(new CustomEvent("fitzflix:card-hide", {detail: {within: holder}}));
 					}
 					if (filmOf(fresh) !== filmOf(holder)) {
 						// A different film (or no film): replace the whole

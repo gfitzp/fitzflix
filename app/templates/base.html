@@ -973,8 +973,14 @@
 
 		// A page that replaces its posters in place fires this event
 		// first. The open card then closes. Otherwise it would stay on
-		// the screen after its poster is gone.
-		document.addEventListener("fitzflix:card-hide", cardHide);
+		// the screen after its poster is gone. The detail names the area
+		// that changes. A card whose poster is outside it stays open.
+		document.addEventListener("fitzflix:card-hide", function(event) {
+			var within = event.detail && event.detail.within;
+			var anchor = cardOpen || cardWanted;
+			if (within && anchor && !within.contains(anchor)) return;
+			cardHide();
+		});
 
 		// Plex remote playback: any [data-plex-play] form posts in the
 		// background and reports into its own [data-plex-play-status]
