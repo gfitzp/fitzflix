@@ -17,6 +17,7 @@ module import direction stays one-way. This module imports the track
 and S3 layers directly. They never import back.
 """
 
+import errno
 import json
 import os
 import re
@@ -67,6 +68,82 @@ from app.tracks import (
     supplement_lossless_tracks,
     watch_mkvmerge_progress,
 )
+
+# An import waits for free space on the library volume. It is never
+# rejected for space (#262). The check asks for the size of the source
+# times SPACE_FACTOR, plus SPACE_RESERVE. The output can be larger than
+# the source, because lossless tracks get FLAC twins. The final copy
+# asks for the size of the output plus SPACE_RESERVE. A waiting file
+# tries again every SPACE_WAIT, with no limit.
+
+SPACE_FACTOR = 1.2
+SPACE_RESERVE = 2 * 1024**3
+SPACE_WAIT = timedelta(minutes=30)
+
+# The errors of a full volume or a full quota. A copy that stops with
+# one of them waits for space. It is not an import failure.
+
+SPACE_ERRNOS = {errno.ENOSPC, errno.EDQUOT}
+
+
+def _existing_directory(path):
+    """Return path, or its nearest parent directory that exists."""
+
+    while not os.path.isdir(path) and path != os.path.dirname(path):
+        path = os.path.dirname(path)
+    return path
+
+
+def _free_bytes(path):
+    """Return the free bytes of the volume that holds path."""
+
+    return shutil.disk_usage(_existing_directory(path)).free
+
+
+def _crosses_volumes(file_path, directory):
+    """Return True if file_path and directory are on different volumes.
+
+    The directory can be a new folder that does not exist yet. Then its
+    nearest existing parent gives the volume."""
+
+    return (
+        os.stat(os.path.dirname(file_path)).st_dev
+        != os.stat(_existing_directory(directory)).st_dev
+    )
+
+
+def library_space_shortfall(directory, needed_bytes):
+    """Return the bytes that the volume of directory lacks, or 0.
+
+    The directory can be a new folder that does not exist yet. Then its
+    nearest existing parent gives the volume. A volume that cannot be
+    read gives 0. Then the copy itself finds the problem."""
+
+    try:
+        free = _free_bytes(directory)
+    except OSError:
+        return 0
+    return max(0, needed_bytes - free)
+
+
+def _gigabytes(size):
+    """Return a byte count as a short GB text."""
+
+    return f"{size / 1024**3:.1f} GB"
+
+
+def _log_space_wait(basename, directory, needed, shortfall, waits):
+    """Log a wait for space. The first wait is a warning, the others are info."""
+
+    message = (
+        f"'{basename}' Needs {_gigabytes(needed)} on the volume of "
+        f"'{directory}', which lacks {_gigabytes(shortfall)}. Trying again "
+        f"in {int(SPACE_WAIT.total_seconds() // 60)} minutes"
+    )
+    if waits == 0:
+        current_app.logger.warning(message + " (waiting for free space)")
+    else:
+        current_app.logger.info(message + f" (wait {waits + 1})")
 
 
 def convert_to_matroska(file_path, output_file, job, name):
@@ -157,6 +234,7 @@ def localization_task(
     ignore_etag=False,
     transient_retries=0,
     completeness_retries=0,
+    space_waits=0,
 ):
     """Archive an untouched file and remove the unnecessary language tracks.
 
@@ -166,6 +244,8 @@ def localization_task(
       the native language.
     - It passes the localized file to a separate process. That process adds
       the file to the database.
+    - It waits while the library volume has too little free space.
+      space_waits counts the waits.
     """
 
     # The shared lock, retry, and copy functions stay in app.videos. The
@@ -410,6 +490,49 @@ def localization_task(
                 )
 
                 return False
+
+            # Wait for free space on the library volume before the heavy
+            # work. Without the space, the final copy would fail and discard
+            # the work. The wait releases the title lock (#262).
+
+            output_directory = os.path.join(
+                current_app.config["LIBRARY_DIR"], file_details.get("dirname")
+            )
+            needed = int(os.path.getsize(file_path) * SPACE_FACTOR) + SPACE_RESERVE
+            shortfall = library_space_shortfall(output_directory, needed)
+            if shortfall:
+                _log_space_wait(
+                    basename, output_directory, needed, shortfall, space_waits
+                )
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
+                lock = None
+                current_app.import_queue.enqueue_in(
+                    SPACE_WAIT,
+                    "app.videos.localization_task",
+                    file_path=file_path,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                    transient_retries=transient_retries,
+                    completeness_retries=completeness_retries,
+                    space_waits=space_waits + 1,
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_id=retry_job_id(
+                        "localization_task",
+                        f"'{basename}'",
+                        transient_retries,
+                        completeness_retries,
+                        f"space{space_waits + 1}",
+                    ),
+                    result_ttl=86400,
+                    description=f"'{basename}'",
+                )
+                return True
+            if space_waits:
+                current_app.logger.info(
+                    f"'{basename}' The library volume has space again after "
+                    f"{space_waits} wait(s). Continuing the import"
+                )
 
             # Save the untouched filename. Fitzflix can need it to recreate the
             # file.
@@ -1083,7 +1206,12 @@ def inspect_localized_file(file_path, container, job=None):
 
 
 def move_localized_file(
-    source_path, file_details, lock, hidden_output_file, transient_retries=0
+    source_path,
+    file_details,
+    lock,
+    hidden_output_file,
+    transient_retries=0,
+    space_waits=0,
 ):
     """Carry the localized output to a hidden name at its library destination.
 
@@ -1092,6 +1220,9 @@ def move_localized_file(
     parallel. The single-worker sql queue only sees the quick database
     work and an immediate same-volume rename. The title lock passes
     through to finalize.
+
+    A library volume without space for the copy makes the task wait. The
+    output stays on staging, and the task keeps the title lock (#262).
     """
 
     from app.videos import (
@@ -1142,6 +1273,54 @@ def move_localized_file(
 
         destination_hidden = os.path.join(output_directory, f".{basename}")
 
+        def wait_for_space(needed, shortfall):
+            """Book the copy again after SPACE_WAIT. Keep the title lock."""
+
+            _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
+            current_app.file_queue.enqueue_in(
+                SPACE_WAIT,
+                "app.videos.move_localized_file",
+                source_path,
+                file_details,
+                lock,
+                hidden_output_file,
+                transient_retries=transient_retries,
+                space_waits=space_waits + 1,
+                job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                job_id=retry_job_id(
+                    "move_localized_file",
+                    f"'{basename}'",
+                    transient_retries,
+                    f"space{space_waits + 1}",
+                ),
+                result_ttl=86400,
+                description=f"'{basename}'",
+            )
+            return False
+
+        # A copy to another volume needs space there. Check before the
+        # inspection and the copy. Thus, a wait repeats neither.
+
+        # A stat error skips the check. Then the copy meets the same
+        # error, and the existing error handling applies.
+
+        try:
+            crosses_volumes = hidden_output_file != destination_hidden and (
+                _crosses_volumes(hidden_output_file, output_directory)
+            )
+            needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
+        except OSError:
+            crosses_volumes = False
+        if crosses_volumes:
+            shortfall = library_space_shortfall(output_directory, needed)
+            if shortfall:
+                return wait_for_space(needed, shortfall)
+        if space_waits:
+            current_app.logger.info(
+                f"'{basename}' The library volume has space again after "
+                f"{space_waits} wait(s). Copying"
+            )
+
         try:
             job = get_current_job()
 
@@ -1173,6 +1352,22 @@ def move_localized_file(
                     os.remove(hidden_output_file)
 
             except OSError as e:
+                if e.errno in SPACE_ERRNOS:
+                    # The volume filled during the copy, for example from
+                    # another import. The output is intact on staging.
+                    # Remove the partial copy and wait. Never reject the
+                    # file for space.
+
+                    try:
+                        os.remove(destination_hidden)
+                    except OSError:
+                        pass
+                    needed = os.path.getsize(hidden_output_file) + SPACE_RESERVE
+                    return wait_for_space(
+                        needed,
+                        library_space_shortfall(output_directory, needed) or needed,
+                    )
+
                 if (
                     e.errno not in TRANSIENT_COPY_ERRNOS
                     or transient_retries >= MAX_TRANSIENT_RETRIES

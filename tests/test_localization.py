@@ -1143,3 +1143,183 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         for stray in move_jobs[0].args[3], source:
             if os.path.exists(stray):
                 os.remove(stray)
+
+
+def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, caplog):
+    """Wait for free space on the library volume. Never reject for space (#262).
+
+    The wait comes before staging and the S3 upload. It releases the
+    title lock. It books the task again with a new id for each wait. The
+    first wait logs a warning. When space is back, the import goes on."""
+
+    from app import importing
+
+    basename = "Space Wait (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    real_free = importing._free_bytes
+    importing._free_bytes = lambda path: 0
+    try:
+        with app.app_context():
+            assert localization_task(source) is True
+
+            waits = [
+                job
+                for job in scheduled_jobs(app.import_queue)
+                if job.id.startswith("retry_")
+            ]
+            assert [job.id for job in waits] == [
+                retry_job_id("localization_task", f"'{basename}'", 0, 0, "space1")
+            ]
+            assert waits[0].kwargs["space_waits"] == 1
+            inspect.signature(videos.localization_task).bind(
+                *(waits[0].args or ()), **(waits[0].kwargs or {})
+            )
+            assert "waiting for free space" in caplog.text
+
+            # Nothing was staged, moved, or rejected. The source is intact.
+            assert os.listdir(app.config["STAGING_DIR"]) == []
+            assert len(app.file_queue) == 0
+            assert basename not in rejected_files(app)
+            assert os.path.exists(source)
+
+            # The title lock is free while the file waits.
+            details = importing.evaluate_filename(source)
+            identifier = json.dumps(
+                {
+                    "title": details.get("title"),
+                    "year": details.get("year"),
+                    "feature_type": details.get("feature_type_name"),
+                    "plex_title": details.get("plex_title"),
+                    "edition": details.get("edition"),
+                }
+            )
+            lock = app.lock_manager.lock(identifier, 1000)
+            assert lock
+            app.lock_manager.unlock(lock)
+
+            # A second wait gets its own id and logs at info level.
+            caplog.clear()
+            assert localization_task(source, space_waits=1) is True
+            assert retry_job_id(
+                "localization_task", f"'{basename}'", 0, 0, "space2"
+            ) in [job.id for job in scheduled_jobs(app.import_queue)]
+            assert "waiting for free space" not in caplog.text
+
+        # With space again, the import goes on to the library copy.
+        importing._free_bytes = real_free
+        with app.app_context():
+            assert localization_task(source, space_waits=2) is True
+            move_jobs = [
+                job
+                for job in app.file_queue.jobs
+                if job.func_name == "app.videos.move_localized_file"
+            ]
+            assert len(move_jobs) == 1
+            os.remove(move_jobs[0].args[3])
+    finally:
+        importing._free_bytes = real_free
+        if os.path.exists(source):
+            os.remove(source)
+
+
+def space_move_fixture(app, incoming_dir, basename):
+    """Make a source and a staged output. Return (source, hidden, details)."""
+
+    source = os.path.join(incoming_dir, basename)
+    with open(source, "wb") as f:
+        f.write(b"untouched source")
+    hidden = os.path.join(app.config["STAGING_DIR"], f".{basename}")
+    with open(hidden, "wb") as f:
+        f.write(b"localized output")
+    details = {
+        "basename": basename,
+        "dirname": f"Movies/{basename.split(' - ')[0]}",
+        "container": "Matroska",
+    }
+    return source, hidden, details
+
+
+def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypatch):
+    """Check the space before the inspection and the copy.
+
+    A full library volume makes the copy wait. The output stays on
+    staging. The task keeps the title lock. Nothing is rejected."""
+
+    from app import importing
+
+    basename = "Full Volume (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+
+    inspected = []
+    monkeypatch.setattr(
+        videos, "inspect_localized_file", lambda *a, **k: inspected.append(a) or {}
+    )
+    monkeypatch.setattr(importing, "_crosses_volumes", lambda *args: True)
+    monkeypatch.setattr(importing, "_free_bytes", lambda path: 0)
+    try:
+        with app.app_context():
+            result = videos.move_localized_file(
+                source, details, "lock-sentinel", hidden
+            )
+        assert result is False
+        assert inspected == []
+
+        waits = [
+            job for job in scheduled_jobs(app.file_queue) if job.id.startswith("retry_")
+        ]
+        assert [job.id for job in waits] == [
+            retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
+        ]
+        assert list(waits[0].args) == [source, details, "lock-sentinel", hidden]
+        assert waits[0].kwargs == {"transient_retries": 0, "space_waits": 1}
+        inspect.signature(videos.move_localized_file).bind(
+            *(waits[0].args or ()), **(waits[0].kwargs or {})
+        )
+        assert os.path.exists(hidden) and os.path.exists(source)
+        assert basename not in rejected_files(app)
+        assert len(app.sql_queue) == 0
+    finally:
+        os.remove(source)
+        os.remove(hidden)
+
+
+def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch):
+    """Wait, and keep the output, when the volume fills during the copy.
+
+    Another import can take the space between the check and the copy.
+    The partial copy goes away. The output on staging stays. The copy
+    tries again later. Nothing is rejected."""
+
+    basename = "Filled Midway (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+    destination_hidden = os.path.join(
+        app.config["LIBRARY_DIR"], details["dirname"], f".{basename}"
+    )
+
+    monkeypatch.setattr(videos, "inspect_localized_file", lambda *a, **k: {})
+
+    def full_during_copy(src, dst, **kwargs):
+        with open(dst, "wb") as f:
+            f.write(b"partial")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(videos, "_rename_with_retries", full_during_copy)
+    try:
+        with app.app_context():
+            result = videos.move_localized_file(
+                source, details, "lock-sentinel", hidden
+            )
+        assert result is False
+        assert not os.path.exists(destination_hidden)
+        assert os.path.exists(hidden) and os.path.exists(source)
+        assert basename not in rejected_files(app)
+        assert len(app.sql_queue) == 0
+        assert retry_job_id("move_localized_file", f"'{basename}'", 0, "space1") in [
+            job.id for job in scheduled_jobs(app.file_queue)
+        ]
+    finally:
+        os.remove(source)
+        os.remove(hidden)
