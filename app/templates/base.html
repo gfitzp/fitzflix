@@ -971,6 +971,11 @@
 			if (event.key === "Escape") cardHide();
 		});
 
+		// A page that replaces its posters in place fires this event
+		// first. The open card then closes. Otherwise it would stay on
+		// the screen after its poster is gone.
+		document.addEventListener("fitzflix:card-hide", cardHide);
+
 		// Plex remote playback: any [data-plex-play] form posts in the
 		// background and reports into its own [data-plex-play-status]
 		// line. This covers the button of the movie page and the poster

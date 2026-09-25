@@ -1115,3 +1115,56 @@ def test_poll_reuses_the_enrichment_of_the_last_poll(app, monkeypatch):
     app.redis.delete(criterion_now.SCHEDULE_KEY)
     assert criterion_now.poll_criterion_now() is True
     assert len(fetched) == 2
+
+
+def test_up_next_posters_carry_the_poster_popover(app, admin_client):
+    """Test that a matched Up next film opens the poster card of the site.
+
+    The poster links to its card by TMDB id and drops the title
+    attribute, which Bootstrap would show as the head of the card. A
+    film with no TMDB match keeps its plain link and its title. The live
+    refresh closes an open card before it replaces the posters."""
+
+    import app.criterion_now as criterion_now
+
+    subscribe_criterion(app)
+    now = datetime.now(timezone.utc)
+
+    def at(minutes):
+        return criterion_now._stamp(now + timedelta(minutes=minutes))
+
+    app.redis.set(
+        criterion_now.NOW_KEY,
+        json.dumps(
+            {"title": "Shock Corridor", "starts_at": at(-10), "ends_at": at(90)}
+        ),
+    )
+    upcoming = [
+        {
+            "title": "Stagecoach",
+            "year": 1939,
+            "tmdb_id": 995,
+            "more_url": "https://www.criterionchannel.com/films/bbbb1111",
+            "starts_at": at(90),
+            "ends_at": at(186),
+        },
+        {
+            "title": "The Hero",
+            "more_url": "https://www.criterionchannel.com/films/cccc2222",
+            "starts_at": at(186),
+            "ends_at": at(300),
+        },
+    ]
+    app.redis.set(
+        criterion_now.SCHEDULE_KEY,
+        json.dumps({"fetched_at": at(0), "upcoming": upcoming}),
+    )
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert 'data-card-url="/movie_card?tmdb_id=995"' in body
+    assert 'title="Stagecoach (1939)"' not in body
+    # Stagecoach has no poster. The link still names the film.
+    assert 'aria-label="Stagecoach (1939)"' in body
+    assert 'title="The Hero"' in body
+    assert body.count('addEventListener("fitzflix:card-hide"') == 1
+    assert body.count('new Event("fitzflix:card-hide")') == 1

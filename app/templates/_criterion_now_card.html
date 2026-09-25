@@ -117,7 +117,12 @@
 			{% set next_href = url_for('main.review_tmdb', tmdb_id=next.tmdb_id) if next.tmdb_id else next.more_url %}
 			{% set next_label = next.title ~ (" (" ~ next.year ~ ")" if next.year else "") %}
 			<div style="flex: 0 0 5rem;">
-				<a{% if next_href %} href="{{ next_href }}"{% endif %} class="text-decoration-none text-body" title="{{ next_label }}">
+				{# A film with a TMDB match gets the poster popover of the
+				   site. Bootstrap would show a title attribute as the head
+				   of the popover. Thus, only a poster with no card keeps
+				   the title. The aria-label names the film in both cases,
+				   also for the placeholder of a film with no poster. #}
+				<a{% if next_href %} href="{{ next_href }}"{% endif %} class="text-decoration-none text-body" aria-label="{{ next_label }}"{% if next.tmdb_id %} data-card-url="{{ url_for('main.movie_card', tmdb_id=next.tmdb_id) }}"{% else %} title="{{ next_label }}"{% endif %}>
 					{% if next.poster_path %}
 						<img src="{{ config['TMDB_IMAGE_URL'] }}/w185{{ next.poster_path }}" loading="lazy" class="img-fluid border rounded w-100" alt="{{ next_label }}">
 					{% else %}

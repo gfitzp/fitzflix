@@ -144,9 +144,15 @@
 				.then(function(html) {
 					var fresh = document.createElement("div");
 					fresh.innerHTML = html;
+					// A replacement removes the Up next posters. Thus, an
+					// open poster card closes first.
+					function closeCard() {
+						document.dispatchEvent(new Event("fitzflix:card-hide"));
+					}
 					if (filmOf(fresh) !== filmOf(holder)) {
 						// A different film (or no film): replace the whole
 						// card.
+						closeCard();
 						holder.innerHTML = html;
 						return;
 					}
@@ -159,6 +165,7 @@
 					var next = holder.querySelector("[data-now-next]");
 					var freshNext = fresh.querySelector("[data-now-next]");
 					if (next && freshNext && next.innerHTML !== freshNext.innerHTML) {
+						closeCard();
 						next.innerHTML = freshNext.innerHTML;
 					}
 				})
