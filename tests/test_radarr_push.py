@@ -355,7 +355,13 @@ def test_movie_folder_prefers_the_plain_folder_of_the_main_feature(app):
         db.session.commit()
 
         assert _movie_folder([edition, extra, plain]) == "Brazil (1985)"
-        assert _movie_folder([edition, extra]) == "Brazil (1985)"
+        # An edition main feature outranks a plain folder that holds only
+        # special features. Radarr finds no movie file in that folder.
+
+        assert _movie_folder([edition, extra]) == (
+            "Brazil (1985) {edition-Love Conquers All Version}"
+        )
+        assert _movie_folder([extra]) == "Brazil (1985)"
         assert _movie_folder([edition]) == (
             "Brazil (1985) {edition-Love Conquers All Version}"
         )

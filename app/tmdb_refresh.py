@@ -241,9 +241,11 @@ def _movie_folder(files):
     A dirname is "Movies/<folder>" or "Movies/<folder>/<feature type>".
     Thus, the second component is the folder. A film can own a plain
     folder and edition folders (Brazil, 1985). Radarr downloads go to
-    the plain folder. Thus, that folder wins. A main feature outranks a
-    special feature. The rows come in a stable order, so the choice is
-    the same on each call."""
+    the plain folder. Thus, the plain folder of a main feature wins.
+    Next is the folder of an edition main feature. A folder that holds
+    only special features is last. Radarr finds no movie file there.
+    The rows come in a stable order, so the choice is the same on each
+    call."""
 
     candidates = []
     for f in files:
@@ -252,7 +254,7 @@ def _movie_folder(files):
             continue
         folder = parts[1]
         candidates.append(
-            ("{edition-" in folder, f.feature_type_id is not None, folder)
+            (f.feature_type_id is not None, "{edition-" in folder, folder)
         )
     if not candidates:
         return None
