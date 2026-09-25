@@ -873,3 +873,33 @@ def profile():
         alerts_form=alerts_form,
         provider_logos={p["provider_id"]: p["logo_path"] for p in picker},
     )
+
+
+@bp.route("/stats")
+@login_required
+def stats():
+    """Show the viewing statistics of the user for 1 year or for all time (#264).
+
+    The year parameter is a year or "all". Without it, the page shows the
+    current year if it has viewings. Otherwise it shows the newest year
+    with viewings."""
+
+    from app.stats import diary_stats, star_label, watched_years
+
+    years = watched_years(int(current_user.id))
+    requested = request.args.get("year")
+    if requested == "all" or not years:
+        year = None
+    elif requested and requested.isdigit() and int(requested) in years:
+        year = int(requested)
+    else:
+        year = years[0]
+
+    return render_template(
+        "stats.html",
+        title=f"Stats: {year}" if year else "Stats: all time",
+        years=years,
+        year=year,
+        stats=diary_stats(int(current_user.id), year),
+        star_label=star_label,
+    )

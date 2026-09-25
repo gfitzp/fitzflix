@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
+
+{# The viewing statistics of the user (#264). The charts are CSS columns,
+   as on the History page. There is no charting library. Each chart has
+   1 series in the primary color. Thus, it needs no legend. The tallest
+   column carries its value. Each column has a hover title, and a table
+   view carries every value. #}
+
+{% macro column_chart(id, label, items, maximum, noun) -%}
+<figure class="mb-0" id="{{ id }}">
+	<div class="stats-chart" role="img" aria-label="{{ label }}">
+		{% for item in items %}
+		{% set percent = (item.count / maximum * 100) if maximum else 0 %}
+		<div class="stats-slot" title="{{ item.title or item.label }}: {{ item.count }} {{ noun }}{{ 's' if item.count != 1 }}">
+			<div class="stats-column{% if not item.count %} stats-empty{% endif %}" style="height: {{ percent }}%;">{% if maximum and item.count == maximum %}<span class="stats-peak small text-body-secondary">{{ item.count }}</span>{% endif %}</div>
+		</div>
+		{% endfor %}
+	</div>
+	{# A long axis shows every other label on a phone. The hover title
+	   and the table still carry each value. #}
+	{% set longest = items | map(attribute="label") | map("length") | max %}
+	<div class="stats-axis small text-body-secondary{% if items | length * longest > 40 %} stats-crowded{% endif %}">
+		{% for item in items %}<span>{{ item.label }}</span>{% endfor %}
+	</div>
+	<details class="small mt-1">
+		<summary class="text-body-secondary">Show as a table</summary>
+		<table class="table table-sm w-auto mt-1">
+			<tbody>
+				{% for item in items %}
+				<tr><th scope="row" class="fw-normal">{{ item.title or item.label }}</th><td class="text-end">{{ item.count }}</td></tr>
+				{% endfor %}
+			</tbody>
+		</table>
+	</details>
+</figure>
+{%- endmacro %}
+
+{# A numbered list of the top entries. kind "person" links each name to
+   the filmography of the person. Other entries are plain text. #}
+{% macro ranked_list(id, heading, items, kind=none) -%}
+<div class="col-12 col-md-6 col-lg-4 mb-4" id="{{ id }}">
+	<h5>{{ heading }}</h5>
+	{% if items %}
+	<ol class="list-group list-group-numbered">
+		{% for item in items %}
+		<li class="list-group-item d-flex justify-content-between align-items-start">
+			<span class="ms-2 me-auto">{% if kind == "person" %}<a href="{{ url_for('main.movie_library', credit=item.id) }}" class="text-decoration-none">{{ item.name }}</a>{% else %}{{ item.name }}{% endif %}</span>
+			<span class="text-body-secondary small text-nowrap" title="{{ item.viewings }} viewing{{ 's' if item.viewings != 1 }} of {{ item.films }} film{{ 's' if item.films != 1 }}">{{ item.viewings }}{% if item.films != item.viewings %} ({{ item.films }} film{{ 's' if item.films != 1 }}){% endif %}</span>
+		</li>
+		{% endfor %}
+	</ol>
+	{% else %}
+	<p class="text-body-secondary">Nothing yet.</p>
+	{% endif %}
+</div>
+{%- endmacro %}
+
+{% block app_content %}
+<style>
+	/* The top padding holds the value label of the tallest column. The
+	   label sits above its column. Thus, it never shortens the column. */
+	.stats-chart { display: flex; align-items: flex-end; gap: 2px; height: 180px; padding-top: 1.25rem; border-bottom: 1px solid var(--bs-border-color); }
+	.stats-slot { flex: 1 1 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; min-width: 0; }
+	.stats-column { position: relative; width: 100%; max-width: 24px; min-height: 2px; background: var(--bs-primary); border-radius: 4px 4px 0 0; }
+	.stats-column.stats-empty { background: transparent; }
+	.stats-slot:hover .stats-column:not(.stats-empty) { opacity: 0.75; }
+	.stats-peak { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); line-height: 1.4; white-space: nowrap; }
+	.stats-axis { display: flex; gap: 2px; }
+	.stats-axis span { flex: 1 1 0; min-width: 0; text-align: center; overflow: visible; white-space: nowrap; font-size: 0.7rem; }
+	@media (max-width: 575.98px) {
+		.stats-axis.stats-crowded span:nth-child(even) { visibility: hidden; }
+	}
+	.stats-figure { font-size: 2rem; font-weight: 600; line-height: 1.1; }
+</style>
+
+{% call page_header('My Stats') %}
+<div class="d-flex flex-wrap gap-1" role="group" aria-label="Period">
+	<a href="{{ url_for('main.stats', year='all') }}" class="btn btn-sm {{ 'btn-primary' if not year else 'btn-outline-secondary' }}"{% if not year %} aria-current="page"{% endif %}>All time</a>
+	{% for y in years %}
+	<a href="{{ url_for('main.stats', year=y) }}" class="btn btn-sm {{ 'btn-primary' if y == year else 'btn-outline-secondary' }}"{% if y == year %} aria-current="page"{% endif %}>{{ y }}</a>
+	{% endfor %}
+</div>
+{% endcall %}
+
+{% set totals = stats.totals %}
+{% if not totals.viewings %}
+<p class="text-body-secondary">No dated viewings yet. The stats count the films in your diary that have a watch date.</p>
+{% else %}
+<div class="row g-3 mb-4" id="stats-totals">
+	<div class="col-6 col-md-3">
+		<div class="text-body-secondary small">Films watched</div>
+		<div class="stats-figure">{{ "{:,}".format(totals.viewings) }}</div>
+		{% if totals.films != totals.viewings %}<div class="small text-body-secondary">{{ "{:,}".format(totals.films) }} different films</div>{% endif %}
+	</div>
+	<div class="col-6 col-md-3">
+		<div class="text-body-secondary small">Hours</div>
+		<div class="stats-figure">{{ "{:,}".format(totals.hours) }}</div>
+		<div class="small text-body-secondary">From the TMDB runtimes</div>
+	</div>
+	<div class="col-6 col-md-3">
+		<div class="text-body-secondary small">First watches</div>
+		<div class="stats-figure">{{ "{:,}".format(totals.first_watches) }}</div>
+		<div class="small text-body-secondary">{{ totals.rewatches }} rewatch{{ 'es' if totals.rewatches != 1 }}</div>
+	</div>
+	<div class="col-6 col-md-3">
+		<div class="text-body-secondary small">Average rating</div>
+		<div class="stats-figure">{% if totals.average is not none %}{{ totals.average }}&#8239;&#9733;{% else %}&mdash;{% endif %}</div>
+		<div class="small text-body-secondary">From {{ totals.rated }} rated viewing{{ 's' if totals.rated != 1 }}</div>
+	</div>
+</div>
+
+<div class="row mb-4">
+	<div class="col-12 col-lg-7 mb-4">
+		<h5>{{ "Films by month" if year else "Films by year" }}</h5>
+		{{ column_chart("stats-periods", ("Films watched in each month of " ~ year) if year else "Films watched in each year", stats.periods, stats.periods_max, "film") }}
+	</div>
+	<div class="col-12 col-lg-5 mb-4">
+		<h5>Ratings</h5>
+		{{ column_chart("stats-ratings", "Viewings at each rating", stats.ratings, stats.ratings_max, "viewing") }}
+	</div>
+	<div class="col-12 col-lg-7 mb-4">
+		<h5>Release decades</h5>
+		{{ column_chart("stats-decades", "Viewings of films from each decade", stats.decades, stats.decades_max, "viewing") }}
+	</div>
+</div>
+
+<div class="row">
+	{{ ranked_list("stats-directors", "Directors", stats.directors, kind="person") }}
+	{{ ranked_list("stats-cast", "Actors", stats.cast, kind="person") }}
+	{{ ranked_list("stats-countries", "Countries", stats.countries) }}
+	<div class="col-12 col-md-6 col-lg-4 mb-4" id="stats-most-watched">
+		<h5>Most watched</h5>
+		{% if stats.most_watched %}
+		<ol class="list-group list-group-numbered">
+			{% for film in stats.most_watched %}
+			<li class="list-group-item d-flex justify-content-between align-items-start">
+				<span class="ms-2 me-auto"><a href="{{ url_for('main.movie', movie_id=film.id) }}" class="text-decoration-none">{{ film.title }} ({{ film.year }})</a></span>
+				<span class="text-body-secondary small text-nowrap">{{ film.viewings }} times</span>
+			</li>
+			{% endfor %}
+		</ol>
+		{% else %}
+		<p class="text-body-secondary">No film was watched more than once.</p>
+		{% endif %}
+	</div>
+</div>
+<p class="small text-body-secondary">The stats count the diary rows with a watch date. A rating with no date is not a viewing. The actors are the first 10 billed of each film.</p>
+{% endif %}
+{% endblock %}
