@@ -34,8 +34,8 @@ ACCOUNT_URL = "https://plex.tv/api/v2/user"
 SNAPSHOT_KEY = "fitzflix:plex:watchlist:synced"
 
 # Films that cannot sync because of their structure. Plex accepted the
-# add, but the item never appears. Buried Loot (1935) was the first
-# case. These films stay on the Fitzflix watchlist. The sync skips them
+# add, but the item never appears (Buried Loot, 1935). Or Plex refused
+# the add with a client error (A Turning Point, 1984). These films stay on the Fitzflix watchlist. The sync skips them
 # without churn. Delete the set to retry them.
 
 UNSYNCABLE_KEY = "fitzflix:plex:watchlist:unsyncable"
@@ -45,6 +45,25 @@ PAGE_SIZE = 100
 # is not a mass removal. Do not propagate deletions from it.
 
 ANOMALY_FLOOR = 10
+
+# Plex refuses some matched films with a client error (A Turning Point,
+# 1984, gets a 400). A retry gets the same answer. Thus, these codes put
+# the film into the unsyncable set. Auth and rate-limit codes are about
+# the token or the load. They are not about the film, so they retry.
+
+RETRYABLE_CLIENT_ERRORS = {401, 403, 408, 429}
+
+
+def _refused_by_plex(error):
+    """Return True if Plex refused the request for this item.
+
+    That is an HTTP 4xx that is not about the token or the load."""
+
+    response = getattr(error, "response", None)
+    if not isinstance(error, requests.HTTPError) or response is None:
+        return False
+    status = response.status_code
+    return 400 <= status < 500 and status not in RETRYABLE_CLIENT_ERRORS
 
 
 def _plex_get(url, params=None):
@@ -282,9 +301,18 @@ def sync_plex_watchlist():
                 attempted.add(tmdb_id)
                 pushed += 1
             except Exception as e:
-                current_app.logger.warning(
-                    f"Plex watchlist: couldn't add tmdb {tmdb_id}: {e}"
-                )
+                if _refused_by_plex(e):
+                    current_app.logger.warning(
+                        f"Plex watchlist: Plex refused the add for tmdb "
+                        f"{tmdb_id} ({e.response.status_code}). Marking it "
+                        f"unsyncable. It stays on the Fitzflix watchlist. "
+                        f"Clear {UNSYNCABLE_KEY} to retry."
+                    )
+                    current_app.redis.sadd(UNSYNCABLE_KEY, tmdb_id)
+                else:
+                    current_app.logger.warning(
+                        f"Plex watchlist: couldn't add tmdb {tmdb_id}: {e}"
+                    )
                 synced.discard(tmdb_id)
                 failed += 1
 

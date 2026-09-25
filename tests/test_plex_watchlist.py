@@ -7,6 +7,8 @@ removal."""
 
 import json
 
+import requests
+
 from app import db
 from app.models import Movie, User, UserWatchlist
 from tests.factories import make_movie
@@ -52,6 +54,7 @@ class FakePlex:
             }
         self.unmatched = set(unmatched)
         self.phantom = set(phantom)
+        self.refused = {}
         self.adds = []
         self.removes = []
 
@@ -115,6 +118,11 @@ class FakePlex:
     def put(self, path, rating_key):
         item = self.items[rating_key]
         if path == "addToWatchlist":
+            status = self.refused.get(item["ids"][0])
+            if status:
+                response = requests.Response()
+                response.status_code = status
+                raise requests.HTTPError(f"{status} Client Error", response=response)
             self.adds.append(item["ids"][0])
             if not set(item["ids"]) & self.phantom:
                 item["listed"] = True
@@ -315,6 +323,39 @@ def test_phantom_add_goes_unsyncable_not_removed(app, monkeypatch):
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fake.adds == [130344]
         assert fitzflix_watchlist_tmdb_ids(user_id) == {130344}
+
+
+def test_refused_add_goes_unsyncable_and_auth_errors_retry(app, monkeypatch):
+    """Test that a 400 on an add goes into the unsyncable set.
+
+    Plex matches A Turning Point (1984) but refuses the add with a 400
+    on each run. The film must stay on the Fitzflix watchlist and stop
+    the retries. A 401 is about the token. Thus, the other film retries."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        for title, tmdb_id in (("A Turning Point", 471036), ("Locked Out", 471099)):
+            movie = make_movie(title, 1984, tmdb_id=tmdb_id)
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        fake = FakePlex({})
+        fake.refused = {471036: 400, 471099: 401}
+        wire(app, monkeypatch, fake)
+        assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert fake.adds == []
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {471036, 471099}
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == []
+        assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) == {b"471036"}
+
+        # The next run skips the refused film and retries the other one.
+        fake.refused = {}
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fake.adds == [471099]
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {471036, 471099}
 
 
 def test_tv_shows_on_the_plex_watchlist_are_ignored(app, monkeypatch):
