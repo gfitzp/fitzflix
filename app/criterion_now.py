@@ -72,7 +72,15 @@ UP_NEXT_SHOWN = 4
 # the card must hide, as before.
 
 SCHEDULE_TRUST = timedelta(hours=6)
-STAMP = "%Y-%m-%d %H:%M:%S"
+
+# Redis holds the times as UTC stamps. Local wall-clock stamps repeat 1
+# hour when the clocks go back. Thus, they cannot tell the 2 halves of
+# that hour apart. The card converts to local time only for display.
+# LEGACY_STAMP is the local form that polls before 2026-09-24 stored.
+# The reader still takes it until the next poll replaces it.
+
+STAMP = "%Y-%m-%dT%H:%M:%SZ"
+LEGACY_STAMP = "%Y-%m-%d %H:%M:%S"
 
 # The time after the expected end. The card continues to show the film
 # during this time. The next poll normally arrives exactly at the end.
@@ -81,63 +89,29 @@ STAMP = "%Y-%m-%d %H:%M:%S"
 
 STALE_GRACE = timedelta(minutes=15)
 
+# The page is a cached Next.js render. Just after a film ends, it can
+# still show the title of that film. A poll that reads such a stale
+# heading tries again after STALE_RETRY. It does not store the old film.
+
+STALE_RETRY = timedelta(seconds=45)
+
+# The heading can also be ahead of the clock by some seconds. A later
+# entry with the title of the heading is the current film only if it
+# starts within this time. A rerun days later is a different showing.
+
+EARLY_START = timedelta(minutes=5)
+
 TITLE_RE = re.compile(r'<h1 class="[^"]*__title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.S)
 
-# The schedule of the feed sits in the data of the Next.js app. There,
-# each quotation mark is escaped as \". The same regex must also read
-# plain JSON. Thus, the quotation mark is optional-backslash-quote.
+# The schedule of the feed sits in the data of the Next.js app. The
+# page sends that data as JavaScript string literals in
+# self.__next_f.push calls. The parser decodes each literal as a JSON
+# string and joins them. Then it reads the schedule array as JSON. A
+# regex over the escaped text misread entries that have no guid
+# (Point of Order!, 2026-09-24).
 
-_Q = r'\\?"'
-
-# Each field stops at the next quotation mark that is not escaped. A
-# match never crosses into the next entry. The tempered dot below
-# refuses to step over the start of the next entry.
-
-_FIELD = r"(?:[^\"\\]|\\.)*?"
-_WITHIN_ENTRY = r"(?:(?!startTime).)*?"
-SCHEDULE_RE = re.compile(
-    _Q
-    + r"startTime"
-    + _Q
-    + r":"
-    + _Q
-    + r"(?P<start>"
-    + _FIELD
-    + r")"
-    + _Q
-    + r","
-    + _Q
-    + r"endTime"
-    + _Q
-    + r":"
-    + _Q
-    + r"(?P<end>"
-    + _FIELD
-    + r")"
-    + _Q
-    + r","
-    + _Q
-    + r"episodeTitle"
-    + _Q
-    + r":"
-    + _Q
-    + r"(?P<title>"
-    + _FIELD
-    + r")"
-    + _Q
-    + r","
-    + _WITHIN_ENTRY
-    + _Q
-    + r"guid"
-    + _Q
-    + r":"
-    + _Q
-    + r"(?P<guid>"
-    + _FIELD
-    + r")"
-    + _Q,
-    re.S,
-)
+PUSH_RE = re.compile(r'self\.__next_f\.push\(\[1,\s*("(?:[^"\\]|\\.)*")\]\)', re.S)
+SCHEDULE_START_RE = re.compile(r'"schedule"\s*:\s*\[')
 FILM_LINK_RE = re.compile(r'href="(/films/[^"]+)"')
 LIVE_LINK_RE = re.compile(r'href="(https://www\.criterionchannel\.com/live/[^"]+)"')
 JSON_LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
@@ -167,59 +141,121 @@ def _parse_utc(stamp):
         return None
 
 
+def _app_data(page_html):
+    """Return the decoded Next.js data of the page, or an empty string."""
+
+    parts = []
+    for match in PUSH_RE.finditer(page_html):
+        try:
+            parts.append(json.loads(match.group(1)))
+        except ValueError:
+            continue
+    return "".join(parts)
+
+
+def _schedule_array(page_html):
+    """Return the schedule of the page as a list of dicts.
+
+    The parser looks in the decoded Next.js data first. Then it looks
+    in the page text, which is plain JSON in some test pages. The first
+    array that decodes is the schedule."""
+
+    decoder = json.JSONDecoder()
+    for text in (_app_data(page_html), page_html):
+        for match in SCHEDULE_START_RE.finditer(text):
+            try:
+                array, _ = decoder.raw_decode(text, match.end() - 1)
+            except ValueError:
+                continue
+            if isinstance(array, list):
+                return [entry for entry in array if isinstance(entry, dict)]
+    return []
+
+
 def _schedule_entries(page_html):
     """Return the schedule entries of the page as (start, end, title, guid).
 
     The entries are in the order of the page. An entry with a time that
-    does not parse is left out."""
+    does not parse, or with no title, is left out. Some entries have no
+    guid. Their guid is None."""
 
     entries = []
-    for match in SCHEDULE_RE.finditer(page_html):
-        start = _parse_utc(match.group("start"))
-        end = _parse_utc(match.group("end"))
-        if not (start and end):
+    for entry in _schedule_array(page_html):
+        start = _parse_utc(str(entry.get("startTime") or ""))
+        end = _parse_utc(str(entry.get("endTime") or ""))
+        title = _clean_text(str(entry.get("episodeTitle") or entry.get("title") or ""))
+        if not (start and end and title):
             continue
-        title = _clean_text(re.sub(r"\\+(.)", r"\1", match.group("title")))
-        entries.append((start, end, title, match.group("guid")))
+        entries.append((start, end, title, entry.get("guid") or None))
     return entries
 
 
 def _current_slot(entries, title, now):
-    """Return the schedule entry of the film with this title, or None.
+    """Return (entry, stale) for the film with this title.
 
     The entry whose window contains now wins if its title agrees with
     the heading. At a film boundary the heading and the clock can
-    disagree. Then the next entry with this title wins. A title that is
-    in no entry gives None. Fitzflix never guesses an end time."""
+    disagree. A heading ahead of the clock gets the entry that starts
+    within EARLY_START. A rerun later in the schedule does not count.
+    A heading behind the clock names a film that ended within
+    STALE_GRACE. Then the page is stale. The result is (None, True),
+    and the poller tries again soon. A title that is in no entry gives
+    (None, False). Fitzflix never guesses an end time."""
 
     wanted = title.casefold()
-    fallback = None
+    early = None
+    stale = False
     for entry in entries:
         start, end, entry_title, _ = entry
-        if end <= now or entry_title.casefold() != wanted:
+        if entry_title.casefold() != wanted:
             continue
-        if start <= now:
-            return entry
-        if fallback is None or start < fallback[0]:
-            fallback = entry
-    return fallback
+        if start <= now < end:
+            return entry, False
+        if now < start <= now + EARLY_START:
+            if early is None or start < early[0]:
+                early = entry
+        elif end <= now < end + STALE_GRACE:
+            stale = True
+    if early is not None:
+        return early, False
+    return None, stale
 
 
-def _local_stamp(moment):
-    """Return an aware datetime as the local wall-clock string of Fitzflix."""
+def _stamp(moment):
+    """Return an aware datetime as the UTC stamp that Redis holds."""
 
-    return moment.astimezone().strftime(STAMP)
+    return moment.astimezone(timezone.utc).strftime(STAMP)
+
+
+def _parse_stamp(stamp):
+    """Return an aware UTC datetime from a stored stamp.
+
+    A UTC stamp parses directly. A legacy local stamp gets the local
+    zone of the host. A value that does not parse raises ValueError."""
+
+    try:
+        return datetime.strptime(stamp, STAMP).replace(tzinfo=timezone.utc)
+    except ValueError:
+        local = datetime.strptime(stamp, LEGACY_STAMP)
+        return local.astimezone().astimezone(timezone.utc)
+
+
+def _clock(moment):
+    """Return an aware datetime as a local clock time for display."""
+
+    return moment.astimezone().strftime("%-I:%M %p")
 
 
 def parse_whatson_page(page_html, now=None):
     """Return the current film and the upcoming films of the now-playing page.
 
     The result is a dict with title, more_url, starts_at, ends_at, and
-    upcoming. The times are aware datetimes, or None. Upcoming is a
-    list of dicts with title, more_url, starts_at, and ends_at as local
-    wall-clock strings. The result is None if the title is not found.
-    An end time that does not parse comes back as None. Then the
-    poller does a short retry. It does not trust a guess."""
+    upcoming, and stale. The times are aware datetimes, or None.
+    Upcoming is a list of dicts with title, more_url, starts_at, and
+    ends_at as UTC stamps. The result is None if the title is not
+    found. An end time that does not parse comes back as None. Then the
+    poller does a short retry. It does not trust a guess. Stale is True
+    when the heading names a film that just ended."""
 
     title_match = TITLE_RE.search(page_html)
     if not title_match:
@@ -228,7 +264,7 @@ def parse_whatson_page(page_html, now=None):
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
-    slot = _current_slot(entries, title, now)
+    slot, stale = _current_slot(entries, title, now)
 
     starts_at = ends_at = guid = None
     if slot:
@@ -249,15 +285,18 @@ def parse_whatson_page(page_html, now=None):
 
     # The films after the current 1, in order. Without a current entry,
     # the films that start after now. The short film link by id
-    # redirects to the full film page.
+    # redirects to the full film page. An entry with no guid has no
+    # link.
 
     horizon = ends_at or now
     upcoming = [
         {
             "title": entry_title,
-            "more_url": f"{CHANNEL_ORIGIN}/films/{entry_guid}",
-            "starts_at": _local_stamp(start),
-            "ends_at": _local_stamp(end),
+            "more_url": (
+                f"{CHANNEL_ORIGIN}/films/{entry_guid}" if entry_guid else None
+            ),
+            "starts_at": _stamp(start),
+            "ends_at": _stamp(end),
         }
         for start, end, entry_title, entry_guid in sorted(entries)
         if start >= horizon
@@ -269,6 +308,7 @@ def parse_whatson_page(page_html, now=None):
         "starts_at": starts_at,
         "ends_at": ends_at,
         "upcoming": upcoming,
+        "stale": stale,
     }
 
 
@@ -433,9 +473,10 @@ def _enriched_entry(title, more_url):
 def poll_criterion_now():
     """Scrape the now-playing page, store the film and the schedule, and poll again.
 
-    This is a task. It enriches the current film and the next film. It
-    schedules itself again for a time just after the current film
-    ends."""
+    This is a task. It enriches the current film and the upcoming
+    films. It schedules itself again for a time just after the current
+    film ends. A stale page changes nothing in Redis. Then the task
+    tries again after STALE_RETRY."""
 
     with app.app_context():
         next_delay = timedelta(minutes=30)
@@ -446,10 +487,16 @@ def poll_criterion_now():
             parsed = parse_whatson_page(r.text, now)
             watch_url = parse_watch_live_url(r.text) or WATCH_LIVE_URL
 
-            if parsed:
+            if parsed and parsed["stale"]:
+                current_app.logger.info(
+                    f"Criterion 24/7 now: the page still shows "
+                    f"'{parsed['title']}', which ended. Trying again soon."
+                )
+                next_delay = STALE_RETRY
+            elif parsed:
                 title = parsed["title"]
                 ends_at = parsed["ends_at"]
-                fetched_at = datetime.now().strftime(STAMP)
+                fetched_at = _stamp(now)
                 current_app.redis.set(
                     NOW_KEY,
                     json.dumps(
@@ -458,11 +505,11 @@ def poll_criterion_now():
                             "more_url": parsed["more_url"],
                             "watch_url": watch_url,
                             "starts_at": (
-                                _local_stamp(parsed["starts_at"])
+                                _stamp(parsed["starts_at"])
                                 if parsed["starts_at"]
                                 else None
                             ),
-                            "ends_at": _local_stamp(ends_at) if ends_at else None,
+                            "ends_at": _stamp(ends_at) if ends_at else None,
                             "fetched_at": fetched_at,
                             **_enriched_entry(title, parsed["more_url"]),
                         }
@@ -485,7 +532,7 @@ def poll_criterion_now():
                 )
 
                 end_note = (
-                    f"next film at {_local_stamp(ends_at)}"
+                    f"next film at {_clock(ends_at)}"
                     if ends_at
                     else "end time unreadable"
                 )
@@ -574,10 +621,10 @@ def _stored_schedule():
         return []
     stored = json.loads(payload)
     try:
-        fetched_at = datetime.strptime(stored.get("fetched_at") or "", STAMP)
+        fetched_at = _parse_stamp(stored.get("fetched_at") or "")
     except ValueError:
         return []
-    if fetched_at < datetime.now() - SCHEDULE_TRUST:
+    if fetched_at < datetime.now(timezone.utc) - SCHEDULE_TRUST:
         return []
     return stored.get("upcoming") or []
 
@@ -587,18 +634,23 @@ def _turned_over(stored, upcoming, now):
 
     The stored film is the film of the last poll. When its end time has
     passed, the upcoming entry whose window contains now is the film.
-    The entries after it are the new upcoming list. Before the end
-    time, or without a matching entry, the stored film stays."""
+    The entries after it are the new upcoming list. An entry that ended
+    within STALE_GRACE is the film only if no entry contains now. Thus,
+    the film that is on wins over the film that just ended. Before the
+    end time, or without a matching entry, the stored film stays."""
 
     ends_at = stored.get("ends_at")
-    if not ends_at or datetime.strptime(ends_at, STAMP) > now:
+    if not ends_at or _parse_stamp(ends_at) > now:
         return stored, upcoming
-    for index, entry in enumerate(upcoming):
-        starts = datetime.strptime(entry["starts_at"], STAMP)
-        ends = datetime.strptime(entry["ends_at"], STAMP)
-        if starts <= now < ends + STALE_GRACE:
-            film = {**entry, "watch_url": stored.get("watch_url")}
-            return film, upcoming[index + 1 :]
+    windows = [
+        (index, _parse_stamp(entry["starts_at"]), _parse_stamp(entry["ends_at"]))
+        for index, entry in enumerate(upcoming)
+    ]
+    for grace in (timedelta(0), STALE_GRACE):
+        for index, starts, ends in windows:
+            if starts <= now < ends + grace:
+                film = {**upcoming[index], "watch_url": stored.get("watch_url")}
+                return film, upcoming[index + 1 :]
     return stored, upcoming
 
 
@@ -610,7 +662,7 @@ def _up_next(upcoming):
 
     previews = []
     for entry in upcoming[:UP_NEXT_SHOWN]:
-        starts_at = datetime.strptime(entry["starts_at"], STAMP)
+        starts_at = _parse_stamp(entry["starts_at"])
         previews.append(
             {
                 "title": entry["title"],
@@ -618,7 +670,7 @@ def _up_next(upcoming):
                 "tmdb_id": entry.get("tmdb_id"),
                 "poster_path": entry.get("poster_path"),
                 "more_url": entry.get("more_url"),
-                "starts_at": starts_at.strftime("%-I:%M %p"),
+                "starts_at": _clock(starts_at),
             }
         )
     return previews
@@ -637,17 +689,17 @@ def criterion_now_card(user):
     payload = current_app.redis.get(NOW_KEY)
     if not payload:
         return None
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     stored, upcoming = _turned_over(json.loads(payload), _stored_schedule(), now)
 
     next_at = None
     ends_at = None
     if stored.get("ends_at"):
-        ends_at = datetime.strptime(stored["ends_at"], STAMP)
+        ends_at = _parse_stamp(stored["ends_at"])
         if ends_at < now - STALE_GRACE:
             return None
         if ends_at > now:
-            next_at = ends_at.strftime("%-I:%M %p")
+            next_at = _clock(ends_at)
 
     tmdb_id = stored.get("tmdb_id")
     payload = enriched_movie(tmdb_id) if tmdb_id else None
@@ -666,7 +718,7 @@ def criterion_now_card(user):
     runtime = (payload or {}).get("runtime")
     if ends_at is not None and now <= ends_at:
         if stored.get("starts_at"):
-            started = datetime.strptime(stored["starts_at"], STAMP)
+            started = _parse_stamp(stored["starts_at"])
         elif runtime:
             started = ends_at - timedelta(minutes=runtime)
         else:

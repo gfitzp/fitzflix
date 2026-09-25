@@ -103,9 +103,10 @@ def test_parse_whatson_page_reads_title_link_and_schedule(app):
     assert parsed["upcoming"][0]["more_url"] == (
         "https://www.criterionchannel.com/films/bbbb1111"
     )
-    assert parsed["upcoming"][0]["starts_at"] == parsed[
-        "ends_at"
-    ].astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    assert parsed["upcoming"][0]["starts_at"] == parsed["ends_at"].strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    assert parsed["stale"] is False
 
     assert (
         parse_watch_live_url(WHATSON_HTML)
@@ -117,15 +118,26 @@ def test_parse_whatson_page_reads_title_link_and_schedule(app):
     # can name the next film before the clock enters its window. Then
     # the end time of that next entry wins
     parsed = parse_whatson_page(
-        whatson_html(minutes_left=83).replace(
+        whatson_html(minutes_left=1).replace(
             '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
             '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
         )
     )
     assert parsed["title"] == "Stagecoach"
     left = parsed["ends_at"] - datetime.now(timezone.utc)
-    assert timedelta(minutes=177) < left <= timedelta(minutes=178)
+    assert timedelta(minutes=95) < left <= timedelta(minutes=96)
     assert parsed["upcoming"] == []
+
+    # A later showing that starts well after now is a rerun, not the
+    # film that is on. It gives no end time.
+    parsed = parse_whatson_page(
+        whatson_html(minutes_left=83).replace(
+            '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
+            '<h1 class="Hero-module-less-module__epcjfa__title">Stagecoach',
+        )
+    )
+    assert parsed["ends_at"] is None
+    assert parsed["stale"] is False
 
     # A heading that is in no schedule entry gives no end time. Fitzflix
     # never guesses. The 1st film link on the page is still the film.
@@ -145,6 +157,92 @@ def test_parse_whatson_page_reads_title_link_and_schedule(app):
     assert [entry["title"] for entry in parsed["upcoming"]] == ["Stagecoach"]
 
     assert parse_whatson_page("<html>redesigned</html>") is None
+
+
+def test_schedule_entries_without_a_guid_stay_separate(app):
+    """Test that an entry with no guid does not swallow the next entry.
+
+    Some schedule entries have no guid (Point of Order!, 2026-09-24).
+    A regex over the escaped data ran the title of such an entry into
+    the next entry. Then the next film dropped out of the schedule."""
+
+    from app.criterion_now import _schedule_entries, parse_whatson_page
+
+    page = (
+        whatson_html()
+        .replace('\\"guid\\":\\"aaaa0000\\",', "")
+        .replace('\\"guid\\":\\"bbbb1111\\",', "")
+    )
+    assert "aaaa0000" not in page and "bbbb1111" not in page
+
+    entries = _schedule_entries(page)
+    assert [(title, guid) for _, _, title, guid in entries] == [
+        ("Black Girl", None),
+        ("Shock Corridor", "8rWb21ax"),
+        ("Stagecoach", None),
+    ]
+
+    parsed = parse_whatson_page(page)
+    assert parsed["ends_at"] is not None
+    assert parsed["upcoming"][0]["title"] == "Stagecoach"
+    assert parsed["upcoming"][0]["more_url"] is None
+
+
+def test_stale_heading_keeps_the_stored_film_and_retries(app, monkeypatch):
+    """Test that a heading of a film that just ended changes nothing.
+
+    The page is a cached render. Just after a film ends, it can still
+    show that film. The poll must not store the old film with no end
+    time. It tries again after STALE_RETRY."""
+
+    import app.criterion_now as criterion_now
+
+    # Black Girl ended 11 minutes ago. Shock Corridor is on.
+    page = whatson_html(minutes_left=90).replace(
+        '<h1 class="Hero-module-less-module__epcjfa__title">Shock Corridor',
+        '<h1 class="Hero-module-less-module__epcjfa__title">Black Girl',
+    )
+    parsed = criterion_now.parse_whatson_page(page)
+    assert parsed["stale"] is True
+    assert parsed["ends_at"] is None
+
+    def fake_requests_get(url, timeout=None):
+        class FakeResponse:
+            text = page
+
+            def raise_for_status(self):
+                """Never an HTTP error."""
+
+        return FakeResponse()
+
+    monkeypatch.setattr(criterion_now.requests, "get", fake_requests_get)
+    with app.app_context():
+        app.redis.set(criterion_now.NOW_KEY, json.dumps({"title": "Kept Film"}))
+        assert criterion_now.poll_criterion_now() is True
+        assert json.loads(app.redis.get(criterion_now.NOW_KEY)) == {
+            "title": "Kept Film"
+        }
+        registry = app.maintenance_queue.scheduled_job_registry
+        booked = registry.get_scheduled_time(criterion_now.POLL_JOB_ID)
+        wait = booked.astimezone() - datetime.now(timezone.utc)
+        assert timedelta(seconds=30) < wait <= criterion_now.STALE_RETRY
+
+
+def test_stamps_are_utc_and_legacy_stamps_still_read(app):
+    """Test the stored time format.
+
+    Redis holds UTC stamps. A local stamp repeats in the hour when the
+    clocks go back. The reader still takes the local stamps of older
+    polls."""
+
+    from app.criterion_now import _parse_stamp, _stamp
+
+    moment = datetime(2026, 11, 1, 6, 10, tzinfo=timezone.utc)
+    assert _stamp(moment) == "2026-11-01T06:10:00Z"
+    assert _parse_stamp("2026-11-01T06:10:00Z") == moment
+
+    local = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    assert _parse_stamp(local).tzinfo is not None
 
 
 def test_parse_film_info_reads_the_schema_block(app):
@@ -214,9 +312,14 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
     assert stored["director"] == "Samuel Fuller"
     assert stored["tmdb_id"] == 33667
     assert stored["poster_path"] == "/shock.jpg"
-    ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%d %H:%M:%S")
-    assert timedelta(minutes=82) < ends_at - datetime.now() <= timedelta(minutes=83)
-    starts_at = datetime.strptime(stored["starts_at"], "%Y-%m-%d %H:%M:%S")
+    ends_at = datetime.strptime(stored["ends_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+    left = ends_at - datetime.now(timezone.utc)
+    assert timedelta(minutes=82) < left <= timedelta(minutes=83)
+    starts_at = datetime.strptime(stored["starts_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
     assert ends_at - starts_at == timedelta(minutes=101)
 
     # The upcoming films are stored with the same enrichment as the
@@ -234,7 +337,7 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
         registry = app.maintenance_queue.scheduled_job_registry
         assert criterion_now.POLL_JOB_ID in registry.get_job_ids()
         booked = registry.get_scheduled_time(criterion_now.POLL_JOB_ID)
-        expected = ends_at.astimezone() + criterion_now.POLL_CUSHION
+        expected = ends_at + criterion_now.POLL_CUSHION
         assert abs((booked.astimezone() - expected).total_seconds()) < 2
 
         # A second run replaces the scheduled poll. It does not add a
@@ -894,3 +997,33 @@ def test_card_turns_over_from_the_stored_schedule(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "Shock Corridor (1963)" in body
     assert ">Up next<" not in body
+
+
+def test_turnover_prefers_the_film_that_is_on(app):
+    """Test that the film that is on wins over the film that just ended.
+
+    A failed poll at a boundary leaves the stored film 2 entries back.
+    The entry that ended within STALE_GRACE also meets the grace test.
+    The entry whose window contains now must still win."""
+
+    from app.criterion_now import _stamp, _turned_over
+
+    now = datetime.now(timezone.utc)
+
+    def at(minutes):
+        return _stamp(now + timedelta(minutes=minutes))
+
+    stored = {"title": "Shock Corridor", "ends_at": at(-100)}
+    upcoming = [
+        {"title": "Stagecoach", "starts_at": at(-100), "ends_at": at(-5)},
+        {"title": "The Hero", "starts_at": at(-5), "ends_at": at(90)},
+        {"title": "Black Girl", "starts_at": at(90), "ends_at": at(160)},
+    ]
+    film, rest = _turned_over(stored, upcoming, now)
+    assert film["title"] == "The Hero"
+    assert [entry["title"] for entry in rest] == ["Black Girl"]
+
+    # With no entry on now, the film that just ended stays on the card
+    # through the grace.
+    film, rest = _turned_over(stored, upcoming[:1], now)
+    assert film["title"] == "Stagecoach"
