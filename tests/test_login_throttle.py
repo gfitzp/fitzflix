@@ -146,7 +146,7 @@ def test_redis_fault_lets_sign_in_through(app, monkeypatch):
         raise ConnectionError("Redis is down")
 
     monkeypatch.setattr(app.redis, "ttl", broken)
-    monkeypatch.setattr(app.redis, "incr", broken)
+    monkeypatch.setattr(app.redis, "eval", broken)
     assert sign_in(app, ADMIN_EMAIL, "wrong").status_code == 302
     assert signed_in(sign_in(app, ADMIN_EMAIL, ADMIN_PASSWORD))
 
@@ -192,3 +192,43 @@ def test_reset_requests_stop_sending_over_the_limit(app, monkeypatch):
         assert "Check your email" in response.get_data(as_text=True)
 
     assert sent == ["reader@example.com"] * throttle.RESET_EMAIL_LIMIT
+
+
+def test_email_variants_share_the_account_lock(app, monkeypatch):
+    """Test that every email that reaches 1 account counts against 1 lock.
+
+    MySQL compares emails without accents. Thus, "ÄDMIN@…" signs in to
+    the admin account. SQLite does not. Thus, the test stands in for
+    the lookup of the database. Before the fix, each variant had its own
+    5 guesses."""
+
+    from app.auth import throttle
+
+    variants = ["Ädmin@example.test", "ädmin@example.test", "admín@example.test"]
+    variants += ["ADMÍN@example.test", "àdmin@example.test"]
+    monkeypatch.setattr(
+        throttle,
+        "_account_email",
+        lambda typed: ADMIN_EMAIL if typed.lower().endswith("@example.test") else None,
+    )
+    for attempt, variant in enumerate(variants):
+        sign_in(app, variant, "wrong", f"198.51.100.{attempt + 1}")
+
+    response = sign_in(app, ADMIN_EMAIL, ADMIN_PASSWORD, "198.51.100.99")
+    assert response.status_code == 429
+
+
+def test_counter_without_expiry_heals(app):
+    """Test that a counter left with no expiry gets one on its next addition.
+
+    A fault between 2 separate calls could leave such a key. It would
+    then never expire."""
+
+    from app.auth import throttle
+
+    key = f"{throttle.KEY_PREFIX}reset:address:203.0.113.77"
+    app.redis.set(key, 7)
+    assert app.redis.ttl(key) == -1
+    with app.app_context():
+        assert throttle._count(key, throttle.RESET_WINDOW) == 8
+    assert 0 < app.redis.ttl(key) <= throttle.RESET_WINDOW.total_seconds()

@@ -71,10 +71,28 @@ def client_address():
 
 
 def _email_hash(email):
-    """Return a short hash of an email. Redis never holds the email itself."""
+    """Return a short hash of the account of an email.
 
-    normalized = (email or "").strip().lower()
+    Redis never holds the email itself. The database compares emails
+    with an accent-insensitive collation. Thus, "glénn@" finds the
+    account of "glenn@". The key comes from the stored email of that
+    account, so every variant that reaches the account shares 1 lock.
+    An email with no account uses its own text."""
+
+    typed = (email or "").strip()
+    normalized = (_account_email(typed) or typed).lower()
     return hashlib.sha256(normalized.encode()).hexdigest()[:32]
+
+
+def _account_email(typed):
+    """Return the stored email of the account that typed reaches, or None.
+
+    The lookup uses the collation of the database, like the sign-in."""
+
+    from app.models import User
+
+    user = User.query.filter_by(email=typed).first() if typed else None
+    return user.email if user else None
 
 
 def _key(*parts):
@@ -83,17 +101,28 @@ def _key(*parts):
     return KEY_PREFIX + ":".join(parts)
 
 
+# INCR and EXPIRE in 1 atomic step. A counter with no expiry gets one
+# on each addition. Thus, a counter never outlives its window, even
+# after a fault between 2 separate calls in the past.
+
+COUNT_SCRIPT = """
+local value = redis.call('INCR', KEYS[1])
+if redis.call('TTL', KEYS[1]) < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return value
+"""
+
+
 def _count(key, window):
     """Add 1 to a counter and return the new value.
 
     The first addition starts the window. The counter expires at the
     end of the window."""
 
-    redis = current_app.redis
-    value = redis.incr(key)
-    if value == 1:
-        redis.expire(key, int(window.total_seconds()))
-    return value
+    return int(
+        current_app.redis.eval(COUNT_SCRIPT, 1, key, int(window.total_seconds()))
+    )
 
 
 def login_lock_seconds(email):
