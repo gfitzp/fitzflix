@@ -1718,13 +1718,17 @@ def health_probe():
         # signature is 1 condition. Thus, it is announced once, reminded
         # daily, and reported as recovered when a digest no longer has it.
 
-        from app.log_digest import trusted_flagged
+        from app.log_digest import digest_issues
 
-        for item in trusted_flagged(redis):
-            issues[f"log:{item['key']}"] = (
-                f"A log entry repeated {item['count']} times in 24 hours: "
-                f"{item['example'][:200]}"
+        issues.update(
+            digest_issues(
+                redis,
+                {
+                    condition.decode(): message.decode()
+                    for condition, message in redis.hgetall(ISSUES_KEY).items()
+                },
             )
+        )
 
         # Compare with the problems known from the previous run to find
         # what is new and what recovered. Fitzflix reports a continued

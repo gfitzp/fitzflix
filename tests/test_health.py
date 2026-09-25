@@ -152,10 +152,20 @@ def test_health_probe_reports_a_flagged_repeat_once(app, health_env):
     assert "A log entry repeated 96 times in 24 hours" in emails[0]["body"]
     assert health_env.run() == []
 
-    # A stale digest is not reported. Its counts are not news.
+    # A stale digest means that the nightly task is broken. That is its
+    # own problem. The repeat it flagged does not read as recovered.
     digest["generated_at"] = (datetime.now() - timedelta(days=3)).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
+    health_env.redis.set(DIGEST_KEY, json.dumps(digest))
+    emails = health_env.run()
+    assert len(emails) == 1
+    assert "The log digest has not run since" in emails[0]["body"]
+    assert "Recovered:" not in emails[0]["body"]
+
+    # A fresh digest without the repeat reports its recovery.
+    digest["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    digest["flagged"] = []
     health_env.redis.set(DIGEST_KEY, json.dumps(digest))
     recoveries = health_env.run()
     assert len(recoveries) == 1

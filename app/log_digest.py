@@ -50,7 +50,15 @@ ENTRY_RE = re.compile(
     r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ ([A-Z]+): (.*)$",
 )
 SITE_RE = re.compile(r" \[in (?:.*/)?([^/\]]+?):\d+\]$")
-QUOTED_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+# A single quote is a delimiter only when it is not between 2 letters.
+# Thus, the apostrophe in "Couldn't" or "Schindler's" stays inside the
+# quoted name or the plain text (#265 review).
+
+LETTER = r"[^\W\d_]"
+QUOTED_RE = re.compile(
+    rf"(?<!{LETTER})'(?:[^']|(?<={LETTER})'(?={LETTER}))*'(?!{LETTER})" r'|"[^"]*"'
+)
+TRACEBACK_MARKERS = ("Traceback", "During handling", "The above exception")
 URL_QUERY_RE = re.compile(r"(https?://[^\s?]+)\?\S*")
 HEX_RE = re.compile(r"\b[0-9a-f]{12,}\b")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
@@ -104,11 +112,40 @@ def read_entries(log_file, since, until):
         yield current
 
 
+def _exception_line(extra):
+    """Return (exception line, source file) of a traceback in extra, or Nones.
+
+    The exception is the last unindented line that is not a traceback
+    marker. The source file comes from its [in path:line] suffix. That
+    suffix is at the end of a message that holds a whole traceback."""
+
+    if not any(line.startswith(TRACEBACK_MARKERS) for line in extra):
+        return None, None
+    tail = [
+        line
+        for line in extra
+        if line.strip()
+        and not line.startswith((" ", "\t"))
+        and not line.startswith(TRACEBACK_MARKERS)
+    ]
+    if not tail:
+        return None, None
+    match = SITE_RE.search(tail[-1])
+    if match:
+        return tail[-1][: match.start()], match.group(1)
+    return tail[-1], None
+
+
 def signature(level, message, extra):
-    """Return (key, text) for one log entry.
+    """Return (key, text, example) for one log entry.
 
     The text is the level, the source file, and the message with its
-    variable parts replaced. The key is a short hash of the text."""
+    variable parts replaced. The key is a short hash of the text. A
+    message that is a whole traceback (traceback.format_exc) is known
+    by its exception line and the source file of its suffix. A message
+    with a traceback after it (logger.exception) adds the type of the
+    exception. Thus, 2 different errors on 1 route stay apart. The
+    example is the message with the exception, for the email."""
 
     site = ""
     match = SITE_RE.search(message)
@@ -116,20 +153,25 @@ def signature(level, message, extra):
         site = match.group(1)
         message = message[: match.start()]
 
-    # A traceback is known by its exception, the last unindented line.
+    exception, exception_site = _exception_line(
+        [message] + extra if message.startswith("Traceback") else extra
+    )
+    if message.startswith("Traceback") and exception:
+        body = example = exception
+        site = site or exception_site or ""
+    elif exception:
+        body = f"{message} [{exception.split(':')[0].strip()}]"
+        example = f"{message} ({exception})"
+    else:
+        body = example = message
 
-    if message.startswith("Traceback"):
-        tail = [line for line in extra if line.strip() and not line.startswith(" ")]
-        if tail:
-            message = SITE_RE.sub("", tail[-1])
-
-    text = QUOTED_RE.sub("…", message)
+    text = QUOTED_RE.sub("…", body)
     text = URL_QUERY_RE.sub(r"\1", text)
     text = HEX_RE.sub("#", text)
     text = NUMBER_RE.sub("N", text)
     text = SIZE_RE.sub("N size", text)
     text = f"{level} {site}: {text.strip()}"[:200]
-    return hashlib.sha1(text.encode()).hexdigest()[:12], text
+    return hashlib.sha1(text.encode()).hexdigest()[:12], text, example.strip()[:300]
 
 
 def build_digest(config, now=None, previous=None):
@@ -157,13 +199,13 @@ def build_digest(config, now=None, previous=None):
         if ignore and ignore.search(message):
             continue
         total += 1
-        key, text = signature(level, message, extra)
+        key, text, example = signature(level, message, extra)
         counts[key] += 1
         if key not in details:
             details[key] = {
                 "key": key,
                 "signature": text,
-                "example": SITE_RE.sub("", message)[:300],
+                "example": example,
                 "first": stamp,
             }
         details[key]["last"] = stamp
@@ -188,16 +230,35 @@ def stored_digest(redis):
     return json.loads(payload) if payload else None
 
 
-def trusted_flagged(redis, now=None):
-    """Return the flagged signatures of a digest newer than DIGEST_TRUST."""
+def digest_issues(redis, previous_issues, now=None):
+    """Return the health issues of the digest as {condition: message}.
+
+    A digest newer than DIGEST_TRUST gives 1 issue per flagged
+    signature. An older digest means that the nightly task is broken.
+    Then 1 issue says so, and the log issues of the last probe stay as
+    they were. Thus, they do not read as recovered."""
 
     digest = stored_digest(redis)
     if not digest:
-        return []
+        return {}
     generated = datetime.strptime(digest["generated_at"], STAMP)
     if generated < (now or datetime.now()) - DIGEST_TRUST:
-        return []
-    return digest["flagged"]
+        kept = {
+            condition: message
+            for condition, message in previous_issues.items()
+            if condition.startswith("log:")
+        }
+        kept["log-digest"] = (
+            f"The log digest has not run since {digest['generated_at']}"
+        )
+        return kept
+    return {
+        f"log:{item['key']}": (
+            f"A log entry repeated {item['count']} times in 24 hours: "
+            f"{item['example'][:200]}"
+        )
+        for item in digest["flagged"]
+    }
 
 
 def log_digest_task():
