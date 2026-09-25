@@ -54,6 +54,7 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import admin_required
+from app.log_digest import stored_digest
 from app.maintenance import system_health
 from app.triage import (
     forced_subtitle_candidates,
@@ -166,6 +167,7 @@ def system():
         local_time=_local_time_text,
         failed_jobs=failed_jobs,
         failed_job_form=failed_job_form,
+        log_digest=stored_digest(current_app.redis),
     )
 
 

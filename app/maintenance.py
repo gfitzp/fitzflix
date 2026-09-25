@@ -1713,6 +1713,19 @@ def health_probe():
         if not scheduler_health(redis)["ok"]:
             issues["scheduler"] = "The rq scheduler is not running"
 
+        # A warning that repeats all day is a problem that sends no email
+        # of its own (#265). The nightly digest flags it. Each flagged
+        # signature is 1 condition. Thus, it is announced once, reminded
+        # daily, and reported as recovered when a digest no longer has it.
+
+        from app.log_digest import trusted_flagged
+
+        for item in trusted_flagged(redis):
+            issues[f"log:{item['key']}"] = (
+                f"A log entry repeated {item['count']} times in 24 hours: "
+                f"{item['example'][:200]}"
+            )
+
         # Compare with the problems known from the previous run to find
         # what is new and what recovered. Fitzflix reports a continued
         # problem again when its daily reminder key expires.

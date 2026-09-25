@@ -119,6 +119,14 @@ def cron_table(config):
             54000,
             "Rotating application logs",
         ),
+        # Digest the repeated warnings of the last 24 hours, after the
+        # rotation (#265). The System page and the health probe read it.
+        (
+            "15 0 * * *",
+            "app.log_digest.log_digest_task",
+            600,
+            "Digesting repeated log warnings",
+        ),
         # Back up the database nightly. The media files are archived at
         # AWS. But the database itself exists only on this machine. Thus,
         # the task also copies each dump to the S3 bucket.

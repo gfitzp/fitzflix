@@ -160,6 +160,13 @@ class Config(object):
     LOG_FILE                            = os.environ.get("LOG_FILE") or os.path.join(basedir, "logs", "fitzflix.log")
     LOG_RETENTION_DAYS                  = int(os.environ.get("LOG_RETENTION_DAYS") or 14)
 
+    # The nightly digest of repeated warnings (#265). A signature with at
+    # least this many entries in 24 hours is flagged. The ignore value is
+    # 1 regex of expected noise. The default skips the health warnings,
+    # which the health email already reports.
+    LOG_DIGEST_THRESHOLD                = int(os.environ.get("LOG_DIGEST_THRESHOLD") or 20)
+    LOG_DIGEST_IGNORE                   = os.environ.get("LOG_DIGEST_IGNORE") or r"^Health"
+
     # Database backup configuration
     MYSQLDUMP_BIN                       = os.environ.get("MYSQLDUMP_BIN") or "/opt/homebrew/bin/mysqldump"
     MYSQL_BIN                           = os.environ.get("MYSQL_BIN") or "/opt/homebrew/bin/mysql"

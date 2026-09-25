@@ -130,6 +130,38 @@ def test_disk_floor_alerts_and_recovers(app, health_env, monkeypatch):
     assert "Recovered:" in recoveries[0]["body"]
 
 
+def test_health_probe_reports_a_flagged_repeat_once(app, health_env):
+    """Test that the health email announces a flagged repeat and its end.
+
+    The health probe runs every 10 minutes. The email goes out once. It
+    goes out again only as the daily reminder, and 1 time on recovery."""
+
+    import json
+
+    from app.log_digest import DIGEST_KEY
+
+    digest = {
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "flagged": [
+            {"key": "abc123", "count": 96, "example": "Plex watchlist: couldn't add"}
+        ],
+    }
+    health_env.redis.set(DIGEST_KEY, json.dumps(digest))
+    emails = health_env.run()
+    assert len(emails) == 1
+    assert "A log entry repeated 96 times in 24 hours" in emails[0]["body"]
+    assert health_env.run() == []
+
+    # A stale digest is not reported. Its counts are not news.
+    digest["generated_at"] = (datetime.now() - timedelta(days=3)).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    health_env.redis.set(DIGEST_KEY, json.dumps(digest))
+    recoveries = health_env.run()
+    assert len(recoveries) == 1
+    assert "Recovered:" in recoveries[0]["body"]
+
+
 def test_missing_scheduler_and_observer_are_reported(health_env):
     health_env.redis.delete("rq:cron_scheduler:test")
     health_env.redis.delete("fitzflix:observer:test-1")

@@ -72,6 +72,38 @@
 		schedule();
 	})();
 </script>
+{% if log_digest %}
+<hr>
+<h4 class="mt-3 mb-2">Repeated log warnings</h4>
+<p class="small text-muted">
+	{{ log_digest.total }} warning and error entries between {{ log_digest.since }} and {{ log_digest.generated_at }}.
+	{% if log_digest.flagged %}{{ log_digest.flagged|length }} signature{{ "s" if log_digest.flagged|length != 1 }} at {{ log_digest.threshold }} or more entries, reported in the health email.{% else %}No signature reached {{ log_digest.threshold }} entries.{% endif %}
+</p>
+{% if log_digest.top %}
+<div class="table-responsive">
+<table class="table table-sm">
+	<thead class="table-light">
+		<tr>
+			<th scope="col" class="text-end">Count</th>
+			<th scope="col">Signature</th>
+			<th scope="col">Example</th>
+			<th scope="col">Last</th>
+		</tr>
+	</thead>
+	<tbody>
+		{% for item in log_digest.top %}
+		<tr{% if item.count >= log_digest.threshold %} class="table-warning"{% endif %}>
+			<td class="text-end">{{ item.count }}</td>
+			<td><code class="small">{{ item.signature }}</code>{% if item.count >= log_digest.threshold and item.new %} <span class="badge text-bg-danger">New</span>{% endif %}</td>
+			<td class="small text-break">{{ item.example }}</td>
+			<td class="small text-nowrap">{{ item.last }}</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+</table>
+</div>
+{% endif %}
+{% endif %}
 {% if failed_jobs %}
 <hr>
 <h4 class="mt-3 mb-2">Failed tasks</h4>
