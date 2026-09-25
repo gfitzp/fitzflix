@@ -293,10 +293,23 @@ def sync_plex_watchlist():
             if tmdb_id in unsyncable:
                 synced.discard(tmdb_id)
                 continue
+            # The lookup and the add fail in different ways. A failed
+            # lookup is always a retry, even a 4xx: a Plex outage or an
+            # API change must not quarantine films. Only a refused add
+            # can make a film unsyncable.
+
             try:
                 rating_key = plex_rating_key(tmdb_id)
                 if rating_key is None:
                     raise LookupError(f"no Plex match for tmdb {tmdb_id}")
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Plex watchlist: couldn't look up tmdb {tmdb_id}: {e}"
+                )
+                synced.discard(tmdb_id)
+                failed += 1
+                continue
+            try:
                 _plex_put("addToWatchlist", rating_key)
                 attempted.add(tmdb_id)
                 pushed += 1

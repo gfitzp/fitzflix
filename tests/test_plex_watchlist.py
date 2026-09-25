@@ -430,3 +430,40 @@ def test_empty_plex_response_never_mass_removes(app, monkeypatch):
         # unchanged.
         assert fitzflix_watchlist_tmdb_ids(user_id) == {106}
         assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == snapshot
+
+
+def test_lookup_client_error_retries_instead_of_quarantine(app, monkeypatch):
+    """Test that a 4xx from the rating-key lookup is only a retry.
+
+    A Plex outage can answer the metadata lookup with a 404 or a 400.
+    That says nothing about the film. The film must retry on the next
+    run and never go into the unsyncable set."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        movie = make_movie("Lookup Outage", 1984, tmdb_id=471050)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+
+        fake = FakePlex({})
+        wire(app, monkeypatch, fake)
+        real_get = fake.get
+
+        def failing_lookup(url, params=None):
+            if "metadata/matches" in url:
+                response = requests.Response()
+                response.status_code = 404
+                raise requests.HTTPError("404 Client Error", response=response)
+            return real_get(url, params)
+
+        monkeypatch.setattr(plex_watchlist, "_plex_get", failing_lookup)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert app.redis.smembers(plex_watchlist.UNSYNCABLE_KEY) == set()
+        assert fake.adds == []
+
+        # When the lookup works again, the add goes through.
+        monkeypatch.setattr(plex_watchlist, "_plex_get", real_get)
+        assert plex_watchlist.sync_plex_watchlist() is True
+        assert fake.adds == [471050]
