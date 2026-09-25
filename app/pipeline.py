@@ -50,9 +50,13 @@ ACTIVE_LIMIT = 100
 
 
 def _basename_from_path(args, kwargs):
-    """Return the basename of the file from a leading path argument."""
+    """Return the basename of the file from a leading path argument.
 
-    return os.path.basename(args[0]) if args else None
+    A retry passes the path as the keyword file_path. Without it, a
+    waiting retry left no chip on the trail (#262 review)."""
+
+    path = args[0] if args else (kwargs or {}).get("file_path")
+    return os.path.basename(path) if path else None
 
 
 def _basename_from_details(args, kwargs):

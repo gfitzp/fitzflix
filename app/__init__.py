@@ -628,7 +628,16 @@ def create_app(config_class=Config, watch_import_dir=False):
                 # see if this file is already in the job_queue. It adds the
                 # file only if the file is not there.
 
-                if safe_job_id(os.path.basename(path)) not in job_queue:
+                # A file that waits for library space has its own chain.
+                # It must not get a second one (#262 review).
+
+                from app.importing import space_wait_pending
+
+                if safe_job_id(
+                    os.path.basename(path)
+                ) not in job_queue and not space_wait_pending(
+                    app.redis, os.path.basename(path)
+                ):
                     app.logger.info(
                         f"'{os.path.basename(path)}' Found in import directory"
                     )

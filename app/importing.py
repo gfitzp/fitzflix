@@ -85,6 +85,74 @@ SPACE_WAIT = timedelta(minutes=30)
 
 SPACE_ERRNOS = {errno.ENOSPC, errno.EDQUOT}
 
+# A file that waits for space has a marker for the length of 1 wait,
+# plus a margin. The hourly sweep and the watcher skip a marked file.
+# Without it, each sweep started 1 more wait chain for the same file.
+# If a chain dies, its marker expires and the sweep takes the file up.
+
+SPACE_WAIT_KEY = "fitzflix:import:space-wait:{}"
+SPACE_WAIT_MARK = SPACE_WAIT + timedelta(minutes=30)
+
+# Refresh the title lock while a copy waits. The token must match. A
+# lock that expired is taken again. A lock that another task holds is
+# left alone. Returns 1, 2, or 0 for those 3 cases.
+
+EXTEND_LOCK_SCRIPT = """
+local held = redis.call('GET', KEYS[1])
+if held == ARGV[1] then
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return 1
+elseif not held then
+    redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+    return 2
+end
+return 0
+"""
+
+
+def mark_space_wait(basename):
+    """Mark a source file as waiting for space, for 1 wait and a margin."""
+
+    current_app.redis.set(
+        SPACE_WAIT_KEY.format(basename),
+        "1",
+        ex=int(SPACE_WAIT_MARK.total_seconds()),
+    )
+
+
+def clear_space_wait(basename):
+    """Remove the space-wait marker of a source file."""
+
+    current_app.redis.delete(SPACE_WAIT_KEY.format(basename))
+
+
+def space_wait_pending(redis, basename):
+    """Return True if a wait chain for space holds this source file."""
+
+    return bool(redis.exists(SPACE_WAIT_KEY.format(basename)))
+
+
+def _hold_title_lock(lock, basename):
+    """Keep the title lock of a waiting copy alive for 1 more lock TTL.
+
+    A copy can wait for space for longer than the TTL of 1 day. Without
+    this, the lock expired, and a second import of the same title could
+    start and write to the same staging file."""
+
+    if not lock:
+        return
+    resource, token = lock[1], lock[2]
+    ttl_ms = current_app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
+    result = current_app.redis.eval(EXTEND_LOCK_SCRIPT, 1, resource, token, ttl_ms)
+    if result == 2:
+        current_app.logger.warning(
+            f"'{basename}' The title lock had expired during the wait. Took it again"
+        )
+    elif result == 0:
+        current_app.logger.warning(
+            f"'{basename}' Another task holds the title lock during the wait"
+        )
+
 
 def _existing_directory(path):
     """Return path, or its nearest parent directory that exists."""
@@ -450,7 +518,11 @@ def localization_task(
                 minutes=(45, 75),
                 timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
                 description=f"'{basename}'",
-                kwargs={"file_path": file_path},
+                kwargs={
+                    "file_path": file_path,
+                    "force_upload": force_upload,
+                    "ignore_etag": ignore_etag,
+                },
             )
             if not lock:
                 return False
@@ -504,6 +576,7 @@ def localization_task(
                 _log_space_wait(
                     basename, output_directory, needed, shortfall, space_waits
                 )
+                mark_space_wait(basename)
                 current_app.lock_manager.unlock(lock)
                 current_app.logger.info(f"Removed lock {lock}")
                 lock = None
@@ -529,6 +602,7 @@ def localization_task(
                 )
                 return True
             if space_waits:
+                clear_space_wait(basename)
                 current_app.logger.info(
                     f"'{basename}' The library volume has space again after "
                     f"{space_waits} wait(s). Continuing the import"
@@ -1277,6 +1351,8 @@ def move_localized_file(
             """Book the copy again after SPACE_WAIT. Keep the title lock."""
 
             _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
+            mark_space_wait(os.path.basename(source_path))
+            _hold_title_lock(lock, basename)
             current_app.file_queue.enqueue_in(
                 SPACE_WAIT,
                 "app.videos.move_localized_file",
@@ -1316,6 +1392,7 @@ def move_localized_file(
             if shortfall:
                 return wait_for_space(needed, shortfall)
         if space_waits:
+            clear_space_wait(os.path.basename(source_path))
             current_app.logger.info(
                 f"'{basename}' The library volume has space again after "
                 f"{space_waits} wait(s). Copying"
@@ -2116,7 +2193,11 @@ def manual_import_task():
                             )
                             job_queue.extend(localization_tasks_running.get_job_ids())
                             job_queue.extend(current_app.import_queue.job_ids)
-                            if safe_job_id(os.path.basename(file)) not in job_queue:
+                            if safe_job_id(
+                                os.path.basename(file)
+                            ) not in job_queue and not space_wait_pending(
+                                current_app.redis, os.path.basename(file)
+                            ):
                                 current_app.logger.info(
                                     f"'{os.path.basename(file)}' Found in import directory"
                                 )

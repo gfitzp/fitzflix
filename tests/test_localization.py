@@ -1323,3 +1323,103 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
     finally:
         os.remove(source)
         os.remove(hidden)
+
+
+def test_sweep_skips_a_file_that_waits_for_space(app):
+    """Test that the hourly sweep starts no second chain for a waiting file.
+
+    A space wait is a scheduled job with its own id. The sweep saw only
+    running and queued jobs by basename. Thus, each sweep started 1 more
+    wait chain. The wait now marks the file, and the sweep skips it."""
+
+    from app import importing
+
+    basename = "Swept Film (2001) - [DVD].mkv"
+    path = os.path.join(app.config["IMPORT_DIR"], basename)
+    os.makedirs(app.config["IMPORT_DIR"], exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"waiting")
+    try:
+        with app.app_context():
+            importing.mark_space_wait(basename)
+            importing.manual_import_task()
+            assert safe_job_id(basename) not in app.import_queue.job_ids
+
+            # When the wait ends, the marker goes, and the sweep takes the file.
+            importing.clear_space_wait(basename)
+            importing.manual_import_task()
+            assert safe_job_id(basename) in app.import_queue.job_ids
+    finally:
+        os.remove(path)
+        app.import_queue.empty()
+
+
+def test_localization_wait_marks_the_file(app, sample_mkv, incoming_dir):
+    from app import importing
+
+    basename = "Marked Wait (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+    real_free = importing._free_bytes
+    importing._free_bytes = lambda path: 0
+    try:
+        with app.app_context():
+            assert localization_task(source) is True
+            assert importing.space_wait_pending(app.redis, basename)
+            ttl = app.redis.ttl(importing.SPACE_WAIT_KEY.format(basename))
+            assert 0 < ttl <= importing.SPACE_WAIT_MARK.total_seconds()
+    finally:
+        importing._free_bytes = real_free
+        os.remove(source)
+
+
+def test_waiting_copy_keeps_its_title_lock(app, incoming_dir, monkeypatch):
+    """Test that a copy that waits for space keeps its title lock alive.
+
+    The lock lasts 1 day. A wait can last longer. Each wait refreshes the
+    lock while the token matches, and takes it again if it expired. A
+    lock that another task holds is left alone."""
+
+    from app import importing
+
+    basename = "Long Wait (2021) - [DVD].mkv"
+    source, hidden, details = space_move_fixture(app, incoming_dir, basename)
+    monkeypatch.setattr(importing, "_crosses_volumes", lambda *args: True)
+    monkeypatch.setattr(importing, "_free_bytes", lambda path: 0)
+    day_ms = app.config["LOCALIZATION_TASK_TIMEOUT"] * 1000
+    try:
+        with app.app_context():
+            lock = app.lock_manager.lock("long-wait-title", 60000)
+            assert app.redis.pttl("long-wait-title") <= 60000
+            videos.move_localized_file(source, details, lock, hidden)
+            assert app.redis.pttl("long-wait-title") > day_ms - 60000
+            assert importing.space_wait_pending(app.redis, basename)
+
+            # An expired lock is taken again with the same token.
+            app.redis.delete("long-wait-title")
+            videos.move_localized_file(source, details, lock, hidden, space_waits=1)
+            assert app.redis.get("long-wait-title") == lock.key
+
+            # A lock that another task holds stays as it is.
+            app.redis.set("long-wait-title", "someone-else", px=5000)
+            videos.move_localized_file(source, details, lock, hidden, space_waits=2)
+            assert app.redis.get("long-wait-title") == b"someone-else"
+    finally:
+        os.remove(source)
+        os.remove(hidden)
+
+
+def test_trail_names_a_retry_that_passes_the_path_by_keyword(app):
+    """Test that a space-wait retry shows on the pipeline trail."""
+
+    from types import SimpleNamespace
+
+    from app.pipeline import _stage_for
+
+    job = SimpleNamespace(
+        func_name="app.videos.localization_task",
+        args=(),
+        kwargs={"file_path": "/import/Waiting (2021) - [DVD].mkv", "space_waits": 1},
+    )
+    assert _stage_for(job) == ("Waiting (2021) - [DVD].mkv", "Localizing")
