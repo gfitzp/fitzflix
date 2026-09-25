@@ -7,6 +7,12 @@ from flask_login import current_user, login_user, logout_user
 from app import db
 from app.auth import bp
 from app.auth.email import send_password_reset_email
+from app.auth.throttle import (
+    allow_reset_request,
+    login_lock_seconds,
+    record_login_failure,
+    record_login_success,
+)
 from app.auth.forms import (
     LoginForm,
     RegistrationForm,
@@ -34,11 +40,34 @@ def login():
 
     form = LoginForm()
     if form.validate_on_submit():
+
+        # A locked account or address gets no password check. Thus, a
+        # guess during the lock tells the attacker nothing (#263).
+
+        locked = login_lock_seconds(form.email.data)
+        if locked:
+            minutes = -(-locked // 60)
+            flash(
+                f"Too many failed sign-in attempts. Try again in {minutes} "
+                f"minute{'s' if minutes != 1 else ''}."
+            )
+            return (
+                render_template(
+                    "auth/login.html",
+                    title="Sign In",
+                    form=form,
+                    prevent_creation=current_app.config["PREVENT_ACCOUNT_CREATION"],
+                ),
+                429,
+            )
+
         user = User.query.filter_by(email=form.email.data).first()
         if user is None or not user.check_password(form.password.data):
+            record_login_failure(form.email.data)
             flash("Invalid username or password")
             return redirect(url_for("auth.login"))
 
+        record_login_success(form.email.data)
         login_user(user, remember=form.remember_me.data)
         next_page = request.args.get("next")
         if not next_page or urlparse(next_page).netloc != "":
@@ -116,9 +145,13 @@ def reset_password_request():
 
     form = ResetPasswordRequestForm()
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user:
-            send_password_reset_email(user)
+        # Over the limit, the page shows the same message but sends no
+        # email. Thus, the form cannot flood an inbox (#263).
+
+        if allow_reset_request(form.email.data):
+            user = User.query.filter_by(email=form.email.data).first()
+            if user:
+                send_password_reset_email(user)
 
         flash("Check your email for instructions to reset your password")
         return redirect(url_for("auth.login"))

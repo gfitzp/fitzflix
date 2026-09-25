@@ -201,6 +201,12 @@ class Config(object):
     # this value, not on the percent used. The NAS library volumes are
     # almost full by design.
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
+
+    # The number of proxy hops in front of gunicorn. CloudFront uses 2:
+    # the edge server of the viewer, then a second CloudFront layer. Each
+    # adds 1 X-Forwarded-For entry (measured 2026-09-25, #263). ProxyFix
+    # and the sign-in throttle read the client address from this count.
+    PROXY_HOPS                          = int(os.environ.get("PROXY_HOPS") or 2)
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
     # Transcoding configuration

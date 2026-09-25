@@ -728,10 +728,20 @@ def create_app(config_class=Config, watch_import_dir=False):
     mail.init_app(app)
     moment.init_app(app)
 
-    # This lets the web server set the X- headers that configure the
-    # https protocol and related values.
+    # CloudFront is in front of gunicorn. It uses 2 hops, and each hop
+    # adds 1 X-Forwarded-For entry. The entry that the first hop added
+    # is the client. A value that the client sends comes before it.
+    # Thus, x_for=PROXY_HOPS gives remote_addr the real address, and
+    # the client cannot forge it through CloudFront. The sign-in
+    # throttle needs that address (#263). A request that goes around
+    # CloudFront can forge the header. The lock per account does not
+    # use the address, so it still holds for such a request. Before
+    # #263 this call did not wrap wsgi_app, so it had no effect. The
+    # proto, host, and prefix options stay off. They never had an
+    # effect, and SERVER_NAME and PREFERRED_URL_SCHEME already set
+    # those values.
 
-    ProxyFix(app, x_proto=1, x_host=1, x_prefix=1)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=app.config["PROXY_HOPS"])
 
     from app import models
 
