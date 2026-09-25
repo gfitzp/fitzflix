@@ -57,7 +57,7 @@
 	<a href="{{ url_for('main.movie', movie_id=movie.id) }}" data-card-url="{{ url_for('main.movie_card', movie_id=movie.id) }}">
 		{% include "_movie_poster_small.html" %}
 	</a>
-	<div class="flex-grow-1" data-state-movie="{{ movie.id }}">
+	<div class="flex-grow-1" data-state-movie="{{ movie.id }}" data-watchlist-scope>
 		<h5 class="mb-0"><a href="{{ url_for('main.movie', movie_id=movie.id) }}" class="text-decoration-none text-body">{{ movie|display_title }} ({{ movie|display_year }})</a></h5>
 		{% call ladder_form(url_for('main.movie', movie_id=movie.id)) %}
 			{{ rating_ladder(compact=true, live=true) }}
@@ -70,7 +70,7 @@
 		</p>
 		{% if instruction != "Already owned" %}
 		<div class="d-flex flex-wrap gap-2">
-			{{ find_button(movie) }}
+			{{ find_button(movie, instruction=instruction) }}
 			{{ cart_toggle(movie_shopping_exclude_form, movie) }}
 		</div>
 		{% endif %}

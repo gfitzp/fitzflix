@@ -632,3 +632,19 @@ def test_tv_library_search_matches_series_titles_only(app, admin_client):
     page = admin_client.get("/library/tv?q=zzzzzz").get_data(as_text=True)
     assert "No TV series match" in page
     assert "Show the whole TV library" in page
+
+
+def test_tv_shopping_list_searches_by_season(app, admin_client):
+    """Put the season into the Amazon and eBay searches of each row.
+
+    The store menu reads the season of the row. Without it, the search
+    finds box sets and other seasons."""
+
+    with app.app_context():
+        series = make_tv_series("Season Search Show")
+        make_tv_file(series, 2, 1, "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/tv").get_data(as_text=True)
+    assert "amazon.com/s?k=Season%20Search%20Show Season 2&i=movies-tv" in page
+    assert "_nkw=Season%20Search%20Show Season 2" in page

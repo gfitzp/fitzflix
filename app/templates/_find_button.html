@@ -6,12 +6,17 @@
    eBay, and every other film searches Blu-ray.com. A series searches
    Blu-ray.com with the television flag. compact is the short button of
    a tile. block fills the column of a standalone page. The two Radarr
-   flags come in as parameters. A loop-local set of the calling page is
-   not visible here, and the store menu reads them. #}
-{% macro find_button(movie=none, tv=none, compact=false, block=false, extra="", radarr_requestable=none, in_radarr=none) -%}
+   flags, the row instruction, and the TV season come in as parameters.
+   A loop variable or a macro parameter of the calling page is not
+   visible here, and the store menu reads them. The instruction sets
+   the eBay disc format. The season goes into the Amazon and eBay
+   searches. #}
+{% macro find_button(movie=none, tv=none, compact=false, block=false, extra="", radarr_requestable=none, in_radarr=none, instruction=none, season=none) -%}
 {% set cls = "btn btn-sm btn-primary" ~ (" py-0" if compact else "") %}
 {% set radarr_requestable = radarr_requestable %}
 {% set in_radarr = in_radarr %}
+{% set instruction = instruction %}
+{% set season = season %}
 <div class="btn-group{% if block %} show w-100{% endif %}{% if extra %} {{ extra }}{% endif %}">
 	{% if movie %}
 	{% set title = movie|display_title %}

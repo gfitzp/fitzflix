@@ -26,7 +26,7 @@
 					<h6><a href="{{ url_for('main.season', series_id=tv.id, season=season.season) }}" class="text-decoration-none text-body"><span>{% if season.season == 0 %}Specials{% else %}Season {{ season.season }}{% endif %}</span></a></h6>
 					<p class="mb-1"><span class="text-muted">{{ season.instruction }}</span></p>
 					{% if season.instruction != "Already owned" %}
-						{{ find_button(tv=tv) }}
+						{{ find_button(tv=tv, season=season) }}
 					{% endif %}
 				</li>
 			{% endfor %}

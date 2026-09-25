@@ -352,3 +352,24 @@ def test_watchlist_view_leaves_default_list_alone(app, admin_client):
     assert "Not available to stream or rent" not in page
     assert 'href="/shopping-list/movie?library=watchlist"' in page
     assert "Watchlisted films not in the library" in page
+
+
+def test_shopping_row_passes_the_instruction_to_the_store_menu(app, admin_client):
+    """Test that the eBay link of a row filters by the disc format.
+
+    The store menu reads the instruction of the row. A Blu-Ray purchase
+    searches Blu-ray and 4K discs, not DVDs. The row is also a watchlist
+    scope. Thus, a star tap refreshes the cached poster card."""
+
+    with app.app_context():
+        user_id = User.query.first().id
+        wanted = make_movie("Format Filter Film", 1981)
+        make_liked_review(user_id, wanted)
+        db.session.commit()
+        movie_id = wanted.id
+
+    page = admin_client.get("/shopping-list/movie").get_data(as_text=True)
+    assert "Buy on Blu-Ray" in page
+    assert "Format=Blu%252Dray%7C4K%2520UHD%2520Blu%252Dray&_sop=15" in page
+    assert "Format=DVD%7C" not in page
+    assert f'data-state-movie="{movie_id}" data-watchlist-scope' in page
