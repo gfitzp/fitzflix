@@ -198,3 +198,95 @@ def _point_entry_at(entry, new_folder):
         "POST", "/api/v3/command", {"name": "RefreshMovie", "movieIds": [entry["id"]]}
     )
     return True
+
+
+# The nightly path check changes at most this many Radarr entries. More
+# mismatches than this point to a systemic cause, for example a changed
+# mount or root folder. Then the check changes nothing and warns.
+
+MAX_PATH_FIXES = 20
+
+
+def reconcile_radarr_paths():
+    """Point each Radarr movie at the folder that Fitzflix holds for it (#266).
+
+    This is a task. It runs nightly. A rename or an import reports the
+    new folder to Radarr at once. If Radarr is down then, that push is
+    lost, and Radarr keeps a path that does not exist. It can then
+    download the film again. This check finds such an entry by TMDB id
+    and compares its folder with the folder that _movie_folder picks.
+
+    The check repoints an entry only when the Fitzflix folder exists and
+    the Radarr folder does not. When both folders exist, it logs the
+    case and changes nothing. A film that Fitzflix holds no file for is
+    not checked. Radarr can be downloading it."""
+
+    from app import get_app
+    from app.models import File, Movie
+    from app.tmdb_refresh import _movie_folder
+
+    with get_app().app_context():
+        if not radarr_configured():
+            return "Radarr is not configured"
+        library = current_app.config["MOVIE_LIBRARY"]
+        try:
+            entries = _radarr("GET", "/api/v3/movie")
+        except Exception as e:
+            current_app.logger.warning(f"Radarr path check: couldn't list movies: {e}")
+            return "Radarr unreachable"
+
+        files_by_tmdb = {}
+        for file, tmdb_id in (
+            File.query.join(Movie, Movie.id == File.movie_id)
+            .filter(Movie.tmdb_id.isnot(None))
+            .with_entities(File, Movie.tmdb_id)
+        ):
+            files_by_tmdb.setdefault(tmdb_id, []).append(file)
+
+        fixes = []
+        ambiguous = 0
+        for entry in entries:
+            files = files_by_tmdb.get(entry.get("tmdbId"))
+            if not files:
+                continue
+            wanted = _movie_folder(files)
+            held = os.path.basename((entry.get("path") or "").rstrip("/"))
+            if not wanted or wanted == held:
+                continue
+            wanted_exists = os.path.isdir(os.path.join(library, wanted))
+            held_exists = bool(held) and os.path.isdir(os.path.join(library, held))
+            if wanted_exists and not held_exists:
+                fixes.append((entry, held, wanted))
+            else:
+                ambiguous += 1
+                current_app.logger.warning(
+                    f"Radarr path check: tmdb {entry.get('tmdbId')} is at "
+                    f"{held!r} in Radarr and at {wanted!r} in Fitzflix. Not "
+                    f"changed (Radarr folder exists: {held_exists}, Fitzflix "
+                    f"folder exists: {wanted_exists})"
+                )
+
+        if len(fixes) > MAX_PATH_FIXES:
+            current_app.logger.warning(
+                f"Radarr path check: {len(fixes)} entries point at missing "
+                f"folders, more than {MAX_PATH_FIXES}. Nothing changed. Check "
+                f"the Radarr root folder and the library mount"
+            )
+            return f"{len(fixes)} mismatches, over the limit"
+
+        fixed = 0
+        for entry, held, wanted in fixes:
+            try:
+                _point_entry_at(entry, wanted)
+                fixed += 1
+            except Exception as e:
+                current_app.logger.warning(
+                    f"Radarr path check: couldn't repoint tmdb "
+                    f"{entry.get('tmdbId')} from {held!r} to {wanted!r}: {e}"
+                )
+
+        current_app.logger.info(
+            f"Radarr path check: {len(entries)} Radarr movies, {fixed} repointed, "
+            f"{ambiguous} left for review"
+        )
+        return f"{fixed} repointed, {ambiguous} for review"

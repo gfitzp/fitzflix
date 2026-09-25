@@ -410,6 +410,20 @@ def cron_table(config):
             )
         )
 
+    # Check the Radarr movie paths nightly (#266). A rename or an import
+    # reports its new folder to Radarr at once. A push that fails while
+    # Radarr is down is repaired here. 05:40 is after the SMB sweep.
+
+    if config.get("RADARR_URL") and config.get("RADARR_API_KEY"):
+        table.append(
+            (
+                "40 5 * * *",
+                "app.radarr_push.reconcile_radarr_paths",
+                900,
+                "Checking the Radarr movie paths",
+            )
+        )
+
     # Rebuild the virtual DVR channel lineups nightly (#182). The task
     # rotates them the same way as the landing-page shelves rotate. The
     # per-file duration cache makes every build after the first

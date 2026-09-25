@@ -6,6 +6,8 @@ the movie page, and the badge cache."""
 
 import re
 
+import pytest
+
 from app import db
 from app.models import UserWatchlist
 from tests.factories import make_movie, make_movie_file
@@ -446,3 +448,125 @@ def test_import_move_survives_a_radarr_outage(app, monkeypatch, tmp_path):
     )
     with app.app_context():
         _report_import_move_to_radarr(source, output)
+
+
+@pytest.fixture
+def library_folders(app):
+    """Remove the folders that a test makes in the shared test library."""
+
+    import shutil
+
+    made = []
+    yield made
+    for folder in made:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def path_check_fixture(app, folders, title, year, tmdb_id):
+    """Make a film with a file, and its library folder on disk."""
+
+    import os
+
+    movie = make_movie(title, year, tmdb_id=tmdb_id)
+    make_movie_file(movie, "Bluray-1080p")
+    db.session.commit()
+    folder = os.path.join(app.config["MOVIE_LIBRARY"], f"{title} ({year})")
+    os.makedirs(folder, exist_ok=True)
+    folders.append(folder)
+
+
+def test_path_check_repoints_an_entry_whose_folder_is_gone(
+    app, monkeypatch, library_folders
+):
+    """Repair a rename that Radarr missed while it was down (#266).
+
+    Radarr points at the old folder, which no longer exists. Fitzflix
+    holds the film in its new folder. The check repoints Radarr and asks
+    for a rescan. A matching entry and a film that Fitzflix does not
+    hold are left alone."""
+
+    import app.radarr_push as radarr_push
+
+    fake = wire(app, monkeypatch)
+    with app.app_context():
+        path_check_fixture(app, library_folders, "Missed Rename", 1951, 9101)
+        path_check_fixture(app, library_folders, "Already Right", 1952, 9102)
+    fake.movies[1] = {
+        "id": 1,
+        "tmdbId": 9101,
+        "path": "/Volumes/Movies/Missed Rename (1950)",
+    }
+    fake.movies[2] = {
+        "id": 2,
+        "tmdbId": 9102,
+        "path": "/Volumes/Movies/Already Right (1952)",
+    }
+    fake.movies[3] = {"id": 3, "tmdbId": 9103, "path": "/Volumes/Movies/Wanted (1953)"}
+
+    assert radarr_push.reconcile_radarr_paths() == "1 repointed, 0 for review"
+    assert [(i, m["path"]) for i, _, m in fake.updated] == [
+        (1, "/Volumes/Movies/Missed Rename (1951)")
+    ]
+    assert fake.commands == [{"name": "RefreshMovie", "movieIds": [1]}]
+
+    # The next run finds nothing to change.
+    assert radarr_push.reconcile_radarr_paths() == "0 repointed, 0 for review"
+
+
+def test_path_check_leaves_two_existing_folders_for_review(
+    app, monkeypatch, caplog, library_folders
+):
+    """Change nothing when both folders exist. The right one is not clear."""
+
+    import os
+
+    import app.radarr_push as radarr_push
+
+    fake = wire(app, monkeypatch)
+    with app.app_context():
+        path_check_fixture(app, library_folders, "Two Homes", 1961, 9201)
+    old_folder = os.path.join(app.config["MOVIE_LIBRARY"], "Two Homes (1960)")
+    os.makedirs(old_folder)
+    library_folders.append(old_folder)
+    fake.movies[1] = {
+        "id": 1,
+        "tmdbId": 9201,
+        "path": "/Volumes/Movies/Two Homes (1960)",
+    }
+
+    assert radarr_push.reconcile_radarr_paths() == "0 repointed, 1 for review"
+    assert fake.updated == [] and fake.commands == []
+    assert "Not changed" in caplog.text
+
+
+def test_path_check_changes_nothing_over_the_limit(
+    app, monkeypatch, caplog, library_folders
+):
+    """Many missing folders point to a systemic cause. Change nothing."""
+
+    import app.radarr_push as radarr_push
+
+    fake = wire(app, monkeypatch)
+    monkeypatch.setattr(radarr_push, "MAX_PATH_FIXES", 1)
+    with app.app_context():
+        for index, tmdb_id in enumerate((9301, 9302)):
+            path_check_fixture(app, library_folders, f"Drifted {index}", 1970, tmdb_id)
+            fake.movies[index] = {
+                "id": index,
+                "tmdbId": tmdb_id,
+                "path": f"/Volumes/Movies/Old Name {index} (1970)",
+            }
+
+    assert radarr_push.reconcile_radarr_paths() == "2 mismatches, over the limit"
+    assert fake.updated == [] and fake.commands == []
+    assert "more than 1. Nothing changed" in caplog.text
+
+
+def test_path_check_survives_a_radarr_outage(app, monkeypatch):
+    import app.radarr_push as radarr_push
+
+    def down(*args, **kwargs):
+        raise ConnectionError("Radarr is down")
+
+    monkeypatch.setattr(radarr_push, "_radarr", down)
+    assert radarr_push.reconcile_radarr_paths() == "Radarr unreachable"
