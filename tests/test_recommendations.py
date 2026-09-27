@@ -1722,3 +1722,70 @@ def test_search_markers_respect_the_stored_bar(app, admin_client, monkeypatch):
     assert page.count("Might interest you") == 1
     assert page.index("Bar Clearing Hit") < page.index("Might interest you")
     assert page.index("Might interest you") < page.index("Bar Missing Match")
+
+
+def test_genre_filter_trims_the_library_rail(app, admin_client):
+    """Filter the view with ?genre=ID.
+
+    Only the films of that genre stay. The filter combines with the
+    runtime filter. The menu lists only the genres of films."""
+
+    from app import db
+    from app.recommendations import RECS_KEY
+    from app.models import TMDBGenre, User
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        western = TMDBGenre(id=990101, name="Genre Filter Western")
+        musical = TMDBGenre(id=990102, name="Genre Filter Musical")
+        db.session.add_all(
+            [western, musical, TMDBGenre(id=990103, name="Genre Filter TV Only")]
+        )
+        short = make_movie("Genre Western Short", 1950, tmdb_runtime=90)
+        short.genres.append(western)
+        long = make_movie("Genre Western Long", 1951, tmdb_runtime=200)
+        long.genres.append(western)
+        other = make_movie("Genre Musical", 1952, tmdb_runtime=90)
+        other.genres.append(musical)
+        for movie in (short, long, other):
+            make_movie_file(movie, "Bluray-1080p")
+        ids = [short.id, long.id, other.id]
+        db.session.commit()
+
+    app.redis.set(
+        RECS_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-09-27 01:45",
+                "items": [
+                    {"movie_id": movie_id, "score": 1.0, "because": ["Western"]}
+                    for movie_id in ids
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?genre=990101").get_data(as_text=True)
+    assert "Genre Western Short (1950)" in body
+    assert "Genre Western Long (1951)" in body
+    assert "Genre Musical" not in body.split("Genre Filter Musical")[-1]
+    assert '<option value="990101" selected>Genre Filter Western</option>' in body
+    assert "Genre Filter TV Only" not in body
+    assert "This page shows only Genre Filter Western films." in body
+    assert ">Clear</a>" in body
+
+    body = admin_client.get("/?genre=990101&minutes=100").get_data(as_text=True)
+    assert "Genre Western Short (1950)" in body
+    assert "Genre Western Long" not in body
+
+    body = admin_client.get("/?genre=990102&minutes=10").get_data(as_text=True)
+    assert (
+        "No recommended film is in the Genre Filter Musical genre "
+        "and fits in 10 minutes" in body
+    )
+
+    # An unknown genre id is ignored. The page is the default view.
+    body = admin_client.get("/?genre=1").get_data(as_text=True)
+    assert "Genre Western Long (1951)" in body
+    assert "Genre Musical (1952)" in body
+    assert ">Clear</a>" not in body

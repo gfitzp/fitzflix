@@ -46,6 +46,7 @@ from app.models import (
     UserMovieReview,
     UserMovieStatus,
     UserWatchlist,
+    movie_genres,
     tmdb_get,
 )
 from app.main import bp
@@ -141,6 +142,49 @@ def _fits(movie, minutes):
     """Return True when the film fits the runtime filter of the evening."""
 
     return bool(movie.tmdb_runtime and movie.tmdb_runtime <= minutes)
+
+
+def genre_options():
+    """Return the (id, name) pairs of the genre filter, by name.
+
+    The list holds only the genres of at least one film. Thus, the
+    genres that only TV series carry stay out of the menu."""
+
+    return (
+        db.session.query(TMDBGenre.id, TMDBGenre.name)
+        .join(movie_genres, movie_genres.c.genre_id == TMDBGenre.id)
+        .distinct()
+        .order_by(TMDBGenre.name)
+        .all()
+    )
+
+
+def genre_members(genre_id, movie_ids, tmdb_ids):
+    """Return (movie ids, tmdb ids) of the candidates in the genre.
+
+    The movie-backed shelves filter on the movie id. The shelves from a
+    stored payload filter on the tmdb id. Each payload film has a movie
+    record (the rail and the catalog pipelines make one). A film with
+    no record hides while the genre filter is set. A film with an
+    unknown runtime hides from the runtime filter in the same way."""
+
+    if not movie_ids and not tmdb_ids:
+        return set(), set()
+    rows = (
+        db.session.query(Movie.id, Movie.tmdb_id)
+        .join(movie_genres, movie_genres.c.movie_id == Movie.id)
+        .filter(movie_genres.c.genre_id == genre_id)
+        .filter(
+            db.or_(
+                Movie.id.in_(movie_ids or [0]),
+                Movie.tmdb_id.in_(tmdb_ids or [0]),
+            )
+        )
+        .all()
+    )
+    return {movie_id for movie_id, _ in rows}, {
+        tmdb_id for _, tmdb_id in rows if tmdb_id
+    }
 
 
 def _movie_key(movie):
@@ -267,19 +311,34 @@ def index():
     ?minutes=N filters every shelf at view time to the films that fit
     the evening. The computed recommendations never consider the
     length. Films with unknown runtimes hide only from filtered views.
+    ?genre=ID filters every shelf the same way to the films of one TMDB
+    genre. The two filters can apply together.
 
     The shelves of the default view are frozen for the calendar day
     (#204). The first render makes a snapshot of the cards of each
     rail. Later renders replay the snapshot. Only the slot of a film
     that is no longer eligible is replaced. See frozen_shelf. The
     ?minutes= view stays a live pick. It is a transient planning lens,
-    not the shelf."""
+    not the shelf. The ?genre= view is the same."""
 
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
         minutes = None
+    genres = genre_options()
+    genre = request.args.get("genre", type=int)
+    genre_name = dict(genres).get(genre)
+    if genre_name is None:
+        genre = None
+    filtering = bool(minutes or genre)
     day = date.today()
-    freeze = minutes is None
+    freeze = not filtering
+
+    def movie_ok(movie, in_genre):
+        """Return True when a film passes the runtime and genre filters."""
+
+        if minutes and not _fits(movie, minutes):
+            return False
+        return not genre or movie.id in in_genre
 
     # The watchlist is a SOURCE now, not a per-shelf sort key (Glenn,
     # 2026-08-30). Its watchable films fill the top shelf. Every
@@ -312,9 +371,14 @@ def index():
     # separate "nothing fits the filter" from "nothing left to recommend"
     # (#198).
     watchlist_eligible = len(wl_urgent) + len(wl_rows)
-    if minutes:
-        wl_urgent = [row for row in wl_urgent if _fits(row["movie"], minutes)]
-        wl_rows = [row for row in wl_rows if _fits(row["movie"], minutes)]
+    if filtering:
+        wl_genre = set()
+        if genre:
+            wl_genre, _ = genre_members(
+                genre, [row["movie"].id for row in wl_urgent + wl_rows], []
+            )
+        wl_urgent = [row for row in wl_urgent if movie_ok(row["movie"], wl_genre)]
+        wl_rows = [row for row in wl_rows if movie_ok(row["movie"], wl_genre)]
     watchlist_items = daily_shelf(
         current_app.redis,
         current_user.id,
@@ -483,15 +547,30 @@ def index():
     # share spread around. They do not always go to the shelf that
     # picked first. The render order of the page stays fixed.
 
-    def movie_fits(row):
-        """Apply the runtime filter to a movie-backed row."""
+    genre_movie_ids, genre_tmdb_ids = set(), set()
+    if genre:
+        genre_movie_ids, genre_tmdb_ids = genre_members(
+            genre,
+            [row["movie"].id for row in rec_rows + again_rows],
+            [
+                item["tmdb_id"]
+                for rows in [rail_rows, leaving_rows]
+                + [feed["items"] for feed in newly_feeds]
+                for item in rows
+            ],
+        )
 
-        return _fits(row["movie"], minutes)
+    def movie_fits(row):
+        """Apply the runtime and genre filters to a movie-backed row."""
+
+        return movie_ok(row["movie"], genre_movie_ids)
 
     def payload_fits(item):
-        """Apply the runtime filter to a stored-payload row."""
+        """Apply the runtime and genre filters to a stored-payload row."""
 
-        return bool(item.get("runtime") and item["runtime"] <= minutes)
+        if minutes and not (item.get("runtime") and item["runtime"] <= minutes):
+            return False
+        return not genre or item["tmdb_id"] in genre_tmdb_ids
 
     def movie_row_key(row):
         """Return the page-wide claim id of a movie-backed row."""
@@ -525,7 +604,7 @@ def index():
         if not rows:
             picked[name] = []
             continue
-        if minutes:
+        if filtering:
             rows = [row for row in rows if fits(row)]
         picked[name] = daily_shelf(
             current_app.redis,
@@ -543,15 +622,27 @@ def index():
     rail = picked["rail"]
     shelf_items = picked["leaving"]
 
-    # A rail that the runtime filter emptied says so. It does not
-    # disappear. Silence reads as "there is nothing here" (#198). Each
-    # flag means that the rail had films and the filter removed them all.
+    # A rail that the filters emptied says so. It does not disappear.
+    # Silence reads as "there is nothing here" (#198). Each flag means
+    # that the rail had films and the filters removed them all.
 
     def filtered_out(shown_cards, eligible):
-        """Return True when a rail had films and the runtime filter
-        removed every one of them."""
+        """Return True when a rail had films and the filters removed
+        every one of them."""
 
-        return bool(minutes) and not shown_cards and eligible > 0
+        return filtering and not shown_cards and eligible > 0
+
+    # The empty-shelf messages name the filters that apply.
+
+    if minutes and genre:
+        fit_phrase = f"is in the {genre_name} genre and fits in {minutes} minutes"
+        fit_hint = "Change the filters"
+    elif genre:
+        fit_phrase = f"is in the {genre_name} genre"
+        fit_hint = "Try a different genre"
+    else:
+        fit_phrase = f"fits in {minutes} minutes"
+        fit_hint = "Try a longer time"
 
     new_shelves = []
     for feed in newly_feeds:
@@ -594,6 +685,12 @@ def index():
         criterion_subscriber=is_criterion_subscriber(current_user),
         review_form=MovieReviewForm(),
         minutes=minutes,
+        genres=genres,
+        genre=genre,
+        genre_name=genre_name,
+        filtering=filtering,
+        fit_phrase=fit_phrase,
+        fit_hint=fit_hint,
     )
 
 

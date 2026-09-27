@@ -5,20 +5,30 @@
 
 {% block app_content %}
 {{ page_header('Pick something to watch') }}
-{% if watchlist_items or recs or rail or minutes %}
-{# The runtime filter is a view on the rails that are already
-   computed. The recommendations never consider the length. Films with
-   an unknown runtime hide only while a limit is set. #}
+{% if watchlist_items or recs or rail or filtering %}
+{# The runtime and genre filters are a view on the rails that are
+   already computed. The recommendations never consider them. Films
+   with an unknown runtime hide only while a limit is set. #}
 {# One flex-wrap row with a gap. Thus, the label, the box, and the
    buttons keep a gap when a narrow screen wraps them. #}
 <form class="d-flex flex-wrap align-items-center gap-2 mb-3" action="{{ url_for('main.index') }}" method="get">
 	<label class="small text-muted mb-0" for="minutes">Only films that fit your evening:</label>
 	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
+	<select name="genre" id="genre" class="form-select form-select-sm" style="width: auto;" aria-label="Genre">
+		<option value="">All genres</option>
+		{% for genre_id, name in genres %}
+		<option value="{{ genre_id }}"{% if genre_id == genre %} selected{% endif %}>{{ name }}</option>
+		{% endfor %}
+	</select>
 	<button type="submit" class="btn btn-sm btn-primary">Filter</button>
-	{% if minutes %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
+	{% if filtering %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.index') }}">Clear</a>{% endif %}
 </form>
-{% if minutes %}
+{% if minutes and genre %}
+<p class="small text-muted">This page shows {{ genre_name }} films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
+{% elif minutes %}
 <p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
+{% elif genre %}
+<p class="small text-muted">This page shows only {{ genre_name }} films.</p>
 {% endif %}
 {% endif %}
 {# The watchlist shelf (2026-08-30): the films that the user wants and
@@ -29,7 +39,7 @@
 {% if watchlist_items or watchlist_filtered_out %}
 <div><h4 id="watchlist-shelf" class="mt-3 mb-2" style="display: inline;">From your watchlist</h4>&nbsp;<span><a href="{{ url_for('main.watchlist') }}" class="small">See more&hellip;</a></span></div>
 {% if watchlist_filtered_out %}
-<p class="text-muted mt-3">Nothing on your watchlist fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing on your watchlist {{ fit_phrase }}. {{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in watchlist_items %}
@@ -69,10 +79,10 @@
 <p class="small text-muted">Fitzflix recommends these films from your library, from your ratings, likes, and watches. It calculates the list each night. The last run was {{ computed_at }}.</p>
 {% endif %}
 {% elif recs_filtered_out %}
-{# The rail is computed, but the runtime filter emptied it (#198). Say
-   so. Do not claim that the recommendations are not ready yet. #}
-<p class="lead">No recommended film fits in {{ minutes }} minutes.</p>
-<p class="text-muted">Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the full list. While a limit is set, the films with an unknown runtime stay hidden.</p>
+{# The rail is computed, but the filters emptied it (#198). Say so. Do
+   not claim that the recommendations are not ready yet. #}
+<p class="lead">No recommended film {{ fit_phrase }}.</p>
+<p class="text-muted">{{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a> to see the full list.{% if minutes %} While a limit is set, the films with an unknown runtime stay hidden.{% endif %}</p>
 {% elif recs_stored %}
 <p class="lead">There is nothing left on the list for tonight.</p>
 <p class="text-muted">You logged or rejected each film on the list. The nightly rebuild selects a new set from your diary.</p>
@@ -189,10 +199,10 @@
    criterionchannel.com source link is on that page. #}
 <div><h4 id="leaving-shelf" class="mt-3 mb-2" style="display: inline;">Leaving the Criterion Channel {{ shelf_departs }}</h4>&nbsp;<span><a href="{{ url_for('main.leaving') }}" class="small">See more&hellip;</a></span></div>
 {% if shelf_filtered_out %}
-{# The runtime filter emptied the shelf. The shelf is not empty. The
+{# The filters emptied the shelf. The shelf is not empty. The
    header stays. Thus, the departure date and the link to the full
    inventory keep their place (#198). #}
-<p class="text-muted mt-3">Nothing leaving fits in {{ minutes }} minutes &mdash; see the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing leaving {{ fit_phrase }}. See the full list, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 {# data-no-leaving-fold: each film on this shelf leaves, by
    definition. Thus, the red corner fold (#197) would only repeat the
@@ -220,7 +230,7 @@
 <hr>
 <div><h4 id="newly-added-shelf-{{ ns.provider_id }}" class="mt-3 mb-2" style="display: inline;">Newly added to {{ ns.label }}</h4>&nbsp;<span><a href="{{ url_for('main.newly_added') }}#newly-added-{{ ns.provider_id }}" class="small">See more&hellip;</a></span></div>
 {% if ns.filtered_out %}
-<p class="text-muted mt-3">Nothing newly added fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing newly added {{ fit_phrase }}. {{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 {# data-no-new-fold: each film on this shelf is newly added, by
    definition. Thus, the green corner fold would only repeat the
@@ -243,7 +253,7 @@
 <hr>
 <h4 class="mt-3 mb-2">Streaming on your services</h4>
 {% if rail_filtered_out %}
-<p class="text-muted mt-3">Nothing streaming on your services fits in {{ minutes }} minutes &mdash; try a longer timeframe, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">Nothing streaming on your services {{ fit_phrase }}. {{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in rail %}
@@ -270,7 +280,7 @@
    never show logged films. #}
 <h4 class="mt-3 mb-2">Watch it again</h4>
 {% if again_filtered_out %}
-<p class="text-muted mt-3">No film that you can watch again fits in {{ minutes }} minutes. Try a longer time, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
+<p class="text-muted mt-3">No film that you can watch again {{ fit_phrase }}. {{ fit_hint }}, or <a href="{{ url_for('main.index') }}">clear the filter</a>.</p>
 {% else %}
 <div class="row mt-3">
 	{% for item in again %}

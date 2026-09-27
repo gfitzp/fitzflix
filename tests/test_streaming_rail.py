@@ -541,3 +541,56 @@ def test_runtime_filter_says_when_the_rail_empties(app, admin_client):
     body = admin_client.get("/").get_data(as_text=True)
     assert "Rail Nothing Fits (1994)" in body
     assert "Nothing streaming on your services fits" not in body
+
+
+def test_genre_filter_trims_the_rail(app, admin_client):
+    """Filter the streaming rail by the genre of the movie record.
+
+    The rail payload has no genres. The filter reads them from the
+    movie record of the tmdb id."""
+
+    from app import db
+    from app.models import TMDBGenre, User
+    from app.streaming_rail import RAIL_KEY
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        noir = TMDBGenre(id=990201, name="Rail Genre Noir")
+        db.session.add(noir)
+        make_movie("Rail Genre Match", 1994, tmdb_id=7201).genres.append(noir)
+        make_movie("Rail Genre Other", 1994, tmdb_id=7202)
+        db.session.commit()
+
+    def item(tmdb_id, title):
+        return {
+            "tmdb_id": tmdb_id,
+            "title": title,
+            "year": "1994",
+            "poster_path": None,
+            "runtime": 100,
+            "providers": [{**NETFLIX, "kind": "flatrate"}],
+            "because": ["popular on Netflix"],
+            "score": 1.0,
+        }
+
+    app.redis.set(
+        RAIL_KEY.format(user_id=user_id),
+        json.dumps(
+            {
+                "computed_at": "2026-09-27 02:15",
+                "items": [
+                    item(7201, "Rail Genre Match"),
+                    item(7202, "Rail Genre Other"),
+                    item(7203, "Rail Genre No Record"),
+                ],
+            }
+        ),
+    )
+
+    body = admin_client.get("/?genre=990201").get_data(as_text=True)
+    assert "Rail Genre Match (1994)" in body
+    assert "Rail Genre Other" not in body
+    assert "Rail Genre No Record" not in body
+
+    body = admin_client.get("/").get_data(as_text=True)
+    assert "Rail Genre Other (1994)" in body
