@@ -112,7 +112,6 @@ from app.recommendations import (
     stored_profile,
 )
 from app.streaming import (
-    _criterion_provider,
     batch_title_availability,
     rental_matches,
     streaming_matches,
@@ -894,12 +893,12 @@ def criterion_collection():
     verdicts. The releases that the library does not have render like
     TMDB search rows. Their row opens the log page. Thus, the user can
     add them to the watchlist. The small number of releases without a
-    TMDB id in Wikidata list as plain spine rows. A streaming filter
+    TMDB id in Wikidata list as plain spine rows. The ON STREAMING filter
     keeps the films on the Criterion Channel or on a subscribed service.
     """
 
     filter_status = request.args.get("filter", "all")
-    if filter_status not in ("all", "library", "settled"):
+    if filter_status not in ("all", "library", "settled", "streaming"):
         filter_status = "all"
     page = max(request.args.get("page", 1, type=int) or 1, 1)
 
@@ -1165,30 +1164,18 @@ def criterion_collection():
 
     merged = sorted(library_rows + catalog_rows, key=sort_key)
 
-    # The streaming filter (requested by Glenn, 2026-09-29). It keeps the
-    # films that stream now on a flat-rate service: the Criterion Channel
-    # or a subscribed service of the user. The Criterion Channel is
-    # always an option on this page, also for a user who does not
-    # subscribe. The filter must see the whole catalog before the
+    # The ON STREAMING filter (requested by Glenn, 2026-09-29). It keeps
+    # the films that stream now on a flat-rate service: the Criterion
+    # Channel or a subscribed service of the user. The Criterion Channel
+    # counts on this page, also for a user who does not subscribe. The
+    # filter and its count must see the whole catalog before the
     # pagination. Thus, Fitzflix reads the availability of each row with
     # a TMDB id. That is 1 MGET from the cache that the nightly refresh
     # keeps full. It never fetches inline (2026-08, a page of misses cost
     # 4 seconds behind the rate limiter). The catalog films without a
     # cache entry warm in the background for the next visit.
 
-    services = {
-        row.provider_id: row.name or "" for row in current_user.streaming_providers
-    }
-    services[CRITERION_CHANNEL_PROVIDER_ID] = _criterion_provider()["provider_name"]
-    streaming_filter = request.args.get("streaming", "")
-    if streaming_filter != "services":
-        try:
-            streaming_filter = int(streaming_filter)
-        except ValueError:
-            streaming_filter = None
-        if streaming_filter not in services:
-            streaming_filter = None
-
+    provider_ids = user_provider_ids(current_user) | {CRITERION_CHANNEL_PROVIDER_ID}
     availability_by_id, deferred = batch_title_availability(
         (row["tmdb_id"] for row in merged if row["tmdb_id"]),
         fetch_limit=0,
@@ -1203,68 +1190,32 @@ def criterion_collection():
             description=(f"Warming streaming availability for {len(deferred)} films"),
         )
     for row in merged:
-        row["streaming_ids"] = []
-        if not row["tmdb_id"]:
-            continue
         # The rows with a local file skip the leaving/newly-added
         # annotations. The copy on the shelf stays.
-        matches = streaming_matches(
-            availability_by_id.get(row["tmdb_id"]),
-            set(services),
-            tmdb_id=None if row["kind"] == "library" else row["tmdb_id"],
+        row["streaming"] = bool(row["tmdb_id"]) and bool(
+            streaming_matches(
+                availability_by_id.get(row["tmdb_id"]),
+                provider_ids,
+                tmdb_id=None if row["kind"] == "library" else row["tmdb_id"],
+            )
         )
-        row["streaming_ids"] = [match["provider_id"] for match in matches]
 
     def status_match(row, status):
-        """Return True if the row passes the library filter."""
+        """Return True if the row passes the chosen filter."""
 
         if status == "library":
             return row["kind"] == "library"
         if status == "settled":
             return row["kind"] == "library" and row["settled"]
+        if status == "streaming":
+            return row["streaming"]
         return True
 
-    def streaming_match(row, chosen):
-        """Return True if the row passes the streaming filter."""
-
-        if chosen is None:
-            return True
-        if chosen == "services":
-            return bool(row["streaming_ids"])
-        return chosen in row["streaming_ids"]
-
-    # Each count tells what the page shows if the user changes only that
-    # control. Thus, the library counts apply the streaming filter, and
-    # the streaming counts apply the library filter.
-
     counts = {
-        status: sum(
-            1
-            for row in merged
-            if status_match(row, status) and streaming_match(row, streaming_filter)
-        )
-        for status in ("all", "library", "settled")
+        status: sum(1 for row in merged if status_match(row, status))
+        for status in ("all", "library", "settled", "streaming")
     }
-    status_rows = [row for row in merged if status_match(row, filter_status)]
-    streaming_options = [
-        {
-            "value": "services",
-            "name": "Any of these services",
-            "count": sum(1 for row in status_rows if row["streaming_ids"]),
-        }
-    ] + [
-        {
-            "value": provider_id,
-            "name": name,
-            "count": sum(
-                1 for row in status_rows if provider_id in row["streaming_ids"]
-            ),
-        }
-        for provider_id, name in sorted(
-            services.items(), key=lambda item: item[1].lower()
-        )
-    ]
-    filtered = [row for row in status_rows if streaming_match(row, streaming_filter)]
+    filtered = [row for row in merged if status_match(row, filter_status)]
 
     last_page = max(
         (len(filtered) + CRITERION_CATALOG_PER_PAGE - 1) // CRITERION_CATALOG_PER_PAGE,
@@ -1273,24 +1224,22 @@ def criterion_collection():
     page = min(page, last_page)
     start = (page - 1) * CRITERION_CATALOG_PER_PAGE
     rows = filtered[start : start + CRITERION_CATALOG_PER_PAGE]
+
     return render_template(
         "library_criterion.html",
         title="Criterion Collection films",
         rows=rows,
         filter_status=filter_status,
-        streaming_filter=streaming_filter,
-        streaming_options=streaming_options,
         counts=counts,
-        # The warming note matters only when the streaming filter hides
-        # the films without a cache entry.
-        pending=len(deferred) if streaming_filter is not None else 0,
+        # The warming note matters only when the ON STREAMING filter
+        # hides the films without a cache entry.
+        pending=len(deferred) if filter_status == "streaming" else 0,
         page_numbers=_page_window(page, last_page),
         current_page=page,
         prev_url=(
             url_for(
                 "main.criterion_collection",
                 filter=filter_status,
-                streaming=streaming_filter,
                 page=page - 1,
             )
             if page > 1
@@ -1300,7 +1249,6 @@ def criterion_collection():
             url_for(
                 "main.criterion_collection",
                 filter=filter_status,
-                streaming=streaming_filter,
                 page=page + 1,
             )
             if page < last_page

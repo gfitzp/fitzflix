@@ -583,13 +583,13 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
 
 
 def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
-    """Make sure the streaming filter keeps only the films that stream now.
+    """Make sure the ON STREAMING filter keeps only the films that stream now.
 
     The filter covers the whole catalog before the pagination. The
-    Criterion Channel is always an option. The other options are the
-    subscribed services of the user. A service that the user does not
-    subscribe to never matches. A film without a cache entry is hidden,
-    and the page tells the user that it warms."""
+    Criterion Channel always counts. The subscribed services of the user
+    also count. A service that the user does not subscribe to never
+    matches. A film without a cache entry is hidden, and the page tells
+    the user that it warms."""
 
     from app.models import User, UserStreamingProvider
     from app.streaming import AVAILABILITY_KEY
@@ -649,21 +649,20 @@ def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
         for title in ("Owned", "Channel", "Elsewhere", "Unknown", "Plain"):
             assert f"Stream {title} (" in page
         assert "continues to get the streaming availability" not in page
-        assert '<option value="258">Criterion Channel (1)</option>' in page
-        assert '<option value="8">Netflix (1)</option>' in page
-        assert '<option value="services">Any of these services (2)</option>' in page
+        assert 'for="criterion-filter-streaming">On streaming (' in page
 
-        # Any service: the owned film on Netflix and the release on the
-        # Channel. The service that the user lacks does not count.
+        # The owned film on Netflix and the release on the Channel. The
+        # service that the user lacks does not count.
 
         page = admin_client.get(
-            "/library/criterion-collection?streaming=services"
+            "/library/criterion-collection?filter=streaming"
         ).get_data(as_text=True)
         assert "Stream Owned (1961)" in page
         assert "Stream Channel (1962)" in page
         assert "Stream Elsewhere" not in page
         assert "Stream Unknown" not in page
         assert "Stream Plain" not in page
+        assert 'id="criterion-filter-streaming" value="streaming" checked' in page
         assert "not on this page yet" not in page
 
         # With a TMDB key, the film without a cache entry is deferred. The
@@ -674,7 +673,7 @@ def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
         monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
         app.redis.delete("fitzflix:streaming:warm:criterion")
         page = admin_client.get(
-            "/library/criterion-collection?streaming=services"
+            "/library/criterion-collection?filter=streaming"
         ).get_data(as_text=True)
         assert "not on this page yet" in page
         warm_jobs = [
@@ -687,32 +686,6 @@ def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
         for job in warm_jobs:
             job.delete()
         monkeypatch.setitem(app.config, "TMDB_API_KEY", None)
-
-        # One service at a time.
-
-        page = admin_client.get("/library/criterion-collection?streaming=258").get_data(
-            as_text=True
-        )
-        assert "Stream Channel (1962)" in page
-        assert "Stream Owned" not in page
-        assert '<option value="258" selected>' in page
-
-        # The filters combine. The counts of each control apply the
-        # other control.
-
-        page = admin_client.get(
-            "/library/criterion-collection?filter=library&streaming=8"
-        ).get_data(as_text=True)
-        assert "Stream Owned (1961)" in page
-        assert "Stream Channel" not in page
-        assert '<option value="258">Criterion Channel (0)</option>' in page
-
-        # An unknown service falls back to no streaming filter.
-
-        page = admin_client.get("/library/criterion-collection?streaming=9").get_data(
-            as_text=True
-        )
-        assert "Stream Elsewhere (1963)" in page
     finally:
         with app.app_context():
             UserStreamingProvider.query.filter_by(

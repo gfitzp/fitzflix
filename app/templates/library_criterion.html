@@ -7,30 +7,20 @@
 {% block app_content %}
 {% call page_header(title) %}
 		<form class="d-flex flex-wrap align-items-center gap-2" action="{{ url_for('main.criterion_collection') }}" method="get">
-			{% for value, label in [("all", "All releases"), ("library", "In library"), ("settled", "Owned & settled")] %}
+			{% for value, label in [("all", "All releases"), ("library", "In library"), ("settled", "Owned & settled"), ("streaming", "On streaming")] %}
 			<div class="form-check form-check-inline">
 				<input class="form-check-input" type="radio" name="filter" id="criterion-filter-{{ value }}" value="{{ value }}"{% if filter_status == value %} checked{% endif %}>
 				<label class="form-check-label" for="criterion-filter-{{ value }}">{{ label }} ({{ counts[value] }})</label>
 			</div>
 			{% endfor %}
-			{# The streaming filter: the films on the Criterion Channel
-			   or on a subscribed service. Each option shows its count
-			   under the chosen library filter. #}
-			<select name="streaming" class="form-select form-select-sm w-auto" aria-label="Limit to films that stream">
-				<option value="">Streaming or not</option>
-				{% for option in streaming_options %}
-				<option value="{{ option.value }}"{% if streaming_filter == option.value %} selected{% endif %}>{{ option.name }} ({{ option.count }})</option>
-				{% endfor %}
-			</select>
 			<button type="submit" class="btn btn-sm btn-primary">Filter</button>
-			{% if streaming_filter or filter_status != "all" %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.criterion_collection') }}">Clear</a>{% endif %}
 		</form>
 {% endcall %}
 {% if pending %}
 <p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} {{ "is" if pending == 1 else "are" }} not on this page yet, because Fitzflix continues to get the streaming availability. Come back in some minutes.</p>
 {% endif %}
 {% if rows %}
-{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status, 'streaming': streaming_filter}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
+{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
 {# The catalog as a poster wall (#45d). This is how Criterion itself
    shows spines. The popover shows the synopsis and the badges of each
    film. The card URL passes context=criterion. Thus, the SETTLED rule
@@ -94,7 +84,7 @@
 	</div>
 	{% endfor %}
 </div>
-{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status, 'streaming': streaming_filter}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
+{% if page_numbers|length > 1 %}{{ pagination(none, 'main.criterion_collection', {'filter': filter_status}, prev_url, next_url, numbers=page_numbers, current=current_page) }}{% endif %}
 {% else %}
 <p class="lead">There are no Criterion Collection films to show.</p>
 {% endif %}
