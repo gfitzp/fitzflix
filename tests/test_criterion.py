@@ -582,6 +582,145 @@ def test_criterion_page_shows_full_catalog(app, admin_client):
     assert "Title Match (1990)" not in settled_page
 
 
+def test_criterion_page_streaming_filter(app, admin_client, monkeypatch):
+    """Make sure the streaming filter keeps only the films that stream now.
+
+    The filter covers the whole catalog before the pagination. The
+    Criterion Channel is always an option. The other options are the
+    subscribed services of the user. A service that the user does not
+    subscribe to never matches. A film without a cache entry is hidden,
+    and the page tells the user that it warms."""
+
+    from app.models import User, UserStreamingProvider
+    from app.streaming import AVAILABILITY_KEY
+    from tests.factories import make_movie_file
+
+    def streams_on(tmdb_id, provider_id, name):
+        """Seed the day cache with 1 flat-rate provider for the film."""
+
+        app.redis.set(
+            AVAILABILITY_KEY.format(tmdb_id=tmdb_id),
+            json.dumps(
+                {
+                    "link": "https://example.test/watch",
+                    "flatrate": [
+                        {
+                            "provider_id": provider_id,
+                            "provider_name": name,
+                            "logo_path": None,
+                        }
+                    ],
+                    "ads": [],
+                    "rent": [],
+                    "buy": [],
+                }
+            ),
+        )
+
+    with app.app_context():
+        user_id = User.query.filter_by(admin=True).first().id
+        subscription = UserStreamingProvider(
+            user_id=user_id, provider_id=8, name="Netflix"
+        )
+        db.session.add(subscription)
+        owned = make_movie("Stream Owned", 1961, tmdb_id=556001)
+        make_movie_file(owned, "Bluray-1080p")
+        db.session.commit()
+
+    _seed_release_cache(
+        app,
+        [
+            release(700, "Stream Owned", 1961, tmdb_id=556001),
+            release(701, "Stream Channel", 1962, tmdb_id=556002),
+            release(702, "Stream Elsewhere", 1963, tmdb_id=556003),
+            release(703, "Stream Unknown", 1964, tmdb_id=556004),
+            release(704, "Stream Plain", 1965),
+        ],
+    )
+    streams_on(556001, 8, "Netflix")
+    streams_on(556002, 258, "The Criterion Channel")
+    streams_on(556003, 9, "Amazon Prime Video")
+    app.redis.delete(AVAILABILITY_KEY.format(tmdb_id=556004))
+
+    try:
+        # With no filter, each release shows, and the note is absent.
+
+        page = admin_client.get("/library/criterion-collection").get_data(as_text=True)
+        for title in ("Owned", "Channel", "Elsewhere", "Unknown", "Plain"):
+            assert f"Stream {title} (" in page
+        assert "continues to get the streaming availability" not in page
+        assert '<option value="258">Criterion Channel (1)</option>' in page
+        assert '<option value="8">Netflix (1)</option>' in page
+        assert '<option value="services">Any of these services (2)</option>' in page
+
+        # Any service: the owned film on Netflix and the release on the
+        # Channel. The service that the user lacks does not count.
+
+        page = admin_client.get(
+            "/library/criterion-collection?streaming=services"
+        ).get_data(as_text=True)
+        assert "Stream Owned (1961)" in page
+        assert "Stream Channel (1962)" in page
+        assert "Stream Elsewhere" not in page
+        assert "Stream Unknown" not in page
+        assert "Stream Plain" not in page
+        assert "not on this page yet" not in page
+
+        # With a TMDB key, the film without a cache entry is deferred. The
+        # note tells the user, and 1 background job warms the catalog.
+        # Other tests leave spine films in the session database. Thus,
+        # the test does not assert the exact number.
+
+        monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+        app.redis.delete("fitzflix:streaming:warm:criterion")
+        page = admin_client.get(
+            "/library/criterion-collection?streaming=services"
+        ).get_data(as_text=True)
+        assert "not on this page yet" in page
+        warm_jobs = [
+            job
+            for job in app.maintenance_queue.jobs
+            if job.func_name == "app.streaming.warm_title_availability"
+            and 556004 in job.args[0]
+        ]
+        assert len(warm_jobs) == 1
+        for job in warm_jobs:
+            job.delete()
+        monkeypatch.setitem(app.config, "TMDB_API_KEY", None)
+
+        # One service at a time.
+
+        page = admin_client.get("/library/criterion-collection?streaming=258").get_data(
+            as_text=True
+        )
+        assert "Stream Channel (1962)" in page
+        assert "Stream Owned" not in page
+        assert '<option value="258" selected>' in page
+
+        # The filters combine. The counts of each control apply the
+        # other control.
+
+        page = admin_client.get(
+            "/library/criterion-collection?filter=library&streaming=8"
+        ).get_data(as_text=True)
+        assert "Stream Owned (1961)" in page
+        assert "Stream Channel" not in page
+        assert '<option value="258">Criterion Channel (0)</option>' in page
+
+        # An unknown service falls back to no streaming filter.
+
+        page = admin_client.get("/library/criterion-collection?streaming=9").get_data(
+            as_text=True
+        )
+        assert "Stream Elsewhere (1963)" in page
+    finally:
+        with app.app_context():
+            UserStreamingProvider.query.filter_by(
+                user_id=user_id, provider_id=8
+            ).delete()
+            db.session.commit()
+
+
 def test_full_refresh_creates_catalog_records(app, monkeypatch):
     """Make sure a full refresh creates records for unknown spine releases.
 
