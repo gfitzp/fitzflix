@@ -301,6 +301,111 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
         )
 
 
+def test_match_tmdb_id_accepts_a_differently_written_director(app, monkeypatch):
+    """Test the loose name test of the matcher.
+
+    TMDB credits "Lindsey C. Vickers" and the Channel says "Lindsey
+    Vickers". The Channel says "Andrew Wingard" for Adam Wingard. Both
+    films match. A candidate whose director agrees strictly still wins
+    over a candidate that passes only the loose test."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    searches = {
+        "The Appointment": [
+            {"id": 57666, "title": "The Appointment", "release_date": "1969-05-22"},
+            {"id": 157276, "title": "The Appointment", "release_date": "1983-01-15"},
+        ],
+        "You’re Next": [
+            {"id": 83899, "title": "You're Next", "release_date": "2013-08-22"}
+        ],
+        "Twins": [
+            {"id": 501, "title": "Twins", "release_date": "1990-01-01"},
+            {"id": 502, "title": "Twins", "release_date": "1990-06-01"},
+        ],
+    }
+    directors = {
+        57666: "Sidney Lumet",
+        157276: "Lindsey C. Vickers",
+        83899: "Adam Wingard",
+        501: "Jane A. Doe",
+        502: "Jane Doe",
+    }
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        if "/search/movie" in url:
+            if params.get("primary_release_year"):
+                return FakeResponse(payload={"results": []})
+            return FakeResponse(payload={"results": searches[params["query"]]})
+        tmdb_id = int(url.split("/")[-2])
+        return FakeResponse(
+            payload={"crew": [{"name": directors[tmdb_id], "job": "Director"}]}
+        )
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        match = leaving_criterion.match_tmdb_id
+        assert match("The Appointment", 1981, "Lindsey Vickers") == 157276
+        assert match("You’re Next", 2011, "Andrew Wingard") == 83899
+        assert match("Twins", 1990, "Jane Doe") == 502
+
+
+def test_match_tmdb_id_finds_a_retitled_film_through_its_director(app, monkeypatch):
+    """Test the last source of the matcher: the films of the director.
+
+    The Channel has "Spider’s Eyes". TMDB has "Eyes of the Spider".
+    The title search finds nothing. The film comes from the films that
+    the director made near that year. A title that fits 2 films of the
+    director stays unmatched."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    crew = [
+        {"id": 66061, "title": "Eyes of the Spider", "job": "Director"},
+        {"id": 103794, "title": "Serpent's Path", "job": "Director"},
+        {"id": 395018, "title": "School Ghost Story G", "job": "Director"},
+        {"id": 774879, "title": "School Ghost Story F", "job": "Director"},
+        {"id": 7001, "title": "Spider Eyes", "job": "Producer"},
+    ]
+    for credit in crew:
+        credit["release_date"] = "1998-04-11"
+    crew.append(
+        {
+            "id": 7002,
+            "title": "The Eyes of a Spider",
+            "job": "Director",
+            "release_date": "2008-01-01",
+        }
+    )
+
+    def fake_tmdb_get(url, params=None, **kwargs):
+        if "/search/movie" in url:
+            return FakeResponse(payload={"results": []})
+        if "/search/person" in url:
+            return FakeResponse(
+                payload={
+                    "results": [
+                        {"id": 26882, "name": "Kiyoshi Kurosawa"},
+                        {"id": 9, "name": "Akira Kurosawa"},
+                    ]
+                }
+            )
+        if url.endswith("/person/26882/movie_credits"):
+            return FakeResponse(payload={"crew": crew})
+        raise AssertionError(url)
+
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr(leaving_criterion, "tmdb_get", fake_tmdb_get)
+
+    with app.app_context():
+        match = leaving_criterion.match_tmdb_id
+        assert match("Spider’s Eyes", 1998, "Kiyoshi Kurosawa") == 66061
+        assert match("School Ghost Story", 1998, "Kiyoshi Kurosawa") is None
+        assert match("Spider’s Eyes", 1998) is None
+
+
 def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     import app.leaving_criterion as leaving_criterion
 

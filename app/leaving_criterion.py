@@ -228,6 +228,41 @@ def _normalize(text):
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+# The words that carry no meaning in a title comparison.
+
+TITLE_STOPWORDS = {"a", "an", "and", "in", "of", "the", "to"}
+
+
+def _title_words(text):
+    """Return the set of significant words of a title.
+
+    A plural loses its final "s". Thus, "Spider’s Eyes" and "Eyes of
+    the Spider" give the same set."""
+
+    words = set()
+    for word in _normalize(text).split():
+        if word in TITLE_STOPWORDS:
+            continue
+        words.add(word[:-1] if len(word) > 3 and word.endswith("s") else word)
+    return words
+
+
+def _same_person(wanted, name):
+    """Return True if a credited name can name a scraped director.
+
+    Both values are comparison keys from _normalize. The scraped value
+    can hold more than 1 director. The family name of the credit must
+    be a word of the scraped value, or 2 words must agree. Thus,
+    "Lindsey C. Vickers" matches "Lindsey Vickers", and "Adam Wingard"
+    matches the "Andrew Wingard" of the Channel."""
+
+    wanted_words = set(wanted.split())
+    name_words = name.split()
+    if not name_words:
+        return False
+    return name_words[-1] in wanted_words or len(wanted_words & set(name_words)) >= 2
+
+
 def _tmdb_json(path, params):
     """Return the JSON body of 1 TMDB GET, or None on a failure (logged)."""
 
@@ -255,9 +290,11 @@ def match_tmdb_id(title, year, director=None):
     first. The 2026-08 set put "Right Here, Right Now" and "The Karate
     Kid" on the shelf in place of the films of Bas Devos and Hal
     Hartley. Thus, this verifies a scraped director against the credits
-    of each candidate. It tries exact-title candidates first. If the
-    director matches no candidate that TMDB offers, the film stays
-    unmatched (a plain "Also leaving" row). It does not become the
+    of each candidate. It tries exact-title candidates first. A strict
+    name test runs first, then a loose one (_same_person). If no
+    candidate passes, the films of the director are the last source
+    (by_filmography). If the director matches no film that TMDB
+    offers, the film stays unmatched (a plain "Also leaving" row). It does not become the
     wrong film. A candidate with no credited director passes on an
     exact title-and-year match. Shorts frequently have no crew on TMDB.
     Without a scraped director, the exact-title candidate wins. If
@@ -313,25 +350,36 @@ def match_tmdb_id(title, year, director=None):
             ordered = [result for result in ordered if rank(result) != (True, True)]
         return ordered[:MATCH_CANDIDATES]
 
-    def directed_by(result):
+    credited = {}
+
+    def directed_by(result, loose=False):
         """Return True if the credited directors of the candidate include
         the scraped director.
 
         This also returns True if no director is credited and the title
-        and the year agree exactly."""
+        and the year agree exactly. The strict test wants one name to
+        contain the other. The loose test is _same_person."""
 
-        body = _tmdb_json(f"/movie/{result['id']}/credits", {})
-        if body is None:
+        if result["id"] not in credited:
+            body = _tmdb_json(f"/movie/{result['id']}/credits", {})
+            credited[result["id"]] = (
+                None
+                if body is None
+                else [
+                    _normalize(person.get("name"))
+                    for person in body.get("crew") or []
+                    if person.get("job") == "Director"
+                ]
+            )
+        directors = credited[result["id"]]
+        if directors is None:
             return False
-        directors = [
-            _normalize(person.get("name"))
-            for person in body.get("crew") or []
-            if person.get("job") == "Director"
-        ]
         if not directors:
             return _normalize(result.get("title")) == wanted_title and (
                 result.get("release_date") or ""
             )[:4] == str(year)
+        if loose:
+            return any(_same_person(wanted_director, name) for name in directors)
         return any(
             name and (name in wanted_director or wanted_director in name)
             for name in directors
@@ -353,6 +401,13 @@ def match_tmdb_id(title, year, director=None):
             for result in found:
                 if directed_by(result):
                     return result.get("id")
+            # The Channel and TMDB can write the name of a person
+            # differently (a middle initial, a wrong first name). The
+            # loose test runs only after the strict test fails for each
+            # candidate.
+            for result in found:
+                if directed_by(result, loose=True):
+                    return result.get("id")
             exact = [
                 result
                 for result in found
@@ -369,11 +424,62 @@ def match_tmdb_id(title, year, director=None):
             return None
         return found[0].get("id") if found else None
 
+    def by_filmography():
+        """Return the film of the scraped director that has this title
+        under a different word order, or None.
+
+        The Channel and TMDB can give a film different English titles.
+        The Channel has "Spider’s Eyes". TMDB has "Eyes of the Spider".
+        Then the title search finds nothing. This reads the films that
+        the director made within 1 year of the scraped date. A film
+        passes if its significant words contain those of the scraped
+        title, or the reverse. The answer must be 1 film only."""
+
+        wanted_words = _title_words(title)
+        if not (director and year and wanted_words):
+            return None
+        hits = set()
+        for name in re.split(r",|&|\band\b", director):
+            wanted_name = _normalize(name)
+            if not wanted_name:
+                continue
+            body = _tmdb_json("/search/person", {"query": name.strip()})
+            people = [
+                person
+                for person in (body or {}).get("results") or []
+                if _normalize(person.get("name")) == wanted_name
+            ]
+            for person in people[:2]:
+                body = _tmdb_json(f"/person/{person['id']}/movie_credits", {})
+                for credit in (body or {}).get("crew") or []:
+                    released = (credit.get("release_date") or "")[:4]
+                    if credit.get("job") != "Director" or not released.isdigit():
+                        continue
+                    if abs(int(released) - int(year)) > 1:
+                        continue
+                    for credit_title in (
+                        credit.get("title"),
+                        credit.get("original_title"),
+                    ):
+                        words = _title_words(credit_title)
+                        if words and (words <= wanted_words or wanted_words <= words):
+                            hits.add(credit["id"])
+        if len(hits) != 1:
+            return None
+        (found_id,) = hits
+        current_app.logger.info(
+            f"Leaving-Criterion: '{title}' ({year}) matched TMDB {found_id} "
+            f"through the films of {director}"
+        )
+        return found_id
+
     tmdb_id = None
     if year:
         tmdb_id = pick({"primary_release_year": year})
     if tmdb_id is None:
         tmdb_id = pick({})
+    if tmdb_id is None:
+        tmdb_id = by_filmography()
     current_app.redis.set(cache_key, json.dumps(tmdb_id), ex=MATCH_CACHE_SECONDS)
     return tmdb_id
 
