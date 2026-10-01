@@ -467,3 +467,131 @@ def test_lookup_client_error_retries_instead_of_quarantine(app, monkeypatch):
         monkeypatch.setattr(plex_watchlist, "_plex_get", real_get)
         assert plex_watchlist.sync_plex_watchlist() is True
         assert fake.adds == [471050]
+
+
+class FakeResponse:
+    """A stand-in for 1 answer of requests.get."""
+
+    def __init__(self, status, payload=None):
+        self.status_code = status
+        self.payload = payload or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} Error", response=self)
+
+    def json(self):
+        return self.payload
+
+
+def wire_answers(app, monkeypatch, answers):
+    """Make requests.get give the answers in sequence. Return the waits."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    waits = []
+    answers = list(answers)
+
+    def fake_get(url, **kwargs):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setitem(app.config, "PLEX_TOKEN", "test-token")
+    monkeypatch.setattr(plex_watchlist.requests, "get", fake_get)
+    monkeypatch.setattr(plex_watchlist.time, "sleep", waits.append)
+    return waits
+
+
+def test_get_tries_again_after_a_transient_failure(app, monkeypatch):
+    """Test that a 503 or a dropped connection does not fail the GET.
+
+    Plex answers 1 page of a long watchlist with a 503 now and then. The
+    same request succeeds a moment later."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        waits = wire_answers(
+            app,
+            monkeypatch,
+            [
+                FakeResponse(503),
+                requests.ConnectionError("dropped"),
+                FakeResponse(200, {"MediaContainer": {"totalSize": 0}}),
+            ],
+        )
+        payload = plex_watchlist._plex_get("https://plex.test/page")
+        assert payload == {"MediaContainer": {"totalSize": 0}}
+        assert waits == list(plex_watchlist.GET_RETRY_WAITS)
+
+
+def test_get_gives_up_after_the_last_wait(app, monkeypatch):
+    """Test that a continued outage raises the last error."""
+
+    import pytest
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        tries = len(plex_watchlist.GET_RETRY_WAITS) + 1
+        waits = wire_answers(app, monkeypatch, [FakeResponse(503)] * tries)
+        with pytest.raises(requests.HTTPError):
+            plex_watchlist._plex_get("https://plex.test/page")
+        assert waits == list(plex_watchlist.GET_RETRY_WAITS)
+
+
+def test_get_does_not_try_a_client_error_again(app, monkeypatch):
+    """Test that a 4xx goes to the caller immediately.
+
+    A client error is about the request. A second try gets the same
+    answer."""
+
+    import pytest
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        waits = wire_answers(app, monkeypatch, [FakeResponse(404)])
+        with pytest.raises(requests.HTTPError):
+            plex_watchlist._plex_get("https://plex.test/page")
+        assert waits == []
+
+
+def test_plex_outage_logs_one_line_and_keeps_the_snapshot(app, monkeypatch, caplog):
+    """Test that a failed watchlist read aborts the run with 1 warning.
+
+    The run must not change the watchlist or the snapshot. The log must
+    not hold a traceback, because an outage is not a code fault."""
+
+    import app.plex_watchlist as plex_watchlist
+
+    with app.app_context():
+        user_id = setup_user(app)
+        movie = make_movie("Outage Night", 1984, tmdb_id=471060)
+        db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        snapshot = [471060]
+        app.redis.set(plex_watchlist.SNAPSHOT_KEY, json.dumps(snapshot))
+
+        fake = FakePlex({})
+        wire(app, monkeypatch, fake)
+        real_get = fake.get
+
+        def failing_listing(url, params=None):
+            if "watchlist/all" in url:
+                response = requests.Response()
+                response.status_code = 503
+                raise requests.HTTPError("503 Server Error", response=response)
+            return real_get(url, params)
+
+        monkeypatch.setattr(plex_watchlist, "_plex_get", failing_listing)
+        with caplog.at_level("WARNING"):
+            assert plex_watchlist.sync_plex_watchlist() is True
+
+        assert "could not read the Plex watchlist" in caplog.text
+        assert "Traceback" not in caplog.text
+        assert fitzflix_watchlist_tmdb_ids(user_id) == {471060}
+        assert json.loads(app.redis.get(plex_watchlist.SNAPSHOT_KEY)) == snapshot
+        assert fake.removes == []

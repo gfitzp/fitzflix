@@ -16,6 +16,7 @@ retry on each run. The sync never reads them as a removal.
 """
 
 import json
+import time
 import traceback
 
 import requests
@@ -53,6 +54,12 @@ ANOMALY_FLOOR = 10
 
 RETRYABLE_CLIENT_ERRORS = {401, 403, 408, 429}
 
+# A plex.tv API sometimes answers 1 page of a long watchlist with a
+# server error (a 503). The same request usually succeeds a moment
+# later. Thus, a GET tries again after each of these waits, in seconds.
+
+GET_RETRY_WAITS = (2, 5)
+
 
 def _refused_by_plex(error):
     """Return True if Plex refused the request for this item.
@@ -66,17 +73,45 @@ def _refused_by_plex(error):
     return 400 <= status < 500 and status not in RETRYABLE_CLIENT_ERRORS
 
 
-def _plex_get(url, params=None):
-    """Do 1 authenticated JSON GET against a plex.tv API."""
+def _transient(error):
+    """Return True if the same GET can succeed a moment later.
 
-    r = requests.get(
-        url,
-        params={**(params or {}), "X-Plex-Token": current_app.config["PLEX_TOKEN"]},
-        headers={"Accept": "application/json"},
-        timeout=30,
+    That is a server error (HTTP 5xx), a dropped connection, or a
+    timeout."""
+
+    if isinstance(error, (requests.ConnectionError, requests.Timeout)):
+        return True
+    response = getattr(error, "response", None)
+    return (
+        isinstance(error, requests.HTTPError)
+        and response is not None
+        and response.status_code >= 500
     )
-    r.raise_for_status()
-    return r.json()
+
+
+def _plex_get(url, params=None):
+    """Do 1 authenticated JSON GET against a plex.tv API.
+
+    A transient failure tries again after each wait in GET_RETRY_WAITS.
+    Then the last error goes to the caller."""
+
+    for wait in (*GET_RETRY_WAITS, None):
+        try:
+            r = requests.get(
+                url,
+                params={
+                    **(params or {}),
+                    "X-Plex-Token": current_app.config["PLEX_TOKEN"],
+                },
+                headers={"Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            return r.json()
+        except requests.RequestException as error:
+            if wait is None or not _transient(error):
+                raise
+            time.sleep(wait)
 
 
 def _plex_put(path, rating_key):
@@ -228,6 +263,14 @@ def sync_plex_watchlist():
 
         try:
             plex = fetch_plex_watchlist(fitzflix, snapshot)
+        except requests.RequestException as e:
+            # A Plex outage is not a code fault. One line is sufficient.
+
+            current_app.logger.warning(
+                f"Plex watchlist: could not read the Plex watchlist: {e}. "
+                f"The next run tries again."
+            )
+            return True
         except Exception:
             current_app.logger.warning(traceback.format_exc())
             return True
