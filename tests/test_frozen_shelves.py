@@ -98,6 +98,39 @@ def test_daily_shelf_urgent_rows_lead_in_order(app):
     assert len({card["id"] for card in cards}) == 6
 
 
+def test_daily_shelf_late_urgent_row_leads_a_frozen_shelf(app):
+    """Test that an urgent row that appears after the freeze still leads.
+
+    The frozen cards keep their order behind it. The last card drops
+    off. A later render replays the same cards."""
+
+    rows = [{"id": f"r{n}"} for n in range(10)]
+
+    def shelf(urgent):
+        return [
+            card["id"]
+            for card in daily_shelf(
+                app.redis,
+                1,
+                "unit-late-urgent",
+                rows,
+                set(),
+                key=lambda row: row["id"],
+                urgent=urgent,
+                day=date(2026, 8, 30),
+                count=6,
+            )
+        ]
+
+    with app.app_context():
+        frozen = shelf([])
+        late = shelf([{"id": "u1"}])
+        again = shelf([{"id": "u1"}])
+
+    assert late == ["u1"] + frozen[:5]
+    assert again == late
+
+
 def test_daily_shelf_never_repeats_across_the_page(app):
     """Test that 2 shelves with the same candidates claim different films.
 

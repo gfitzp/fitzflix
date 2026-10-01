@@ -1143,7 +1143,8 @@ def daily_shelf(
     snapshot claims its films exactly as the first render of the day
     did. With `freeze`, the first render of the day stores a snapshot
     of the result. Later renders replay it slot for slot through
-    frozen_shelf. The ?minutes= view passes freeze=False. It picks live
+    frozen_shelf. An urgent row that appears later in the day
+    still takes a leading slot. The ?minutes= view passes freeze=False. It picks live
     over the rows that fit. It is a transient planning view, not the
     shelf (#204).
     """
@@ -1176,6 +1177,23 @@ def daily_shelf(
             ],
             pick=pick,
         )
+        # An urgent row can appear after the first render of the day. The
+        # leaving set of a new month is published on the clock of the
+        # provider. Such a row still takes a leading slot. The frozen
+        # cards keep their order behind the urgent rows, and the last
+        # cards drop off to keep the size of the shelf.
+        urgent_ids = [key(row) for row in urgent if key(row) not in shown]
+        if any(row_key not in ids for row_key in urgent_ids):
+            lead = urgent_ids[:count]
+            ids = lead + [row_key for row_key in ids if row_key not in lead]
+            ids = ids[:count]
+            redis_client.set(
+                SHELF_SNAPSHOT_KEY.format(
+                    shelf=shelf, user_id=int(user_id), day=day.isoformat()
+                ),
+                json.dumps(ids),
+                ex=SHELF_SNAPSHOT_TTL,
+            )
     else:
         ids = pick()
     shown.update(ids)
