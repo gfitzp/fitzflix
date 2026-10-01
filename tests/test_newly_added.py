@@ -11,6 +11,7 @@ from datetime import date, timedelta
 from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 from tests.test_leaving_criterion import (
+    FILM_PAGES,
     LEAVING_HTML,
     FakeResponse,
     shelf_item,
@@ -42,36 +43,85 @@ def plant_feed(app, items, provider_id=None):
         json.dumps(
             {
                 "fetched_at": "2026-08-27 05:00",
-                "source": "https://www.criterionchannel.com/newly-added",
+                "source": "https://www.criterionchannel.com/discover/newly-added",
                 "items": items,
             }
         ),
     )
 
 
-def test_fetch_collection_films_paginates_and_dedupes(app, monkeypatch):
+def test_fetch_collection_films_reads_directors_and_dedupes(app, monkeypatch):
+    """Test the collection reader on the playlist page of the Channel.
+
+    The director of each film comes from its film page. A second read
+    takes the directors from the cache and reads only the collection
+    page. A film that the playlist repeats shows 1 time."""
+
     import app.leaving_criterion as leaving_criterion
 
+    from tests.test_leaving_criterion import collection_page
+
+    source = "https://www.criterionchannel.com/discover/newly-added"
+    entry = {
+        "title": "The Searchers",
+        "release_date": "1956-05-16",
+        "contentType": "film",
+        "deeplink": "https://www.criterionchannel.com/films/aaaa1111/the-searchers",
+    }
     calls = []
 
-    def fake_requests_get(url, params=None, timeout=None):
-        calls.append(params.get("page"))
-        if params.get("page") == 1:
-            return FakeResponse(text=LEAVING_HTML)
-        if params.get("page") == 2:
-            # The same films again. This is the duplicate case
-            return FakeResponse(text=LEAVING_HTML)
-        return FakeResponse(text="<html>empty</html>")
+    def fake_requests_get(url, timeout=None):
+        calls.append(url)
+        if url in FILM_PAGES:
+            return FakeResponse(text=FILM_PAGES[url])
+        # The same film 2 times. This is the duplicate case
+        return FakeResponse(text=collection_page([entry, entry]))
 
     monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
 
     with app.app_context():
         from app.leaving_criterion import fetch_collection_films
 
-        films = fetch_collection_films("https://www.criterionchannel.com/newly-added")
+        films = fetch_collection_films(source)
+        assert films == [
+            {"title": "The Searchers", "director": "John Ford", "year": 1956}
+        ]
+        assert calls == [source, entry["deeplink"]]
 
-    assert [film["title"] for film in films] == ["The Searchers", "Love & Mercy"]
-    assert calls == [1, 2, 3]
+        assert fetch_collection_films(source) == films
+        assert calls == [source, entry["deeplink"], source]
+
+
+def test_fetch_collection_films_survives_a_dead_page(app, monkeypatch):
+    """Test the reader on pages that do not answer.
+
+    A dead collection page gives no films. A dead film page gives a
+    film with no director."""
+
+    import app.leaving_criterion as leaving_criterion
+
+    source = "https://www.criterionchannel.com/discover/newly-added"
+    pages = {source: FakeResponse(status_code=404)}
+
+    def fake_requests_get(url, timeout=None):
+        if url not in pages:
+            raise ConnectionError("no answer")
+        return pages[url]
+
+    monkeypatch.setattr(leaving_criterion.requests, "get", fake_requests_get)
+
+    with app.app_context():
+        from app.leaving_criterion import fetch_collection_films
+
+        assert fetch_collection_films(source) == []
+
+        pages[source] = FakeResponse(text=LEAVING_HTML)
+        films = fetch_collection_films(source)
+
+    assert [(film["title"], film["director"]) for film in films] == [
+        ("The Searchers", None),
+        ("Love & Mercy", None),
+    ]
 
 
 def test_refresh_plants_first_then_stamps_and_prunes(app, monkeypatch):
@@ -415,7 +465,7 @@ def test_newly_added_page_lists_the_complete_inventory(app, admin_client):
     assert "Also new" in body
     assert "Inventory Unmatched (1962)" in body
     assert "Directed by Jane Doe" in body
-    assert 'href="https://www.criterionchannel.com/newly-added"' in body
+    assert 'href="https://www.criterionchannel.com/discover/newly-added"' in body
 
     # The films on the watchlist are first. The owned films are last
 

@@ -15,7 +15,7 @@ it has a `first_seen` date that the diff sets. There is a shelf per
 subscribed provider with a stored feed. There is an "added <date>"
 availability badge. But only one feed exists today: the newly-added
 collection of the Criterion Channel. Fitzflix scrapes it through the
-same VHX collection reader as the leaving page. The listing of full
+same collection reader as the leaving page. The listing of full
 provider catalogs from TMDb /discover is the job of #250. It writes
 this same store shape. Its target is the recommendation universe, not
 a shelf.
@@ -62,7 +62,7 @@ app = LocalProxy(get_app)
 
 FEEDS = {
     CRITERION_PROVIDER_ID: {
-        "url": "https://www.criterionchannel.com/newly-added",
+        "url": "https://www.criterionchannel.com/discover/newly-added",
         "label": "the Criterion Channel",
     }
 }

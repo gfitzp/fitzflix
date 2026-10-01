@@ -1,11 +1,12 @@
 """Build the "Leaving the Criterion Channel" shelf of the landing page.
 
-criterionchannel.com/leaving-{month}-{lastday} is the canonical source
-for the films that leave at the end of the month. It is structured
-HTML with a tooltip for each film. The tooltip carries the title, the
-director, and the year. No feed or API exists. The JSON and RSS
-variants return 404. JustWatch has no public leaving API. TMDB does not
-license departure data. Fitzflix scrapes this 1 official page to get
+criterionchannel.com/discover/leaving-{month}-{lastday} is the
+canonical source for the films that leave at the end of the month. The
+page is a Next.js page since 2026-09. Its app data carries a playlist
+with the title, the release date, and the film page of each film. The
+film page carries the director. No feed or API exists. JustWatch has
+no public leaving API. TMDB does not license departure data.
+Fitzflix scrapes this 1 official page to get
 the titles. This is a narrow and deliberate exception to the
 no-scraping rule. A daily task parses the collection. The task does
 nothing while the stored set is current. The task matches each film to
@@ -22,7 +23,6 @@ now, or buy the disc.
 """
 
 import calendar
-import html
 import json
 import re
 import traceback
@@ -53,19 +53,21 @@ CRITERION_PROVIDER_ID = 258
 
 LEAVING_KEY = "fitzflix:criterion:leaving"
 MATCH_KEY = "fitzflix:criterion:match:{slug}"
+DIRECTOR_KEY = "fitzflix:criterion:director:{media_id}"
 MATCH_CACHE_SECONDS = 60 * 86400
 MATCH_CANDIDATES = 5
-PAGE_CAP = 10
 
-# There is 1 film for each tooltip: the title heading, then an optional
-# "Directed by X • YYYY • Country" line.
+# The collection pages are below /discover since the 2026-09 redesign of
+# the Channel. The old top-level addresses no longer show a collection.
 
-TOOLTIP_TITLE_RE = re.compile(
-    r"tooltip-item-title[^>]*>\s*<strong>\s*(.*?)\s*</strong>", re.S
-)
-TOOLTIP_META_RE = re.compile(
-    r"(?:Directed by\s+(?P<director>[^•<]+?)\s*)?•\s*(?P<year>\d{4})\s*•"
-)
+COLLECTION_ORIGIN = "https://www.criterionchannel.com/discover"
+
+# A collection page carries its films in the data of the Next.js app,
+# as a "playlist" array. Each film has a title, a release date, a
+# content type, and a deeplink to its film page.
+
+PLAYLIST_START_RE = re.compile(r'"playlist"\s*:\s*\[')
+MEDIA_ID_RE = re.compile(r"/films/([^/?#]+)")
 
 
 def leaving_page_candidates(today):
@@ -88,56 +90,98 @@ def leaving_page_candidates(today):
         month_name = calendar.month_name[month].lower()
         candidates.append(
             (
-                f"https://www.criterionchannel.com/leaving-{month_name}-{last_day}",
+                f"{COLLECTION_ORIGIN}/leaving-{month_name}-{last_day}",
                 date(year, month, last_day),
             )
         )
     return candidates
 
 
-def parse_leaving_page(page_html):
-    """Return [{title, director, year}] from 1 page of the tooltip markup
-    of the leaving collection, or [] if the page has no films."""
+def parse_collection_page(page_html):
+    """Return [{title, director, year, url}] from 1 collection page, or
+    [] if the page has no films.
 
-    films = []
-    for chunk in page_html.split('class="tooltip background-white"')[1:]:
-        title_match = TOOLTIP_TITLE_RE.search(chunk)
-        if not title_match:
+    The films are the first playlist of the page that holds a film. An
+    entry of a different content type (a series, a collection) is not
+    a film and is left out. The playlist has no director. Thus, the
+    director is None here. The url is the film page."""
+
+    # Imported here. criterion_now imports this module at its top.
+    from app.criterion_now import _app_data
+
+    data = _app_data(page_html)
+    decoder = json.JSONDecoder()
+    for match in PLAYLIST_START_RE.finditer(data):
+        try:
+            playlist, _ = decoder.raw_decode(data, match.end() - 1)
+        except ValueError:
             continue
-        film = {
-            "title": html.unescape(title_match.group(1)).strip(),
-            "director": None,
-            "year": None,
-        }
-        meta = TOOLTIP_META_RE.search(chunk.replace("&nbsp;", " "))
-        if meta:
-            film["year"] = int(meta.group("year"))
-            if meta.group("director"):
-                film["director"] = html.unescape(meta.group("director")).strip()
-        films.append(film)
-    return films
+        films = []
+        for entry in playlist:
+            if not isinstance(entry, dict) or entry.get("contentType") != "film":
+                continue
+            title = str(entry.get("title") or "").replace("\xa0", " ").strip()
+            if not title:
+                continue
+            year = re.match(r"(\d{4})", str(entry.get("release_date") or ""))
+            films.append(
+                {
+                    "title": title,
+                    "director": None,
+                    "year": int(year.group(1)) if year else None,
+                    "url": entry.get("deeplink") or None,
+                }
+            )
+        if films:
+            return films
+    return []
+
+
+def film_page_director(url):
+    """Return the director that the film page of the Channel names, or
+    None.
+
+    The cache keeps the answer for 2 months. Thus, a daily refresh reads
+    only the pages of the films that are new to a collection. A page
+    that does not answer is not cached."""
+
+    media = MEDIA_ID_RE.search(url or "")
+    if not media:
+        return None
+    cache_key = DIRECTOR_KEY.format(media_id=media.group(1))
+    cached = current_app.redis.get(cache_key)
+    if cached is not None:
+        return json.loads(cached) or None
+
+    # Imported here. criterion_now imports this module at its top.
+    from app.criterion_now import parse_film_info
+
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        director = parse_film_info(r.text)["director"]
+    except Exception:
+        current_app.logger.warning(traceback.format_exc())
+        return None
+    current_app.redis.set(cache_key, json.dumps(director), ex=MATCH_CACHE_SECONDS)
+    return director
 
 
 def fetch_collection_films(url):
-    """Return [{title, director, year}] scraped from 1 VHX collection
-    page, without duplicates.
+    """Return [{title, director, year}] scraped from 1 collection page,
+    without duplicates.
 
-    Each Criterion Channel collection serves the ?html=1&page=N markup.
-    This reads the pages until an empty page. It returns [] if the page
-    does not answer. This is the generic half of the scraper. The
-    leaving page and the newly-added feed (#246, app.newly_added) both
-    read through it."""
+    The page carries its complete playlist. It returns [] if the page
+    does not answer. The director of each film comes from its film
+    page. This is the generic half of the scraper. The leaving page and
+    the newly-added feed (#246, app.newly_added) both read through
+    it."""
 
-    films = []
     try:
-        for page in range(1, PAGE_CAP + 1):
-            r = requests.get(url, params={"html": 1, "page": page}, timeout=15)
-            if r.status_code != 200:
-                break
-            page_films = parse_leaving_page(r.text)
-            if not page_films:
-                break
-            films.extend(page_films)
+        r = requests.get(url, timeout=15)
+        if r.status_code != 200:
+            return []
+        films = parse_collection_page(r.text)
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         return []
@@ -145,9 +189,16 @@ def fetch_collection_films(url):
     unique = []
     for film in films:
         key = (film["title"].lower(), film["year"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(film)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(
+            {
+                "title": film["title"],
+                "director": film_page_director(film["url"]),
+                "year": film["year"],
+            }
+        )
     return unique
 
 
@@ -155,8 +206,7 @@ def fetch_leaving_films():
     """Return (departure date, source url, films) scraped from the
     official leaving page.
 
-    This reads the pages until an empty page. It returns (None, None,
-    []) if no candidate page answers."""
+    It returns (None, None, []) if no candidate page has films."""
 
     for url, departs in leaving_page_candidates(date.today()):
         films = fetch_collection_films(url)
@@ -532,7 +582,7 @@ def _source_url(stored, departs):
     builds."""
 
     return stored.get("source") or (
-        "https://www.criterionchannel.com/leaving-"
+        f"{COLLECTION_ORIGIN}/leaving-"
         f"{calendar.month_name[departs.month].lower()}-{departs.day}"
     )
 

@@ -11,17 +11,55 @@ from datetime import date, timedelta
 from tests.conftest import dvr_rebuild_jobs
 from tests.factories import make_movie, make_movie_file
 
-LEAVING_HTML = """
-<li class="js-collection-item collection-item-1 item-type-video"></li>
-<div class="tooltip background-white" id="collection-tooltip-1">
-  <h3 class="tooltip-item-title site-font-primary-family"><strong>The Searchers</strong></h3>
-  <p>Directed by John Ford • 1956 • United States<br />Starring John Wayne, Jeffrey Hunter</p>
-</div>
-<div class="tooltip background-white" id="collection-tooltip-2">
-  <h3 class="tooltip-item-title"><strong>Love &amp; Mercy</strong></h3>
-  <p>Directed by Bill Pohlad •&nbsp;2015 • United States</p>
-</div>
-"""
+
+def collection_page(entries):
+    """Return a collection page with the entries as its playlist.
+
+    The page sends the playlist as the Next.js app data, in the same
+    shape as the pages of the Channel."""
+
+    data = json.dumps({"blocks": [{"type": 20, "playlist": entries}]})
+    return f"<html><script>self.__next_f.push([1,{json.dumps(data)}])</script></html>"
+
+
+def film_page(director):
+    """Return a film page of the Channel that names the director."""
+
+    block = {"@type": "Movie", "director": [{"@type": "Person", "name": director}]}
+    return f'<script type="application/ld+json">{json.dumps(block)}</script>'
+
+
+LEAVING_HTML = collection_page(
+    [
+        {
+            "title": "The Searchers",
+            "release_date": "1956-05-16",
+            "contentType": "film",
+            "deeplink": "https://www.criterionchannel.com/films/aaaa1111/the-searchers",
+        },
+        {
+            "title": "A Series",
+            "release_date": "2014-07-10",
+            "contentType": "series",
+            "deeplink": "https://www.criterionchannel.com/series/cccc3333/a-series",
+        },
+        {
+            "title": "Love & Mercy",
+            "release_date": "2015-01-01",
+            "contentType": "film",
+            "deeplink": "https://www.criterionchannel.com/films/bbbb2222/love-mercy",
+        },
+    ]
+)
+
+FILM_PAGES = {
+    "https://www.criterionchannel.com/films/aaaa1111/the-searchers": film_page(
+        "John Ford"
+    ),
+    "https://www.criterionchannel.com/films/bbbb2222/love-mercy": film_page(
+        "Bill Pohlad"
+    ),
+}
 
 
 class FakeResponse:
@@ -49,22 +87,32 @@ def test_leaving_page_candidates_roll_over_year_boundaries(app):
     departures = [departs for _, departs in candidates]
 
     assert urls == [
-        "https://www.criterionchannel.com/leaving-december-31",
-        "https://www.criterionchannel.com/leaving-january-31",
-        "https://www.criterionchannel.com/leaving-november-30",
+        "https://www.criterionchannel.com/discover/leaving-december-31",
+        "https://www.criterionchannel.com/discover/leaving-january-31",
+        "https://www.criterionchannel.com/discover/leaving-november-30",
     ]
     assert departures == [date(2026, 12, 31), date(2027, 1, 31), date(2026, 11, 30)]
 
 
-def test_parse_leaving_page_reads_tooltips(app):
-    from app.leaving_criterion import parse_leaving_page
+def test_parse_collection_page_reads_the_playlist(app):
+    from app.leaving_criterion import parse_collection_page
 
-    films = parse_leaving_page(LEAVING_HTML)
+    films = parse_collection_page(LEAVING_HTML)
     assert films == [
-        {"title": "The Searchers", "director": "John Ford", "year": 1956},
-        {"title": "Love & Mercy", "director": "Bill Pohlad", "year": 2015},
+        {
+            "title": "The Searchers",
+            "director": None,
+            "year": 1956,
+            "url": "https://www.criterionchannel.com/films/aaaa1111/the-searchers",
+        },
+        {
+            "title": "Love & Mercy",
+            "director": None,
+            "year": 2015,
+            "url": "https://www.criterionchannel.com/films/bbbb2222/love-mercy",
+        },
     ]
-    assert parse_leaving_page("<html>nothing here</html>") == []
+    assert parse_collection_page("<html>nothing here</html>") == []
 
 
 def test_match_tmdb_id_searches_by_year_and_caches(app, monkeypatch):
@@ -256,10 +304,10 @@ def test_match_tmdb_id_verifies_the_director(app, monkeypatch):
 def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
     import app.leaving_criterion as leaving_criterion
 
-    def fake_requests_get(url, params=None, timeout=None):
-        if params and params.get("page", 1) == 1:
-            return FakeResponse(text=LEAVING_HTML)
-        return FakeResponse(text="<html>empty</html>")
+    def fake_requests_get(url, timeout=None):
+        if url in FILM_PAGES:
+            return FakeResponse(text=FILM_PAGES[url])
+        return FakeResponse(text=LEAVING_HTML)
 
     def fake_tmdb_get(url, params=None, **kwargs):
         if "/search/movie" in url:
@@ -316,7 +364,9 @@ def test_refresh_task_scrapes_matches_and_stores(app, monkeypatch):
 
     stored = json.loads(app.redis.get(leaving_criterion.LEAVING_KEY))
     assert stored["departs"]
-    assert stored["source"].startswith("https://www.criterionchannel.com/leaving-")
+    assert stored["source"].startswith(
+        "https://www.criterionchannel.com/discover/leaving-"
+    )
     ids = [item["tmdb_id"] for item in stored["items"]]
     assert ids == [3110, None]
     assert stored["items"][0]["genres"] == [{"id": 37, "name": "Western"}]
@@ -682,7 +732,7 @@ def test_leaving_page_source_link_survives_pre_url_payloads(app, admin_client):
 
     body = admin_client.get("/leaving").get_data(as_text=True)
     expected = (
-        "https://www.criterionchannel.com/leaving-"
+        "https://www.criterionchannel.com/discover/leaving-"
         f"{calendar.month_name[departs.month].lower()}-{departs.day}"
     )
     assert f'<a href="{expected}"' in body
