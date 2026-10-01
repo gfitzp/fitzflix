@@ -8,8 +8,8 @@
 		{# The availability filter: all films by default, or one
 		   exclusive bucket (owned, streaming, rent-only, or nowhere).
 		   This is the radio grammar of the criterion page, with
-		   counts. Title and runtime (#216/#195) share the form. Thus,
-		   one Filter applies all 3. The counts show
+		   counts. Title and runtime (#216/#195) and genre share the
+		   form. Thus, one Filter applies all 4. The counts show
 		   data-watchlist-count. Thus, a live tile removal (#187)
 		   keeps them correct without a reload. #}
 		{# The row aligns on the text baseline, not the center. The
@@ -19,6 +19,17 @@
 		<form class="d-flex flex-wrap align-items-baseline gap-2" action="{{ url_for('main.watchlist') }}" method="get">
 			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
 			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
+			{# The genre menu holds only the genres of the films on
+			   the list. It has no counts. Thus, a live tile removal
+			   (#187) has nothing to keep correct here. #}
+			{% if genres %}
+			<select name="genre" class="form-select form-select-sm w-auto" aria-label="Genre">
+				<option value="">All genres</option>
+				{% for genre_id, name in genres %}
+				<option value="{{ genre_id }}"{% if genre_id == genre %} selected{% endif %}>{{ name }}</option>
+				{% endfor %}
+			</select>
+			{% endif %}
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
 			{# The service dropdown (requested by Glenn, 2026-09-15)
 			   sits under the services pill, as one block. Thus, it
@@ -49,12 +60,16 @@
 			   wraps Clear onto a line of its own. #}
 			<div class="d-inline-flex gap-2">
 				<button type="submit" class="btn btn-sm btn-primary">Filter</button>
-				{% if q or minutes or provider %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
+				{% if q or minutes or provider or genre %}<a class="btn btn-sm btn-secondary" href="{{ url_for('main.watchlist') }}">Clear</a>{% endif %}
 			</div>
 		</form>
 {% endcall %}
-{% if minutes %}
+{% if minutes and genre %}
+<p class="small text-muted">This page shows {{ genre_name }} films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
+{% elif minutes %}
 <p class="small text-muted">This page shows films of {{ minutes }} minutes or less. It hides the films that have an unknown runtime.</p>
+{% elif genre %}
+<p class="small text-muted">This page shows only {{ genre_name }} films.</p>
 {% endif %}
 {% if pending %}
 <p class="small text-muted">{{ pending }} film{{ "s" if pending != 1 }} {{ "is" if pending == 1 else "are" }} not on this page yet, because Fitzflix continues to get the streaming availability. Come back in some minutes.</p>
@@ -121,7 +136,7 @@
 	{% endfor %}
 </div>
 {% elif total %}
-<p class="lead">No watchlisted films match {% if q or minutes %}this search{% else %}this filter{% endif %}.</p>
+<p class="lead">No watchlisted films match {% if q or minutes or genre %}this search{% else %}this filter{% endif %}.</p>
 <p class="text-muted"><a href="{{ url_for('main.watchlist') }}">Show all {{ total }} watchlisted film{{ "s" if total != 1 }}</a> instead.</p>
 {% else %}
 <p class="lead">Your watchlist is empty.</p>

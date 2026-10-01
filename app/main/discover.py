@@ -1616,8 +1616,8 @@ def watchlist():
 
     # The availability filter: the default is ALL. The user can narrow
     # it to one exclusive bucket of the list. The removal redirect keeps
-    # the filter in place. The title and runtime filters (#216/#195) go
-    # with the same query string. They survive the redirect the same way.
+    # the filter in place. The title, runtime, and genre filters go with
+    # the same query string. They survive the redirect the same way.
 
     availability_filter = request.args.get("availability", "all")
     if availability_filter not in WATCHLIST_BUCKETS:
@@ -1643,6 +1643,10 @@ def watchlist():
     minutes = request.args.get("minutes", type=int)
     if minutes is not None and minutes < 1:
         minutes = None
+    # The genre filter (requested by Glenn, 2026-10-01): one TMDB genre.
+    # The check against the genres of the list comes after the query of
+    # the entries. An unknown id falls back to all genres there.
+    genre = request.args.get("genre", type=int)
 
     watchlist_form = WatchlistForm()
     if (
@@ -1666,6 +1670,7 @@ def watchlist():
                 provider=provider_filter,
                 q=q or None,
                 minutes=minutes,
+                genre=genre,
             )
         )
 
@@ -1780,10 +1785,32 @@ def watchlist():
     for row in rows:
         row["bucket"] = watchlist_bucket(row)
 
-    # The title and runtime filters narrow the list before the buckets
-    # count. Thus, the pills always add up in the current search. The
-    # runtime semantics match the landing page: films that fit the
-    # evening, with unknown runtimes hidden only from filtered views.
+    # The genre menu holds only the genres of the films on the list.
+    # Thus, no option gives an empty page on the full list. One query
+    # gets the genres of all the films.
+
+    genre_rows = (
+        db.session.query(movie_genres.c.movie_id, TMDBGenre.id, TMDBGenre.name)
+        .join(TMDBGenre, TMDBGenre.id == movie_genres.c.genre_id)
+        .filter(
+            movie_genres.c.movie_id.in_([entry.movie_id for entry in entries] or [0])
+        )
+        .all()
+    )
+    genres = sorted(
+        {(genre_id, name) for _, genre_id, name in genre_rows},
+        key=lambda option: (option[1] or "").lower(),
+    )
+    genre_name = dict(genres).get(genre)
+    if genre_name is None:
+        genre = None
+
+    # The title, runtime, and genre filters narrow the list before the
+    # buckets count. Thus, the pills always add up in the current
+    # search. The runtime semantics match the landing page: films that
+    # fit the evening, with unknown runtimes hidden only from filtered
+    # views. A film with no genre data hides from a genre view in the
+    # same way.
 
     total = len(rows)
     if q:
@@ -1800,6 +1827,11 @@ def watchlist():
             for row in rows
             if row["movie"].tmdb_runtime and row["movie"].tmdb_runtime <= minutes
         ]
+    if genre:
+        in_genre = {
+            movie_id for movie_id, genre_id, _ in genre_rows if genre_id == genre
+        }
+        rows = [row for row in rows if row["movie"].id in in_genre]
 
     counts = {
         chosen: sum(1 for row in rows if chosen == "all" or row["bucket"] == chosen)
@@ -1835,6 +1867,9 @@ def watchlist():
         services=services,
         q=q,
         minutes=minutes,
+        genres=genres,
+        genre=genre,
+        genre_name=genre_name,
         total=total,
         counts=counts,
         # The warming note matters only where unfetched films are hidden.

@@ -1142,6 +1142,99 @@ def test_watchlist_title_and_runtime_filters(app, admin_client):
     assert brisk_id not in entries_for(app, user_id)
 
 
+def test_watchlist_genre_filter(app, admin_client):
+    """Test the genre filter of the watchlist page.
+
+    The menu holds only the genres of the films on the list. The filter
+    narrows the list before the availability pills count. It stacks
+    with the runtime filter. A film with no genre data hides only from
+    a genre view. The filter survives the removal redirect."""
+
+    from app import db
+    from app.models import TMDBGenre, UserWatchlist
+
+    user_id = admin_id(app)
+    with app.app_context():
+        noir = TMDBGenre(id=777101, name="Watchlist Noir")
+        farce = TMDBGenre(id=777102, name="Watchlist Farce")
+        unused = TMDBGenre(id=777103, name="Watchlist Unused")
+        db.session.add_all([noir, farce, unused])
+        long_noir = make_movie("Genre Long Noir", 1950, tmdb_runtime=140)
+        short_noir = make_movie("Genre Short Noir", 1951, tmdb_runtime=80)
+        both = make_movie("Genre Noir Farce", 1952, tmdb_runtime=95)
+        plain = make_movie("Genre Plain", 1953, tmdb_runtime=90)
+        long_noir.genres.append(noir)
+        short_noir.genres.append(noir)
+        both.genres.append(noir)
+        both.genres.append(farce)
+        for movie in (long_noir, short_noir, both, plain):
+            db.session.add(UserWatchlist(user_id=user_id, movie_id=movie.id))
+        db.session.commit()
+        short_id = short_noir.id
+
+    # The menu has the genres of the list, by name. It does not have a
+    # genre that no watchlisted film carries.
+
+    page = admin_client.get("/watchlist").get_data(as_text=True)
+    assert pill_counts(page)["all"] == 4
+    assert '<option value="777101">Watchlist Noir</option>' in page
+    assert '<option value="777102">Watchlist Farce</option>' in page
+    assert page.index("Watchlist Farce") < page.index("Watchlist Noir")
+    assert "Watchlist Unused" not in page
+    assert ">Clear</a>" not in page
+
+    # One genre keeps its films. The pills count the narrowed set. The
+    # page names the genre, and the menu keeps the selection.
+
+    page = admin_client.get("/watchlist?genre=777101").get_data(as_text=True)
+    for title in ("Genre Long Noir", "Genre Short Noir", "Genre Noir Farce"):
+        assert title in page
+    assert "Genre Plain" not in page
+    assert pill_counts(page)["all"] == 3
+    assert "This page shows only Watchlist Noir films." in page
+    assert '<option value="777101" selected>Watchlist Noir</option>' in page
+    assert ">Clear</a>" in page
+
+    page = admin_client.get("/watchlist?genre=777102").get_data(as_text=True)
+    assert "Genre Noir Farce" in page
+    assert "Genre Long Noir" not in page
+    assert pill_counts(page)["all"] == 1
+
+    # The genre and the runtime stack.
+
+    page = admin_client.get("/watchlist?genre=777101&minutes=100").get_data(
+        as_text=True
+    )
+    assert "Genre Short Noir" in page
+    assert "Genre Noir Farce" in page
+    assert "Genre Long Noir" not in page
+    assert "This page shows Watchlist Noir films of 100 minutes or less." in page
+
+    # Fitzflix ignores a genre that is not on the list.
+
+    for value in ("777103", "999999", "noir"):
+        page = admin_client.get(f"/watchlist?genre={value}").get_data(as_text=True)
+        assert pill_counts(page)["all"] == 4
+        assert "This page shows only" not in page
+
+    # No match offers a link back to the full list.
+
+    page = admin_client.get("/watchlist?genre=777102&minutes=10").get_data(as_text=True)
+    assert "No watchlisted films match this search." in page
+    assert "Show all 4 watchlisted films" in page
+
+    # A removal under the filter redirects back INTO it.
+
+    page = admin_client.get("/watchlist?genre=777101").get_data(as_text=True)
+    response = admin_client.post(
+        "/watchlist?genre=777101",
+        data=remove_form_fields(page, short_id),
+    )
+    assert response.status_code == 302
+    assert "genre=777101" in response.headers["Location"]
+    assert short_id not in entries_for(app, user_id)
+
+
 def test_watchlist_remove_in_place(app, admin_client):
     """Test that the Remove button of the tile posts in the background.
 
