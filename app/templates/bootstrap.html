@@ -432,10 +432,22 @@
 	<meta name="theme-color" content="#212529" media="(prefers-color-scheme: dark)">
 
 	<!-- The webfonts: Creepster for the October styling, and Besley
-	     900 for the MPAA look of the certification chip -->
+	     900 for the MPAA look of the certification chip. Creepster
+	     loads with display=block. Thus, the title stays hidden until
+	     the font is ready and never shows in the usual typeface -->
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Besley:wght@900&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Creepster&display=block" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Besley:wght@900&display=swap" rel="stylesheet">
+
+	<!-- Make the title scary in October. The script runs in the head.
+	     Thus, the class is set before the browser paints the navbar -->
+	<style>
+		.october .navbar-brand { font-family: 'Creepster', cursive; font-size: 1.5em; }
+	</style>
+	<script>
+		if (new Date().getMonth() === 9) document.documentElement.classList.add("october");
+	</script>
 
 
     <title>{% block title %}{{title|default}}{% endblock title %}</title>
@@ -510,28 +522,6 @@
 		})();
 	</script>
 
-	<!-- Make the title scary in October -->
-	<script>
-		function titleTheme() {
-			const d = new Date();
-			const month = new Array();
-			var element = document.getElementsByClassName("navbar-brand");
-			var i;
-
-			thisMonth = d.getMonth();
-
-			month[9] = {fontFamily: "'Creepster', cursive", fontSize: "1.5em"}; // October
-
-			if (thisMonth in month) {
-				for (i = 0; i < element.length; i++) {
-					element[i].style.fontFamily = month[thisMonth].fontFamily;
-					element[i].style.fontSize = month[thisMonth].fontSize;
-				}
-			}
-		}
-
-		document.addEventListener("DOMContentLoaded", titleTheme);
-	</script>
 	{%- endblock scripts %}
 	{%- endblock body %}
   </body>
