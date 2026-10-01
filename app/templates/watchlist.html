@@ -16,8 +16,11 @@
 		   services pill is a 2-line block (pill, then dropdown). The
 		   baseline of that block is its first line. Thus, the other
 		   pills stay level with the pill, not with the dropdown. #}
+		{# The boxes are narrow and the pills have a small margin.
+		   Thus, on a wide screen, the row has space for Clear, and
+		   Clear does not wrap. #}
 		<form class="d-flex flex-wrap align-items-baseline gap-2" action="{{ url_for('main.watchlist') }}" method="get">
-			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 10rem;" placeholder="Title..." aria-label="Filter by title">
+			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 8rem;" placeholder="Title..." aria-label="Filter by title">
 			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
 			{# The genre menu holds only the genres of the films on
 			   the list. It has no counts. Thus, a live tile removal
@@ -42,7 +45,7 @@
 			   dropdown. The route applies the same rule. #}
 			{% set with_services = value == "services" and services %}
 			{% if with_services %}<div class="d-inline-flex flex-column">{% endif %}
-			<div class="form-check form-check-inline{% if with_services %} me-0{% endif %}">
+			<div class="form-check form-check-inline {% if with_services %}me-0{% else %}me-1{% endif %}">
 				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
