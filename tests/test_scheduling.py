@@ -186,10 +186,17 @@ def test_localization_defers_while_title_is_locked(app, held_lock, incoming_dir)
         os.remove(file_path)
 
 
-def test_localization_defers_while_file_is_growing(app, incoming_dir):
+def test_localization_defers_while_file_is_growing(app, incoming_dir, monkeypatch):
     """Test that the task reschedules a file that a copy still writes.
 
     The task does not process or reject the file."""
+
+    from app import importing
+
+    # The writer adds bytes each 0.1 second. Thus, a wait of 1 second
+    # always sees the file grow.
+
+    monkeypatch.setattr(importing, "GROWTH_CHECK_SECONDS", 1)
 
     basename = "Growing (2020) - [DVD].mkv"
     file_path = os.path.join(incoming_dir, basename)
@@ -202,7 +209,7 @@ def test_localization_defers_while_file_is_growing(app, incoming_dir):
         while not stop.is_set():
             with open(file_path, "ab") as f:
                 f.write(b"more bytes")
-            time.sleep(0.5)
+            time.sleep(0.1)
 
     thread = threading.Thread(target=writer, daemon=True)
     thread.start()

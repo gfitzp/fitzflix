@@ -269,6 +269,18 @@ def clean_state(app):
         db.session.commit()
 
 
+@pytest.fixture(autouse=True)
+def no_growth_wait(app, monkeypatch):
+    """Remove the wait between the 2 size readings of an incoming file.
+
+    The wait is 5 seconds in production. Each localization test paid for
+    it. A test of a growing file sets its own short wait."""
+
+    from app import importing
+
+    monkeypatch.setattr(importing, "GROWTH_CHECK_SECONDS", 0)
+
+
 @pytest.fixture
 def client(app):
     return app.test_client()

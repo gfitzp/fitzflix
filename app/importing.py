@@ -259,6 +259,13 @@ COMPLETENESS_QUIET_SECONDS = 120
 MAX_COMPLETENESS_RETRIES = 30
 
 
+# The number of seconds between the 2 size readings of an incoming file.
+# A file that grows in this time is still being copied. The test suite
+# sets a shorter time.
+
+GROWTH_CHECK_SECONDS = 5
+
+
 # Containers that declare their own length. Thus, MediaInfo can prove
 # that a stalled partial copy is truncated, not complete.
 
@@ -391,7 +398,7 @@ def localization_task(
             # grows, check again in 1 minute.
 
             size_before = os.path.getsize(file_path)
-            time.sleep(5)
+            time.sleep(GROWTH_CHECK_SECONDS)
             if os.path.getsize(file_path) != size_before:
                 current_app.logger.info(
                     f"'{basename}' is still being copied, "
