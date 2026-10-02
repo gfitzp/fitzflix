@@ -4,6 +4,28 @@
 {% from "_poster_tile.html" import poster_image, movie_poster_src, tile_actions %}
 
 {% block app_content %}
+<style>
+	/* The filter row. On a wide screen, the pills are direct items of
+	   the row, and the row wraps as one line of controls. */
+	.watchlist-filters .watchlist-title { width: 8rem; }
+	.watchlist-pills { display: contents; }
+	/* The phone layout puts each type of filter on its own row. The
+	   title box has the first row. The runtime and the genre share
+	   the second row. The pills make a grid of 2 columns. The
+	   services pill has a full row, with its dropdown at its side.
+	   The buttons have the last row. */
+	@media (max-width: 575.98px) {
+		div:has(> .watchlist-filters), .watchlist-filters { width: 100%; }
+		.watchlist-filters .watchlist-title { width: 100%; }
+		.watchlist-filters .watchlist-genre { flex: 1 1 0; }
+		.watchlist-pills { display: grid; grid-template-columns: 1fr 1fr; align-items: baseline; gap: .5rem; width: 100%; }
+		.watchlist-services { grid-column: 1 / -1; }
+		/* The pill keeps its label on one line. The dropdown takes
+		   the remaining width of the row. */
+		.watchlist-services .form-check { flex: 0 0 auto; white-space: nowrap; }
+		.watchlist-services select { flex: 1 1 0; min-width: 0; }
+	}
+</style>
 {% call page_header("My Watchlist") %}
 		{# The availability filter: all films by default, or one
 		   exclusive bucket (owned, streaming, rent-only, or nowhere).
@@ -19,20 +41,21 @@
 		{# The boxes are narrow and the pills have a small margin.
 		   Thus, on a wide screen, the row has space for Clear, and
 		   Clear does not wrap. #}
-		<form class="d-flex flex-wrap align-items-baseline gap-2" action="{{ url_for('main.watchlist') }}" method="get">
-			<input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="width: 8rem;" placeholder="Title..." aria-label="Filter by title">
+		<form class="watchlist-filters d-flex flex-wrap align-items-baseline gap-2" action="{{ url_for('main.watchlist') }}" method="get">
+			<input type="search" name="q" value="{{ q }}" class="watchlist-title form-control form-control-sm" placeholder="Title..." aria-label="Filter by title">
 			<input type="number" min="1" name="minutes" value="{{ minutes or '' }}" class="form-control form-control-sm" style="width: 6rem;" placeholder="minutes" aria-label="Maximum runtime in minutes">
 			{# The genre menu holds only the genres of the films on
 			   the list. It has no counts. Thus, a live tile removal
 			   (#187) has nothing to keep correct here. #}
 			{% if genres %}
-			<select name="genre" class="form-select form-select-sm w-auto" aria-label="Genre">
+			<select name="genre" class="watchlist-genre form-select form-select-sm w-auto" aria-label="Genre">
 				<option value="">All genres</option>
 				{% for genre_id, name in genres %}
 				<option value="{{ genre_id }}"{% if genre_id == genre %} selected{% endif %}>{{ name }}</option>
 				{% endfor %}
 			</select>
 			{% endif %}
+			<div class="watchlist-pills">
 			{% for value, label in [("all", "All"), ("local", "In library"), ("services", "On my services"), ("rent", "For rent"), ("unavailable", "Unavailable")] %}
 			{# The service dropdown (requested by Glenn, 2026-09-15)
 			   sits under the services pill, as one block. Thus, it
@@ -42,15 +65,16 @@
 			   data-watchlist-service-count. Thus, a live tile removal
 			   (#187) keeps the options correct too. A chosen service
 			   checks the services pill. A different pill resets the
-			   dropdown. The route applies the same rule. #}
+			   dropdown. The route applies the same rule. On a phone,
+			   the block is one row: the pill, then the dropdown. #}
 			{% set with_services = value == "services" and services %}
-			{% if with_services %}<div class="d-inline-flex flex-column">{% endif %}
+			{% if with_services %}<div class="watchlist-services d-inline-flex flex-row flex-sm-column align-items-baseline align-items-sm-stretch gap-2 gap-sm-0">{% endif %}
 			<div class="form-check form-check-inline {% if with_services %}me-0{% else %}me-1{% endif %}">
 				<input class="form-check-input" type="radio" name="availability" id="watchlist-filter-{{ value }}" value="{{ value }}"{% if availability == value %} checked{% endif %}>
 				<label class="form-check-label" for="watchlist-filter-{{ value }}">{{ label }} (<span data-watchlist-count="{{ value }}">{{ counts[value] }}</span>)</label>
 			</div>
 			{% if with_services %}
-			<select name="provider" class="form-select form-select-sm w-auto mt-1" aria-label="Limit to one service" data-watchlist-service>
+			<select name="provider" class="form-select form-select-sm w-auto flex-grow-1 mt-sm-1" aria-label="Limit to one service" data-watchlist-service>
 				<option value="">Any service</option>
 				{% for service in services %}
 				<option value="{{ service.provider_id }}" data-watchlist-service-count="{{ service.count }}"{% if provider == service.provider_id %} selected{% endif %}>{{ service.name }} ({{ service.count }})</option>
@@ -59,6 +83,7 @@
 			</div>
 			{% endif %}
 			{% endfor %}
+			</div>
 			{# Filter and Clear are one block. Thus, a phone never
 			   wraps Clear onto a line of its own. #}
 			<div class="d-inline-flex gap-2">
