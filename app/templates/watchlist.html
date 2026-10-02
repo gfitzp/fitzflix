@@ -18,7 +18,10 @@
 		div:has(> .watchlist-filters), .watchlist-filters { width: 100%; }
 		.watchlist-filters .watchlist-title { width: 100%; }
 		.watchlist-filters .watchlist-genre { flex: 1 1 0; }
-		.watchlist-pills { display: grid; grid-template-columns: 1fr 1fr; align-items: baseline; gap: .5rem; width: 100%; }
+		/* The grid aligns on the center, not on the baseline. With a
+		   baseline grid, Safari moves each row of pills down by the
+		   height of a pill. */
+		.watchlist-pills { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: .5rem; width: 100%; }
 		.watchlist-services { grid-column: 1 / -1; }
 		/* The pill keeps its label on one line. The dropdown takes
 		   the remaining width of the row. */
