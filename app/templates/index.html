@@ -12,7 +12,7 @@
 {# One flex-wrap row with a gap. Thus, the label, the box, and the
    buttons keep a gap when a narrow screen wraps them. #}
 <form class="d-flex flex-wrap align-items-center gap-2 mb-3" action="{{ url_for('main.index') }}" method="get">
-	<label class="small text-muted mb-0" for="minutes">Only films that fit your evening:</label>
+	<label class="small text-muted mb-0" for="minutes">Only films that fit your schedule:</label>
 	<input type="number" min="1" name="minutes" id="minutes" class="form-control form-control-sm" style="width: 6rem;" value="{{ minutes or '' }}" placeholder="minutes" aria-label="Maximum runtime in minutes">
 	<select name="genre" id="genre" class="form-select form-select-sm" style="width: auto;" aria-label="Genre">
 		<option value="">All genres</option>
