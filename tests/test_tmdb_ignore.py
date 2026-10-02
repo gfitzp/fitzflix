@@ -302,7 +302,16 @@ def test_remove_button_detaches_the_series(app, admin_client):
         assert stored.tmdb_ignored is True
 
 
-def test_entering_an_id_by_hand_reattaches_an_ignored_series(app, admin_client):
+def test_entering_an_id_by_hand_reattaches_an_ignored_series(
+    app, admin_client, monkeypatch
+):
+    import app.main.library as library
+
+    # The route waits 10 seconds for the refresh job. No worker runs in
+    # the suite. Thus, the job never completes.
+
+    monkeypatch.setattr(library.time, "sleep", lambda seconds: None)
+
     with app.app_context():
         series = make_tv_series("Rifftrax", tmdb_ignored=True)
         db.session.commit()
