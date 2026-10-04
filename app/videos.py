@@ -344,17 +344,28 @@ def acquire_lock_or_defer(
         current_app.logger.info(f"Created lock {lock}")
         return lock
 
+    schedule_retry(
+        queue, func, minutes, timeout, description, "Lock exists", args, kwargs
+    )
+    return None
+
+
+def schedule_retry(
+    queue, func, minutes, timeout, description, reason, args=(), kwargs=None
+):
+    """Put a task back on its queue after a random delay.
+
+    The delay is a random number of minutes in the given range. The
+    deterministic id makes a repeat deferral replace the pending retry.
+    It does not add a new one. The result ttl of 1 day keeps the record
+    of a finished retry alive. Thus, a retry that it scheduled itself can
+    still find that record. The function returns the delay in minutes.
+    """
+
     sleep_duration = random.randint(*minutes)
     current_app.logger.warning(
-        f"{description} Lock exists, "
-        f"returning to queue after {sleep_duration} minutes"
+        f"{description} {reason}, returning to queue after {sleep_duration} minutes"
     )
-
-    # The deterministic id makes a repeat deferral replace the pending
-    # retry. It does not add a new one. The result ttl of 1 day keeps the
-    # record of a finished retry alive. Thus, a retry that it scheduled
-    # itself can still find that record.
-
     queue.enqueue_in(
         timedelta(minutes=sleep_duration),
         func,
@@ -365,7 +376,7 @@ def acquire_lock_or_defer(
         result_ttl=86400,
         description=description,
     )
-    return None
+    return sleep_duration
 
 
 def wait_for_subprocess(process, ok_returncodes=(0,)):

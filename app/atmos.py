@@ -350,11 +350,30 @@ def maybe_enqueue_atmos_supplement(file_id):
 def atmos_supplement_task(file_id):
     """Add E-AC-3 Atmos twins to the TrueHD Atmos tracks of a file."""
 
-    from app.videos import acquire_lock_or_defer
+    from app.tmdb_refresh import tmdb_refresh_pending
+    from app.videos import acquire_lock_or_defer, schedule_retry
 
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
+            return True
+
+        # The import queues the TMDB refresh and this task together. The
+        # refresh must apply first. It can rename the title, and it holds
+        # the title lock for seconds. This task holds the lock for the
+        # whole MediaConvert run. Thus, this task waits while a refresh
+        # of the movie is still on its way.
+
+        if file.movie_id and tmdb_refresh_pending("Movies", file.movie_id):
+            schedule_retry(
+                current_app.transcode_queue,
+                "app.atmos.atmos_supplement_task",
+                (1, 3),
+                current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                f"'{file.basename}'",
+                "A TMDB refresh of the movie is pending",
+                args=(int(file_id),),
+            )
             return True
 
         # Serialize with the other tasks that rewrite the files or the

@@ -24,6 +24,7 @@ import zlib
 from datetime import datetime, timedelta
 
 from flask import current_app, render_template
+from rq.registry import ScheduledJobRegistry, StartedJobRegistry
 from werkzeug.local import LocalProxy
 
 from app import db, get_app, safe_job_id
@@ -106,6 +107,61 @@ def _movie_refresh_lock_resources(*movies):
         for file in movie.files.all():
             resources.add(file.file_identifier())
     return sorted(resources)
+
+
+REFRESH_FUNC = "app.videos.refresh_tmdb_info"
+APPLY_FUNC = "app.videos.apply_tmdb_refresh"
+
+
+def _refresh_job_target(job):
+    """Return the (library, id) that a refresh or apply job works on.
+
+    The fetch job takes positional arguments. The apply job and its
+    retries take keyword arguments. Both shapes are read here."""
+
+    if job is None or job.func_name not in (REFRESH_FUNC, APPLY_FUNC):
+        return None
+    if len(job.args) >= 2:
+        return (job.args[0], job.args[1])
+    kwargs = job.kwargs or {}
+    if "library" in kwargs and "id" in kwargs:
+        return (kwargs["library"], kwargs["id"])
+    return None
+
+
+def tmdb_refresh_pending(library, id):
+    """Return True while a TMDB refresh of this record is queued or running.
+
+    The refresh is 2 jobs. The fetch runs on the request queue. It hands
+    its payload to the apply on the sql queue. The apply takes the title
+    lock. A retry of the apply waits in the scheduled registry of the
+    sql queue. This function reads all of these places.
+
+    A task that also takes the title lock calls this function first. The
+    Atmos supplement is one. On 2026-10-04, that task took the lock of
+    'Jungle Cruise (2021)' 15 ms after the import released it. The
+    refresh then found the lock busy and waited for the whole
+    MediaConvert run. The match from the review page waited with it.
+    """
+
+    target = (library, int(id))
+    queues = (current_app.request_queue, current_app.sql_queue)
+    for queue in queues:
+        candidates = list(queue.jobs)
+        registries = [StartedJobRegistry(queue=queue)]
+        if queue is current_app.sql_queue:
+            registries.append(ScheduledJobRegistry(queue=queue))
+        for registry in registries:
+            candidates.extend(
+                queue.job_class.fetch_many(
+                    registry.get_job_ids(), connection=queue.connection
+                )
+            )
+        for job in candidates:
+            found = _refresh_job_target(job)
+            if found is not None and (found[0], int(found[1])) == target:
+                return True
+    return False
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):
