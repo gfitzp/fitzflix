@@ -110,6 +110,7 @@
 		{% endif %}
 		{% if tv.tmdb_id and tv.tmdb_data_as_of %}<em class="small">TMDB data as of {{ moment(tv.tmdb_data_as_of).fromNow() }}</em>{% endif %}
 		{% if tv.tmdb_ignored %}<em class="small text-muted">Detached from TMDB — enter an ID above to match it again</em>{% endif %}
+		{% include "_tmdb_refresh_note.html" %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">

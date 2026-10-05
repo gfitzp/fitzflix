@@ -1,0 +1,9 @@
+{# The TMDB refresh shares the title lock with the import pipeline. A
+   refresh that found the lock busy waits in the scheduled registry.
+   Without this note, a match from the form looks like it did nothing.
+   The route passes tmdb_refresh_state for admins only. #}
+{% if tmdb_refresh_state and tmdb_refresh_state.state == "deferred" %}
+<p class="small text-warning mb-0">A TMDB refresh is waiting for another task that holds this title. Next attempt {{ moment(tmdb_refresh_state.retry_at).fromNow() }}.</p>
+{% elif tmdb_refresh_state %}
+<p class="small text-muted mb-0">A TMDB refresh is queued or running. Reload this page in a moment.</p>
+{% endif %}

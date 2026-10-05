@@ -152,3 +152,33 @@ def test_movie_page_shows_a_queued_refresh(app, admin_client):
     page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
     assert "A TMDB refresh is queued or running" in page
     assert "waiting for another task" not in page
+
+
+def test_tv_page_shows_a_deferred_refresh(app, admin_client):
+    """Test that the series page shows the same note as the movie page."""
+
+    from tests.factories import make_tv_series
+
+    with app.app_context():
+        series = make_tv_series("Star Trek")
+        db.session.commit()
+        series_id = series.id
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    assert "A TMDB refresh is" not in page
+
+    with app.app_context():
+        app.sql_queue.enqueue_in(
+            timedelta(minutes=9),
+            "app.videos.apply_tmdb_refresh",
+            library="TV Shows",
+            id=series_id,
+            tmdb_id=253,
+            tmdb_payload=None,
+            notify_if_missing=False,
+            job_id=f"retry_apply_tmdb_refresh_TV_Shows_{series_id}",
+            description="Updating 'Star Trek' with TMDB data",
+        )
+
+    page = admin_client.get(f"/tv/{series_id}").get_data(as_text=True)
+    assert "A TMDB refresh is waiting for another task that holds this title" in page

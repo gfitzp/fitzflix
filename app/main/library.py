@@ -2615,10 +2615,17 @@ def tv(series_id):
     # only for Ended shows), and the genres. The shared helper that the
     # popover card reads too builds it.
 
+    tmdb_refresh_state = None
+    if current_user.admin:
+        from app.tmdb_refresh import tmdb_refresh_status
+
+        tmdb_refresh_state = tmdb_refresh_status("TV Shows", tv.id)
+
     return render_template(
         "tv.html",
         title=title,
         tv=tv,
+        tmdb_refresh_state=tmdb_refresh_state,
         seasons=seasons,
         # The In-library badge of the page, in the colors of the TV card
         # (#191): amber when a season is worth an upgrade, green when
