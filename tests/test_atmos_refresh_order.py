@@ -103,3 +103,52 @@ def test_atmos_task_defers_while_a_refresh_is_pending(app):
         lock = app.lock_manager.lock(resource, 1000)
         assert lock
         app.lock_manager.unlock(lock)
+
+
+def test_movie_page_shows_a_deferred_refresh(app, admin_client):
+    """Test that the movie page names a deferred refresh and its next attempt.
+
+    Without the note, a match from the form looked like it did nothing
+    while the apply waited for the Atmos supplement to release the lock."""
+
+    with app.app_context():
+        movie, _ = _movie_with_file()
+        movie_id = movie.id
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "A TMDB refresh is waiting for another task" not in page
+    assert "A TMDB refresh is queued or running" not in page
+
+    with app.app_context():
+        app.sql_queue.enqueue_in(
+            timedelta(minutes=12),
+            "app.videos.apply_tmdb_refresh",
+            library="Movies",
+            id=movie_id,
+            tmdb_id=451048,
+            tmdb_payload=None,
+            notify_if_missing=True,
+            job_id=f"retry_apply_tmdb_refresh_Movies_{movie_id}",
+            description="Updating 'Jungle Cruise (2021)' with TMDB data",
+        )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "A TMDB refresh is waiting for another task that holds this title" in page
+    assert "Next attempt" in page
+
+
+def test_movie_page_shows_a_queued_refresh(app, admin_client):
+    """Test that a queued fetch shows the lighter in-progress note."""
+
+    with app.app_context():
+        movie, _ = _movie_with_file()
+        movie_id = movie.id
+        app.request_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=("Movies", movie_id, 451048),
+            description="Refreshing TMDB data for 'Jungle Cruise (2021)'",
+        )
+
+    page = admin_client.get(f"/movie/{movie_id}").get_data(as_text=True)
+    assert "A TMDB refresh is queued or running" in page
+    assert "waiting for another task" not in page

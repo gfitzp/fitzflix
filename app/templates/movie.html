@@ -304,6 +304,11 @@
 		   enrichment refresh is still in the queue. #}
 		{% if movie.tmdb_id and movie.tmdb_data_as_of %}<em class="small">TMDB data as of <abbr title="{{ movie.tmdb_data_as_of.strftime('%Y-%m-%d %H:%M:%S') }} UTC">{{ moment(movie.tmdb_data_as_of).fromNow() }}</abbr></em>{% elif movie.tmdb_id %}<em class="small">TMDB data refreshing&hellip;</em>{% endif %}
 		{% if movie.tmdb_ignored %}<em class="small text-muted">Detached from TMDB — enter an ID above to match it again</em>{% endif %}
+		{% if tmdb_refresh_state and tmdb_refresh_state.state == "deferred" %}
+		<p class="small text-warning mb-0">A TMDB refresh is waiting for another task that holds this title. Next attempt {{ moment(tmdb_refresh_state.retry_at).fromNow() }}.</p>
+		{% elif tmdb_refresh_state %}
+		<p class="small text-muted mb-0">A TMDB refresh is queued or running. Reload this page in a moment.</p>
+		{% endif %}
 		<hr class="d-block d-sm-none">
 	</div>
 	<div class="col-sm-4">

@@ -21,7 +21,7 @@ import shutil
 import traceback
 import zlib
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app, render_template
 from rq.registry import ScheduledJobRegistry, StartedJobRegistry
@@ -129,13 +129,20 @@ def _refresh_job_target(job):
     return None
 
 
-def tmdb_refresh_pending(library, id):
-    """Return True while a TMDB refresh of this record is queued or running.
+def tmdb_refresh_status(library, id):
+    """Return the state of a TMDB refresh of this record, or None.
 
     The refresh is 2 jobs. The fetch runs on the request queue. It hands
     its payload to the apply on the sql queue. The apply takes the title
-    lock. A retry of the apply waits in the scheduled registry of the
-    sql queue. This function reads all of these places.
+    lock. When the lock is busy, the apply puts a retry in the scheduled
+    registry of the sql queue. This function reads all of these places.
+
+    The result is a dict with a "state" key. The state is "deferred" when
+    a retry waits for its time. Then "retry_at" gives that time as a
+    naive UTC datetime. The state is "pending" when a fetch or an apply
+    is queued or running. The result is None when no refresh is on its
+    way. A deferred retry outranks a queued job, because it names the
+    reason that the page still shows the old data.
 
     A task that also takes the title lock calls this function first. The
     Atmos supplement is one. On 2026-10-04, that task took the lock of
@@ -145,23 +152,42 @@ def tmdb_refresh_pending(library, id):
     """
 
     target = (library, int(id))
-    queues = (current_app.request_queue, current_app.sql_queue)
-    for queue in queues:
+
+    def _matches(job):
+        found = _refresh_job_target(job)
+        return found is not None and (found[0], int(found[1])) == target
+
+    scheduled = ScheduledJobRegistry(queue=current_app.sql_queue)
+    scheduled_ids = scheduled.get_job_ids()
+    for job in current_app.sql_queue.job_class.fetch_many(
+        scheduled_ids, connection=current_app.sql_queue.connection
+    ):
+        if _matches(job):
+            retry_at = scheduled.get_scheduled_time(job.id)
+            return {
+                "state": "deferred",
+                "retry_at": retry_at.astimezone(timezone.utc).replace(tzinfo=None),
+            }
+
+    for queue in (current_app.request_queue, current_app.sql_queue):
         candidates = list(queue.jobs)
-        registries = [StartedJobRegistry(queue=queue)]
-        if queue is current_app.sql_queue:
-            registries.append(ScheduledJobRegistry(queue=queue))
-        for registry in registries:
-            candidates.extend(
-                queue.job_class.fetch_many(
-                    registry.get_job_ids(), connection=queue.connection
-                )
+        candidates.extend(
+            queue.job_class.fetch_many(
+                StartedJobRegistry(queue=queue).get_job_ids(),
+                connection=queue.connection,
             )
-        for job in candidates:
-            found = _refresh_job_target(job)
-            if found is not None and (found[0], int(found[1])) == target:
-                return True
-    return False
+        )
+        if any(_matches(job) for job in candidates):
+            return {"state": "pending"}
+    return None
+
+
+def tmdb_refresh_pending(library, id):
+    """Return True while a TMDB refresh of this record is queued or running.
+
+    This covers a deferred retry too. See tmdb_refresh_status."""
+
+    return tmdb_refresh_status(library, id) is not None
 
 
 def refresh_tmdb_info(library, id, tmdb_id=None, notify_if_missing=False):

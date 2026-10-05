@@ -1887,10 +1887,21 @@ def movie(movie_id):
         and movie.tmdb_id in radarr_tmdb_ids()
     )
 
+    # The refresh and the import pipeline share the title lock. A refresh
+    # that found the lock busy waits in the scheduled registry. Without
+    # this note, a match from the form looks like it did nothing.
+
+    tmdb_refresh_state = None
+    if current_user.admin:
+        from app.tmdb_refresh import tmdb_refresh_status
+
+        tmdb_refresh_state = tmdb_refresh_status("Movies", movie.id)
+
     return render_template(
         "movie.html",
         title=title,
         movie=movie,
+        tmdb_refresh_state=tmdb_refresh_state,
         poster_fold=poster_fold(current_user, movie.tmdb_id, movie.id),
         cast=cast,
         directors=directors,
