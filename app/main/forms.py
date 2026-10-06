@@ -596,3 +596,20 @@ class DVRMemberForm(FlaskForm):
     add_movie_submit = SubmitField("Add movie")
     add_series_submit = SubmitField("Add series")
     remove_submit = SubmitField("Remove")
+
+
+class MissingScanForm(FlaskForm):
+    """Run the scan for best files with no local copy again (missing files page)."""
+
+    missing_scan_submit = SubmitField("Scan now")
+
+
+class MissingRestoreForm(FlaskForm):
+    """Request a restore of the selected missing files after a password check.
+
+    The selected file ids come from the checkboxes of the table. The
+    form reads them from the request. Thus, the form has no field for
+    them."""
+
+    password = PasswordField("Password:", validators=[DataRequired()])
+    missing_restore_submit = SubmitField("Request restore of selected files")

@@ -8,6 +8,9 @@
 	<span class="badge text-bg-{{ 'success' if health.scheduler.ok else 'danger' }} me-1 mb-1">Scheduler{% if not health.scheduler.ok %} down{% endif %}</span>
 	<span class="badge text-bg-{{ 'success' if health.observer.ok else 'danger' }} me-1 mb-1">Import watcher {{ health.observer.watchers }} / {{ health.observer.expected }}</span>
 	<span class="badge text-bg-{{ 'success' if health.backup.ok else 'danger' }} me-1 mb-1">DB backup {% if health.backup.last %}{{ relative_time(health.backup.last) }}{% else %}never{% endif %}</span>
+	{% if health.missing_best and health.missing_best.count %}
+	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.missing_files') }}" title="Best-quality files with no local copy, scanned {{ relative_time(health.missing_best.checked) }}">{{ health.missing_best.count }} best cop{{ 'y' if health.missing_best.count == 1 else 'ies' }} not local</a>
+	{% endif %}
 	{% for mount in health.missing_mounts %}
 	<span class="badge text-bg-danger me-1 mb-1">{{ mount }} not mounted</span>
 	{% endfor %}

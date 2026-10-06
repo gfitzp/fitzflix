@@ -199,6 +199,16 @@ def cron_table(config):
             3600,
             "Discovering provider-catalog films for recommendations",
         ),
+        # Find the best-quality files that have no local copy (#274). The
+        # scan stats every best file over the NFS mount. Thus, it runs
+        # nightly, after the backup window, and the pages read its stored
+        # result.
+        (
+            "15 1 * * *",
+            "app.missing_files.missing_best_files_task",
+            1800,
+            "Scanning for best files that have no local copy",
+        ),
         # Recompute the per-user film recommendations nightly, after the
         # log rotation and backup windows.
         (

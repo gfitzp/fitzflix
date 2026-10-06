@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
+
+{% block app_content %}
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{% call page_header(title) %}
+<form action="" method="post">
+	{{ scan_form.hidden_tag() }}
+	{{ scan_form.missing_scan_submit(class_="btn btn-sm btn-secondary") }}
+</form>
+{% endcall %}
+{% if report is none %}
+<p class="lead">The first scan has not run yet.</p>
+<p class="text-muted">The scan runs nightly at 01:15. It stats every best-quality file on the library disk. Scan now runs it at once on the maintenance queue. Load this page again when the scan is complete.</p>
+{% elif report.rows %}
+<p class="text-muted">There {{ "is" if report.rows|length == 1 else "are" }} {{ report.rows|length }} best-quality file{{ "s" if report.rows|length != 1 }} with no local copy, of {{ report.ranked }} titles scanned {{ moment(report.checked).fromNow() }}. A title with no fallback is not playable until a restore is complete. Select the files to restore, enter your password, and request the restore. A restore costs real money. The estimate for the whole list is &asymp; ${{ "%.2f"|format(restore_estimate.cost) }} (~{{ "%.1f"|format(restore_estimate.gigabytes) }} GB).</p>
+<form action="" method="post" id="missing-restore-form">
+	{{ restore_form.hidden_tag() }}
+	<div class="table-responsive">
+	<table class="table table-sm mt-3 align-middle">
+		<thead class="table-light">
+			<tr>
+				<th scope="col"><input type="checkbox" class="form-check-input" id="missing-select-all" aria-label="Select all"></th>
+				<th scope="col">Title</th>
+				{# The filename is hidden on a phone. The title links to the record, and the file link is one tap further. #}
+				<th scope="col" class="d-none d-md-table-cell">File</th>
+				<th scope="col">Quality</th>
+				<th scope="col">Local fallback</th>
+				<th scope="col" class="text-end">Size</th>
+				<th scope="col">Archive</th>
+			</tr>
+		</thead>
+		<tbody>
+			{% for row in report.rows %}
+			{% set file = row.file %}
+			<tr>
+				<td>{% if row.archived %}<input type="checkbox" class="form-check-input" name="file_id" value="{{ file.id }}" aria-label="Select {{ row.title }}">{% endif %}</td>
+				<td>
+					{% if file.movie_id %}
+					<a href="{{ url_for('main.movie', movie_id=file.movie_id) }}">{{ row.title }}</a>
+					{% else %}
+					<a href="{{ url_for('main.tv', series_id=file.series_id) }}">{{ row.title }}</a>
+					<span class="text-muted small">S{{ "%02d"|format(file.season) }}E{{ "%02d"|format(file.episode) }}</span>
+					{% endif %}
+				</td>
+				<td class="text-break small d-none d-md-table-cell"><a href="{{ url_for('main.file', file_id=file.id) }}">{{ file.basename }}</a></td>
+				<td>{{ row.quality }}</td>
+				<td>{% if row.fallback %}{{ row.fallback }}{% else %}<span class="text-danger">none</span>{% endif %}</td>
+				<td class="text-end">{% if file.filesize_bytes %}{{ file.filesize_bytes|filesizeformat }}{% else %}&mdash;{% endif %}</td>
+				<td>{% if row.archived %}<span class="badge text-bg-success">archived</span>{% else %}<span class="badge text-bg-danger">not archived</span>{% endif %}</td>
+			</tr>
+			{% endfor %}
+		</tbody>
+	</table>
+	</div>
+	{# One flex-wrap row with a gap. Thus, the password box and the
+	   button keep a gap when a phone wraps them. #}
+	<div class="d-flex flex-wrap align-items-center gap-2">
+		{{ restore_form.password(class_="form-control form-control-sm", style="width: 16rem; max-width: 100%;", placeholder="Password") }}
+		{{ restore_form.missing_restore_submit(class_="btn btn-sm btn-success") }}
+	</div>
+</form>
+<script>
+	// The header checkbox selects or clears every archived row.
+	document.getElementById("missing-select-all").addEventListener("change", function (event) {
+		document.querySelectorAll("#missing-restore-form input[name=file_id]").forEach(function (box) {
+			box.checked = event.target.checked;
+		});
+	});
+</script>
+{% else %}
+<p class="lead">Every best-quality file is on the library disk.</p>
+<p class="text-muted">{{ report.ranked }} titles scanned {{ moment(report.checked).fromNow() }}.</p>
+{% endif %}
+{% endblock %}

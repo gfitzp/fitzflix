@@ -62,6 +62,19 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
+<h4 class="mt-3 mb-2">Missing best copies</h4>
+<p class="small text-muted">The best-quality files that have no local copy. Such a title plays only after a restore from the AWS archive. A nightly scan finds them.</p>
+{% if missing_best is none %}
+<p class="small text-muted mb-0">The first scan has not run yet.</p>
+<a class="btn btn-sm btn-secondary" href="{{ url_for('main.missing_files') }}" role="button">View missing best copies</a>
+{% elif missing_best.count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.missing_files') }}" role="button">Restore missing best copies <span class="badge text-bg-light">{{ missing_best.count }}</span></a>
+<span class="small text-muted ms-2">scanned {{ moment(missing_best.checked).fromNow() }}</span>
+{% else %}
+<p class="small text-muted mb-0">Every best copy is on the library disk. Scanned {{ moment(missing_best.checked).fromNow() }}.</p>
+<a class="btn btn-sm btn-secondary" href="{{ url_for('main.missing_files') }}" role="button">View missing best copies</a>
+{% endif %}
+<hr>
 <h4 class="mt-3 mb-2">Runtime mismatches</h4>
 <p class="small text-muted">The files whose estimated length is very different from the TMDB runtime of the film. The usual causes are a recording with the wrong label, or a truncated download.</p>
 {% if runtime_mismatch_count %}

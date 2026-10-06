@@ -29,6 +29,8 @@ from app.main.forms import (
     FailedJobForm,
     FilenameTestForm,
     LossyAudioTriageForm,
+    MissingRestoreForm,
+    MissingScanForm,
     SubtitleTriageForm,
     ImportForm,
     LibrarySearchForm,
@@ -54,8 +56,10 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import admin_required
+from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
 from app.maintenance import system_health
+from app.missing_files import missing_best_report, missing_best_summary
 from app.triage import (
     forced_subtitle_candidates,
     lossy_audio_candidates,
@@ -673,6 +677,7 @@ def maintenance():
         lossy_triage_count=len(lossy_audio_candidates()),
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
         runtime_mismatch_count=len(runtime_mismatch_candidates()),
+        missing_best=missing_best_summary(current_app.redis),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -682,6 +687,80 @@ def maintenance():
         sync_form=sync_form,
         metadata_scan_form=metadata_scan_form,
         import_form=import_form,
+    )
+
+
+@bp.route("/maintenance/missing", methods=["GET", "POST"])
+@login_required
+@admin_required
+def missing_files():
+    """List the best-quality files that have no local copy (#274).
+
+    The page reads the stored result of the nightly scan. Scan now runs
+    the scan again on the maintenance queue. The restore form requests
+    a restore from AWS for each selected file, after a password check.
+    That is the same path as the restore button of the file page. A
+    restore costs real money. Thus, the page shows the cost estimate
+    of the whole list."""
+
+    scan_form = MissingScanForm()
+    if scan_form.missing_scan_submit.data and scan_form.validate_on_submit():
+        current_app.maintenance_queue.enqueue(
+            "app.missing_files.missing_best_files_task",
+            args=(),
+            job_timeout=1800,
+            description="Scanning for best files that have no local copy",
+            at_front=True,
+        )
+        flash("Scanning the library for best files that have no local copy", "info")
+        return redirect(url_for("main.missing_files"))
+
+    restore_form = MissingRestoreForm()
+    if restore_form.missing_restore_submit.data and restore_form.validate_on_submit():
+        if not current_user.check_password(restore_form.password.data):
+            flash("Incorrect password provided!", "danger")
+            return redirect(url_for("main.missing_files"))
+
+        selected = [
+            int(value) for value in request.form.getlist("file_id") if value.isdigit()
+        ]
+        files = (
+            File.query.filter(
+                File.id.in_(selected), File.aws_untouched_key.isnot(None)
+            ).all()
+            if selected
+            else []
+        )
+        if not files:
+            flash("No archived files were selected.", "warning")
+            return redirect(url_for("main.missing_files"))
+
+        for file in files:
+            current_app.request_queue.enqueue(
+                "app.videos.aws_restore",
+                args=(file.aws_untouched_key,),
+                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
+                description=f"'{file.untouched_basename}'",
+            )
+        estimate = restore_cost_estimate(files)
+        flash(
+            f"Requesting {len(files)} file{'s' if len(files) != 1 else ''} to be "
+            f"restored from AWS Glacier (≈ ${estimate['cost']:.2f})",
+            "info",
+        )
+        return redirect(url_for("main.missing_files"))
+
+    report = missing_best_report(current_app.redis)
+    archived = (
+        [row["file"] for row in report["rows"] if row["archived"]] if report else []
+    )
+    return render_template(
+        "missing_files.html",
+        title="Missing best copies",
+        report=report,
+        restore_estimate=restore_cost_estimate(archived),
+        scan_form=scan_form,
+        restore_form=MissingRestoreForm(),
     )
 
 

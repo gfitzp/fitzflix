@@ -666,6 +666,10 @@ def system_health(flask_app):
     a network call.
     """
 
+    # Lazy import: app.missing_files imports missing_volumes from here
+
+    from app.missing_files import missing_best_summary
+
     started = time.perf_counter()
     flask_app.redis.ping()
     redis_ms = round((time.perf_counter() - started) * 1000, 1)
@@ -684,6 +688,7 @@ def system_health(flask_app):
         "observer": observer_health(flask_app.redis),
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
+        "missing_best": missing_best_summary(flask_app.redis),
     }
 
 
