@@ -1751,7 +1751,13 @@ def health_probe():
             or not redis.exists(f"{ALERTED_KEY_PREFIX}{condition}")
         }
 
-        for message in issues.values():
+        # The log gets a problem on the runs that email it: when it
+        # appears, and once a day while it continues. The runs between
+        # them log nothing. Thus, a problem that ended yesterday does not
+        # read as a live failure every 10 minutes. The System page shows
+        # the open problems.
+
+        for message in report.values():
             current_app.logger.warning(f"Health: {message}")
         for message in recovered.values():
             current_app.logger.info(f"Health recovered: {message}")

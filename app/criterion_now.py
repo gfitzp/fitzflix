@@ -469,8 +469,10 @@ def _film_info_from(more_url):
             info_page = requests.get(more_url, timeout=15)
             info_page.raise_for_status()
             info = parse_film_info(info_page.text)
-        except Exception:
-            current_app.logger.warning(traceback.format_exc())
+        except Exception as e:
+            current_app.logger.warning(
+                f"Criterion 24/7: could not read the film page {more_url}: {e}"
+            )
     return info
 
 

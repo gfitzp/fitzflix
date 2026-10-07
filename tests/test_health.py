@@ -130,11 +130,14 @@ def test_disk_floor_alerts_and_recovers(app, health_env, monkeypatch):
     assert "Recovered:" in recoveries[0]["body"]
 
 
-def test_health_probe_reports_a_flagged_repeat_once(app, health_env):
+def test_health_probe_reports_a_flagged_repeat_once(app, health_env, caplog):
     """Test that the health email announces a flagged repeat and its end.
 
     The health probe runs every 10 minutes. The email goes out once. It
-    goes out again only as the daily reminder, and 1 time on recovery."""
+    goes out again only as the daily reminder, and 1 time on recovery.
+    The log WARNING follows the email. A run that sends no email logs
+    the problem no more. Thus, a problem that ended does not read as a
+    live failure every 10 minutes."""
 
     import json
 
@@ -147,10 +150,16 @@ def test_health_probe_reports_a_flagged_repeat_once(app, health_env):
         ],
     }
     health_env.redis.set(DIGEST_KEY, json.dumps(digest))
-    emails = health_env.run()
+    with caplog.at_level("INFO"):
+        emails = health_env.run()
     assert len(emails) == 1
     assert "A log entry repeated 96 times in 24 hours" in emails[0]["body"]
-    assert health_env.run() == []
+    assert caplog.text.count("Health: A log entry repeated") == 1
+
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        assert health_env.run() == []
+    assert "A log entry repeated" not in caplog.text
 
     # A stale digest means that the nightly task is broken. That is its
     # own problem. The repeat it flagged does not read as recovered.
