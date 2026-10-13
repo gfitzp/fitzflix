@@ -401,6 +401,12 @@ def record_manual_interaction(service, payload):
         for message in status.get("messages") or []
     ]
     reason = "; ".join(messages) or "no reason given"
+    if not still_blocked(service, download_id):
+        current_app.logger.info(
+            f"{service} reported '{title}' for manual import, but the download "
+            f"no longer waits in its queue; ignoring the event"
+        )
+        return False
     if not store_pending(current_app.redis, service, download_id, title):
         current_app.logger.info(
             f"{service} reported '{title}' for manual import again; already recorded"
@@ -412,6 +418,29 @@ def record_manual_interaction(service, payload):
     )
     notify_admin(service, title, reason)
     return True
+
+
+def still_blocked(service, download_id):
+    """Return True if the download waits in the live queue of the app.
+
+    The app can send the event after Fitzflix removed the queue item,
+    for example 3 seconds after the import of "M" (2026-10-13). Then
+    the event is stale. If the app does not answer, the event counts.
+    A lost notice is worse than a duplicate."""
+
+    try:
+        queue = fetch_queue(service)
+    except Exception as e:
+        current_app.logger.warning(
+            f"{service} did not answer the queue check of a manual-import "
+            f"event: {e}"
+        )
+        return True
+    return any(
+        item.get("downloadId") == download_id
+        and item.get("trackedDownloadState") in BLOCKED_STATES
+        for item in queue
+    )
 
 
 def notify_admin(service, title, reason):

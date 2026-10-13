@@ -122,6 +122,37 @@ def test_manual_interaction_event_records_and_emails_once(app, client, monkeypat
     app.redis.delete(manual_imports.PENDING_KEY)
 
 
+def test_stale_manual_interaction_event_is_ignored(
+    app, client, monkeypatch, downloads, fake_queues
+):
+    """The app can send the event after Fitzflix removed the queue item."""
+
+    sent = []
+    monkeypatch.setattr(
+        "app.email.send_email", lambda *args, **kwargs: sent.append(kwargs)
+    )
+    monkeypatch.setitem(app.config, "MAIL_SERVER", "smtp.test")
+    monkeypatch.setitem(app.config, "SERVER_EMAIL", "noreply@example.test")
+    fake_queues["Radarr"] = [radarr_item(make_download(downloads), state="importing")]
+
+    payload = {
+        "eventType": "ManualInteractionRequired",
+        "downloadId": DOWNLOAD_ID,
+        "downloadInfo": {"title": "M-Eine.Stadt.1931-playBD"},
+    }
+    response = client.post("/api/radarr/add", json=payload, headers=auth_header())
+    assert response.status_code == 202
+    assert app.redis.hlen(manual_imports.PENDING_KEY) == 0
+    assert sent == []
+
+    # The same event counts when the download waits in the queue.
+
+    fake_queues["Radarr"] = [radarr_item(make_download(downloads))]
+    client.post("/api/radarr/add", json=payload, headers=auth_header())
+    assert app.redis.hlen(manual_imports.PENDING_KEY) == 1
+    assert len(sent) == 1
+
+
 def test_proposed_names():
     movie = {
         "quality": "Remux-1080p",
