@@ -6,6 +6,7 @@ import threading
 import time
 import traceback
 
+from datetime import timezone
 from logging.handlers import SMTPHandler, WatchedFileHandler
 from urllib.parse import quote_plus
 
@@ -723,6 +724,24 @@ def create_app(config_class=Config, watch_import_dir=False):
 
     app.jinja_env.filters["display_title"] = display_title
     app.jinja_env.filters["display_year"] = display_year
+
+    # The File Activity cards carry the time of their file in the clock
+    # of the pipeline trails. The database stores the file times in UTC.
+    # The trail stamps are the local wall clock of the server, in the
+    # same text format. Thus, the poll can compare the two as text (#275).
+
+    def trail_clock(moment):
+        """Return a naive UTC datetime as a local wall-clock stamp, or ""."""
+
+        if moment is None:
+            return ""
+        return (
+            moment.replace(tzinfo=timezone.utc)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+    app.jinja_env.filters["trail_clock"] = trail_clock
 
     # The action forms of the poster tiles render their own csrf inputs.
     # They do not need a form object passed through every gallery route.

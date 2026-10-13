@@ -558,6 +558,22 @@
 
 			var filesSignature = null;
 			var pendingCards = {};
+
+			// The newest file time among the cards on the page, in the
+			// clock of the trail stamps (data-file-time). A trail that is
+			// not newer than this belongs to a file that the page already
+			// ranks, on this page or a deeper one. The poll does not fetch
+			// its card. Thus, a file that moved to page 2 stays there
+			// (#275). An inserted card raises the watermark.
+
+			var cardWatermark = "";
+
+			function readWatermark() {
+				document.querySelectorAll("#file-activity-cards [data-file-time]").forEach(function(card) {
+					var stamp = card.getAttribute("data-file-time") || "";
+					if (stamp > cardWatermark) cardWatermark = stamp;
+				});
+			}
 			var chipClass = {
 				done: "text-bg-success",
 				started: "text-bg-primary",
@@ -643,8 +659,9 @@
 			// stamp of the trail races the database commit). The pending
 			// marker clears in both cases. Thus, the next poll retries
 
-			function fetchCard(basename) {
+			function fetchCard(basename, updated) {
 				if (pendingCards[basename]) return;
+				if (updated && updated <= cardWatermark) return;
 				pendingCards[basename] = true;
 				fetch(window.fileActivityCardUrl + "?basename=" + encodeURIComponent(basename), { credentials: "same-origin" })
 					.then(function(response) { return response.ok ? response.text() : null; })
@@ -658,6 +675,7 @@
 						if (!card) return;
 						holder.insertBefore(card, holder.firstChild);
 						card.querySelectorAll(".flask-moment").forEach(flask_moment_render);
+						if (updated && updated > cardWatermark) cardWatermark = updated;
 						filesSignature = null;
 					})
 					.catch(function() {})
@@ -681,11 +699,13 @@
 					} else if (file.entries.some(function(entry) {
 						return entry.stage === "Cataloging" && entry.status === "done";
 					})) {
-						fetchCard(file.basename);
+						fetchCard(file.basename, file.updated);
 					}
 				});
 				filesSignature = signature;
 			}
+
+			readWatermark();
 
 			function scheduleNext() {
 				clearTimeout(pollTimer);

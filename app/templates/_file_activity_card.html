@@ -8,8 +8,12 @@
    by the original filename, not by the name of the File row. Thus,
    both names go with the card. The poll paints the stage chips of
    this file into the hidden data-trail slot while Redis keeps its
-   trail. #}
-<div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}">
+   trail. The data-file-time attribute is the time that orders this
+   card, in the clock of the trail stamps. The poll fetches the card of
+   a trail only when the trail is newer than every card on the page.
+   Thus, a file that moved to page 2 does not come back to the top
+   (#275). #}
+<div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}" data-file-time="{{ (file.date_updated or file.date_added)|trail_clock }}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">

@@ -367,6 +367,25 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
     )
     assert "data-trail" in page
 
+    # The card carries the file time in the clock of the trail stamps.
+    # The poll compares it with the trail stamps as text (#275).
+
+    import re
+    from datetime import timezone
+
+    from app.models import File
+
+    with app.app_context():
+        file = File.query.filter_by(untouched_basename="Dashboard.Film.2012.mkv").one()
+        expected = (
+            (file.date_updated or file.date_added)
+            .replace(tzinfo=timezone.utc)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+    assert f'data-file-time="{expected}"' in page
+    assert re.search(r'data-file-time="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d"', page)
+
     deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
     assert "window.fileActivityCardUrl = " not in deeper
 
