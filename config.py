@@ -264,6 +264,12 @@ class Config(object):
     RADARR_ROOT_FOLDERS                 = _path_list(os.environ.get("RADARR_ROOT_FOLDERS"), [MOVIE_LIBRARY])
     RADARR_PROXY_URL                    = os.environ.get("RADARR_PROXY_URL") or RADARR_URL
 
+    # The completed-download folders of the download client, as this host
+    # sees them. The Manual imports page copies and deletes files only
+    # below these folders. Empty means the page can list but not act.
+
+    ARR_DOWNLOAD_FOLDERS                = _path_list(os.environ.get("ARR_DOWNLOAD_FOLDERS"), [])
+
     # TMDB configuration
     TMDB_API_KEY                        = os.environ.get("TMDB_API_KEY") or None
     TMDB_API_URL                        = os.environ.get("TMDB_API_URL") or "https://api.themoviedb.org/3"

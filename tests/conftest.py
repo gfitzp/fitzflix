@@ -124,6 +124,7 @@ class TestConfig(Config):
     RADARR_ROOT_FOLDERS = [MOVIE_LIBRARY]
     SONARR_ROOT_FOLDERS = [TV_LIBRARY]
     RADARR_PROXY_URL = "http://127.0.0.1:1"
+    ARR_DOWNLOAD_FOLDERS = [os.path.join(_TMP, "downloads")]
     WIKIDATA_SPARQL_URL = "http://127.0.0.1:1"
     HANDBRAKE_PRESET_FILE = None
 

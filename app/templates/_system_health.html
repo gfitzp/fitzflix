@@ -11,6 +11,9 @@
 	{% if health.missing_best and health.missing_best.count %}
 	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.missing_files') }}" title="Best-quality files with no local copy, scanned {{ relative_time(health.missing_best.checked) }}">{{ health.missing_best.count }} best cop{{ 'y' if health.missing_best.count == 1 else 'ies' }} not local</a>
 	{% endif %}
+	{% if health.manual_imports %}
+	<a class="badge text-bg-warning text-decoration-none me-1 mb-1" href="{{ url_for('main.manual_imports') }}" title="Downloads that Sonarr or Radarr cannot import">{{ health.manual_imports }} manual import{{ 's' if health.manual_imports != 1 }}</a>
+	{% endif %}
 	{% for mount in health.missing_mounts %}
 	<span class="badge text-bg-danger me-1 mb-1">{{ mount }} not mounted</span>
 	{% endfor %}

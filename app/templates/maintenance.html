@@ -11,6 +11,14 @@
 <p class="small text-muted mb-0">Nothing to triage.</p>
 {% endif %}
 <hr>
+<h4 class="mt-3 mb-2">Manual imports</h4>
+<p class="small text-muted">The downloads that Sonarr or Radarr completed but cannot import. Fitzflix copies the file to the import directory under a correct name, deletes the download, and clears the queue of the app.</p>
+{% if manual_import_count %}
+<a class="btn btn-sm btn-warning" href="{{ url_for('main.manual_imports') }}" role="button">Finish manual imports <span class="badge text-bg-light">{{ manual_import_count }}</span></a>
+{% else %}
+<p class="small text-muted mb-0">Nothing waits. <a href="{{ url_for('main.manual_imports') }}">Check the live queues</a>.</p>
+{% endif %}
+<hr>
 <h4 class="mt-3 mb-2">Pipeline activity</h4>
 <p class="small text-muted">The path of each recent file through the import, as a status chip for each stage. The chips show the current stage of each file, the scheduled retries, and the failures.</p>
 <a class="btn btn-sm btn-secondary" href="{{ url_for('main.file_activity') }}" role="button">View file activity</a>

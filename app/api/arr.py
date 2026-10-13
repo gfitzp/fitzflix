@@ -65,6 +65,15 @@ def import_event_webhook(service):
             if payload.get("eventType") == "Test":
                 return response
 
+            # A download that the app cannot import waits for a person.
+            # Record it for the Manual imports page (#276).
+
+            if payload.get("eventType") == "ManualInteractionRequired":
+                from app.manual_imports import record_manual_interaction
+
+                record_manual_interaction(service, payload)
+                return response
+
             # Only an import event carries the file fields that the handlers
             # use. Acknowledge and ignore all other events.
 

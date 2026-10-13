@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import page_header, breadcrumb %}
+
+{% block app_content %}
+{{ breadcrumb([("Library Maintenance", url_for('main.maintenance')), (title, none)]) }}
+{{ page_header(title) }}
+{% for error in report.errors %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endfor %}
+{% if not fenced %}
+<div class="alert alert-warning">Set <code>ARR_DOWNLOAD_FOLDERS</code> in <code>.env</code> to the completed-download folders of the download client. Until then, this page lists the downloads but cannot import them.</div>
+{% endif %}
+{% if report.entries %}
+<p class="text-muted">There {{ "is" if report.entries|length == 1 else "are" }} {{ report.entries|length }} download{{ "s" if report.entries|length != 1 }} that Sonarr or Radarr cannot import. Import copies the selected file to the import directory under the given name, deletes the download, and removes it from the queue of the app. Discard removes it from the queue and tells the download client to delete it.</p>
+<div class="list-group">
+	{% for entry in report.entries %}
+	<div class="list-group-item">
+		<h6 class="mb-1 text-break">{{ entry.title }}</h6>
+		<p class="mb-1 small">
+			<span class="badge text-bg-secondary">{{ entry.service }}</span>
+			{% if entry.quality %}<span class="badge text-bg-light">{{ entry.quality }}</span>{% endif %}
+			<span class="text-muted">{{ entry.size|filesizeformat }}</span>
+			{% if entry.record %}
+			&middot; matched to
+			{% if entry.record_url %}<a href="{{ entry.record_url }}">{{ entry.record.title }}{% if entry.record.year %} ({{ entry.record.year }}){% endif %}</a>
+			{% else %}{{ entry.record.title }}{% if entry.record.year %} ({{ entry.record.year }}){% endif %}{% endif %}
+			{% endif %}
+		</p>
+		{% for message in entry.messages %}
+		<p class="mb-1 small text-warning-emphasis">{{ message }}</p>
+		{% endfor %}
+		<p class="mb-2 small text-muted text-break">{{ entry.output_path }}</p>
+		{% if entry.started %}
+		<span class="badge text-bg-info">Import queued</span>
+		{% elif not entry.fenced %}
+		<span class="badge text-bg-warning">Outside ARR_DOWNLOAD_FOLDERS</span>
+		{% elif not entry.candidates %}
+		<span class="badge text-bg-warning">No video file in the download folder</span>
+		<form action="" method="post" class="d-inline ms-2">
+			{{ form.csrf_token() }}
+			<input type="hidden" name="service" value="{{ entry.service }}">
+			<input type="hidden" name="download_id" value="{{ entry.download_id }}">
+			<button class="btn btn-sm btn-danger" name="discard_submit" value="Discard download" type="submit" onclick="return confirm('Delete this download?');">Discard</button>
+		</form>
+		{% else %}
+		<form action="" method="post">
+			{{ form.csrf_token() }}
+			<input type="hidden" name="service" value="{{ entry.service }}">
+			<input type="hidden" name="download_id" value="{{ entry.download_id }}">
+			{% for candidate in entry.candidates %}
+			<div class="form-check small">
+				<input class="form-check-input" type="radio" name="source" id="source-{{ loop.index }}-{{ entry.download_id }}" value="{{ candidate.relative }}"{% if loop.first %} checked{% endif %}>
+				<label class="form-check-label text-break" for="source-{{ loop.index }}-{{ entry.download_id }}">{{ candidate.relative }} <span class="text-muted">({{ candidate.size|filesizeformat }})</span></label>
+			</div>
+			{% endfor %}
+			<div class="input-group input-group-sm my-2">
+				<span class="input-group-text">Import as</span>
+				<input type="text" class="form-control" name="new_name" value="{{ entry.proposed_name }}" aria-label="Import as">
+			</div>
+			{# One flex-wrap row with a gap. Thus, the buttons keep a gap
+			   when a narrow screen wraps them. #}
+			<div class="d-flex flex-wrap gap-2">
+			<button class="btn btn-sm btn-primary" name="import_submit" value="Import" type="submit">Import</button>
+			<button class="btn btn-sm btn-danger" name="discard_submit" value="Discard download" type="submit" onclick="return confirm('Delete this download?');">Discard</button>
+			</div>
+		</form>
+		{% endif %}
+	</div>
+	{% endfor %}
+</div>
+{% elif not report.errors %}
+<p class="lead">Nothing waits for a manual import.</p>
+{% endif %}
+{% endblock %}

@@ -668,6 +668,7 @@ def system_health(flask_app):
 
     # Lazy import: app.missing_files imports missing_volumes from here
 
+    from app.manual_imports import pending_count
     from app.missing_files import missing_best_summary
 
     started = time.perf_counter()
@@ -689,6 +690,7 @@ def system_health(flask_app):
         "scheduler": scheduler_health(flask_app.redis),
         "probes": probe_health(flask_app.redis),
         "missing_best": missing_best_summary(flask_app.redis),
+        "manual_imports": pending_count(flask_app.redis),
     }
 
 

@@ -23,12 +23,13 @@ from flask import (
 # Flask 2.4 removed flask.Markup. Import it from its real module
 from flask_login import current_user, login_required
 
-from app import db, enqueue_import_scan
+from app import db, enqueue_import_scan, safe_job_id
 from app.main.forms import (
     CriterionRefreshForm,
     FailedJobForm,
     FilenameTestForm,
     LossyAudioTriageForm,
+    ManualImportForm,
     MissingRestoreForm,
     MissingScanForm,
     SubtitleTriageForm,
@@ -59,6 +60,20 @@ from app.main.helpers import admin_required
 from app.main.library import restore_cost_estimate
 from app.log_digest import stored_digest
 from app.maintenance import system_health
+from app.manual_imports import (
+    STARTED_KEY,
+    STARTED_TTL,
+    PENDING_KEY,
+    blocked_downloads,
+    download_folders,
+    fetch_queue,
+    fitzflix_basename,
+    pending_count,
+    pending_report,
+    remove_from_queue,
+    started,
+    video_candidates,
+)
 from app.missing_files import missing_best_report, missing_best_summary
 from app.triage import (
     forced_subtitle_candidates,
@@ -678,6 +693,7 @@ def maintenance():
         tmdb_triage_count=sum(len(bucket) for bucket in _tmdb_unmatched()),
         runtime_mismatch_count=len(runtime_mismatch_candidates()),
         missing_best=missing_best_summary(current_app.redis),
+        manual_import_count=pending_count(current_app.redis),
         duplicate_groups=_duplicate_movie_groups(),
         movie_merge_form=movie_merge_form,
         filename_test_form=filename_test_form,
@@ -761,6 +777,107 @@ def missing_files():
         restore_estimate=restore_cost_estimate(archived),
         scan_form=scan_form,
         restore_form=MissingRestoreForm(),
+    )
+
+
+@bp.route("/maintenance/manual-imports", methods=["GET", "POST"])
+@login_required
+@admin_required
+def manual_imports():
+    """Finish the downloads that Sonarr and Radarr cannot import (#276).
+
+    The page reads the live queues of both apps. Import copies the
+    chosen video file to the import directory under the given name.
+    That runs on the file-operation queue. Then the task deletes the
+    download and removes the queue items. Discard removes the queue items and tells the download
+    client to delete the download. Every action checks the live queue
+    again. Thus, a stale page cannot act on a download that a person
+    solved in the app itself."""
+
+    form = ManualImportForm()
+    if form.validate_on_submit():
+        service = form.service.data
+        download_id = form.download_id.data
+        if service not in ("Radarr", "Sonarr"):
+            flash("Unknown service.", "danger")
+            return redirect(url_for("main.manual_imports"))
+        try:
+            queue = fetch_queue(service)
+        except Exception as e:
+            flash(f"{service} did not answer: {e}", "danger")
+            return redirect(url_for("main.manual_imports"))
+        entry = next(
+            (
+                candidate
+                for candidate in blocked_downloads(service, queue)
+                if candidate["download_id"] == download_id
+            ),
+            None,
+        )
+        if entry is None:
+            flash(f"That download is no longer in the {service} queue.", "warning")
+            return redirect(url_for("main.manual_imports"))
+
+        if form.discard_submit.data:
+            try:
+                remove_from_queue(service, download_id, delete_files=True)
+            except Exception as e:
+                flash(f"{service} refused the removal: {e}", "danger")
+                return redirect(url_for("main.manual_imports"))
+            current_app.redis.hdel(PENDING_KEY, download_id)
+            current_app.logger.info(
+                f"'{entry['title']}' Discarded from the {service} queue"
+            )
+            flash(
+                f"Discarded '{entry['title']}'. {service} tells the download "
+                f"client to delete it.",
+                "success",
+            )
+            return redirect(url_for("main.manual_imports"))
+
+        if started(current_app.redis, download_id):
+            flash("That import is already queued.", "info")
+            return redirect(url_for("main.manual_imports"))
+        candidates = video_candidates(entry["output_path"])
+        relative = form.source.data or ""
+        if relative not in [candidate["relative"] for candidate in candidates]:
+            flash(
+                "That file is not a video file below ARR_DOWNLOAD_FOLDERS.",
+                "danger",
+            )
+            return redirect(url_for("main.manual_imports"))
+        new_name = (form.new_name.data or "").strip()
+        if not fitzflix_basename(new_name):
+            flash(
+                "The name must be in the form 'Title (Year) - [Quality].mkv' or "
+                "'Series - S01E02 - [Quality].mkv'.",
+                "danger",
+            )
+            return redirect(url_for("main.manual_imports"))
+
+        current_app.redis.set(
+            STARTED_KEY.format(download_id=download_id), "1", ex=STARTED_TTL
+        )
+        current_app.file_queue.enqueue(
+            "app.manual_imports.manual_import_task",
+            args=(service, download_id, entry["output_path"], relative, new_name),
+            job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+            description=f"'{new_name}'",
+            job_id=safe_job_id(f"manual-import:{download_id}"),
+        )
+        current_app.logger.info(
+            f"'{new_name}' Manual import of '{relative}' requested by "
+            f"{current_user.email}"
+        )
+        flash(f"Copying '{relative}' to the import directory as '{new_name}'.", "info")
+        return redirect(url_for("main.manual_imports"))
+
+    return render_template(
+        "manual_imports.html",
+        title="Manual imports",
+        report=pending_report(),
+        form=form,
+        fenced=bool(download_folders()),
     )
 
 

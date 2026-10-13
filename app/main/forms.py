@@ -598,6 +598,17 @@ class DVRMemberForm(FlaskForm):
     remove_submit = SubmitField("Remove")
 
 
+class ManualImportForm(FlaskForm):
+    """Finish or discard a download that Sonarr or Radarr cannot import."""
+
+    service = HiddenField(validators=[DataRequired()])
+    download_id = HiddenField(validators=[DataRequired()])
+    source = HiddenField()
+    new_name = StringField("Import as")
+    import_submit = SubmitField("Import")
+    discard_submit = SubmitField("Discard download")
+
+
 class MissingScanForm(FlaskForm):
     """Run the scan for best files with no local copy again (missing files page)."""
 

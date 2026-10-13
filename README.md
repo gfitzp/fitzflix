@@ -205,6 +205,7 @@ A multiple-choice round uses **cast-aware distractors**. The wrong answers are f
 Fitzflix can operate downstream of Sonarr and Radarr, and import each file that they download. In Sonarr or Radarr, add a **Webhook** connection (Settings → Connect → Webhook) with these values:
 
 - URL: `http://<fitzflix host>:8000/api/sonarr/add` (Sonarr) or `http://<fitzflix host>:8000/api/radarr/add` (Radarr)
+- Triggers: **On Import** (Sonarr: On File Import) and **On Upgrade**, and also **On Manual Interaction Required** for the manual-import page (refer to [Manual imports](#manual-imports) below)
 - Method: `POST`, with the triggers **On Import** and **On Upgrade**
 - Credentials (HTTP Basic authentication): the username is the email address of an **admin** account. The password is the **API key** of that account. The admin page of the user shows the key. The webhook renames and imports files at the paths in the payload. Thus, Fitzflix refuses the key of a member account (403). The endpoint does not accept the password of the account. You can make a new key on the admin page without a change to your login password.
 
@@ -227,6 +228,14 @@ A download with a custom format score below 1600 gets the label `WEBRip` in plac
 For the series that Sonarr manages, Sonarr is also the **episode-data authority**. Fitzflix matches its series to the Sonarr series by the library folder. A file coverage check protects the match, so a folder name that matches by chance cannot claim a show. For a matched series, Fitzflix takes the episode titles from the TVDB records of Sonarr. This function exists for the shows where the TMDB numbers are different from the numbers in the files. Daily shows and panel shows are examples. For these shows, the episode files follow the TVDB sequence.
 
 Before Fitzflix accepts a webhook delivery, it makes sure that the structure of the downloaded file is complete. It uses the same truncation probe as the import directory. Fitzflix does not import an incomplete file, for example a stalled download or a corrupted download. Fitzflix reports the grab as **failed** to Sonarr or Radarr. The application then blocklists that release and searches for an other release. Fitzflix deletes the bad file and sends an email report. If Fitzflix cannot report the failure, the application does not download the file again. In that case, Fitzflix keeps the file in place for manual attention, and the email says so.
+
+### Manual imports
+
+Sometimes the download client completes a download, but Sonarr or Radarr cannot import it. One example is a release that the app matched to the movie by id only. The app then marks the queue item "manual import required" and waits. When the webhook connection has the **On Manual Interaction Required** trigger, the app sends the event to Fitzflix. Fitzflix records the download, writes a log line, and emails the admin once for each download. The System page and the Library Maintenance page show a count of the downloads that wait.
+
+The **Manual imports** page (Library Maintenance → Finish manual imports) reads the live queues of both apps. For each blocked download, it shows the reason from the app and the matched title. It also shows the video files in the download folder and a proposed Fitzflix filename. The proposed name uses the matched title, the year or the episode numbers, and the downgraded web quality title from the table above. You can change the name before the import. **Import** copies the selected file to the import directory under that name, deletes the download folder, and removes the queue items from the app. The copy lands under a hidden name, so the import watcher only sees the complete file. The import then follows the usual path. **Discard** removes the queue items and tells the download client to delete the download.
+
+Fitzflix copies and deletes only below the folders in `ARR_DOWNLOAD_FOLDERS` in `.env`, separated by colons. These are the completed-download folders of the download client, as this host sees them. Without this setting, the page lists the downloads but cannot act on them.
 
 ## Tracking Plex watches
 
@@ -383,6 +392,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | The credentials for the archival bucket. Uploads need all three. |
 | `AWS_DOWNLOAD_VIA_CDN`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY` | The CloudFront download path for a library rebuild. The flag turns it on. The other three name the distribution, the CloudFront key pair, and the local private key file (refer to [Downloading through CloudFront](#downloading-through-cloudfront)). |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
+| `ARR_DOWNLOAD_FOLDERS` | The completed-download folders that the [Manual imports](#manual-imports) page may copy from and delete, separated by colons. Empty by default, so the page can list but not act. |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking. The URL and the token enable the 15-minute history poller. The webhook token protects the `/api/plex/webhook/<token>` endpoint (refer to [Tracking Plex watches](#tracking-plex-watches)). |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
 | `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
