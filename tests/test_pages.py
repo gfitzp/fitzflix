@@ -390,6 +390,56 @@ def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
     assert "window.fileActivityCardUrl = " not in deeper
 
 
+def test_file_activity_card_carries_the_added_time(app, admin_client):
+    """Test that the card carries the added time next to the file time.
+
+    A later stage (an audio rebuild, a track scan, the S3 archive) sets
+    date_updated. That moves data-file-time, the time that orders the
+    card. The watermark of the poll must not move with it. Otherwise
+    one rebuilt card blocks the cards of every trail that finished
+    before the rebuild. Thus, the card also carries data-file-added,
+    the arrival time of the file, and the poll reads its watermark from
+    that attribute."""
+
+    from datetime import datetime, timedelta, timezone
+
+    from app import db
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    def clock(moment):
+        return (
+            moment.replace(tzinfo=timezone.utc)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+    with app.app_context():
+        movie = make_movie("Rebuilt Film", 2014)
+        make_movie_file(movie, "Bluray-1080p", untouched_basename="Rebuilt.Film.mkv")
+        db.session.commit()
+        file = File.query.filter_by(untouched_basename="Rebuilt.Film.mkv").one()
+        added = datetime(2026, 10, 14, 12, 0, 0)
+        file.date_added = added
+        file.date_updated = added + timedelta(hours=3)
+        db.session.commit()
+        basename = file.basename
+
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    assert (
+        f'data-file-time="{clock(added + timedelta(hours=3))}" '
+        f'data-file-added="{clock(added)}"'
+    ) in page
+
+    # The fragment that the poll fetches carries the same two stamps
+
+    card = admin_client.get(
+        "/file-activity/card", query_string={"basename": basename}
+    ).get_data(as_text=True)
+    assert f'data-file-added="{clock(added)}"' in card
+    assert f'data-file-time="{clock(added + timedelta(hours=3))}"' in card
+
+
 def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
     """Test that /file-activity/card matches the trail basenames.
 

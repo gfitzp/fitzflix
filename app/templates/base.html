@@ -562,20 +562,49 @@
 			var filesSignature = null;
 			var pendingCards = {};
 
-			// The newest file time among the cards on the page, in the
-			// clock of the trail stamps (data-file-time). A trail that is
-			// not newer than this belongs to a file that the page already
-			// ranks, on this page or a deeper one. The poll does not fetch
-			// its card. Thus, a file that moved to page 2 stays there
-			// (#275). An inserted card raises the watermark.
+			// A card fetch that got a 404 retries at the next poll, even
+			// when no trail changed (the last film of a batch changes
+			// nothing after its cataloging). The count caps the retries
+			// of one basename
+
+			var retryCards = {};
+			var CARD_RETRY_LIMIT = 12;
+
+			// The newest added time among the cards on the page, in the
+			// clock of the trail stamps (data-file-added). A trail whose
+			// cataloging is older than this belongs to a file that the
+			// page already ranks, on this page or a deeper one. The poll
+			// does not fetch its card. Thus, a file that moved to page 2
+			// stays there (#275). The watermark reads the added time, not
+			// the file time (data-file-time). A later stage moves the
+			// file time (an audio rebuild, a track scan, the S3 archive).
+			// A card moved that way must not block the trails that
+			// finished before it. An inserted card raises the watermark.
 
 			var cardWatermark = "";
 
 			function readWatermark() {
-				document.querySelectorAll("#file-activity-cards [data-file-time]").forEach(function(card) {
-					var stamp = card.getAttribute("data-file-time") || "";
+				document.querySelectorAll("#file-activity-cards [data-file-added]").forEach(function(card) {
+					var stamp = card.getAttribute("data-file-added") || "";
 					if (stamp > cardWatermark) cardWatermark = stamp;
 				});
+			}
+
+			// Place a fetched card by its file time, before the first
+			// card with an older time. The cards keep the order of a
+			// reload when one poll fetches several cards and the
+			// responses arrive in any order
+
+			function placeCard(holder, card) {
+				var stamp = card.getAttribute("data-file-time") || "";
+				var cards = holder.querySelectorAll("[data-file-time]");
+				for (var i = 0; i < cards.length; i++) {
+					if ((cards[i].getAttribute("data-file-time") || "") < stamp) {
+						holder.insertBefore(card, cards[i]);
+						return;
+					}
+				}
+				holder.appendChild(card);
 			}
 			var chipClass = {
 				done: "text-bg-success",
@@ -660,14 +689,25 @@
 
 			// A 404 means that the File row is not visible yet (the "done"
 			// stamp of the trail races the database commit). The pending
-			// marker clears in both cases. Thus, the next poll retries
+			// marker clears in both cases. A 404 also clears the files
+			// signature while the retry count is under the cap. Thus, the
+			// next poll retries. The retry skips the watermark check: the
+			// first fetch passed it, and the cards inserted since then
+			// may have raised the watermark past this trail. The
+			// cataloged stamp is the time of the "Cataloging done" entry
+			// of the trail
 
-			function fetchCard(basename, updated) {
+			function fetchCard(basename, cataloged) {
 				if (pendingCards[basename]) return;
-				if (updated && updated <= cardWatermark) return;
+				if (!retryCards[basename] && cataloged && cataloged < cardWatermark) return;
 				pendingCards[basename] = true;
 				fetch(window.fileActivityCardUrl + "?basename=" + encodeURIComponent(basename), { credentials: "same-origin" })
-					.then(function(response) { return response.ok ? response.text() : null; })
+					.then(function(response) {
+						if (response.ok) return response.text();
+						retryCards[basename] = (retryCards[basename] || 0) + 1;
+						if (retryCards[basename] <= CARD_RETRY_LIMIT) filesSignature = null;
+						return null;
+					})
 					.then(function(html) {
 						if (!html) return;
 						var holder = document.getElementById("file-activity-cards");
@@ -676,9 +716,11 @@
 						wrapper.innerHTML = html;
 						var card = wrapper.querySelector("[data-file-basenames]");
 						if (!card) return;
-						holder.insertBefore(card, holder.firstChild);
+						placeCard(holder, card);
 						card.querySelectorAll(".flask-moment").forEach(flask_moment_render);
-						if (updated && updated > cardWatermark) cardWatermark = updated;
+						var added = card.getAttribute("data-file-added") || "";
+						if (added > cardWatermark) cardWatermark = added;
+						delete retryCards[basename];
 						filesSignature = null;
 					})
 					.catch(function() {})
@@ -699,10 +741,13 @@
 					if (slot) {
 						paintChips(slot, file.entries);
 						slot.hidden = false;
-					} else if (file.entries.some(function(entry) {
-						return entry.stage === "Cataloging" && entry.status === "done";
-					})) {
-						fetchCard(file.basename, file.updated);
+					} else {
+						var cataloged = "";
+						file.entries.forEach(function(entry) {
+							if (entry.stage === "Cataloging" && entry.status === "done"
+								&& (entry.at || "") > cataloged) cataloged = entry.at;
+						});
+						if (cataloged) fetchCard(file.basename, cataloged);
 					}
 				});
 				filesSignature = signature;
