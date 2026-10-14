@@ -721,10 +721,12 @@ def file_activity():
 
     This page merges the old Recently Added page and the Pipeline
     Activity trails (Glenn, 2026-08). A file that arrived renders as a
-    full card here. The queue poll of base.html fills the trail chips of
-    each card. A file still in flight shows as chips on the job rows of
-    the queue page. When the cataloging completes, the poll adds the card
-    of the file here through /file-activity/card."""
+    full card here. The server paints the trail chips of each card on
+    page 1. Thus, the chips are in place at the first paint. The queue
+    poll of base.html then repaints them with the live state. A file
+    still in flight shows as chips on the job rows of the queue page.
+    When the cataloging completes, the poll adds the card of the file
+    here through /file-activity/card."""
 
     page = request.args.get("page", 1, type=int)
 
@@ -854,6 +856,13 @@ def file_activity():
                 "reject_count": reject_count,
             }
 
+    # The poll asks for 100 trails on page 1 only (window.pipelineTrailLimit).
+    # The server reads the same set. Thus, the first poll finds the same
+    # chips that the server painted. A deeper page gets no chips, the
+    # same as before.
+
+    trails = _trail_lookup() if page == 1 else _trail_lookup(trails=[])
+
     return render_template(
         "file_activity.html",
         title="File Activity",
@@ -864,7 +873,29 @@ def file_activity():
         prev_url=prev_url,
         pages=recently_added,
         upgrade_threshold=_upgrade_threshold(),
+        trail_for=trails,
     )
+
+
+def _trail_lookup(trails=None):
+    """Return a function that gives the trail entries of a File row.
+
+    The File Activity card template calls it for each card. The function
+    tries the basename of the row and the original import filename, each
+    as it is and as its stem. This is the server twin of the slot match
+    in renderFiles (base.html). With trails=None, this reads the newest
+    100 trails from Redis. That is the set that the poll asks for."""
+
+    from app.pipeline import index_trails, pipeline_trails, trail_entries_for
+
+    if trails is None:
+        trails = pipeline_trails(current_app.redis, limit=100)
+    index = index_trails(trails)
+
+    def trail_for(file):
+        return trail_entries_for(index, file.basename, file.untouched_basename)
+
+    return trail_for
 
 
 def _file_for_trail_basename(basename):
@@ -911,9 +942,9 @@ def file_activity_card():
 
     The queue poll fetches it when a trail with no card completes its
     cataloging. The chips become the full card (poster, quality badge,
-    tracks, links) without a reload. The key is the basename of the
-    trail. A 404 means that the File row is not visible yet. Then the
-    poll tries again."""
+    tracks, links) without a reload. The card arrives with its own trail
+    chips painted. The key is the basename of the trail. A 404 means
+    that the File row is not visible yet. Then the poll tries again."""
 
     basename = request.args.get("basename", "", type=str)
     if not basename:
@@ -926,6 +957,7 @@ def file_activity_card():
         file=file,
         native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
         upgrade_threshold=_upgrade_threshold(),
+        trail_for=_trail_lookup(),
     )
 
 

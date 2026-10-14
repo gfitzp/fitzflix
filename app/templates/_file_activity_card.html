@@ -6,13 +6,17 @@
    without a reload. The poll uses the data-file-basenames attribute
    to match the pipeline trails to this card. The trail can be keyed
    by the original filename, not by the name of the File row. Thus,
-   both names go with the card. The poll paints the stage chips of
-   this file into the hidden data-trail slot while Redis keeps its
-   trail. The data-file-time attribute is the time that orders this
+   both names go with the card. The server paints the stage chips of
+   this file into the data-trail slot (the trail_for lookup of the
+   view). The slot is hidden when the file has no trail. The poll
+   repaints the slot while Redis keeps the trail. Thus, nothing moves
+   at the first poll. The data-file-time attribute is the time that orders this
    card, in the clock of the trail stamps. The poll fetches the card of
    a trail only when the trail is newer than every card on the page.
    Thus, a file that moved to page 2 does not come back to the top
    (#275). #}
+{% from "_trail_chips.html" import trail_chips %}
+{% set trail = trail_for(file) if trail_for is defined else [] %}
 <div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}" data-file-time="{{ (file.date_updated or file.date_added)|trail_clock }}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
@@ -45,7 +49,7 @@
 				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
 				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
-			<div class="mt-1" data-trail hidden></div>
+			<div class="mt-1" data-trail{% if not trail %} hidden{% endif %}>{{ trail_chips(trail) }}</div>
 		</div>
 	{% elif file.tv_series %}
 		{% set tv = file.tv_series %}
@@ -72,7 +76,7 @@
 				{% elif track.forced == 1 %}<span class="badge text-bg-warning me-1 mb-1">
 				{% else %}<span class="badge text-bg-light me-1 mb-1">
 				{% endif %}{{ track.language }}{% if track.default == 1 %} (default){% elif track.forced == 1 %} (forced){% endif %}</span> {% endfor %}<br/>{% endif %}
-			<div class="mt-1" data-trail hidden></div>
+			<div class="mt-1" data-trail{% if not trail %} hidden{% endif %}>{{ trail_chips(trail) }}</div>
 		</div>
 	{% endif %}
 </div>

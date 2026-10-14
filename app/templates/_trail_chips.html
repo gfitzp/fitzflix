@@ -1,0 +1,43 @@
+{# The stage chips of one pipeline trail, rendered by the server. This
+   macro is the twin of paintChips in base.html. The server paints the
+   chips into the page. Thus, the chips are in place at the first paint,
+   and nothing moves when the first poll arrives. The poll then repaints
+   the same markup with the live state. Done is green, running is blue,
+   queued is gray, a deferred retry is amber, and a failure is red. A
+   completed stage reads as an accomplishment ("Localized"). A running
+   stage keeps the present tense of the registry with no suffix. Keep
+   the two painters the same. #}
+{% set chip_class = {
+	"done": "text-bg-success",
+	"started": "text-bg-primary",
+	"queued": "text-bg-secondary",
+	"scheduled": "text-bg-warning",
+	"failed": "text-bg-danger"
+} %}
+{% set chip_word = {
+	"done": "done",
+	"started": "running",
+	"queued": "queued",
+	"scheduled": "waiting to retry",
+	"failed": "failed"
+} %}
+{% set chip_past_tense = {
+	"Copying to staging": "Copied to staging",
+	"Localizing": "Localized",
+	"Moving into the library": "Moved into the library",
+	"Cataloging": "Cataloged",
+	"Archiving to S3": "Archived to S3",
+	"Scanning track metadata": "Scanned track metadata",
+	"Setting track flags": "Set track flags",
+	"Remuxing": "Remuxed",
+	"Rebuilding audio": "Rebuilt audio",
+	"Transcoding": "Transcoded",
+	"Restoring from S3": "Restored from S3"
+} %}
+{% macro trail_chips(entries) -%}
+{%- for entry in entries -%}
+{%- if not loop.first %} &rarr; {% endif -%}
+{%- set word = chip_word.get(entry.status, entry.status) -%}
+<span class="badge fw-normal mb-1 {{ chip_class.get(entry.status, "text-bg-light") }}" title="{{ entry.stage }} &mdash; {{ word }} at {{ entry.at }}">{{ chip_past_tense.get(entry.stage, entry.stage) if entry.status == "done" else entry.stage }}{% if entry.status not in ("done", "started") %} &middot; {{ word }}{% endif %}</span>
+{%- endfor -%}
+{%- endmacro %}

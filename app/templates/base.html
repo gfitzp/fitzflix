@@ -549,7 +549,10 @@
 
 			// The per-file pipeline trails show the journey of each recent
 			// file as stage chips. Done is green, running is blue, queued is
-			// gray, retry-wait is amber, and failed is red. The queue page
+			// gray, retry-wait is amber, and failed is red. The server
+			// paints the first set (the trail_chips macro). Thus, nothing
+			// moves at the first poll. paintChips must stay the twin of
+			// that macro. The queue page
 			// paints them on its job rows (renderAll). The File Activity
 			// dashboard (window.fileActivityCardUrl is set) paints a trail
 			// inline on its card if the file already has a card. When a

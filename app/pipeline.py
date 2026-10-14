@@ -606,6 +606,83 @@ def _heal_orphaned_entries(connection, digest, entries):
         return entries
 
 
+def _stem(name):
+    """Return the name without its extension, or the name itself."""
+
+    dot = name.rfind(".")
+    return name[:dot] if dot > 0 else name
+
+
+def index_trails(trails):
+    """Return the trails of pipeline_trails keyed by basename and by stem.
+
+    The cards of the File Activity page look their trail up here. The
+    basename of a trail can be the original import filename, while the
+    card carries the name of the File row. A container conversion also
+    changes the extension to .mkv. Thus, the index holds each trail under
+    its full name and under its stem. The newest trail wins a shared key.
+    This mirrors cardSlots and renderFiles in base.html."""
+
+    index = {}
+    for trail in trails:
+        name = trail.get("basename") or ""
+        if not name:
+            continue
+        index.setdefault(name, trail)
+        index.setdefault(_stem(name), trail)
+    return index
+
+
+def trail_entries_for(index, *names):
+    """Return the entries of the trail that matches one of the names, or [].
+
+    Each name is tried as it is and then as its stem. The first match
+    wins. The names of a card are the basename of the File row and the
+    original import filename."""
+
+    for name in names:
+        if not name:
+            continue
+        trail = index.get(name) or index.get(_stem(name))
+        if trail:
+            return trail["entries"]
+    return []
+
+
+def queue_rows(tasks, trails):
+    """Return the rows of the queue page: the jobs, then the orphan trails.
+
+    This is the twin of renderAll in base.html. The server renders the
+    table from it. Thus, the rows are in place at the first paint. Each
+    row is {"task": task or None, "trail": trail or None}. A job finds
+    the trail of its file by the job id stamped on the trail entries. A
+    trail whose last stage is not done, and that no listed job owns,
+    comes after the jobs as a "no job in queue" row."""
+
+    trail_by_job = {}
+    for trail in trails:
+        for entry in trail["entries"]:
+            if entry.get("job"):
+                trail_by_job[entry["job"]] = trail
+
+    rows = []
+    listed = []
+    for task in tasks:
+        trail = trail_by_job.get(task["id"])
+        if trail is not None and all(trail is not seen for seen in listed):
+            listed.append(trail)
+        rows.append({"task": task, "trail": trail})
+
+    for trail in trails:
+        if any(trail is seen for seen in listed):
+            continue
+        last = trail["entries"][-1] if trail["entries"] else None
+        if last is None or last.get("status") == "done":
+            continue
+        rows.append({"task": None, "trail": trail})
+    return rows
+
+
 def pipeline_trails(connection, limit=25):
     """Return the newest file trails for the queue page, most recent
     first: [{basename, updated, entries: [{stage, status, at, job}, ...]}, ...].

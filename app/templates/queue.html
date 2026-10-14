@@ -3,11 +3,16 @@
 
 {% block app_content %}
 {{ page_header(title) }}
+{% from "_trail_chips.html" import trail_chips %}
 {# Every job that runs, waits, or is booked for a deferred retry, each
-   with the pipeline trail of its file as stage chips. The 5-second poll
-   in base.html (renderAll) keeps the rows live. The poll asks for the
-   full retained trail set. Thus, a file with no job left to list under
-   still shows as a trailing "no job in queue" row. #}
+   with the pipeline trail of its file as stage chips. The server
+   renders the rows (queue_rows in app/pipeline.py). Thus, the table is
+   in place at the first paint. The 5-second poll in base.html
+   (renderAll) then keeps the rows live with the same markup. The poll
+   asks for the full retained trail set. Thus, a file with no job left
+   to list under still shows as a trailing "no job in queue" row. The
+   relative times are flask-moment spans. The poll writes the same
+   wording with moment.js. #}
 <script>
 	window.pipelineTrailLimit = 100;
 </script>
@@ -22,7 +27,28 @@
 			<th scope="col" class="col-3 col-sm-3 col-lg-2">Started</th>
 		</tr>
 	</thead>
-	<tbody id="all-tasks"></tbody>
+	<tbody id="all-tasks">
+		{% for row in rows %}
+		<tr class="d-flex">
+			<th scope="row" class="col-1">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}</th>
+			<td class="col-5 col-sm-5 col-lg-7">
+				{% if row.task %}<div>{{ row.task.description }}</div>{% else %}<div class="text-muted">{{ row.trail.basename }}</div>{% endif %}
+				{% if row.trail %}<div class="mt-1">{{ trail_chips(row.trail.entries) }}</div>{% endif %}
+			</td>
+			{% if row.task %}
+			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.enqueued_at %}<abbr title="{{ row.task.enqueued_at }}">{{ moment(row.task.enqueued_at).fromNow() }}</abbr>{% endif %}</td>
+			{% if row.task.status == "scheduled" %}
+			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.scheduled_for %}<abbr title="{{ row.task.scheduled_for }}">retries {{ moment(row.task.scheduled_for).fromNow() }}</abbr>{% endif %}</td>
+			{% else %}
+			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.started_at %}<abbr title="{{ row.task.started_at }}">{{ moment(row.task.started_at).fromNow() }}</abbr>{% endif %}</td>
+			{% endif %}
+			{% else %}
+			<td class="col-3 col-sm-3 col-lg-2"></td>
+			<td class="col-3 col-sm-3 col-lg-2 small text-muted">No job in queue; last update {{ row.trail.updated }}</td>
+			{% endif %}
+		</tr>
+		{% endfor %}
+	</tbody>
 </table>
 </div>
 {% endblock %}

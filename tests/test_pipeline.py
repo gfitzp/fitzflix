@@ -746,3 +746,90 @@ def test_a_mid_flight_rename_carries_the_enqueue_anchor(app):
     migrate_trail(app.redis, old, new)
     new_key = FILE_KEY.format(digest=_digest(new))
     assert app.redis.hget(new_key, "first_enqueued") == b"2026-01-02 03:04:05"
+
+
+def test_queue_page_renders_its_rows_on_the_server(app, admin_client):
+    """Render the queue table on the server, with the trail chips in place.
+
+    Before, the table body was empty until the first poll filled it. The
+    rows then popped into place a split second after the page loaded.
+    Now the server renders the same rows that renderAll paints. The
+    poll repaints them with the same markup."""
+
+    with app.app_context():
+        app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Server Row Film (2020) - [DVD].mkv",),
+            description="'Server Row Film (2020) - [DVD].mkv'",
+        )
+
+    page = admin_client.get("/queue").get_data(as_text=True)
+    assert "Server Row Film (2020) - [DVD].mkv" in page
+    assert "text-bg-secondary" in page
+    assert "Localizing &middot; queued" in page
+    assert 'id="all-tasks">' in page
+    # The queued job holds position 1 in the live queue
+    assert '<th scope="row" class="col-1">1</th>' in page
+
+
+def test_queue_rows_list_the_orphan_trails_after_the_jobs():
+    """Put a trail with no job of its own after the jobs, once.
+
+    A trail whose last stage is done is settled. It gets no row. A trail
+    that a listed job owns gets no second row."""
+
+    from app.pipeline import queue_rows
+
+    owned = {"basename": "Owned.mkv", "entries": [{"job": "j1", "status": "started"}]}
+    settled = {"basename": "Settled.mkv", "entries": [{"job": "j9", "status": "done"}]}
+    orphan = {"basename": "Orphan.mkv", "entries": [{"job": "j8", "status": "failed"}]}
+    tasks = [{"id": "j1", "position": 1}]
+
+    rows = queue_rows(tasks, [owned, settled, orphan])
+    assert [row["task"] and row["task"]["id"] for row in rows] == ["j1", None]
+    assert rows[0]["trail"] is owned
+    assert rows[1]["trail"] is orphan
+
+
+def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
+    """Paint the trail chips of a card on the server.
+
+    The slot of a card with a trail is visible and holds the chips. The
+    slot of a card with no trail stays hidden. The card fragment that
+    the poll fetches carries its chips too. Thus, nothing pops into
+    place after the first paint."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    with app.app_context():
+        movie = make_movie("Painted Film", 2014)
+        make_movie_file(movie, "DVD", untouched_basename="Painted.Film.2014.avi")
+        bare = make_movie("Bare Film", 2015)
+        make_movie_file(bare, "DVD", untouched_basename="Bare.Film.2015.avi")
+        db.session.commit()
+        # The trail is keyed by the import name with the converted extension
+        app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Painted.Film.2014.mkv",),
+            description="'Painted.Film.2014.mkv'",
+        )
+
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    # Each segment after a split runs from one card to the next card
+    cards = page.split('data-file-basenames="')
+    painted_html = next(c for c in cards if c.startswith("Painted Film (2014)"))
+    bare_html = next(c for c in cards if c.startswith("Bare Film (2015)"))
+    assert '<div class="mt-1" data-trail>' in painted_html
+    assert "Localizing &middot; queued" in painted_html
+    assert '<div class="mt-1" data-trail hidden>' in bare_html
+    assert "Localizing" not in bare_html
+
+    deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
+    assert "Localizing &middot; queued" not in deeper
+
+    card = admin_client.get(
+        "/file-activity/card", query_string={"basename": "Painted.Film.2014.mkv"}
+    ).get_data(as_text=True)
+    assert '<div class="mt-1" data-trail>' in card
+    assert "Localizing &middot; queued" in card

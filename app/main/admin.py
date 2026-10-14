@@ -1476,10 +1476,19 @@ def rejects():
 def queue():
     """Show a list of all localization and transcode tasks in the queue.
 
-    See api.queue_details for the generation of the queue.
+    The server renders the rows from the same data that
+    api.queue_details serves. Thus, the table is in place at the first
+    paint. The 5-second poll then repaints the rows (renderAll in
+    base.html) with the live state.
     """
 
-    return render_template("queue.html", title="Queue")
+    from app.pipeline import pipeline_trails, queue_rows
+
+    details = current_user.get_queue_details()
+    trails = pipeline_trails(current_app.redis, limit=100)
+    return render_template(
+        "queue.html", title="Queue", rows=queue_rows(details["all"], trails)
+    )
 
 
 @bp.route("/library/files", methods=["GET", "POST"])
