@@ -1639,3 +1639,61 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
         assert os.path.exists(staged) is kept
     if kept:
         os.remove(staged)
+
+
+def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
+    app, sample_mkv, incoming_dir
+):
+    """Queue the S3 delete of a replaced file on the handoff queue.
+
+    The delete is the last step of a file in the pipeline. On the
+    file-operation queue, it waited in line behind long file work. On
+    the sql queue, the single sql worker would wait on the network."""
+
+    from datetime import datetime, timezone
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    key = "untouched/Replace Archive (2021) - [SDTV].mkv"
+    with app.app_context():
+        movie = make_movie("Replace Archive", 2021)
+        make_movie_file(
+            movie,
+            "SDTV",
+            aws_untouched_key=key,
+            aws_untouched_date_uploaded=datetime.now(timezone.utc),
+        )
+        db.session.commit()
+
+    basename = "Replace Archive (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+            and job.args[0] == source
+        )
+        assert videos.move_localized_file(*move.args) is True
+        finalize = next(
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.finalize_localization"
+            and job.args[0] == source
+        )
+        finalize_localization(*finalize.args, **finalize.kwargs)
+
+        def deletes(queue):
+            return [
+                job.args
+                for job in queue.jobs
+                if job.func_name == "app.videos.aws_delete"
+            ]
+
+        assert deletes(app.handoff_queue) == [(key,)]
+        assert deletes(app.file_queue) == []

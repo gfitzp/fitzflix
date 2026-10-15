@@ -2028,8 +2028,10 @@ def finalize_localization(
                 _remove_staged_output(staged_output)
 
             # The commit succeeded. Thus, delete the AWS archives of the
-            # replaced files. Do it from the file-operation queue. Then the
-            # sql worker does not wait on the network.
+            # replaced files. Do it from the handoff queue. Then the sql
+            # worker does not wait on the network. The delete is the last
+            # step of a file in the pipeline. Thus, it does not wait in line
+            # behind long file work (Glenn, 2026-10-15).
 
             for worse_key in worse_aws_keys:
                 # The new file can claim the same key that its predecessor
@@ -2041,7 +2043,7 @@ def finalize_localization(
                         f"record still claims it"
                     )
                     continue
-                current_app.file_queue.enqueue(
+                current_app.handoff_queue.enqueue(
                     "app.videos.aws_delete",
                     args=(worse_key,),
                     job_timeout=current_app.config["FILE_TASK_TIMEOUT"],

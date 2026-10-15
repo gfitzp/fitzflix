@@ -432,7 +432,7 @@ Fitzflix divides the background work across seven Redis queues. The supervisor c
 
 | Queue | Function |
 | --- | --- |
-| `fitzflix-handoff` | Holds the next stage of a file that is already in the pipeline: the copy of a localized file from the staging area into the library. Each import, transcode, and file-operation worker takes from this queue first. Thus, a file that started finishes before a new file starts. |
+| `fitzflix-handoff` | Holds the next stage of a file that is already in the pipeline: the copy of a localized file from the staging area into the library, and the S3 delete of the archive of a file that the import replaced. Each import, transcode, and file-operation worker takes from this queue first. Thus, a file that started finishes before a new file starts. |
 | `fitzflix-import` | Imports new files: parses the name, removes the tracks that are not in your language, and sorts the file into the library |
 | `fitzflix-file-operation` | Does the operations on single files: S3 uploads and downloads, and Matroska property edits |
 | `fitzflix-transcode` | Does the HandBrake transcodes (high CPU load; usually one worker) |
