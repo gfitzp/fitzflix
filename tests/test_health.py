@@ -262,6 +262,7 @@ def test_worker_health_counts_and_staleness(app, monkeypatch):
 
 def test_expected_workers_derived_from_program_roster():
     assert maintenance.EXPECTED_WORKERS == {
+        "fitzflix-handoff": 5,
         "fitzflix-user-request": 2,
         "fitzflix-import": 5,
         "fitzflix-file-operation": 5,
@@ -480,3 +481,30 @@ def test_create_work_directory_refuses_an_unmounted_volume(app, monkeypatch, cap
         assert create_work_directory(app, "TEST_WORK_DIR") is False
     assert made == []
     assert "is not mounted" in caplog.text
+
+
+def test_the_roster_matches_the_supervisor_configuration():
+    """Keep PROGRAM_QUEUES the same as the commands in fitzflix_supervisor.ini.
+
+    Each of the 5 pipeline workers takes from the handoff queue first.
+    Thus, the library copy of a file that is in the pipeline never
+    waits behind a new import (Glenn, 2026-10-14)."""
+
+    import configparser
+    import pathlib
+
+    ini = configparser.ConfigParser(interpolation=None)
+    ini.read(pathlib.Path(__file__).resolve().parent.parent / "fitzflix_supervisor.ini")
+    roster = {}
+    for section in ini.sections():
+        command = ini[section].get("command", "")
+        if "supervisor.py" in command:
+            program = section.split(":", 1)[1]
+            roster[program] = command.split("supervisor.py", 1)[1].split()
+    assert roster == maintenance.PROGRAM_QUEUES
+
+    pipeline = ("fitzflix-import", "fitzflix-transcode", "fitzflix-file-operation")
+    for program in pipeline:
+        assert roster[program][0] == "fitzflix-handoff"
+    workers = sum(maintenance.PROGRAM_COUNTS.get(program, 1) for program in pipeline)
+    assert maintenance.EXPECTED_WORKERS["fitzflix-handoff"] == workers == 5

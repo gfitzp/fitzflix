@@ -1331,6 +1331,7 @@ class User(UserMixin, db.Model):
         from app.pipeline import STAGES
 
         return (
+            (current_app.handoff_queue, None),
             (current_app.import_queue, None),
             (current_app.transcode_queue, None),
             (current_app.file_queue, None),

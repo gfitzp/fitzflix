@@ -1153,7 +1153,7 @@ def localization_task(
             if file_details.get("basename") != basename:
                 migrate_trail(current_app.redis, basename, file_details.get("basename"))
 
-            current_app.file_queue.enqueue(
+            current_app.handoff_queue.enqueue(
                 "app.videos.move_localized_file",
                 args=(source_path, file_details, lock, hidden_output_file),
                 job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
@@ -1335,7 +1335,7 @@ def move_localized_file(
                 f"'{basename}' Volumes unavailable ({', '.join(dead)}), "
                 f"retrying the library copy in 5 minutes"
             )
-            current_app.file_queue.enqueue_in(
+            current_app.handoff_queue.enqueue_in(
                 timedelta(minutes=5),
                 "app.videos.move_localized_file",
                 source_path,
@@ -1360,7 +1360,7 @@ def move_localized_file(
             _log_space_wait(basename, output_directory, needed, shortfall, space_waits)
             mark_space_wait(os.path.basename(source_path))
             _hold_title_lock(lock, basename)
-            current_app.file_queue.enqueue_in(
+            current_app.handoff_queue.enqueue_in(
                 SPACE_WAIT,
                 "app.videos.move_localized_file",
                 source_path,
@@ -1473,7 +1473,7 @@ def move_localized_file(
                     os.remove(destination_hidden)
                 except OSError:
                     pass
-                current_app.file_queue.enqueue_in(
+                current_app.handoff_queue.enqueue_in(
                     timedelta(minutes=5),
                     "app.videos.move_localized_file",
                     source_path,
@@ -1903,7 +1903,7 @@ def finalize_localization(
                 )
                 db.session.rollback()
                 handed_off = True
-                current_app.file_queue.enqueue(
+                current_app.handoff_queue.enqueue(
                     "app.videos.move_localized_file",
                     args=(file_path, file_details, lock, hidden_output_file),
                     job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],

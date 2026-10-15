@@ -757,6 +757,15 @@ def create_app(config_class=Config, watch_import_dir=False):
     app.transcode_queue = TrackedQueue("fitzflix-transcode", connection=app.redis)
     app.file_queue = TrackedQueue("fitzflix-file-operation", connection=app.redis)
 
+    # The handoff queue holds the next stage of a file that is already in
+    # the pipeline (the library copy after the localization). Each of
+    # the 5 pipeline workers takes from it first. Thus, a file that
+    # started finishes before a new file starts (Glenn, 2026-10-14).
+    # Bulk work (the S3 sync uploads, the track scans) stays on the
+    # file-operation queue. Thus, it never blocks new imports.
+
+    app.handoff_queue = TrackedQueue("fitzflix-handoff", connection=app.redis)
+
     # Configure the Redis redlock manager.
 
     app.lock_manager = Redlock([app.redis])

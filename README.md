@@ -428,12 +428,13 @@ brew services start supervisor
 
 ## Worker queues
 
-Fitzflix divides the background work across six Redis queues. The supervisor configuration and the manual worker commands below decide the number of workers for each queue. The queues are:
+Fitzflix divides the background work across seven Redis queues. The supervisor configuration and the manual worker commands below decide the number of workers for each queue. The queues are:
 
 | Queue | Function |
 | --- | --- |
+| `fitzflix-handoff` | Holds the next stage of a file that is already in the pipeline: the copy of a localized file from the staging area into the library. Each import, transcode, and file-operation worker takes from this queue first. Thus, a file that started finishes before a new file starts. |
 | `fitzflix-import` | Imports new files: parses the name, removes the tracks that are not in your language, and sorts the file into the library |
-| `fitzflix-file-operation` | Does the operations on single files: S3 uploads and downloads, Matroska property edits, and moves of localized files from the staging area into the library |
+| `fitzflix-file-operation` | Does the operations on single files: S3 uploads and downloads, and Matroska property edits |
 | `fitzflix-transcode` | Does the HandBrake transcodes (high CPU load; usually one worker) |
 | `fitzflix-sql` | Writes to the database, including the database half of the TMDB refreshes. Start exactly one worker, so the writes occur in sequence. |
 | `fitzflix-user-request` | Does the jobs from the web UI and the CLI: manual scans, S3 sync, SQS polls, and the network half of the TMDB refreshes |
@@ -483,17 +484,17 @@ rq worker fitzflix-user-request
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-import fitzflix-file-operation
+rq worker fitzflix-handoff fitzflix-import fitzflix-file-operation
 ```
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-transcode fitzflix-import fitzflix-file-operation
+rq worker fitzflix-handoff fitzflix-transcode fitzflix-import fitzflix-file-operation
 ```
 
 ```
 source venv/bin/activate &&
-rq worker fitzflix-file-operation fitzflix-import
+rq worker fitzflix-handoff fitzflix-file-operation fitzflix-import
 ```
 
 ### Flask

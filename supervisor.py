@@ -12,10 +12,12 @@ qs = sys.argv[1:] or ["default"]
 
 # Build the app of the worker at startup, not at the first task. Only the
 # import-program workers watch the import directory. Their primary queue
-# is first on the command line. The other programs only drain the import
-# queue. Thus, they do not need their own filesystem observer.
+# is first on the command line, after the handoff queue that each
+# pipeline worker takes from first. The other programs only drain the
+# import queue. Thus, they do not need their own filesystem observer.
 
-get_app(watch_import_dir=qs[0] == "fitzflix-import")
+primary = next((q for q in qs if q != "fitzflix-handoff"), qs[0])
+get_app(watch_import_dir=primary == "fitzflix-import")
 
 db.configure_mappers()
 

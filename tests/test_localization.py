@@ -95,7 +95,7 @@ def test_localization_end_to_end_through_staging(app, sample_mkv, incoming_dir):
 
         move_jobs = [
             job
-            for job in app.file_queue.jobs
+            for job in app.handoff_queue.jobs
             if job.func_name == "app.videos.move_localized_file"
         ]
         assert len(move_jobs) == 1
@@ -181,7 +181,7 @@ def run_full_chain(app, source):
     assert localization_task(source) is True
     move_jobs = [
         job
-        for job in app.file_queue.jobs
+        for job in app.handoff_queue.jobs
         if job.func_name == "app.videos.move_localized_file"
     ]
     assert len(move_jobs) == 1
@@ -491,7 +491,9 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
         assert result is False
 
         retries = [
-            job for job in scheduled_jobs(app.file_queue) if job.id.startswith("retry_")
+            job
+            for job in scheduled_jobs(app.handoff_queue)
+            if job.id.startswith("retry_")
         ]
         assert [job.id for job in retries] == [
             retry_job_id("move_localized_file", f"'{basename}'", 1)
@@ -556,7 +558,7 @@ def test_library_copy_rejects_after_max_retries(app, incoming_dir, monkeypatch):
         )
 
     assert not any(
-        job.id.startswith("retry_") for job in scheduled_jobs(app.file_queue)
+        job.id.startswith("retry_") for job in scheduled_jobs(app.handoff_queue)
     )
     assert basename in rejected_files(app)
     assert not os.path.exists(hidden)
@@ -987,7 +989,7 @@ def test_move_localized_file_defers_when_volumes_dead(app, tmp_path, monkeypatch
 
     retries = [
         job.id
-        for job in scheduled_jobs(app.file_queue)
+        for job in scheduled_jobs(app.handoff_queue)
         if job.id.startswith("retry_move_localized_file")
     ]
     assert retries == [
@@ -1130,7 +1132,7 @@ def test_completeness_budget_exhausted_imports_anyway(app, incoming_dir):
         )
         move_jobs = [
             job
-            for job in app.file_queue.jobs
+            for job in app.handoff_queue.jobs
             if job.func_name == "app.videos.move_localized_file"
         ]
         assert len(move_jobs) == 1
@@ -1181,7 +1183,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
 
             # Nothing was staged, moved, or rejected. The source is intact.
             assert os.listdir(app.config["STAGING_DIR"]) == []
-            assert len(app.file_queue) == 0
+            assert len(app.handoff_queue) == 0
             assert basename not in rejected_files(app)
             assert os.path.exists(source)
 
@@ -1214,7 +1216,7 @@ def test_localization_waits_for_library_space(app, sample_mkv, incoming_dir, cap
             assert localization_task(source, space_waits=2) is True
             move_jobs = [
                 job
-                for job in app.file_queue.jobs
+                for job in app.handoff_queue.jobs
                 if job.func_name == "app.videos.move_localized_file"
             ]
             assert len(move_jobs) == 1
@@ -1268,7 +1270,9 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
         assert inspected == []
 
         waits = [
-            job for job in scheduled_jobs(app.file_queue) if job.id.startswith("retry_")
+            job
+            for job in scheduled_jobs(app.handoff_queue)
+            if job.id.startswith("retry_")
         ]
         assert [job.id for job in waits] == [
             retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
@@ -1318,7 +1322,7 @@ def test_library_copy_out_of_space_mid_copy_waits(app, incoming_dir, monkeypatch
         assert basename not in rejected_files(app)
         assert len(app.sql_queue) == 0
         assert retry_job_id("move_localized_file", f"'{basename}'", 0, "space1") in [
-            job.id for job in scheduled_jobs(app.file_queue)
+            job.id for job in scheduled_jobs(app.handoff_queue)
         ]
     finally:
         os.remove(source)

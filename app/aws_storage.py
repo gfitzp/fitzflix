@@ -193,6 +193,7 @@ def sync_aws_s3_storage_task():
         job = get_current_job()
         busy = []
         for queue_name, queue in (
+            ("fitzflix-handoff", current_app.handoff_queue),
             ("fitzflix-import", current_app.import_queue),
             ("fitzflix-transcode", current_app.transcode_queue),
             ("fitzflix-file-operation", current_app.file_queue),

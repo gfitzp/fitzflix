@@ -54,6 +54,7 @@ class LocalTimeCronJob(CronJob):
 LATEST_KEY = "fitzflix:cron:latest"
 
 QUEUE_NAMES = [
+    "fitzflix-handoff",
     "fitzflix-import",
     "fitzflix-file-operation",
     "fitzflix-transcode",

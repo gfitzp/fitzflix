@@ -102,6 +102,7 @@ def system():
     queues_by_name = {
         queue.name: queue
         for queue in (
+            current_app.handoff_queue,
             current_app.import_queue,
             current_app.sql_queue,
             current_app.request_queue,

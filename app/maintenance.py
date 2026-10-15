@@ -42,13 +42,22 @@ PROGRAM_QUEUES = {
     "fitzflix-maintenance": ["fitzflix-maintenance"],
     "fitzflix-sql": ["fitzflix-sql"],
     "fitzflix-user-request": ["fitzflix-user-request"],
-    "fitzflix-import": ["fitzflix-import", "fitzflix-file-operation"],
+    "fitzflix-import": [
+        "fitzflix-handoff",
+        "fitzflix-import",
+        "fitzflix-file-operation",
+    ],
     "fitzflix-transcode": [
+        "fitzflix-handoff",
         "fitzflix-transcode",
         "fitzflix-import",
         "fitzflix-file-operation",
     ],
-    "fitzflix-file-operation": ["fitzflix-file-operation", "fitzflix-import"],
+    "fitzflix-file-operation": [
+        "fitzflix-handoff",
+        "fitzflix-file-operation",
+        "fitzflix-import",
+    ],
 }
 
 PROGRAM_COUNTS = {
