@@ -993,7 +993,7 @@ def test_queue_page_renders_its_rows_on_the_server(app, admin_client):
     assert "Localizing &middot; queued" in page
     assert 'id="all-tasks">' in page
     # The queued job holds position 1 in the live queue
-    assert '<th scope="row" class="col-1">1</th>' in page
+    assert '<th scope="row" class="col-1 queue-position">1</th>' in page
 
 
 def test_queue_rows_list_the_orphan_trails_after_the_jobs():
@@ -1205,3 +1205,28 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
     sub_stages = {"Copying to staging", "Decoding TrueHD", "Encoding E-AC-3 Atmos"}
     labels = {label for label, _ in STAGES.values()} | sub_stages
     assert labels <= set(server)
+
+
+def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
+    """Give each queue row a line of times for a phone.
+
+    On a phone, the 2 time columns do not show. The queue-times line in
+    the File cell shows the same times. Each phrase stays whole. The
+    poll (renderAll and phoneTimes) writes the same markup."""
+
+    with app.app_context():
+        app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Phone Row (2026) - [DVD].mkv",),
+            description="'Phone Row (2026) - [DVD].mkv'",
+        )
+
+    page = admin_client.get("/queue").get_data(as_text=True)
+    assert 'class="table table-striped queue-table"' in page
+    for kind in ("queue-position", "queue-file", "queue-enqueued", "queue-started"):
+        assert kind in page
+    times = page[page.index('<div class="queue-times') :]
+    times = times[: times.index("</div>")]
+    assert '<span class="text-nowrap">Enqueued ' in times
+    assert "started " not in times
+    assert "fileCell.appendChild(phoneTimes(task, trailByJob[task.id]))" in page

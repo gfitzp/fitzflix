@@ -446,7 +446,7 @@
 
 			function trailCell(task, trail) {
 				var cell = document.createElement("td");
-				cell.className = "col-5 col-sm-5 col-lg-7";
+				cell.className = "col-5 col-sm-5 col-lg-7 queue-file";
 				var name = document.createElement("div");
 				name.textContent = task ? task.description : trail.basename;
 				if (!task) name.className = "text-muted";
@@ -460,9 +460,13 @@
 				return cell;
 			}
 
-			function timeCell(stamp, prefix) {
+			// kind is queue-enqueued or queue-started. On a phone, these 2
+			// cells do not show. The queue-times line in the File cell
+			// (phoneTimes) shows the same times.
+
+			function timeCell(stamp, prefix, kind) {
 				var cell = document.createElement("td");
-				cell.className = "col-3 col-sm-3 col-lg-2";
+				cell.className = "col-3 col-sm-3 col-lg-2 " + kind;
 				if (stamp) {
 					// The tooltips carry the LOCAL time of the viewer, not
 					// the raw GMT timestamp that the API serves
@@ -474,10 +478,43 @@
 				return cell;
 			}
 
+			// The times of a row as 1 line of text below the chips, for a
+			// phone. Each phrase stays whole. Thus, a long line breaks
+			// between the phrases. This is the twin of the queue-times line
+			// in queue.html.
+
+			function phoneTimes(task, trail) {
+				var line = document.createElement("div");
+				line.className = "queue-times d-sm-none small text-body-secondary";
+				if (!task) {
+					line.textContent = "No job in queue; last update " + trail.updated;
+					return line;
+				}
+				var phrases = [];
+				if (task.enqueued_at) {
+					phrases.push("Enqueued " + moment(task.enqueued_at).fromNow());
+				}
+				if (task.status === "scheduled") {
+					if (task.scheduled_for) {
+						phrases.push("retries " + moment(task.scheduled_for).fromNow());
+					}
+				} else if (task.started_at) {
+					phrases.push("started " + moment(task.started_at).fromNow());
+				}
+				phrases.forEach(function(text, index) {
+					if (index) line.appendChild(document.createTextNode(" · "));
+					var phrase = document.createElement("span");
+					phrase.className = "text-nowrap";
+					phrase.textContent = text;
+					line.appendChild(phrase);
+				});
+				return line;
+			}
+
 			function positionCell(text) {
 				var cell = document.createElement("th");
 				cell.setAttribute("scope", "row");
-				cell.className = "col-1";
+				cell.className = "col-1 queue-position";
 				cell.textContent = text;
 				return cell;
 			}
@@ -523,22 +560,26 @@
 					var row = document.createElement("tr");
 					row.className = "d-flex";
 					row.appendChild(positionCell(task.position === null ? "—" : task.position));
-					row.appendChild(trailCell(task, trailByJob[task.id]));
-					row.appendChild(timeCell(task.enqueued_at));
+					var fileCell = trailCell(task, trailByJob[task.id]);
+					fileCell.appendChild(phoneTimes(task, trailByJob[task.id]));
+					row.appendChild(fileCell);
+					row.appendChild(timeCell(task.enqueued_at, "", "queue-enqueued"));
 					// A deferred retry has not started. Its slot says
 					// when it is back in line
 					row.appendChild(task.status === "scheduled"
-						? timeCell(task.scheduled_for, "retries ")
-						: timeCell(task.started_at));
+						? timeCell(task.scheduled_for, "retries ", "queue-started")
+						: timeCell(task.started_at, "", "queue-started"));
 					tbody.appendChild(row);
 				});
 				orphans.forEach(function(trail) {
 					var row = document.createElement("tr");
 					row.className = "d-flex";
 					row.appendChild(positionCell("—"));
-					row.appendChild(trailCell(null, trail));
-					row.appendChild(timeCell(null));
-					var updated = timeCell(null);
+					var orphanCell = trailCell(null, trail);
+					orphanCell.appendChild(phoneTimes(null, trail));
+					row.appendChild(orphanCell);
+					row.appendChild(timeCell(null, "", "queue-enqueued"));
+					var updated = timeCell(null, "", "queue-started");
 					updated.className += " small text-muted";
 					updated.textContent = "No job in queue; last update " + trail.updated;
 					row.appendChild(updated);

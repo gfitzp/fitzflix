@@ -255,6 +255,16 @@
 		   queued") went past the edge of its cell and was cut off. The
 		   rounding is the same as the badges of the film card */
 		.trail-chip { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; max-width: 100%; }
+		/* On a phone, the file of each queue row gets almost the full
+		   width. The 2 time columns do not show. The queue-times line
+		   below the chips shows the same times. Before, the 4 columns
+		   made the File column narrow, and each row was very tall
+		   (Glenn, 2026-10-15) */
+		.queue-times { margin-top: .5rem; }
+		@media (max-width: 575.98px) {
+			.queue-table .queue-file { flex: 0 0 91.667%; max-width: 91.667%; width: 91.667%; }
+			.queue-table .queue-enqueued, .queue-table .queue-started { display: none; }
+		}
 		/* The label block of the film card shows only when it holds a
 		   badge. The rule above it goes with it. Thus, a card with no
 		   labels shows no empty group between 2 rules */

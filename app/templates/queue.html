@@ -17,33 +17,52 @@
 	window.pipelineTrailLimit = 100;
 </script>
 <div class="table-responsive">
-<table class="table table-striped">
+{# On a phone, the 2 time columns do not show (the queue-table rules in
+   bootstrap.html). The queue-times line in the File cell shows the same
+   times as 1 line of text below the chips. Each phrase stays whole.
+   Thus, a long line breaks between the phrases, below the file name. #}
+<table class="table table-striped queue-table">
 	<thead class="table-light">
 		<tr class="d-flex">
-			<th scope="col" class="col-1">#</th>
-			<th scope="col" class="col-5 col-sm-5 col-lg-7">File</th>
-			<th scope="col" class="col-3 col-sm-3 col-lg-2">Enqueued</th>
-			<th scope="col" class="col-3 col-sm-3 col-lg-2">Started</th>
+			<th scope="col" class="col-1 queue-position">#</th>
+			<th scope="col" class="col-5 col-sm-5 col-lg-7 queue-file">File</th>
+			<th scope="col" class="col-3 col-sm-3 col-lg-2 queue-enqueued">Enqueued</th>
+			<th scope="col" class="col-3 col-sm-3 col-lg-2 queue-started">Started</th>
 		</tr>
 	</thead>
 	<tbody id="all-tasks">
 		{% for row in rows %}
 		<tr class="d-flex">
-			<th scope="row" class="col-1">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}</th>
-			<td class="col-5 col-sm-5 col-lg-7">
+			<th scope="row" class="col-1 queue-position">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}</th>
+			<td class="col-5 col-sm-5 col-lg-7 queue-file">
 				{% if row.task %}<div>{{ row.task.description }}</div>{% else %}<div class="text-muted">{{ row.trail.basename }}</div>{% endif %}
 				{% if row.trail %}<div class="mt-1">{{ trail_chips(row.trail.entries) }}</div>{% endif %}
+				<div class="queue-times d-sm-none small text-body-secondary">
+				{%- if row.task -%}
+					{%- set phrases = [] -%}
+					{%- if row.task.enqueued_at %}{% set _ = phrases.append(("Enqueued ", row.task.enqueued_at)) %}{% endif -%}
+					{%- if row.task.status == "scheduled" -%}
+						{%- if row.task.scheduled_for %}{% set _ = phrases.append(("retries ", row.task.scheduled_for)) %}{% endif -%}
+					{%- elif row.task.started_at %}{% set _ = phrases.append(("started ", row.task.started_at)) %}{% endif -%}
+					{%- for word, stamp in phrases -%}
+						{%- if not loop.first %} &middot; {% endif -%}
+						<span class="text-nowrap">{{ word }}{{ moment(stamp).fromNow() }}</span>
+					{%- endfor -%}
+				{%- else -%}
+					No job in queue; last update {{ row.trail.updated }}
+				{%- endif -%}
+				</div>
 			</td>
 			{% if row.task %}
-			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.enqueued_at %}<abbr title="{{ row.task.enqueued_at }}">{{ moment(row.task.enqueued_at).fromNow() }}</abbr>{% endif %}</td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-enqueued">{% if row.task.enqueued_at %}<abbr title="{{ row.task.enqueued_at }}">{{ moment(row.task.enqueued_at).fromNow() }}</abbr>{% endif %}</td>
 			{% if row.task.status == "scheduled" %}
-			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.scheduled_for %}<abbr title="{{ row.task.scheduled_for }}">retries {{ moment(row.task.scheduled_for).fromNow() }}</abbr>{% endif %}</td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-started">{% if row.task.scheduled_for %}<abbr title="{{ row.task.scheduled_for }}">retries {{ moment(row.task.scheduled_for).fromNow() }}</abbr>{% endif %}</td>
 			{% else %}
-			<td class="col-3 col-sm-3 col-lg-2">{% if row.task.started_at %}<abbr title="{{ row.task.started_at }}">{{ moment(row.task.started_at).fromNow() }}</abbr>{% endif %}</td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-started">{% if row.task.started_at %}<abbr title="{{ row.task.started_at }}">{{ moment(row.task.started_at).fromNow() }}</abbr>{% endif %}</td>
 			{% endif %}
 			{% else %}
-			<td class="col-3 col-sm-3 col-lg-2"></td>
-			<td class="col-3 col-sm-3 col-lg-2 small text-muted">No job in queue; last update {{ row.trail.updated }}</td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-enqueued"></td>
+			<td class="col-3 col-sm-3 col-lg-2 queue-started small text-muted">No job in queue; last update {{ row.trail.updated }}</td>
 			{% endif %}
 		</tr>
 		{% endfor %}
