@@ -1430,6 +1430,11 @@ class User(UserMixin, db.Model):
                 "started_at": started_at,
                 "ended_at": job.ended_at,
                 "description": job.meta.get("description", job.description),
+                # A check or finish job of a multi-job run (the Atmos twin)
+                # shows the chips of the first job of the run. A booked
+                # check names its wait ("checks again"), not "retries".
+                "trail_job": job.meta.get("trail_job"),
+                "scheduled_word": job.meta.get("scheduled_word"),
             }
 
         def time_key(value):

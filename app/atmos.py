@@ -25,9 +25,9 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 import traceback
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import boto3
 from flask import current_app
@@ -47,8 +47,11 @@ app = get_app()
 TRUEHD_ATMOS_CODEC = "Dolby TrueHD with Dolby Atmos"
 EAC3_ATMOS_CODEC = "Dolby Digital Plus with Dolby Atmos"
 
-MEDIACONVERT_POLL_SECONDS = 20
-MEDIACONVERT_POLL_LIMIT = 1080  # 6 hours
+# atmos_check_task asks MediaConvert about a run this often, and gives
+# up after this many checks (6 hours).
+
+MEDIACONVERT_CHECK_SECONDS = 120
+MEDIACONVERT_CHECK_LIMIT = 180
 
 # The local scratch requirement: the extracted TrueHD bitstream plus
 # its decoded DAMF master, with headroom.
@@ -343,30 +346,6 @@ def _run_step(command, job, basename, description, ok_returncodes=(0,)):
     wait_for_subprocess(process, ok_returncodes=ok_returncodes)
 
 
-def _wait_for_mediaconvert(client, mc_job_id, job, basename):
-    """Poll a MediaConvert job until it stops. Raise an error on a failure."""
-
-    for _ in range(MEDIACONVERT_POLL_LIMIT):
-        mc_job = client.get_job(Id=mc_job_id)["Job"]
-        status = mc_job["Status"]
-        percent = mc_job.get("JobPercentComplete")
-        if job:
-            job.meta["description"] = (
-                f"'{basename}' — MediaConvert encoding E-AC-3 Atmos"
-            )
-            job.meta["progress"] = int(percent) if percent is not None else -1
-            job.save_meta()
-        if status == "COMPLETE":
-            return mc_job
-        if status in ("ERROR", "CANCELED"):
-            raise RuntimeError(
-                f"MediaConvert job {mc_job_id} {status}: "
-                f"{mc_job.get('ErrorCode')} {mc_job.get('ErrorMessage')}"
-            )
-        time.sleep(MEDIACONVERT_POLL_SECONDS)
-    raise RuntimeError(f"MediaConvert job {mc_job_id} timed out")
-
-
 def _cleanup_s3_prefix(s3_client, bucket, prefix):
     """Try to remove the S3 scratch objects of the pipeline."""
 
@@ -382,14 +361,33 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
         current_app.logger.error(traceback.format_exc())
 
 
+# The Atmos run is 3 jobs. While MediaConvert encodes, no job runs, and
+# no worker waits. This key marks a run that is between its jobs. Then
+# a second request for the same file does not start a second run.
+
+CHAIN_KEY = "fitzflix:atmos:chain:{file_id}"
+
+# The own chip of the run on the trail of the file. The check and the
+# finish jobs write to the chips of the first job.
+
+OWN_STAGE = "Adding Atmos twin"
+
+# A sentinel result of _atmos_prepare: staging is short of space now.
+
+NO_STAGING_SPACE = "no staging space"
+
+
 def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
     """Queue the supplement if the file needs an E-AC-3 Atmos twin.
 
     The import calls this after its track scan. If the file carries a
     TrueHD Atmos track without its E-AC-3 Atmos twin, this queues the
-    supplement on the transcode queue. That queue is serial. Thus, a
-    batch of imports converts 1 film at a time. The MediaConvert cost
-    stays visible.
+    first job of the supplement on the import queue. The run is 3 jobs.
+    atmos_supplement_task decodes the track and submits it to
+    MediaConvert. atmos_check_task asks MediaConvert about the encode
+    every 2 minutes. atmos_finish_task muxes the twin in and moves the
+    file into the library. Thus, no worker waits on MediaConvert, and
+    more than 1 film can encode at a time (Glenn, 2026-10-15).
 
     staged_source is the staged copy of a new import (staged_handoff).
     The job starts from it and does not read the library file back.
@@ -408,12 +406,14 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
     file = db.session.get(File, int(file_id))
     if file is None:
         return False
-    job_id = safe_job_id(f"atmos_supplement:{file_id}")
-    queue = current_app.transcode_queue
-    started = StartedJobRegistry(queue=queue)
-    if job_id in queue.job_ids or job_id in started.get_job_ids():
+    if current_app.redis.exists(CHAIN_KEY.format(file_id=int(file_id))):
         return False
-    queue.enqueue(
+    job_id = safe_job_id(f"atmos_supplement:{file_id}")
+    for queue in (current_app.import_queue, current_app.transcode_queue):
+        started = StartedJobRegistry(queue=queue)
+        if job_id in queue.job_ids or job_id in started.get_job_ids():
+            return False
+    current_app.import_queue.enqueue(
         "app.atmos.atmos_supplement_task",
         args=(int(file_id),),
         kwargs={"staged_source": staged_source} if staged_source else None,
@@ -425,11 +425,14 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
 
 
 def atmos_supplement_task(file_id, staged_source=None):
-    """Add E-AC-3 Atmos twins to the TrueHD Atmos tracks of a file.
+    """Decode the TrueHD Atmos tracks of a file and submit them to MediaConvert.
 
-    staged_source is the staged copy that the import gave to this job,
-    or None. The deferred retries carry it. When the job ends, a staged
-    copy that it did not use is removed."""
+    This is the first of the 3 jobs of the supplement. It takes the
+    title lock and gives it to atmos_check_task, with the state of the
+    run. The chips of this job stay open until atmos_finish_task closes
+    them. staged_source is the staged copy that the import gave to this
+    job, or None. The deferred retries carry it. When the job ends, a
+    staged copy that it did not use is removed."""
 
     from app.tmdb_refresh import tmdb_refresh_pending
     from app.videos import acquire_lock_or_defer, schedule_retry
@@ -444,13 +447,13 @@ def atmos_supplement_task(file_id, staged_source=None):
 
         # The import queues the TMDB refresh and this task together. The
         # refresh must apply first. It can rename the title, and it holds
-        # the title lock for seconds. This task holds the lock for the
-        # whole MediaConvert run. Thus, this task waits while a refresh
-        # of the movie is still on its way.
+        # the title lock for seconds. The run holds the lock until the
+        # finish job. Thus, this task waits while a refresh of the movie
+        # is still on its way.
 
         if file.movie_id and tmdb_refresh_pending("Movies", file.movie_id):
             schedule_retry(
-                current_app.transcode_queue,
+                current_app.import_queue,
                 "app.atmos.atmos_supplement_task",
                 (1, 3),
                 current_app.config["TRANSCODE_TASK_TIMEOUT"],
@@ -467,7 +470,7 @@ def atmos_supplement_task(file_id, staged_source=None):
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-            current_app.transcode_queue,
+            current_app.import_queue,
             "app.atmos.atmos_supplement_task",
             minutes=(5, 15),
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
@@ -482,36 +485,424 @@ def atmos_supplement_task(file_id, staged_source=None):
         # A failure turns the chip of its step red.
 
         phases = TaskPhases()
+        handed_off = False
         try:
-            result = _atmos_supplement_unlocked(int(file_id), phases, staged_source)
+            outcome = _atmos_prepare(int(file_id), phases, staged_source)
+            if isinstance(outcome, dict):
+                _start_checks(outcome, lock)
+                handed_off = True
+                return True
         except BaseException:
             phases.fail()
             raise
         finally:
-            current_app.lock_manager.unlock(lock)
+            if not handed_off:
+                current_app.lock_manager.unlock(lock)
 
-            # A used staged copy is in the workspace now, and the job
-            # removed it. This removes an unused one.
+            # A used staged copy is in the workspace now. This removes an
+            # unused one.
 
             discard_staged_source(staged_source)
+
         phases.finish()
+        if outcome == NO_STAGING_SPACE:
+            # More than 1 run can use staging now. Wait for space. Do not
+            # give up on the twin.
+
+            schedule_retry(
+                current_app.import_queue,
+                "app.atmos.atmos_supplement_task",
+                (15, 30),
+                current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                f"'{file.basename}'",
+                "Staging space is insufficient for the Atmos pipeline",
+                args=(int(file_id),),
+            )
+            return True
+        return outcome
+
+
+def _atmos_prepare(file_id, phases, staged_source=None):
+    """Stage the file, decode each TrueHD Atmos track, and submit the encodes.
+
+    This returns the state of the run for atmos_check_task, or True or
+    False when the run ends here, or NO_STAGING_SPACE. The library share
+    carries 1 read here (the staging copy), and none if the import gave
+    its staged copy. The DAMF masters are removed after their upload.
+    Thus, the workspace holds only the staged source during the encode.
+    """
+
+    from app.videos import aws_s3_client, copy_with_progress, get_audio_tracks_from_file
+
+    job = get_current_job()
+    file = db.session.get(File, int(file_id))
+    basename = file.basename
+    file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    if not os.path.exists(file_path):
+        current_app.logger.warning(f"'{basename}' No local copy, cannot supplement")
+        return False
+
+    # A cheap check of the stored rows before the full-size staging
+    # copy. The pipeline inspects the copy again as the real authority.
+
+    stored_rows = (
+        FileAudioTrack.query.filter_by(file_id=file.id)
+        .order_by(FileAudioTrack.track)
+        .all()
+    )
+    stored_tracks = [
+        {"codec": row.codec, "language": row.language} for row in stored_rows
+    ]
+    if stored_rows and not atmos_supplement_candidates(stored_tracks):
+        current_app.logger.info(
+            f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
+        )
+        return True
+
+    staging_dir = current_app.config["STAGING_DIR"]
+    try:
+        staging_free = shutil.disk_usage(staging_dir).free
+    except OSError:
+        staging_free = 0
+
+    # The workspace holds the staged source AND the remuxed output for a
+    # short time. Each is about the size of the source. The headroom
+    # covers the extracted bitstream, the DAMF master, and the .ec3
+    # phases. A staged copy from the import is already on staging. Then
+    # only the output needs new space.
+
+    use_staged = _usable_staged_source(staged_source, file_path)
+    if staged_source and not use_staged:
+        current_app.logger.info(
+            f"'{basename}' The library file changed after the import. "
+            f"Copying it from the library"
+        )
+        discard_staged_source(staged_source)
+    copies = 1 if use_staged else 2
+    needed = copies * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
+    if staging_free < needed:
+        current_app.logger.warning(
+            f"'{basename}' Staging space is insufficient for the Atmos "
+            f"pipeline ({staging_free} free, {needed} needed). Trying again later"
+        )
+        return NO_STAGING_SPACE
+
+    workspace = os.path.join(staging_dir, f"atmos-{file_id}")
+    s3_client = aws_s3_client()
+    bucket = current_app.config["AWS_BUCKET"]
+    prefix = f"{current_app.config['AWS_MEDIACONVERT_PREFIX']}/{file_id}"
+    tracks = []
+
+    try:
+        os.makedirs(workspace, exist_ok=True)
+        staging_source = os.path.join(workspace, basename)
+        if use_staged:
+            # The import left this copy on the same SSD. The move into the
+            # workspace is a rename. The NAS is not read.
+
+            try:
+                os.rename(staged_source["path"], staging_source)
+                current_app.logger.info(
+                    f"'{basename}' Using the staged copy from the import"
+                )
+            except OSError:
+                use_staged = False
+        if not use_staged:
+            phases.enter("Copying to staging")
+            copy_with_progress(
+                file_path, staging_source, job, basename, "Copying to local staging"
+            )
+
+        audio_tracks = get_audio_tracks_from_file(staging_source)
+        wanting = atmos_supplement_candidates(audio_tracks)
+        if not wanting:
+            current_app.logger.info(
+                f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
+            )
+            shutil.rmtree(workspace, ignore_errors=True)
+            return True
+
+        for source_index in wanting:
+            source = audio_tracks[source_index]
+            streamorder = source.get("streamorder")
+
+            # Extract the TrueHD bitstream and decode it to a DAMF Atmos
+            # master with truehdd. ffmpeg cannot produce one.
+
+            thd_path = os.path.join(workspace, f"track{streamorder}.thd")
+            phases.enter("Decoding TrueHD")
+            _run_step(
+                [
+                    current_app.config["MKVEXTRACT_BIN"],
+                    "tracks",
+                    staging_source,
+                    f"{streamorder}:{thd_path}",
+                ],
+                job,
+                basename,
+                "Extracting TrueHD bitstream",
+            )
+            damf_base = os.path.join(workspace, f"track{streamorder}")
+            _run_step(
+                [
+                    current_app.config["TRUEHDD_BIN"],
+                    "decode",
+                    "--output-path",
+                    damf_base,
+                    thd_path,
+                ],
+                job,
+                basename,
+                "Decoding TrueHD to Atmos master",
+            )
+            damf_files = sorted(glob.glob(f"{damf_base}.atmos*"))
+            if not damf_files:
+                raise RuntimeError(
+                    f"truehdd produced no DAMF output for '{basename}' "
+                    f"track {streamorder}"
+                )
+            os.remove(thd_path)
+
+            # Upload the master to the S3 scratch area and submit the
+            # encode. The run does not wait for it here.
+
+            phases.enter("Encoding E-AC-3 Atmos")
+            _set_stage(job, basename, "Uploading Atmos master to S3", progress=0)
+            upload_progress = _UploadProgress(
+                job, sum(os.path.getsize(path) for path in damf_files)
+            )
+            for damf_path in damf_files:
+                key = f"{prefix}/{os.path.basename(damf_path)}"
+                size = os.path.getsize(damf_path)
+                current_app.logger.info(
+                    f"'{basename}' Uploading {os.path.basename(damf_path)} "
+                    f"({size / 1e9:.2f} GB) to s3://{bucket}/{key}"
+                )
+                s3_client.upload_file(damf_path, bucket, key, Callback=upload_progress)
+
+            input_uri = f"s3://{bucket}/{prefix}/{os.path.basename(damf_base)}.atmos"
+            destination_uri = f"s3://{bucket}/{prefix}/out{streamorder}/twin"
+            mc_job = mediaconvert_client().create_job(
+                Role=current_app.config["MEDIACONVERT_ROLE_ARN"],
+                Settings=mediaconvert_job_settings(
+                    input_uri,
+                    destination_uri,
+                    current_app.config["EAC3_ATMOS_BITRATE"],
+                ),
+            )
+            mc_job_id = mc_job["Job"]["Id"]
+            current_app.logger.info(
+                f"'{basename}' MediaConvert job {mc_job_id} submitted "
+                f"({current_app.config['EAC3_ATMOS_BITRATE']} bps 9.1.6)"
+            )
+            for damf_path in damf_files:
+                os.remove(damf_path)
+
+            tracks.append(
+                {
+                    "streamorder": streamorder,
+                    "insert_at": insertion_point(audio_tracks, source_index),
+                    "language": source.get("language"),
+                    "mc_job_id": mc_job_id,
+                }
+            )
+
+    except BaseException:
+        current_app.logger.error(traceback.format_exc())
+        shutil.rmtree(workspace, ignore_errors=True)
+        _cleanup_s3_prefix(s3_client, bucket, prefix)
+        raise
+
+    return {
+        "file_id": file.id,
+        "basename": basename,
+        "workspace": workspace,
+        "staging_source": staging_source,
+        "bucket": bucket,
+        "prefix": prefix,
+        "audio_tracks": audio_tracks,
+        "tracks": tracks,
+        "trail_job": job.id if job else None,
+        "chain": uuid.uuid4().hex[:8],
+    }
+
+
+def _start_checks(state, lock):
+    """Give the run to atmos_check_task. Keep the chips of this job open.
+
+    The worker stamps a job done when it returns. The run is not done.
+    Thus, the trail_continues flag tells the worker to leave the chip of
+    this job open."""
+
+    job = get_current_job()
+    if job is not None:
+        job.meta["trail_continues"] = True
+        job.save_meta()
+    current_app.redis.set(
+        CHAIN_KEY.format(file_id=state["file_id"]),
+        state["chain"],
+        ex=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+    )
+    _book_check(state, lock, 0, None)
+
+
+def _continuation_meta(state, word):
+    """Return the job meta of a check or finish job of a run.
+
+    trail_job puts the row of the job on the trail of the first job.
+    scheduled_word names the wait of a booked check on the queue page."""
+
+    return {"trail_job": state["trail_job"], "scheduled_word": word}
+
+
+def _book_check(state, lock, checks, percent):
+    """Book the next atmos_check_task in MEDIACONVERT_CHECK_SECONDS."""
+
+    progress = f" ({percent}%)" if percent is not None else ""
+    current_app.handoff_queue.enqueue_in(
+        timedelta(seconds=MEDIACONVERT_CHECK_SECONDS),
+        "app.atmos.atmos_check_task",
+        state,
+        lock,
+        checks=checks,
+        job_timeout=600,
+        job_id=safe_job_id(f"atmos_check:{state['file_id']}:{state['chain']}:{checks}"),
+        description=(
+            f"'{state['basename']}' — MediaConvert encoding E-AC-3 Atmos{progress}"
+        ),
+        meta=_continuation_meta(state, "checks again"),
+    )
+
+
+def _close_run(state, lock):
+    """Release the title lock and remove the workspace and the S3 scratch area."""
+
+    from app.videos import aws_s3_client
+
+    shutil.rmtree(state["workspace"], ignore_errors=True)
+    try:
+        _cleanup_s3_prefix(aws_s3_client(), state["bucket"], state["prefix"])
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+    current_app.redis.delete(CHAIN_KEY.format(file_id=state["file_id"]))
+    if lock:
+        current_app.lock_manager.unlock(lock)
+
+
+def _trail_phases(state, current):
+    """Return the phases of the run, bound to the chips of the first job."""
+
+    return TaskPhases(
+        target=(state["trail_job"], state["basename"], OWN_STAGE), current=current
+    )
+
+
+def atmos_check_task(state, lock, checks=0):
+    """Ask MediaConvert once about the encodes of an Atmos run.
+
+    This holds a worker for about 1 second. Then it books itself again
+    in MEDIACONVERT_CHECK_SECONDS. When each encode is complete, it
+    queues atmos_finish_task. A network error only books the next
+    check. An encode that fails, or a run longer than
+    MEDIACONVERT_CHECK_LIMIT checks, ends the run."""
+
+    with app.app_context():
+        job = get_current_job()
+        basename = state["basename"]
+        try:
+            client = mediaconvert_client()
+            results = [
+                client.get_job(Id=track["mc_job_id"])["Job"]
+                for track in state["tracks"]
+            ]
+        except Exception as e:
+            current_app.logger.warning(
+                f"'{basename}' MediaConvert status unavailable ({e}). " f"Asking again"
+            )
+            results = None
+
+        percent = None
+        if results is not None:
+            failed = [
+                result
+                for result in results
+                if result.get("Status") in ("ERROR", "CANCELED")
+            ]
+            if failed:
+                _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
+                _trail_phases(state, None).close("failed")
+                _close_run(state, lock)
+                raise RuntimeError(
+                    "; ".join(
+                        f"MediaConvert job {result.get('Id')} "
+                        f"{result.get('Status')}: {result.get('ErrorCode')} "
+                        f"{result.get('ErrorMessage')}"
+                        for result in failed
+                    )
+                )
+            percent = min(
+                (
+                    100
+                    if result.get("Status") == "COMPLETE"
+                    else int(result.get("JobPercentComplete") or 0)
+                )
+                for result in results
+            )
+            _set_stage(job, basename, "MediaConvert encoding E-AC-3 Atmos", percent)
+            if all(result.get("Status") == "COMPLETE" for result in results):
+                current_app.logger.info(
+                    f"'{basename}' MediaConvert finished the E-AC-3 Atmos twin"
+                )
+                current_app.handoff_queue.enqueue(
+                    "app.atmos.atmos_finish_task",
+                    args=(state, lock),
+                    job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
+                    job_id=safe_job_id(
+                        f"atmos_finish:{state['file_id']}:{state['chain']}"
+                    ),
+                    description=f"E-AC-3 Atmos twin for '{basename}'",
+                    meta=_continuation_meta(state, "retries"),
+                )
+                return True
+
+        if checks + 1 >= MEDIACONVERT_CHECK_LIMIT:
+            _trail_phases(state, "Encoding E-AC-3 Atmos").fail()
+            _trail_phases(state, None).close("failed")
+            _close_run(state, lock)
+            raise RuntimeError(
+                f"MediaConvert did not finish the encode of '{basename}' "
+                f"after {checks + 1} checks"
+            )
+        _book_check(state, lock, checks + 1, percent)
+        return True
+
+
+def atmos_finish_task(state, lock):
+    """Mux the finished E-AC-3 Atmos twins in and move the file into the library.
+
+    This is the last of the 3 jobs. It releases the title lock and
+    removes the workspace and the S3 scratch area. It closes the chips
+    of the first job."""
+
+    with app.app_context():
+        phases = _trail_phases(state, "Encoding E-AC-3 Atmos")
+        try:
+            result = _atmos_finish(state, phases)
+        except BaseException:
+            phases.fail()
+            phases.close("failed")
+            raise
+        finally:
+            _close_run(state, lock)
+        phases.finish()
+        phases.close("done")
         return result
 
 
-def _atmos_supplement_unlocked(file_id, phases=None, staged_source=None):
-    """Run the supplement pipeline. The caller must hold the lock of the
-    title.
+def _atmos_finish(state, phases):
+    """Download the twins, remux, verify, and replace the library file.
 
-    The library share carries exactly 2 sequential transfers. The first
-    is 1 copy of the source into local staging at the start. The second
-    is 1 copy of the verified result back at the end. All steps between
-    them run on the staging SSD. These are the extraction, the decode,
-    the remux, the flag edits, the verification parses, and the
-    untouched-archive upload.
-    """
-
-    if phases is None:
-        phases = TaskPhases()
+    The library share carries 1 write here: the verified result."""
 
     from app.videos import (
         aws_s3_client,
@@ -526,405 +917,230 @@ def _atmos_supplement_unlocked(file_id, phases=None, staged_source=None):
         watch_mkvmerge_progress,
     )
 
-    with app.app_context():
-        job = get_current_job()
-        file = db.session.get(File, int(file_id))
-        basename = file.basename
-        file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-        if not os.path.exists(file_path):
-            current_app.logger.warning(f"'{basename}' No local copy, cannot supplement")
-            return False
+    job = get_current_job()
+    file = db.session.get(File, int(state["file_id"]))
+    if file is None:
+        return True
+    basename = state["basename"]
+    file_path = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    workspace = state["workspace"]
+    staging_source = state["staging_source"]
+    audio_tracks = state["audio_tracks"]
+    s3_client = aws_s3_client()
+    bucket = state["bucket"]
+    prefix = state["prefix"]
+    inserts = []
 
-        # A cheap check of the stored rows before the full-size staging
-        # copy. The pipeline inspects the copy again as the real
-        # authority.
+    try:
+        for track in state["tracks"]:
+            streamorder = track["streamorder"]
+            listed = s3_client.list_objects_v2(
+                Bucket=bucket, Prefix=f"{prefix}/out{streamorder}/"
+            )
+            ec3_key = next(
+                (
+                    obj["Key"]
+                    for obj in listed.get("Contents", [])
+                    if obj["Key"].endswith(".ec3")
+                ),
+                None,
+            )
+            if ec3_key is None:
+                raise RuntimeError(
+                    f"MediaConvert job {track['mc_job_id']} completed but left "
+                    f"no .ec3 under '{prefix}/out{streamorder}/'"
+                )
+            ec3_path = os.path.join(workspace, f"track{streamorder}.ec3")
+            _set_stage(job, basename, "Downloading E-AC-3 Atmos twin")
+            s3_client.download_file(bucket, ec3_key, ec3_path)
+            current_app.logger.info(
+                f"'{basename}' Downloaded E-AC-3 Atmos twin "
+                f"({os.path.getsize(ec3_path) / 1e6:.0f} MB)"
+            )
+            inserts.append((track["insert_at"], ec3_path, track["language"]))
 
-        stored_rows = (
-            FileAudioTrack.query.filter_by(file_id=file.id)
-            .order_by(FileAudioTrack.track)
-            .all()
+        phases.enter("Remuxing")
+
+        # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD]. This
+        # reads the staged source and writes next to it. All of this is
+        # local.
+
+        inserts.sort(key=lambda insert: insert[0])
+        media_info = MediaInfo.parse(staging_source)
+        video_orders, audio_orders, text_orders = [], [], []
+        for media_track in media_info.tracks:
+            track_order = media_track.to_data().get("streamorder")
+            if not str(track_order).isdigit():
+                continue
+            if media_track.track_type == "Video":
+                video_orders.append(int(track_order))
+            elif media_track.track_type == "Audio":
+                audio_orders.append(int(track_order))
+            elif media_track.track_type == "Text":
+                text_orders.append(int(track_order))
+
+        staging_output = os.path.join(workspace, f".{basename}")
+        command = build_remux_command(
+            current_app.config["MKVMERGE_BIN"],
+            staging_output,
+            staging_source,
+            video_orders,
+            audio_orders,
+            text_orders,
+            inserts,
         )
-        stored_tracks = [
-            {"codec": row.codec, "language": row.language} for row in stored_rows
-        ]
-        if stored_rows and not atmos_supplement_candidates(stored_tracks):
-            current_app.logger.info(
-                f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
-            )
-            return True
+        current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
+        mkvmerge_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+        )
+        watch_mkvmerge_progress(
+            mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
+        )
+        wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
 
-        staging_dir = current_app.config["STAGING_DIR"]
+        remove_empty_subtitle_tracks(staging_output)
+
+        # The first audio track gets the default flag. Each other track
+        # has the flag cleared. This is the library convention. The
+        # pipeline applies it while the file is on the local disk.
+
+        total_audio = len(audio_orders) + len(inserts)
+        flag_args = []
+        for track_number in range(1, total_audio + 1):
+            flag_args.extend(
+                [
+                    "--edit",
+                    f"track:a{track_number}",
+                    "--set",
+                    f"flag-default={'1' if track_number == 1 else '0'}",
+                ]
+            )
+        _run_step(
+            [current_app.config["MKVPROPEDIT_BIN"], staging_output] + flag_args,
+            job,
+            basename,
+            "Setting default audio flag",
+            ok_returncodes=(0, 1),
+        )
+
+        # Never replace the library copy with a mux that failed. The
+        # output must carry each expected twin and all of the original
+        # lossless tracks.
+
+        new_audio_tracks = get_audio_tracks_from_file(staging_output)
+        new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
+        originals_before = sum(
+            1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
+        )
+        originals_after = sum(
+            1 for track in new_audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
+        )
+        if (
+            atmos_supplement_candidates(new_audio_tracks)
+            or originals_after != originals_before
+        ):
+            raise RuntimeError(
+                f"'{basename}' remux did not produce the expected "
+                f"E-AC-3 Atmos twins; library copy left untouched"
+            )
+
+        # The staged source is not necessary now. The verified output
+        # takes its name. Thus, the untouched-archive upload gets the same
+        # S3 key that the library file would get.
+
+        os.remove(staging_source)
+        final_staging = staging_source
+        os.rename(staging_output, final_staging)
+
+        # The 1 write that the library share carries. The verified result
+        # crosses as a hidden dotfile. Then the pipeline renames it into
+        # place. The pipeline removes a failed copy. Thus, no partial file
+        # sits next to the real file.
+
+        hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
+        phases.enter("Moving into the library")
         try:
-            staging_free = shutil.disk_usage(staging_dir).free
-        except OSError:
-            staging_free = 0
-
-        # The workspace holds the staged source AND the remuxed output
-        # for a short time. Each is about the size of the source. The
-        # headroom covers the extracted bitstream, the DAMF master, and
-        # the .ec3 phases. A staged copy from the import is already on
-        # staging. Then only the output needs new space.
-
-        use_staged = _usable_staged_source(staged_source, file_path)
-        if staged_source and not use_staged:
-            current_app.logger.info(
-                f"'{basename}' The library file changed after the import. "
-                f"Copying it from the library"
-            )
-            discard_staged_source(staged_source)
-        copies = 1 if use_staged else 2
-        needed = copies * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
-        if staging_free < needed:
-            current_app.logger.warning(
-                f"'{basename}' Staging space is insufficient for the Atmos "
-                f"pipeline ({staging_free} free, {needed} needed)"
-            )
-            return False
-
-        workspace = os.path.join(staging_dir, f"atmos-{file_id}")
-        s3_client = aws_s3_client()
-        bucket = current_app.config["AWS_BUCKET"]
-        prefix = f"{current_app.config['AWS_MEDIACONVERT_PREFIX']}/{file_id}"
-        inserts = []
-
-        try:
-            os.makedirs(workspace, exist_ok=True)
-
-            # The 1 read of the source that the library share carries.
-
-            staging_source = os.path.join(workspace, basename)
-            if use_staged:
-                # The import left this copy on the same SSD. The move into
-                # the workspace is a rename. The NAS is not read.
-
-                try:
-                    os.rename(staged_source["path"], staging_source)
-                    current_app.logger.info(
-                        f"'{basename}' Using the staged copy from the import"
-                    )
-                except OSError:
-                    use_staged = False
-            if not use_staged:
-                phases.enter("Copying to staging")
-                copy_with_progress(
-                    file_path,
-                    staging_source,
-                    job,
-                    basename,
-                    "Copying to local staging",
-                )
-
-            audio_tracks = get_audio_tracks_from_file(staging_source)
-            wanting = atmos_supplement_candidates(audio_tracks)
-            if not wanting:
-                current_app.logger.info(
-                    f"'{basename}' TrueHD Atmos tracks already have E-AC-3 twins"
-                )
-                return True
-
-            for source_index in wanting:
-                source = audio_tracks[source_index]
-                streamorder = source.get("streamorder")
-
-                # Extract the TrueHD bitstream and decode it to a DAMF
-                # Atmos master with truehdd. ffmpeg cannot produce one.
-
-                thd_path = os.path.join(workspace, f"track{streamorder}.thd")
-                phases.enter("Decoding TrueHD")
-                _run_step(
-                    [
-                        current_app.config["MKVEXTRACT_BIN"],
-                        "tracks",
-                        staging_source,
-                        f"{streamorder}:{thd_path}",
-                    ],
-                    job,
-                    basename,
-                    "Extracting TrueHD bitstream",
-                )
-                damf_base = os.path.join(workspace, f"track{streamorder}")
-                _run_step(
-                    [
-                        current_app.config["TRUEHDD_BIN"],
-                        "decode",
-                        "--output-path",
-                        damf_base,
-                        thd_path,
-                    ],
-                    job,
-                    basename,
-                    "Decoding TrueHD to Atmos master",
-                )
-                damf_files = sorted(glob.glob(f"{damf_base}.atmos*"))
-                if not damf_files:
-                    raise RuntimeError(
-                        f"truehdd produced no DAMF output for '{basename}' "
-                        f"track {streamorder}"
-                    )
-                os.remove(thd_path)
-
-                # Upload the master to the S3 scratch area and encode it.
-
-                phases.enter("Encoding E-AC-3 Atmos")
-                _set_stage(job, basename, "Uploading Atmos master to S3", progress=0)
-                upload_progress = _UploadProgress(
-                    job, sum(os.path.getsize(path) for path in damf_files)
-                )
-                for damf_path in damf_files:
-                    key = f"{prefix}/{os.path.basename(damf_path)}"
-                    size = os.path.getsize(damf_path)
-                    current_app.logger.info(
-                        f"'{basename}' Uploading {os.path.basename(damf_path)} "
-                        f"({size / 1e9:.2f} GB) to s3://{bucket}/{key}"
-                    )
-                    s3_client.upload_file(
-                        damf_path, bucket, key, Callback=upload_progress
-                    )
-
-                input_uri = (
-                    f"s3://{bucket}/{prefix}/{os.path.basename(damf_base)}.atmos"
-                )
-                destination_uri = f"s3://{bucket}/{prefix}/out{streamorder}/twin"
-                client = mediaconvert_client()
-                mc_job = client.create_job(
-                    Role=current_app.config["MEDIACONVERT_ROLE_ARN"],
-                    Settings=mediaconvert_job_settings(
-                        input_uri,
-                        destination_uri,
-                        current_app.config["EAC3_ATMOS_BITRATE"],
-                    ),
-                )
-                mc_job_id = mc_job["Job"]["Id"]
-                current_app.logger.info(
-                    f"'{basename}' MediaConvert job {mc_job_id} submitted "
-                    f"({current_app.config['EAC3_ATMOS_BITRATE']} bps 9.1.6)"
-                )
-                _wait_for_mediaconvert(client, mc_job_id, job, basename)
-
-                listed = s3_client.list_objects_v2(
-                    Bucket=bucket, Prefix=f"{prefix}/out{streamorder}/"
-                )
-                ec3_key = next(
-                    (
-                        obj["Key"]
-                        for obj in listed.get("Contents", [])
-                        if obj["Key"].endswith(".ec3")
-                    ),
-                    None,
-                )
-                if ec3_key is None:
-                    raise RuntimeError(
-                        f"MediaConvert job {mc_job_id} completed but left no "
-                        f".ec3 under '{prefix}/out{streamorder}/'"
-                    )
-                ec3_path = os.path.join(workspace, f"track{streamorder}.ec3")
-                _set_stage(job, basename, "Downloading E-AC-3 Atmos twin")
-                s3_client.download_file(bucket, ec3_key, ec3_path)
-                current_app.logger.info(
-                    f"'{basename}' Downloaded E-AC-3 Atmos twin "
-                    f"({os.path.getsize(ec3_path) / 1e6:.0f} MB)"
-                )
-                for damf_path in damf_files:
-                    os.remove(damf_path)
-
-                inserts.append(
-                    (
-                        insertion_point(audio_tracks, source_index),
-                        ec3_path,
-                        source.get("language"),
-                    )
-                )
-
-            phases.enter("Remuxing")
-
-            # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD].
-            # This reads the staged source and writes next to it. All of
-            # this is local.
-
-            inserts.sort(key=lambda insert: insert[0])
-            media_info = MediaInfo.parse(staging_source)
-            video_orders, audio_orders, text_orders = [], [], []
-            for track in media_info.tracks:
-                track_order = track.to_data().get("streamorder")
-                if not str(track_order).isdigit():
-                    continue
-                if track.track_type == "Video":
-                    video_orders.append(int(track_order))
-                elif track.track_type == "Audio":
-                    audio_orders.append(int(track_order))
-                elif track.track_type == "Text":
-                    text_orders.append(int(track_order))
-
-            staging_output = os.path.join(workspace, f".{basename}")
-            command = build_remux_command(
-                current_app.config["MKVMERGE_BIN"],
-                staging_output,
-                staging_source,
-                video_orders,
-                audio_orders,
-                text_orders,
-                inserts,
-            )
-            current_app.logger.info(f"'{basename}' Running mkvmerge: {command}")
-            mkvmerge_process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-            )
-            watch_mkvmerge_progress(
-                mkvmerge_process, job, basename, "Muxing E-AC-3 Atmos twin"
-            )
-            wait_for_subprocess(mkvmerge_process, ok_returncodes=(0, 1))
-
-            remove_empty_subtitle_tracks(staging_output)
-
-            # The first audio track gets the default flag. Each other
-            # track has the flag cleared. This is the library convention.
-            # The pipeline applies it while the file is on the local disk.
-
-            total_audio = len(audio_orders) + len(inserts)
-            flag_args = []
-            for track_number in range(1, total_audio + 1):
-                flag_args.extend(
-                    [
-                        "--edit",
-                        f"track:a{track_number}",
-                        "--set",
-                        f"flag-default={'1' if track_number == 1 else '0'}",
-                    ]
-                )
-            _run_step(
-                [current_app.config["MKVPROPEDIT_BIN"], staging_output] + flag_args,
+            copy_with_progress(
+                final_staging,
+                hidden_output,
                 job,
                 basename,
-                "Setting default audio flag",
-                ok_returncodes=(0, 1),
+                "Moving supplemented file into the library",
             )
-
-            # Never replace the library copy with a mux that failed. The
-            # output must carry each expected twin and all of the
-            # original lossless tracks.
-
-            new_audio_tracks = get_audio_tracks_from_file(staging_output)
-            new_subtitle_tracks = get_subtitle_tracks_from_file(staging_output)
-            originals_before = sum(
-                1 for track in audio_tracks if track.get("codec") == TRUEHD_ATMOS_CODEC
-            )
-            originals_after = sum(
-                1
-                for track in new_audio_tracks
-                if track.get("codec") == TRUEHD_ATMOS_CODEC
-            )
-            if (
-                atmos_supplement_candidates(new_audio_tracks)
-                or originals_after != originals_before
-            ):
-                raise RuntimeError(
-                    f"'{basename}' remux did not produce the expected "
-                    f"E-AC-3 Atmos twins; library copy left untouched"
-                )
-
-            # The staged source is not necessary now. The verified output
-            # takes its name. Thus, the untouched-archive upload gets the
-            # same S3 key that the library file would get.
-
-            os.remove(staging_source)
-            final_staging = staging_source
-            os.rename(staging_output, final_staging)
-
-            # The 1 write that the library share carries. The verified
-            # result crosses as a hidden dotfile. Then the pipeline
-            # renames it into place. The pipeline removes a failed copy.
-            # Thus, no partial file sits next to the real file.
-
-            hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
-            phases.enter("Moving into the library")
+            os.rename(hidden_output, file_path)
+        except BaseException:
             try:
-                copy_with_progress(
-                    final_staging,
-                    hidden_output,
-                    job,
-                    basename,
-                    "Moving supplemented file into the library",
-                )
-                os.rename(hidden_output, file_path)
-            except BaseException:
-                try:
-                    os.remove(hidden_output)
-                except OSError:
-                    pass
-                raise
+                os.remove(hidden_output)
+            except OSError:
+                pass
+            raise
 
-            # Rebuild the track records because the file changed.
+        # Rebuild the track records because the file changed.
 
-            FileAudioTrack.query.filter_by(file_id=file.id).delete()
-            FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
+        FileAudioTrack.query.filter_by(file_id=file.id).delete()
+        FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
-            for i, track in enumerate(new_audio_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                audio_track = FileAudioTrack(**track)
-                current_app.logger.info(f"{file} Adding audio track {audio_track}")
-                db.session.add(audio_track)
+        for i, track in enumerate(new_audio_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            audio_track = FileAudioTrack(**track)
+            current_app.logger.info(f"{file} Adding audio track {audio_track}")
+            db.session.add(audio_track)
 
-            flag_possibly_forced_subtitles(file, new_subtitle_tracks)
-            for i, track in enumerate(new_subtitle_tracks):
-                track["file_id"] = file.id
-                track["track"] = i + 1
-                db.session.add(FileSubtitleTrack(**track))
+        flag_possibly_forced_subtitles(file, new_subtitle_tracks)
+        for i, track in enumerate(new_subtitle_tracks):
+            track["file_id"] = file.id
+            track["track"] = i + 1
+            db.session.add(FileSubtitleTrack(**track))
 
-            # Read from the staging copy. It is byte-identical to the
-            # file that was renamed into the library. Thus, the share is
-            # not touched again.
+        # Read from the staging copy. It is byte-identical to the file that
+        # was renamed into the library. Thus, the share is not touched
+        # again.
 
-            record_filesize(file, os.path.getsize(final_staging))
-            file.date_updated = datetime.now(timezone.utc)
+        record_filesize(file, os.path.getsize(final_staging))
+        file.date_updated = datetime.now(timezone.utc)
 
+    except Exception:
+        current_app.logger.error(traceback.format_exc())
+        db.session.rollback()
+        raise
+
+    db.session.commit()
+
+    # The film gained a track under a path that Plex already knows. Thus,
+    # nothing tells Plex to look again until its next scan. Ask for the
+    # analysis now instead (#194).
+
+    enqueue_plex_analyze(file_path)
+
+    # The supplemented file replaces the untouched S3 archive. Glenn
+    # decided this. The file is a strict superset of the rip. A
+    # re-download must never pay for a second MediaConvert run. The
+    # pipeline uploads from the staging copy. Thus, the library share is
+    # not read again. The library replacement above is already
+    # committed. Thus, an upload failure fails the job, and the S3 sync
+    # task repairs it.
+
+    if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+        phases.enter("Archiving to S3")
+        try:
+            (
+                file.aws_untouched_key,
+                file.aws_untouched_date_uploaded,
+                file.aws_untouched_filesize_bytes,
+            ) = aws_upload(
+                final_staging,
+                current_app.config["AWS_UNTOUCHED_PREFIX"],
+                force_upload=True,
+                ignore_etag=True,
+            )
+            db.session.commit()
         except Exception:
             current_app.logger.error(traceback.format_exc())
             db.session.rollback()
             raise
-
-        else:
-            db.session.commit()
-
-            # The film gained a track under a path that Plex already
-            # knows. Thus, nothing tells Plex to look again until its next
-            # scan. Ask for the analysis now instead (#194).
-
-            enqueue_plex_analyze(file_path)
-
-            # The supplemented file replaces the untouched S3 archive.
-            # Glenn decided this. The file is a strict superset of the
-            # rip. A re-download must never pay for a second MediaConvert
-            # run. The pipeline uploads from the staging copy. Thus, the
-            # library share is not read again. This is the same as the
-            # mkvpropedit path. The library replacement above is already
-            # committed. Thus, an upload failure fails the job, and the
-            # S3 sync task repairs it.
-
-            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
-                phases.enter("Archiving to S3")
-                try:
-                    (
-                        file.aws_untouched_key,
-                        file.aws_untouched_date_uploaded,
-                        file.aws_untouched_filesize_bytes,
-                    ) = aws_upload(
-                        final_staging,
-                        current_app.config["AWS_UNTOUCHED_PREFIX"],
-                        force_upload=True,
-                        ignore_etag=True,
-                    )
-                    db.session.commit()
-                except Exception:
-                    current_app.logger.error(traceback.format_exc())
-                    db.session.rollback()
-                    raise
-            return True
-
-        finally:
-            shutil.rmtree(workspace, ignore_errors=True)
-            _cleanup_s3_prefix(s3_client, bucket, prefix)
+    return True

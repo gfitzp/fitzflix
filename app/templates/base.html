@@ -496,7 +496,8 @@
 				}
 				if (task.status === "scheduled") {
 					if (task.scheduled_for) {
-						phrases.push("retries " + moment(task.scheduled_for).fromNow());
+						phrases.push((task.scheduled_word || "retries") + " "
+							+ moment(task.scheduled_for).fromNow());
 					}
 				} else if (task.started_at) {
 					phrases.push("started " + moment(task.started_at).fromNow());
@@ -537,7 +538,7 @@
 
 				var listed = [];
 				tasks.forEach(function(task) {
-					var trail = trailByJob[task.id] || null;
+					var trail = trailByJob[task.trail_job || task.id] || null;
 					if (trail && listed.indexOf(trail) < 0) listed.push(trail);
 				});
 				var orphans = files.filter(function(trail) {
@@ -545,7 +546,7 @@
 				});
 
 				var signature = tasks.map(function(task) {
-					var trail = trailByJob[task.id];
+					var trail = trailByJob[task.trail_job || task.id];
 					return task.position + "|" + task.id + "|" + task.description
 						+ "|" + task.started_at + "|" + task.scheduled_for
 						+ "|" + (trail ? trail.updated + "|" + trail.entries.length : "");
@@ -560,14 +561,14 @@
 					var row = document.createElement("tr");
 					row.className = "d-flex";
 					row.appendChild(positionCell(task.position === null ? "—" : task.position));
-					var fileCell = trailCell(task, trailByJob[task.id]);
-					fileCell.appendChild(phoneTimes(task, trailByJob[task.id]));
+					var fileCell = trailCell(task, trailByJob[task.trail_job || task.id]);
+					fileCell.appendChild(phoneTimes(task, trailByJob[task.trail_job || task.id]));
 					row.appendChild(fileCell);
 					row.appendChild(timeCell(task.enqueued_at, "", "queue-enqueued"));
 					// A deferred retry has not started. Its slot says
 					// when it is back in line
 					row.appendChild(task.status === "scheduled"
-						? timeCell(task.scheduled_for, "retries ", "queue-started")
+						? timeCell(task.scheduled_for, (task.scheduled_word || "retries") + " ", "queue-started")
 						: timeCell(task.started_at, "", "queue-started"));
 					tbody.appendChild(row);
 				});

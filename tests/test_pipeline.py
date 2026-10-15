@@ -1235,7 +1235,10 @@ def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
     times = times[: times.index("</div>")]
     assert '<span class="text-nowrap">Enqueued ' in times
     assert "started " not in times
-    assert "fileCell.appendChild(phoneTimes(task, trailByJob[task.id]))" in page
+    assert (
+        "fileCell.appendChild(phoneTimes(task, trailByJob[task.trail_job || task.id]))"
+        in page
+    )
 
 
 def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):

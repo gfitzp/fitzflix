@@ -18,7 +18,7 @@ import os
 # analyzes the file
 
 IN_PLACE_REWRITES = [
-    ("app/atmos.py", "_atmos_supplement_unlocked"),
+    ("app/atmos.py", "_atmos_finish"),
     ("app/tracks.py", "mkvpropedit_unlocked"),
     ("app/tracks.py", "_remux_audio_plan_unlocked"),
 ]

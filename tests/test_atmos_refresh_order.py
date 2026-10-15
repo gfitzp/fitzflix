@@ -87,10 +87,10 @@ def test_atmos_task_defers_while_a_refresh_is_pending(app):
     assert atmos_supplement_task(file_id) is True
 
     with app.app_context():
-        registry = ScheduledJobRegistry(queue=app.transcode_queue)
+        registry = ScheduledJobRegistry(queue=app.import_queue)
         job_ids = registry.get_job_ids()
         assert len(job_ids) == 1
-        job = app.transcode_queue.fetch_job(job_ids[0])
+        job = app.import_queue.fetch_job(job_ids[0])
         assert job.func_name == "app.atmos.atmos_supplement_task"
         assert job.args == (file_id,)
         delay = registry.get_scheduled_time(job_ids[0]) - job.created_at.replace(

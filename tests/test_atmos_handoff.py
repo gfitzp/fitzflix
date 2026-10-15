@@ -99,7 +99,7 @@ def test_the_atmos_job_starts_from_the_staged_copy(app, monkeypatch):
     with app.app_context():
         file, library, staged = _library_and_staged(app, "Handoff Use")
         handoff = atmos.staged_handoff(staged, library)
-        assert atmos._atmos_supplement_unlocked(file.id, phases, handoff) is True
+        assert atmos._atmos_prepare(file.id, phases, handoff) is True
 
     # The rename moved the copy into the workspace. The workspace is gone.
     # The library file is untouched. No "Copying to staging" chip shows.
@@ -131,7 +131,7 @@ def test_a_changed_library_file_is_copied_again(app, monkeypatch):
         handoff = atmos.staged_handoff(staged, library)
         stat = os.stat(library)
         os.utime(library, (stat.st_atime, stat.st_mtime + 60))
-        assert atmos._atmos_supplement_unlocked(file.id, phases, handoff) is True
+        assert atmos._atmos_prepare(file.id, phases, handoff) is True
 
     assert copied == [library]
     assert not os.path.exists(staged)
@@ -159,9 +159,9 @@ def test_a_deferred_atmos_job_keeps_its_staged_copy(app):
         )
         assert atmos.atmos_supplement_task(file.id, staged_source=handoff) is True
 
-        registry = ScheduledJobRegistry(queue=app.transcode_queue)
+        registry = ScheduledJobRegistry(queue=app.import_queue)
         (job_id,) = registry.get_job_ids()
-        job = app.transcode_queue.fetch_job(job_id)
+        job = app.import_queue.fetch_job(job_id)
         assert job.kwargs == {"staged_source": handoff}
     assert os.path.exists(staged)
     os.remove(staged)

@@ -134,6 +134,32 @@ STAGES = {
 }
 
 
+# The later jobs of a multi-job run. They leave no chips of their own.
+# They write to the chips of the first job. But the queue page sorts and
+# dates their rows by the anchors of the file. Thus, first_run and
+# first_enqueued find the file of these jobs here.
+
+CONTINUATIONS = {
+    "app.atmos.atmos_check_task": lambda args, kwargs: args[0]["basename"],
+    "app.atmos.atmos_finish_task": lambda args, kwargs: args[0]["basename"],
+}
+
+
+def _file_of(job):
+    """Return the basename of the file of a pipeline or continuation job, or None."""
+
+    found = _stage_for(job)
+    if found is not None:
+        return found[0]
+    extractor = CONTINUATIONS.get(job.func_name)
+    if extractor is None:
+        return None
+    try:
+        return extractor(job.args or (), job.kwargs or {})
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
 def _stage_for(job):
     """Return (basename, stage label) for a pipeline job, or None."""
 
@@ -597,10 +623,24 @@ class TaskPhases:
     phase and completes the phase before it. finish completes the last
     phase. fail marks the phase that runs as failed. The chips go before
     the own chip of the job. Each call is advisory, like
-    record_task_stage."""
+    record_task_stage.
 
-    def __init__(self):
-        self.current = None
+    target is (job id, basename, own stage) of an EARLIER job. The Atmos
+    run is 3 jobs. The check and the finish jobs continue the chips of
+    the first job. current is the phase that the earlier job left open.
+    """
+
+    def __init__(self, target=None, current=None):
+        self.target = target
+        self.current = current
+
+    def _record(self, stage, status):
+        """Stamp 1 phase on the current job, or on the target job."""
+
+        if self.target is None:
+            record_task_stage(stage, status)
+        else:
+            record_stage_for(*self.target, stage, status)
 
     def enter(self, stage):
         """Complete the phase that runs, then start the phase stage."""
@@ -608,22 +648,75 @@ class TaskPhases:
         if stage == self.current:
             return
         self.finish()
-        record_task_stage(stage, "started")
+        self._record(stage, "started")
         self.current = stage
 
     def finish(self):
         """Complete the phase that runs, if there is one."""
 
         if self.current is not None:
-            record_task_stage(self.current, "done")
+            self._record(self.current, "done")
             self.current = None
 
     def fail(self):
         """Mark the phase that runs as failed, if there is one."""
 
         if self.current is not None:
-            record_task_stage(self.current, "failed")
+            self._record(self.current, "failed")
             self.current = None
+
+    def close(self, status):
+        """Stamp the own chip of the target job done or failed."""
+
+        if self.target is not None:
+            record_stage_for(*self.target, None, status)
+
+
+def record_stage_for(job_id, basename, own_stage, stage, status):
+    """Stamp a chip of an earlier job of the same run.
+
+    stage is a sub-stage of that job, or None for the own chip of the
+    job. A sub-stage moves the own chip between "queued" and "started",
+    the same as record_task_stage. This is advisory. It catches each
+    failure."""
+
+    try:
+        from flask import current_app
+
+        connection = current_app.redis
+        if stage is None:
+            _write_trail_entry(connection, basename, own_stage, status, job_id)
+            return
+        sibling = (own_stage, "queued" if status == "started" else "started")
+        _write_trail_entry(
+            connection,
+            basename,
+            stage,
+            status,
+            job_id,
+            before_job=True,
+            sibling=sibling,
+        )
+    except Exception:
+        try:
+            from flask import current_app
+
+            current_app.logger.warning(traceback.format_exc())
+        except Exception:
+            pass
+
+
+def trail_continues(job):
+    """Return True if a later job of the run closes the chips of this job.
+
+    The first Atmos job returns when MediaConvert has the encode. The
+    run is not done. Thus, the worker does not stamp its chip done."""
+
+    try:
+        meta = job.get_meta(refresh=True)
+    except Exception:
+        meta = job.meta or {}
+    return bool(meta.get("trail_continues"))
 
 
 def first_run(connection, job):
@@ -635,10 +728,10 @@ def first_run(connection, job):
     new job with a new started_at."""
 
     try:
-        found = _stage_for(job)
-        if found is None:
+        name = _file_of(job)
+        if name is None:
             return None
-        basename = _resolve_basename(connection, found[0])
+        basename = _resolve_basename(connection, name)
         value = connection.hget(FILE_KEY.format(digest=_digest(basename)), "first_run")
         return value.decode() if isinstance(value, bytes) else value
     except Exception:
@@ -658,10 +751,10 @@ def first_enqueued(connection, job):
     job."""
 
     try:
-        found = _stage_for(job)
-        if found is None:
+        name = _file_of(job)
+        if name is None:
             return None
-        basename = _resolve_basename(connection, found[0])
+        basename = _resolve_basename(connection, name)
         value = connection.hget(
             FILE_KEY.format(digest=_digest(basename)), "first_enqueued"
         )
@@ -816,7 +909,10 @@ def queue_rows(tasks, trails):
     rows = []
     listed = []
     for task in tasks:
-        trail = trail_by_job.get(task["id"])
+        # A check or finish job of a multi-job run writes to the chips of
+        # the first job. trail_job names that job.
+
+        trail = trail_by_job.get(task.get("trail_job") or task["id"])
         if trail is not None and all(trail is not seen for seen in listed):
             listed.append(trail)
         rows.append({"task": task, "trail": trail})
@@ -925,7 +1021,8 @@ class PipelineWorker(SimpleWorker):
         """Run the success handling of rq. Then stamp the trail done."""
 
         super().handle_job_success(job, queue, started_job_registry)
-        record_job_event(self.connection, job, "done")
+        if not trail_continues(job):
+            record_job_event(self.connection, job, "done")
 
     def handle_job_failure(self, job, queue, started_job_registry=None, exc_string=""):
         """Run the failure handling of rq. Then stamp the trail failed."""
