@@ -1202,6 +1202,12 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
     browser = dict(pair.findall(script))
 
     assert server == browser
+
+    # The own chip of the Atmos job comes after all its steps. It reads as
+    # the end of the job. "Added Atmos twin" read as 1 more step after the
+    # S3 archive (Glenn, 2026-10-15).
+
+    assert server["Adding Atmos twin"] == "Atmos twin complete"
     sub_stages = {"Copying to staging", "Decoding TrueHD", "Encoding E-AC-3 Atmos"}
     labels = {label for label, _ in STAGES.values()} | sub_stages
     assert labels <= set(server)
