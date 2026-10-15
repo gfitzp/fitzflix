@@ -1409,8 +1409,14 @@ class User(UserMixin, db.Model):
             replacement banner per round disrupts the game. It also shows
             that the pool changed. Even the 'Extracting a frame from X'
             banner of the nightly batch names films that will become
-            answers. All these jobs still list on the queue page."""
+            answers. All these jobs still list on the queue page.
 
+            The SQL worker never gets one either (Glenn, 2026-10-14). Its
+            cataloging jobs list as rows only. Thus, the banners stay at
+            1 for each of the 5 pipeline workers."""
+
+            if job.origin == current_app.sql_queue.name:
+                return False
             return not (job.func_name or "").startswith("app.frames.")
 
         def row(job, started_at):

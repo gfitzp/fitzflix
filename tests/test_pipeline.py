@@ -608,7 +608,8 @@ def test_a_cataloging_job_lists_on_the_queue_page(app, admin_client):
     Before, the page listed only the import, transcode, and
     file-operation queues. A file in cataloging thus had no job row. Its
     trail showed as a "no job in queue" row at the end of the table. The
-    other work of the SQL queue is not file work. It does not list."""
+    other work of the SQL queue is not file work. It does not list. The
+    SQL worker gets no progress banner."""
 
     import time
 
@@ -634,7 +635,12 @@ def test_a_cataloging_job_lists_on_the_queue_page(app, admin_client):
         app.redis.lrem("rq:queue:fitzflix-sql", 0, catalog.id)
         app.redis.zadd("rq:wip:fitzflix-sql", {f"{catalog.id}:test": time.time() + 600})
     payload = admin_client.get("/api/queue-details").get_json()
-    assert [item["id"] for item in payload["running"]] == [catalog.id]
+
+    # The running job lists as row 1. It gets no banner (Glenn,
+    # 2026-10-14). The banners stay at 1 for each pipeline worker.
+
+    assert [item["id"] for item in payload["all"]] == [catalog.id]
+    assert payload["running"] == []
 
     rows = queue_rows(payload["all"], pipeline_trails(app.redis))
     assert [row["task"]["id"] for row in rows] == [catalog.id]
