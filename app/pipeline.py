@@ -130,6 +130,7 @@ STAGES = {
     ),
     "app.videos.transcode_task": ("Transcoding", _basename_from_file_id),
     "app.videos.download_task": ("Restoring from S3", _basename_from_second_arg),
+    "app.atmos.atmos_supplement_task": ("Adding Atmos twin", _basename_from_file_id),
 }
 
 
@@ -303,10 +304,19 @@ def _write_trail_entry(
                             existing.get("status") == "done" for existing in trail
                         )
 
+                    # A job can report more than 1 sub-stage. Each one
+                    # goes directly before the own entry of the job.
+                    # Thus, the sub-stages keep the order of their first
+                    # stamps. The job entry carries the stage label of
+                    # the sibling.
+
                     index = len(trail)
                     if before_job:
+                        own_stage = sibling[0] if sibling is not None else None
                         for position, existing in enumerate(trail):
-                            if existing.get("job") == job_id:
+                            if existing.get("job") == job_id and (
+                                own_stage is None or existing.get("stage") == own_stage
+                            ):
                                 index = position
                                 break
                     trail.insert(
@@ -545,6 +555,43 @@ def record_task_stage(stage, status):
             current_app.logger.warning(traceback.format_exc())
         except Exception:
             pass
+
+
+class TaskPhases:
+    """Record the phases of 1 job as sub-stage chips, in order.
+
+    A long job can do many steps. The Atmos twin copies the file to
+    staging, decodes, encodes, remuxes, and copies back. enter starts a
+    phase and completes the phase before it. finish completes the last
+    phase. fail marks the phase that runs as failed. The chips go before
+    the own chip of the job. Each call is advisory, like
+    record_task_stage."""
+
+    def __init__(self):
+        self.current = None
+
+    def enter(self, stage):
+        """Complete the phase that runs, then start the phase stage."""
+
+        if stage == self.current:
+            return
+        self.finish()
+        record_task_stage(stage, "started")
+        self.current = stage
+
+    def finish(self):
+        """Complete the phase that runs, if there is one."""
+
+        if self.current is not None:
+            record_task_stage(self.current, "done")
+            self.current = None
+
+    def fail(self):
+        """Mark the phase that runs as failed, if there is one."""
+
+        if self.current is not None:
+            record_task_stage(self.current, "failed")
+            self.current = None
 
 
 def first_run(connection, job):

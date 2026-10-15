@@ -1111,3 +1111,97 @@ def test_the_started_column_shows_the_first_start_of_the_file(app, admin_client)
     expected = datetime(2026, 1, 1, 10, 0, 0).astimezone().astimezone(timezone.utc)
     assert started == expected
     assert started.utcoffset().total_seconds() == 0
+
+
+def test_a_jobs_phases_read_in_order_before_its_own_chip(app, monkeypatch):
+    """Put each phase of 1 job before the own chip of the job, in order.
+
+    The Atmos twin reports 6 phases. Before, each sub-stage went before
+    the FIRST entry of its job. A second sub-stage thus went before the
+    first one, and the chips read in reverse."""
+
+    import rq
+
+    from app.pipeline import TaskPhases, pipeline_trails, record_job_event
+
+    with app.app_context():
+        job = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=("/import/Trail Phases (2026) - [DVD].mkv",),
+        )
+    record_job_event(app.redis, job, "started")
+    monkeypatch.setattr(rq, "get_current_job", lambda: job)
+
+    phases = TaskPhases()
+    phases.enter("Copying to staging")
+    phases.enter("Decoding TrueHD")
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Copying to staging", "done"),
+        ("Decoding TrueHD", "started"),
+        ("Localizing", "queued"),
+    ]
+
+    phases.enter("Encoding E-AC-3 Atmos")
+    phases.fail()
+    record_job_event(app.redis, job, "failed")
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Copying to staging", "done"),
+        ("Decoding TrueHD", "done"),
+        ("Encoding E-AC-3 Atmos", "failed"),
+        ("Localizing", "failed"),
+    ]
+
+
+def test_the_atmos_twin_leaves_a_trail(app):
+    """Give the Atmos twin job a trail, like the other stages of a file."""
+
+    from app import db
+    from app.pipeline import pipeline_trails
+
+    with app.app_context():
+        movie = make_movie("Trail Atmos", 1982)
+        file = make_movie_file(movie, "WEBDL-1080p")
+        db.session.commit()
+        file_id, basename = file.id, file.basename
+        app.transcode_queue.enqueue(
+            "app.atmos.atmos_supplement_task",
+            args=(file_id,),
+            description=f"E-AC-3 Atmos twin for '{basename}'",
+        )
+
+    trails = pipeline_trails(app.redis)
+    assert trails[0]["basename"] == basename
+    assert [(entry["stage"], entry["status"]) for entry in trails[0]["entries"]] == [
+        ("Adding Atmos twin", "queued"),
+    ]
+
+
+def test_both_chip_painters_know_the_past_tense_of_each_stage():
+    """Keep the past tense of each chip the same in both painters.
+
+    The server macro and paintChips in base.html each carry the map. A
+    done chip with no entry kept its present tense ("Re-archiving to
+    S3" after it completed)."""
+
+    import pathlib
+    import re
+
+    from app.pipeline import STAGES
+
+    templates = pathlib.Path(__file__).resolve().parent.parent / "app" / "templates"
+    macro = (templates / "_trail_chips.html").read_text()
+    macro = macro[macro.index("chip_past_tense") :]
+    macro = macro[: macro.index("} %}")]
+    script = (templates / "base.html").read_text()
+    script = script[script.index("var chipPastTense") :]
+    script = script[: script.index("};")]
+    pair = re.compile(r'"([^"]+)": "([^"]+)"')
+    server = dict(pair.findall(macro))
+    browser = dict(pair.findall(script))
+
+    assert server == browser
+    sub_stages = {"Copying to staging", "Decoding TrueHD", "Encoding E-AC-3 Atmos"}
+    labels = {label for label, _ in STAGES.values()} | sub_stages
+    assert labels <= set(server)

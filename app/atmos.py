@@ -37,6 +37,7 @@ from rq.registry import StartedJobRegistry
 
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.pipeline import TaskPhases
 from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
@@ -392,13 +393,22 @@ def atmos_supplement_task(file_id):
         if not lock:
             return True
 
+        # Each step of the run shows as a chip on the trail of the file.
+        # A failure turns the chip of its step red.
+
+        phases = TaskPhases()
         try:
-            return _atmos_supplement_unlocked(int(file_id))
+            result = _atmos_supplement_unlocked(int(file_id), phases)
+        except BaseException:
+            phases.fail()
+            raise
         finally:
             current_app.lock_manager.unlock(lock)
+        phases.finish()
+        return result
 
 
-def _atmos_supplement_unlocked(file_id):
+def _atmos_supplement_unlocked(file_id, phases=None):
     """Run the supplement pipeline. The caller must hold the lock of the
     title.
 
@@ -409,6 +419,9 @@ def _atmos_supplement_unlocked(file_id):
     the remux, the flag edits, the verification parses, and the
     untouched-archive upload.
     """
+
+    if phases is None:
+        phases = TaskPhases()
 
     from app.videos import (
         aws_s3_client,
@@ -481,6 +494,7 @@ def _atmos_supplement_unlocked(file_id):
             # The 1 read of the source that the library share carries.
 
             staging_source = os.path.join(workspace, basename)
+            phases.enter("Copying to staging")
             copy_with_progress(
                 file_path, staging_source, job, basename, "Copying to local staging"
             )
@@ -501,6 +515,7 @@ def _atmos_supplement_unlocked(file_id):
                 # Atmos master with truehdd. ffmpeg cannot produce one.
 
                 thd_path = os.path.join(workspace, f"track{streamorder}.thd")
+                phases.enter("Decoding TrueHD")
                 _run_step(
                     [
                         current_app.config["MKVEXTRACT_BIN"],
@@ -535,6 +550,7 @@ def _atmos_supplement_unlocked(file_id):
 
                 # Upload the master to the S3 scratch area and encode it.
 
+                phases.enter("Encoding E-AC-3 Atmos")
                 _set_stage(job, basename, "Uploading Atmos master to S3", progress=0)
                 upload_progress = _UploadProgress(
                     job, sum(os.path.getsize(path) for path in damf_files)
@@ -603,6 +619,8 @@ def _atmos_supplement_unlocked(file_id):
                         source.get("language"),
                     )
                 )
+
+            phases.enter("Remuxing")
 
             # Remux the twins into place: [E-AC-3 Atmos, FLAC, TrueHD].
             # This reads the staged source and writes next to it. All of
@@ -707,6 +725,7 @@ def _atmos_supplement_unlocked(file_id):
             # Thus, no partial file sits next to the real file.
 
             hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
+            phases.enter("Moving into the library")
             try:
                 copy_with_progress(
                     final_staging,
@@ -772,6 +791,7 @@ def _atmos_supplement_unlocked(file_id):
             # S3 sync task repairs it.
 
             if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+                phases.enter("Archiving to S3")
                 try:
                     (
                         file.aws_untouched_key,
