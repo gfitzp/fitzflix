@@ -1860,7 +1860,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             hidden_library = os.path.join(os.path.dirname(file_path), f".{basename}")
             copy_with_progress(
-                final_staging, hidden_library, job, basename, "Copying to library"
+                final_staging, hidden_library, job, basename, "Moving to library"
             )
             os.replace(hidden_library, file_path)
 

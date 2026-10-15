@@ -289,7 +289,7 @@ def test_staging_copy_transient_error_defers_and_retries(
         f.write(b"video bytes")
     settle(source)
 
-    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+    def revoked_handles(src, dst, job, name, activity="Moving to library"):
         with open(dst, "wb") as f:
             f.write(b"partial")
         raise OSError(errno.EBADF, "Bad file descriptor")
@@ -360,7 +360,7 @@ def test_staging_copy_retries_advance_toward_the_budget(app, incoming_dir, monke
         f.write(b"video bytes")
     settle(source)
 
-    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+    def revoked_handles(src, dst, job, name, activity="Moving to library"):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
@@ -412,7 +412,7 @@ def test_staging_copy_transient_error_rejects_after_max_retries(
         f.write(b"video bytes")
     settle(source)
 
-    def revoked_handles(src, dst, job, name, activity="Copying to library"):
+    def revoked_handles(src, dst, job, name, activity="Moving to library"):
         raise OSError(errno.EBADF, "Bad file descriptor")
 
     monkeypatch.setattr(videos, "copy_with_progress", revoked_handles)
@@ -438,7 +438,7 @@ def test_staging_copy_permanent_error_rejects_immediately(
         f.write(b"video bytes")
     settle(source)
 
-    def no_space(src, dst, job, name, activity="Copying to library"):
+    def no_space(src, dst, job, name, activity="Moving to library"):
         raise OSError(errno.ENOSPC, "No space left on device")
 
     monkeypatch.setattr(videos, "copy_with_progress", no_space)
@@ -809,9 +809,7 @@ def test_copy_with_progress_reports_percentages(app, tmp_path):
     percents = [u["progress"] for u in job.updates]
     assert percents == sorted(percents)
     assert percents[-1] == 100
-    assert all(
-        u["description"] == "'big.mkv' — Copying to library" for u in job.updates
-    )
+    assert all(u["description"] == "'big.mkv' — Moving to library" for u in job.updates)
 
 
 def test_copy_with_progress_keeps_copy_when_source_close_fails(
