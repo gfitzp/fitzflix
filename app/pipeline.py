@@ -199,6 +199,7 @@ def _write_trail_entry(
     before_job=False,
     sibling=None,
     enqueued_at=None,
+    anchor=None,
 ):
     """Apply 1 stage event to the trail of the file atomically.
 
@@ -220,6 +221,15 @@ def _write_trail_entry(
     earlier run (Moved into the library, Cataloged) stayed green after
     the new Localizing chip. enqueued_at is the enqueue time of the job.
     It tells a new enqueue apart from a late enqueue stamp.
+
+    anchor is the same time in UTC, the format of first_enqueued. A free
+    worker can start a job before its "queued" stamp arrives. The late
+    stamp is then dropped. Before, its enqueue time went with it. The
+    trail had no first_enqueued, and the next enqueue of the journey
+    (the library copy) filled it. Thus, the Enqueued column showed the
+    end of the localization (Gandhi, How to Train Your Dragon The Hidden
+    World, Oct 2026). Now each stamp can fill a missing first_enqueued
+    from anchor.
     """
 
     from redis import WatchError
@@ -275,6 +285,17 @@ def _write_trail_entry(
                         if status in ("queued", "scheduled") and entry.get(
                             "status"
                         ) in ("started", "done", "failed"):
+                            # Keep the enqueue time of the dropped stamp.
+                            # hsetnx never moves an anchor that is set.
+
+                            pipe.hsetnx(
+                                key,
+                                "first_enqueued",
+                                anchor
+                                or datetime.now(timezone.utc).strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                ),
+                            )
                             return
                         entry["status"] = status
                         entry["at"] = now
@@ -364,8 +385,10 @@ def _write_trail_entry(
                 # The other stamps of the trail are local wall clock, for
                 # the chips. See first_enqueued.
 
-                if status in ("queued", "scheduled") or fresh_journey:
-                    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                if status in ("queued", "scheduled", "started") or fresh_journey:
+                    stamp = anchor or datetime.now(timezone.utc).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
                     if fresh_journey:
                         pipe.hset(key, "first_enqueued", stamp)
                     else:
@@ -489,13 +512,22 @@ def record_job_event(connection, job, event):
         # UTC. Thus, convert it before the compare.
 
         enqueued_at = None
-        if event in ("queued", "scheduled") and job.enqueued_at is not None:
+        anchor = None
+        if job.enqueued_at is not None:
             moment = job.enqueued_at
             if moment.tzinfo is None:
                 moment = moment.replace(tzinfo=timezone.utc)
-            enqueued_at = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            anchor = moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            if event in ("queued", "scheduled"):
+                enqueued_at = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
         _write_trail_entry(
-            connection, basename, stage, event, job.id, enqueued_at=enqueued_at
+            connection,
+            basename,
+            stage,
+            event,
+            job.id,
+            enqueued_at=enqueued_at,
+            anchor=anchor,
         )
     except Exception:
         try:

@@ -1236,3 +1236,58 @@ def test_queue_rows_carry_the_phone_layout_markup(app, admin_client):
     assert '<span class="text-nowrap">Enqueued ' in times
     assert "started " not in times
     assert "fileCell.appendChild(phoneTimes(task, trailByJob[task.id]))" in page
+
+
+def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
+    """Anchor Enqueued at the first job, also when its stamp comes late.
+
+    A free worker started the localization before the "queued" stamp of
+    the enqueue side arrived. The late stamp was dropped, and its enqueue
+    time with it. The library copy then filled first_enqueued at the end
+    of the localization. The Enqueued column showed that time (Gandhi,
+    How to Train Your Dragon The Hidden World, 2026-10-15)."""
+
+    from datetime import timezone
+
+    from rq import Queue
+
+    from app.pipeline import FILE_KEY, _digest, record_job_event
+
+    basename = "Trail Late Anchor (2026) - [DVD].mkv"
+    key = FILE_KEY.format(digest=_digest(basename))
+    with app.app_context():
+        # A plain rq Queue writes no stamp. Thus, the test controls the
+        # order of the 2 stamps.
+
+        plain = Queue(app.import_queue.name, connection=app.redis)
+        localize = plain.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+        expected = localize.enqueued_at.astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+        record_job_event(app.redis, localize, "started")
+        record_job_event(app.redis, localize, "queued")
+        assert app.redis.hget(key, "first_enqueued") == expected.encode()
+
+        app.redis.hset(key, "first_enqueued", "2026-01-02 03:04:05")
+        app.handoff_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/.{basename}", {"basename": basename}, None, None),
+        )
+        assert app.redis.hget(key, "first_enqueued") == b"2026-01-02 03:04:05"
+
+    # The same holds when the late stamp never arrives. The "started"
+    # stamp fills the anchor.
+
+    other = "Trail Started Anchor (2026) - [DVD].mkv"
+    other_key = FILE_KEY.format(digest=_digest(other))
+    with app.app_context():
+        job = plain.enqueue("app.videos.localization_task", args=(f"/import/{other}",))
+        record_job_event(app.redis, job, "started")
+        assert app.redis.hget(other_key, "first_enqueued") == (
+            job.enqueued_at.astimezone(timezone.utc)
+            .strftime("%Y-%m-%d %H:%M:%S")
+            .encode()
+        )
