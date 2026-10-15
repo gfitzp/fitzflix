@@ -2015,7 +2015,17 @@ def finalize_localization(
                 return False
 
             db.session.commit()
-            _remove_staged_output(staged_output)
+
+            # The staged copy can go to the Atmos job of this file. Then
+            # that job does not read the file back from the NAS. The
+            # Atmos decision comes at the end of this task. Until then,
+            # keep the staged copy only if staging has space for it.
+
+            from app.atmos import staged_handoff
+
+            atmos_handoff = staged_handoff(staged_output, output_file)
+            if atmos_handoff is None:
+                _remove_staged_output(staged_output)
 
             # The commit succeeded. Thus, delete the AWS archives of the
             # replaced files. Do it from the file-operation queue. Then the
@@ -2095,7 +2105,8 @@ def finalize_localization(
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
-            maybe_enqueue_atmos_supplement(file.id)
+            if not maybe_enqueue_atmos_supplement(file.id, staged_source=atmos_handoff):
+                _remove_staged_output(staged_output)
 
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:
                 admin_user = User.query.filter(User.admin == True).first()

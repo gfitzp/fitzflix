@@ -55,6 +55,76 @@ MEDIACONVERT_POLL_LIMIT = 1080  # 6 hours
 
 WORKSPACE_HEADROOM_BYTES = 16 * 1024**3
 
+# An import keeps its staged copy for the Atmos job only while staging
+# keeps this much space free. Atmos jobs run 1 at a time. In a large
+# batch, the kept copies wait on staging. New imports need about 2.5
+# times their size free there.
+
+STAGED_HANDOFF_RESERVE_BYTES = 200 * 1024**3
+
+
+def staged_handoff(staged_path, library_path):
+    """Return the staged copy of an import for its Atmos job, or None.
+
+    The import copied the file from staging into the library. The staged
+    copy is byte-identical. The Atmos job can start from it, and does
+    not read the file back from the NAS. The result records the size
+    and the modification time of the library file. Thus, the job can
+    see a later change to the library file. This returns None if the
+    staged copy is missing or staging is short of space."""
+
+    if not staged_path:
+        return None
+    try:
+        staged_size = os.path.getsize(staged_path)
+        free = shutil.disk_usage(os.path.dirname(staged_path)).free
+        library = os.stat(library_path)
+    except OSError:
+        return None
+    if free < STAGED_HANDOFF_RESERVE_BYTES:
+        current_app.logger.info(
+            f"'{os.path.basename(library_path)}' Staging has {free} bytes free. "
+            f"The Atmos job will copy from the library"
+        )
+        return None
+    if library.st_size != staged_size:
+        return None
+    return {
+        "path": staged_path,
+        "size": library.st_size,
+        "mtime": library.st_mtime,
+    }
+
+
+def discard_staged_source(staged_source):
+    """Remove a staged copy that the Atmos job does not use."""
+
+    if staged_source and staged_source.get("path"):
+        try:
+            os.remove(staged_source["path"])
+        except OSError:
+            pass
+
+
+def _usable_staged_source(staged_source, library_path):
+    """Return True if the staged copy still matches the library file.
+
+    Something can change the library file after the import, for example
+    a track flag edit. A start from the old staged copy would then undo
+    that change. Thus, the size and the modification time of the library
+    file must be the same as at the import."""
+
+    if not staged_source:
+        return False
+    try:
+        library = os.stat(library_path)
+        staged_size = os.path.getsize(staged_source["path"])
+    except (OSError, KeyError, TypeError):
+        return False
+    return library.st_size == staged_source.get(
+        "size"
+    ) == staged_size and library.st_mtime == staged_source.get("mtime")
+
 
 def atmos_supplement_candidates(audio_tracks):
     """Return the indices of the TrueHD Atmos tracks that have no E-AC-3
@@ -312,14 +382,19 @@ def _cleanup_s3_prefix(s3_client, bucket, prefix):
         current_app.logger.error(traceback.format_exc())
 
 
-def maybe_enqueue_atmos_supplement(file_id):
+def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
     """Queue the supplement if the file needs an E-AC-3 Atmos twin.
 
     The import calls this after its track scan. If the file carries a
     TrueHD Atmos track without its E-AC-3 Atmos twin, this queues the
     supplement on the transcode queue. That queue is serial. Thus, a
     batch of imports converts 1 film at a time. The MediaConvert cost
-    stays visible."""
+    stays visible.
+
+    staged_source is the staged copy of a new import (staged_handoff).
+    The job starts from it and does not read the library file back.
+    This returns True only if it queued the job. Then the job owns the
+    staged copy. Otherwise the caller removes it."""
 
     rows = (
         FileAudioTrack.query.filter_by(file_id=int(file_id))
@@ -341,6 +416,7 @@ def maybe_enqueue_atmos_supplement(file_id):
     queue.enqueue(
         "app.atmos.atmos_supplement_task",
         args=(int(file_id),),
+        kwargs={"staged_source": staged_source} if staged_source else None,
         job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
         job_id=job_id,
         description=f"E-AC-3 Atmos twin for '{file.basename}'",
@@ -348,8 +424,12 @@ def maybe_enqueue_atmos_supplement(file_id):
     return True
 
 
-def atmos_supplement_task(file_id):
-    """Add E-AC-3 Atmos twins to the TrueHD Atmos tracks of a file."""
+def atmos_supplement_task(file_id, staged_source=None):
+    """Add E-AC-3 Atmos twins to the TrueHD Atmos tracks of a file.
+
+    staged_source is the staged copy that the import gave to this job,
+    or None. The deferred retries carry it. When the job ends, a staged
+    copy that it did not use is removed."""
 
     from app.tmdb_refresh import tmdb_refresh_pending
     from app.videos import acquire_lock_or_defer, schedule_retry
@@ -357,7 +437,10 @@ def atmos_supplement_task(file_id):
     with app.app_context():
         file = db.session.get(File, int(file_id))
         if file is None:
+            discard_staged_source(staged_source)
             return True
+
+        retry_kwargs = {"staged_source": staged_source} if staged_source else None
 
         # The import queues the TMDB refresh and this task together. The
         # refresh must apply first. It can rename the title, and it holds
@@ -374,6 +457,7 @@ def atmos_supplement_task(file_id):
                 f"'{file.basename}'",
                 "A TMDB refresh of the movie is pending",
                 args=(int(file_id),),
+                kwargs=retry_kwargs,
             )
             return True
 
@@ -389,6 +473,7 @@ def atmos_supplement_task(file_id):
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
             description=f"'{file.basename}'",
             args=(int(file_id),),
+            kwargs=retry_kwargs,
         )
         if not lock:
             return True
@@ -398,17 +483,22 @@ def atmos_supplement_task(file_id):
 
         phases = TaskPhases()
         try:
-            result = _atmos_supplement_unlocked(int(file_id), phases)
+            result = _atmos_supplement_unlocked(int(file_id), phases, staged_source)
         except BaseException:
             phases.fail()
             raise
         finally:
             current_app.lock_manager.unlock(lock)
+
+            # A used staged copy is in the workspace now, and the job
+            # removed it. This removes an unused one.
+
+            discard_staged_source(staged_source)
         phases.finish()
         return result
 
 
-def _atmos_supplement_unlocked(file_id, phases=None):
+def _atmos_supplement_unlocked(file_id, phases=None, staged_source=None):
     """Run the supplement pipeline. The caller must hold the lock of the
     title.
 
@@ -472,9 +562,18 @@ def _atmos_supplement_unlocked(file_id, phases=None):
         # The workspace holds the staged source AND the remuxed output
         # for a short time. Each is about the size of the source. The
         # headroom covers the extracted bitstream, the DAMF master, and
-        # the .ec3 phases.
+        # the .ec3 phases. A staged copy from the import is already on
+        # staging. Then only the output needs new space.
 
-        needed = 2 * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
+        use_staged = _usable_staged_source(staged_source, file_path)
+        if staged_source and not use_staged:
+            current_app.logger.info(
+                f"'{basename}' The library file changed after the import. "
+                f"Copying it from the library"
+            )
+            discard_staged_source(staged_source)
+        copies = 1 if use_staged else 2
+        needed = copies * os.path.getsize(file_path) + WORKSPACE_HEADROOM_BYTES
         if staging_free < needed:
             current_app.logger.warning(
                 f"'{basename}' Staging space is insufficient for the Atmos "
@@ -494,10 +593,26 @@ def _atmos_supplement_unlocked(file_id, phases=None):
             # The 1 read of the source that the library share carries.
 
             staging_source = os.path.join(workspace, basename)
-            phases.enter("Copying to staging")
-            copy_with_progress(
-                file_path, staging_source, job, basename, "Copying to local staging"
-            )
+            if use_staged:
+                # The import left this copy on the same SSD. The move into
+                # the workspace is a rename. The NAS is not read.
+
+                try:
+                    os.rename(staged_source["path"], staging_source)
+                    current_app.logger.info(
+                        f"'{basename}' Using the staged copy from the import"
+                    )
+                except OSError:
+                    use_staged = False
+            if not use_staged:
+                phases.enter("Copying to staging")
+                copy_with_progress(
+                    file_path,
+                    staging_source,
+                    job,
+                    basename,
+                    "Copying to local staging",
+                )
 
             audio_tracks = get_audio_tracks_from_file(staging_source)
             wanting = atmos_supplement_candidates(audio_tracks)

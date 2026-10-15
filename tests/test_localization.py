@@ -1572,3 +1572,70 @@ def test_a_library_copy_that_keeps_vanishing_fails_as_before(
         )
         assert File.query.filter_by(basename=basename).first() is None
     os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
+
+
+@pytest.mark.parametrize(
+    "reserve, queued, kept, offered",
+    [
+        (0, True, True, True),
+        (0, False, False, True),
+        (10**18, True, False, False),
+    ],
+)
+def test_finalize_gives_the_staged_copy_to_the_atmos_job(
+    app, sample_mkv, incoming_dir, monkeypatch, reserve, queued, kept, offered
+):
+    """Keep the staged copy for the Atmos job of the file, or remove it.
+
+    The Atmos job read the just-copied file back from the NAS (Gandhi:
+    8 min 41 s). Now finalize offers the staged copy. It stays only if
+    the job was queued. A staging volume short of space keeps nothing,
+    and the job then copies from the library."""
+
+    import app.atmos as atmos
+
+    _separate_library_volume(app, monkeypatch)
+    monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", reserve)
+    offers = []
+
+    def fake_enqueue(file_id, staged_source=None):
+        offers.append(staged_source)
+        return queued
+
+    monkeypatch.setattr(atmos, "maybe_enqueue_atmos_supplement", fake_enqueue)
+
+    basename = f"Atmos Handoff {reserve} {queued} (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+            and job.args[0] == source
+        )
+        staged = move.args[3]
+        assert videos.move_localized_file(*move.args) is True
+        job = next(
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.finalize_localization"
+            and job.args[0] == source
+        )
+        finalize_localization(*job.args, **job.kwargs)
+
+        output = os.path.join(app.config["LIBRARY_DIR"], job.args[1]["file_path"])
+        assert os.path.exists(output)
+        assert len(offers) == 1
+        if offered:
+            assert offers[0]["path"] == staged
+            assert offers[0]["size"] == os.path.getsize(output)
+            assert offers[0]["mtime"] == os.stat(output).st_mtime
+        else:
+            assert offers[0] is None
+        assert os.path.exists(staged) is kept
+    if kept:
+        os.remove(staged)
