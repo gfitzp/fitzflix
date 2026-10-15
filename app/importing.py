@@ -1574,6 +1574,15 @@ def finalize_localization(
     from app.videos import _dead_volumes, _rename_with_retries
 
     with app.app_context():
+        # The queue page lists this job with a banner and a row. Name the
+        # stage there, as the other stages of the pipeline do.
+
+        job = get_current_job()
+        if job:
+            job.meta["description"] = f"'{file_details.get('basename')}' — Cataloging"
+            job.meta["progress"] = -1
+            job.save_meta()
+
         output_directory = os.path.join(
             current_app.config["LIBRARY_DIR"], file_details.get("dirname")
         )

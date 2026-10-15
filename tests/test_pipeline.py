@@ -539,6 +539,108 @@ def test_running_banners_hold_first_run_order(app, admin_client):
     assert payload["running"][0]["first_run"] == "2026-01-01 10:00:00"
 
 
+def test_the_queue_table_and_the_banners_share_one_order(app, admin_client):
+    """Sort the running rows of the table in the order of the banners.
+
+    File A began to run first. Its work then stepped to the
+    file-operation queue, as a move job that started after file B. The
+    table sorted by the start of the current job. Thus, file A dropped
+    below file B in the table and stayed above it in the banners. Now
+    both sort by the first start of the file. The Started column shows
+    that time."""
+
+    import time
+
+    from rq.job import Job
+
+    from app.pipeline import FILE_KEY, _digest
+
+    with app.app_context():
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest("Table A (2020) - [DVD].mkv")),
+            "first_run",
+            "2026-01-01 10:00:00",
+        )
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest("Table B (2021) - [DVD].mkv")),
+            "first_run",
+            "2026-01-01 10:05:00",
+        )
+        for job_id, func, args, queue in (
+            (
+                "table-b-localize",
+                "app.videos.localization_task",
+                ("/import/Table B (2021) - [DVD].mkv",),
+                "fitzflix-import",
+            ),
+            (
+                "table-a-move",
+                "app.videos.move_localized_file",
+                (
+                    "/staging/.Table A (2020) - [DVD].mkv",
+                    {"basename": "Table A (2020) - [DVD].mkv"},
+                    None,
+                    None,
+                ),
+                "fitzflix-file-operation",
+            ),
+        ):
+            job = Job.create(
+                func, args=args, id=job_id, origin=queue, connection=app.redis
+            )
+            job.save()
+            app.redis.zadd(f"rq:wip:{queue}", {f"{job_id}:test": time.time() + 600})
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    banners = [item["id"] for item in payload["running"]]
+    rows = [item["id"] for item in payload["all"] if item["status"] != "queued"]
+    assert banners == ["table-a-move", "table-b-localize"]
+    assert rows == banners
+    assert [item["position"] for item in payload["all"][:2]] == [1, 2]
+
+    page = admin_client.get("/queue").get_data(as_text=True)
+    assert page.index("Table A (2020)") < page.index("Table B (2021)")
+
+
+def test_a_cataloging_job_lists_on_the_queue_page(app, admin_client):
+    """List the cataloging job of a file, which runs on the SQL queue.
+
+    Before, the page listed only the import, transcode, and
+    file-operation queues. A file in cataloging thus had no job row. Its
+    trail showed as a "no job in queue" row at the end of the table. The
+    other work of the SQL queue is not file work. It does not list."""
+
+    import time
+
+    from app.pipeline import pipeline_trails, queue_rows
+
+    basename = "Trail Catalog (2026) - [DVD].mkv"
+    with app.app_context():
+        catalog = app.sql_queue.enqueue(
+            "app.videos.finalize_localization",
+            args=(f"/staging/{basename}", {"basename": basename}),
+            description=f"'{basename}'",
+        )
+        app.sql_queue.enqueue(
+            "app.tmdb_refresh.refresh_everything",
+            description="An SQL refresh",
+        )
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    assert [item["id"] for item in payload["all"]] == [catalog.id]
+    assert payload["count"] == 1
+
+    with app.app_context():
+        app.redis.lrem("rq:queue:fitzflix-sql", 0, catalog.id)
+        app.redis.zadd("rq:wip:fitzflix-sql", {f"{catalog.id}:test": time.time() + 600})
+    payload = admin_client.get("/api/queue-details").get_json()
+    assert [item["id"] for item in payload["running"]] == [catalog.id]
+
+    rows = queue_rows(payload["all"], pipeline_trails(app.redis))
+    assert [row["task"]["id"] for row in rows] == [catalog.id]
+    assert rows[0]["trail"]["basename"] == basename
+
+
 def test_a_cancelled_jobs_stranded_chip_heals_away(app):
     """Prune the chip of a queued job that rq no longer knows.
 
@@ -961,3 +1063,45 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
         before, "Painted Film (2014)"
     )
     assert version(listing, "Bare Film (2015)") == version(before, "Bare Film (2015)")
+
+
+def test_the_started_column_shows_the_first_start_of_the_file(app, admin_client):
+    """Show the first start of the file as aware UTC in the Started column.
+
+    The trail stores local wall clock. flask-moment reads each time as
+    UTC. A local value would show hours away from the real start."""
+
+    import time
+
+    from datetime import datetime, timezone
+
+    from rq.job import Job
+
+    from app.pipeline import FILE_KEY, _digest
+
+    basename = "Started Column (2020) - [DVD].mkv"
+    with app.app_context():
+        app.redis.hset(
+            FILE_KEY.format(digest=_digest(basename)),
+            "first_run",
+            "2026-01-01 10:00:00",
+        )
+        job = Job.create(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+            id="started-column",
+            origin="fitzflix-import",
+            connection=app.redis,
+        )
+        job.save()
+        app.redis.zadd(
+            "rq:wip:fitzflix-import", {"started-column:test": time.time() + 600}
+        )
+        from app.models import User
+
+        details = User.query.filter_by(admin=True).first().get_queue_details()
+
+    started = details["all"][0]["started_at"]
+    expected = datetime(2026, 1, 1, 10, 0, 0).astimezone().astimezone(timezone.utc)
+    assert started == expected
+    assert started.utcoffset().total_seconds() == 0
