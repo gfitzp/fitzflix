@@ -727,6 +727,120 @@ def test_a_fresh_journey_restarts_the_enqueue_anchor(app):
     assert app.redis.hget(key, "first_enqueued") != b"2026-01-02 03:04:05"
 
 
+def _arrive(app, basename, job_id, monkeypatch):
+    """Take a file through localization, the move, and the catalog.
+
+    The localization job id comes from the basename, as in the import
+    sweep. Then move the stamps of that run into the past."""
+
+    import json
+
+    import rq
+
+    from app.pipeline import FILE_KEY, _digest, record_job_event, record_task_stage
+
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+            job_id=job_id,
+        )
+        record_job_event(app.redis, localize, "started")
+        monkeypatch.setattr(rq, "get_current_job", lambda: localize)
+        record_task_stage("Copying to staging", "started")
+        record_task_stage("Copying to staging", "done")
+        move = app.file_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/.{basename}", {"basename": basename}, None, None),
+        )
+        record_job_event(app.redis, localize, "done")
+        record_job_event(app.redis, move, "started")
+        record_job_event(app.redis, move, "done")
+        catalog = app.import_queue.enqueue(
+            "app.videos.finalize_localization",
+            args=(None, {"basename": basename}),
+        )
+        record_job_event(app.redis, catalog, "started")
+        record_job_event(app.redis, catalog, "done")
+
+    key = FILE_KEY.format(digest=_digest(basename))
+    trail = json.loads(app.redis.hget(key, "trail"))
+    for entry in trail:
+        entry["at"] = "2026-01-01 00:00:00"
+    app.redis.hset(key, "trail", json.dumps(trail))
+    app.redis.hset(key, "first_run", "2026-01-01 00:00:00")
+    return key
+
+
+def test_a_reimport_under_the_same_job_id_clears_the_earlier_chips(app, monkeypatch):
+    """Remove the chips of the earlier run when the same job id runs again.
+
+    The import sweep uses the basename as the localization job id. A
+    re-import of the same file thus finds the settled chips of the
+    earlier run. Before, the new Localizing chip ran while Moved into
+    the library and Cataloged stayed green after it."""
+
+    import rq
+
+    from app.pipeline import pipeline_trails, record_job_event, record_task_stage
+
+    basename = "Trail Reimport (2026) - [DVD].mkv"
+    key = _arrive(app, basename, "trail-reimport", monkeypatch)
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [entry["stage"] for entry in entries] == [
+        "Copying to staging",
+        "Localizing",
+        "Moving into the library",
+        "Cataloging",
+    ]
+
+    with app.app_context():
+        again = app.import_queue.enqueue(
+            "app.videos.localization_task",
+            args=(f"/import/{basename}",),
+            job_id="trail-reimport",
+        )
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Localizing", "queued"),
+    ]
+    assert app.redis.hget(key, "first_run") is None
+
+    record_job_event(app.redis, again, "started")
+    monkeypatch.setattr(rq, "get_current_job", lambda: again)
+    record_task_stage("Copying to staging", "started")
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Copying to staging", "started"),
+        ("Localizing", "queued"),
+    ]
+    assert app.redis.hget(key, "first_run") != b"2026-01-01 00:00:00"
+
+
+def test_a_rerun_with_no_queued_stamp_clears_the_earlier_chips(app, monkeypatch):
+    """Remove the chips of the earlier run when "started" finds a settled chip.
+
+    A scheduled job has no enqueue time to compare. Thus, its waiting
+    stamp holds back. The "started" stamp of the worker then starts the
+    new run."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    basename = "Trail Restart (2026) - [DVD].mkv"
+    key = _arrive(app, basename, "trail-restart", monkeypatch)
+    app.redis.hset(key, "first_enqueued", "2026-01-01 00:00:00")
+
+    with app.app_context():
+        job = app.import_queue.fetch_job("trail-restart")
+    record_job_event(app.redis, job, "started")
+
+    entries = pipeline_trails(app.redis)[0]["entries"]
+    assert [(entry["stage"], entry["status"]) for entry in entries] == [
+        ("Localizing", "started"),
+    ]
+    assert app.redis.hget(key, "first_enqueued") != b"2026-01-01 00:00:00"
+
+
 def test_a_mid_flight_rename_carries_the_enqueue_anchor(app):
     """Move the anchor with the journey in migrate_trail, the same as first_run.
 

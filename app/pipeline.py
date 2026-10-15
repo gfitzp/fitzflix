@@ -176,8 +176,28 @@ def _resolve_basename(connection, basename):
     return basename
 
 
+def _rerun_start(trail, index):
+    """Return the position where the earlier run of a job starts.
+
+    The sub-stages of a job sit directly before its own entry. They
+    share its id. Thus, the earlier run starts at the first entry of
+    that contiguous group."""
+
+    job_id = trail[index].get("job")
+    while index > 0 and trail[index - 1].get("job") == job_id:
+        index -= 1
+    return index
+
+
 def _write_trail_entry(
-    connection, basename, stage, status, job_id, before_job=False, sibling=None
+    connection,
+    basename,
+    stage,
+    status,
+    job_id,
+    before_job=False,
+    sibling=None,
+    enqueued_at=None,
 ):
     """Apply 1 stage event to the trail of the file atomically.
 
@@ -190,6 +210,15 @@ def _write_trail_entry(
     ever. Thus, the write WATCHes the trail key. If the key changed, the
     write reads again and retries. The retries are limited. The trail
     is advisory. It is never worth a stalled worker.
+
+    The localization job id comes from the basename. Thus, a re-import
+    of the same file runs the same job id again. Its stamp finds the
+    settled entry of the earlier run. That entry and all entries after
+    it are from the earlier run. Thus, the write removes them, and the
+    new run starts a new journey. Without this, the chips of the
+    earlier run (Moved into the library, Cataloged) stayed green after
+    the new Localizing chip. enqueued_at is the enqueue time of the job.
+    It tells a new enqueue apart from a late enqueue stamp.
     """
 
     from redis import WatchError
@@ -213,8 +242,29 @@ def _write_trail_entry(
                 # sub-stage from a task shares the id of its job. It
                 # carries its own stage label. Thus, it is its own line.
 
-                for entry in reversed(trail):
+                rerun = False
+                append = True
+                for position in range(len(trail) - 1, -1, -1):
+                    entry = trail[position]
                     if entry.get("job") == job_id and entry.get("stage") == stage:
+                        # The same job id runs again after its earlier run
+                        # settled. The worker stamps "started" again, or
+                        # the queue stamps a new enqueue that comes after
+                        # the settled stamp. Then the earlier run leaves
+                        # the trail.
+                        if not before_job and entry.get("status") in (
+                            "done",
+                            "failed",
+                        ):
+                            if status == "started" or (
+                                status in ("queued", "scheduled")
+                                and enqueued_at is not None
+                                and entry.get("at", "") < enqueued_at
+                            ):
+                                del trail[_rerun_start(trail, position) :]
+                                rerun = True
+                                break
+
                         # A job can complete before its own enqueue-side
                         # stamp is written. The deferred re-archive skips
                         # a superseded key in milliseconds. A late
@@ -227,8 +277,10 @@ def _write_trail_entry(
                             return
                         entry["status"] = status
                         entry["at"] = now
+                        append = False
                         break
-                else:
+
+                if append:
                     # A sub-stage reports preparatory work inside its job.
                     # The staging copy comes before the localization
                     # itself. Thus, the sub-stage goes BEFORE the own
@@ -244,7 +296,9 @@ def _write_trail_entry(
                     # A retry after a failure continues the same journey.
                     # Thus, the anchor holds.
 
-                    if status in ("queued", "scheduled") and not before_job:
+                    if rerun:
+                        fresh_journey = True
+                    elif status in ("queued", "scheduled") and not before_job:
                         fresh_journey = not trail or all(
                             existing.get("status") == "done" for existing in trail
                         )
@@ -283,9 +337,12 @@ def _write_trail_entry(
 
                 # The FIRST start of the file is the sort anchor of the
                 # running banners (the original banner-ordering request
-                # of Glenn). It never moves after it is set. Thus, a file
-                # that steps between queues keeps its place.
+                # of Glenn). It does not move while the journey continues.
+                # Thus, a file that steps between queues keeps its place.
+                # A new journey (a re-import) sets it again.
 
+                if fresh_journey:
+                    pipe.hdel(key, "first_run")
                 if status == "started":
                     pipe.hsetnx(key, "first_run", now)
 
@@ -297,7 +354,7 @@ def _write_trail_entry(
                 # The other stamps of the trail are local wall clock, for
                 # the chips. See first_enqueued.
 
-                if status in ("queued", "scheduled"):
+                if status in ("queued", "scheduled") or fresh_journey:
                     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                     if fresh_journey:
                         pipe.hset(key, "first_enqueued", stamp)
@@ -417,7 +474,19 @@ def record_job_event(connection, job, event):
         if found is None:
             return
         basename, stage = found
-        _write_trail_entry(connection, basename, stage, event, job.id)
+
+        # The trail stamps are local wall clock. rq stamps enqueued_at in
+        # UTC. Thus, convert it before the compare.
+
+        enqueued_at = None
+        if event in ("queued", "scheduled") and job.enqueued_at is not None:
+            moment = job.enqueued_at
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            enqueued_at = moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        _write_trail_entry(
+            connection, basename, stage, event, job.id, enqueued_at=enqueued_at
+        )
     except Exception:
         try:
             from flask import current_app
