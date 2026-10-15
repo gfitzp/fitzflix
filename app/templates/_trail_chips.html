@@ -42,6 +42,6 @@
 {%- for entry in entries -%}
 {%- if not loop.first %} &rarr; {% endif -%}
 {%- set word = chip_word.get(entry.status, entry.status) -%}
-<span class="badge fw-normal mb-1 {{ chip_class.get(entry.status, "text-bg-light") }}" title="{{ entry.stage }} &mdash; {{ word }} at {{ entry.at }}">{{ chip_past_tense.get(entry.stage, entry.stage) if entry.status == "done" else entry.stage }}{% if entry.status not in ("done", "started") %} &middot; {{ word }}{% endif %}</span>
+<span class="badge trail-chip fw-normal mb-1 {{ chip_class.get(entry.status, "text-bg-light") }}" title="{{ entry.stage }} &mdash; {{ word }} at {{ entry.at }}">{{ chip_past_tense.get(entry.stage, entry.stage) if entry.status == "done" else entry.stage }}{% if entry.status not in ("done", "started") %} &middot; {{ word }}{% endif %}</span>
 {%- endfor -%}
 {%- endmacro %}

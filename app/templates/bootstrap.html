@@ -250,6 +250,11 @@
 		/* A wrapped two-line badge as a full pill reads as a lozenge.
 		   Thus, the badges of the card take a softer rounding */
 		.poster-card .badge { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; }
+		/* A trail chip wraps its text inside its cell. On a phone the File
+		   column is narrow. A long chip ("Moving into the library ·
+		   queued") went past the edge of its cell and was cut off. The
+		   rounding is the same as the badges of the film card */
+		.trail-chip { white-space: normal; text-align: start; line-height: 1.35; border-radius: 0.75rem; max-width: 100%; }
 		/* The label block of the film card shows only when it holds a
 		   badge. The rule above it goes with it. Thus, a card with no
 		   labels shows no empty group between 2 rules */
