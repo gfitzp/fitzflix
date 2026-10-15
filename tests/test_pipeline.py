@@ -450,7 +450,9 @@ def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client)
     The in-flight trails paint on the job rows of the queue page. Glenn
     folded the separate in-flight list of the File Activity page into
     them in 2026-08. The File Activity dashboard keeps only the chips of
-    its completed cards. The old dedicated pipeline page is gone."""
+    its completed cards. The server paints those. Thus, that page asks the
+    poll for no trails of its own. The old dedicated pipeline page is
+    gone."""
 
     queue_page = admin_client.get("/queue").get_data(as_text=True)
     assert "window.pipelineTrailLimit = 100" in queue_page
@@ -459,7 +461,7 @@ def test_pipeline_trails_render_on_the_queue_page_and_landed_cards(admin_client)
     page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in page
     assert "In flight" not in page
-    assert "window.pipelineTrailLimit = 100" in page
+    assert "window.pipelineTrailLimit = " not in page
 
     assert admin_client.get("/maintenance/pipeline").status_code == 404
 
@@ -797,7 +799,7 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
     The slot of a card with a trail is visible and holds the chips. The
     slot of a card with no trail stays hidden. The card fragment that
     the poll fetches carries its chips too. Thus, nothing pops into
-    place after the first paint."""
+    place after the first paint, and the poll sees the chips change."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
@@ -808,6 +810,14 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
         bare = make_movie("Bare Film", 2015)
         make_movie_file(bare, "DVD", untouched_basename="Bare.Film.2015.avi")
         db.session.commit()
+
+    def version(body, title):
+        card = next(c for c in body.split('data-card-key="') if title in c)
+        return card.split('data-card-version="', 1)[1].split('"', 1)[0]
+
+    before = admin_client.get("/file-activity/cards").get_data(as_text=True)
+
+    with app.app_context():
         # The trail is keyed by the import name with the converted extension
         app.import_queue.enqueue(
             "app.videos.localization_task",
@@ -817,9 +827,9 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
     # Each segment after a split runs from one card to the next card
-    cards = page.split('data-file-basenames="')
-    painted_html = next(c for c in cards if c.startswith("Painted Film (2014)"))
-    bare_html = next(c for c in cards if c.startswith("Bare Film (2015)"))
+    cards = page.split('data-card-key="')
+    painted_html = next(c for c in cards if "Painted Film (2014)" in c)
+    bare_html = next(c for c in cards if "Bare Film (2015)" in c)
     assert '<div class="mt-1" data-trail>' in painted_html
     assert "Localizing &middot; queued" in painted_html
     assert '<div class="mt-1" data-trail hidden>' in bare_html
@@ -828,8 +838,12 @@ def test_file_activity_cards_arrive_with_their_chips_painted(app, admin_client):
     deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
     assert "Localizing &middot; queued" not in deeper
 
-    card = admin_client.get(
-        "/file-activity/card", query_string={"basename": "Painted.Film.2014.mkv"}
-    ).get_data(as_text=True)
-    assert '<div class="mt-1" data-trail>' in card
-    assert "Localizing &middot; queued" in card
+    # A new trail entry changes the version of its card only. Thus, the
+    # poll replaces that card and keeps the other one.
+
+    listing = admin_client.get("/file-activity/cards").get_data(as_text=True)
+    assert "Localizing &middot; queued" in listing
+    assert version(listing, "Painted Film (2014)") != version(
+        before, "Painted Film (2014)"
+    )
+    assert version(listing, "Bare Film (2015)") == version(before, "Bare Film (2015)")

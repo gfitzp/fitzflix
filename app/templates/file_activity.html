@@ -7,10 +7,10 @@
    arrived show as full cards. Each card carries its own trail chips
    while Redis retains them. Files that still move through the
    pipeline show on the Queue page, as chips on their job rows. The
-   5-second queue poll in base.html keeps the card chips live. It adds
-   the card of a file the moment the cataloging completes.
-   window.fileActivityCardUrl is what switches renderFiles into that
-   dashboard mode. Thus, it only exists on page 1. #}
+   5-second queue poll in base.html fetches the cards of page 1 again
+   (/file-activity/cards). Thus, the chips stay live, and the card of a
+   new file appears in its place. window.fileActivityCardsUrl switches
+   the poll into that mode. Thus, it only exists on page 1. #}
 
 {% block app_content %}
 {{ page_header(title) }}
@@ -39,21 +39,18 @@
 {% endif %}
 {% if not pages or pages.page == 1 %}
 <script>
-	window.pipelineTrailLimit = 100;
-	window.fileActivityCardUrl = "{{ url_for('main.file_activity_card') }}";
+	window.fileActivityCardsUrl = "{{ url_for('main.file_activity_cards') }}";
 </script>
 {% endif %}
 {% if recently_added %}
 {{ pagination_pair(pages, 'main.file_activity', {}, prev_url, next_url) }}
 {% endif %}
 
-{# The poll inserts the card of a newly arrived file at the top of
-   this holder. Thus, the holder exists (empty is fine) even when no
-   file arrived in the last week #}
+{# The poll puts the cards of a new list into this holder. Thus, the
+   holder exists (empty is fine) even when no file arrived in the last
+   week #}
 <div id="file-activity-cards" class="list-group mb-3">
-{% for file in recently_added %}
-{% include "_file_activity_card.html" %}
-{% endfor %}
+{% include "_file_activity_cards.html" %}
 </div>
 
 {% if recently_added %}

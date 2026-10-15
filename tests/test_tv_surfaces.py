@@ -371,13 +371,10 @@ def test_file_activity_card_names_the_series_from_tmdb(app, admin_client):
 
     with app.app_context():
         series = make_tv_series("Mash", tmdb_id=918, tmdb_name="M*A*S*H")
-        file = make_tv_file(series, 1, 1, "DVD")
+        make_tv_file(series, 1, 1, "DVD")
         db.session.commit()
-        basename = file.basename
 
-    page = admin_client.get(f"/file-activity/card?basename={basename}").get_data(
-        as_text=True
-    )
+    page = admin_client.get("/file-activity/cards").get_data(as_text=True)
     assert "M*A*S*H" in page
 
 

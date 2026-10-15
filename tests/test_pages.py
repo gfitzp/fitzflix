@@ -342,142 +342,108 @@ def test_recently_added_badges_quality_by_upgradability(app, admin_client):
 def test_file_activity_page_wires_the_live_dashboard(app, admin_client):
     """Test that the File Activity page wires the live dashboard.
 
-    Page 1 has the card-fetch URL. The dashboard mode of the queue poll
-    keys on it. Each card of a file that arrived advertises the
-    basenames that the trails can match. The deeper pages are a plain
-    list. The separate in-flight list is gone. Those chips now paint on
-    the rows of the queue page."""
+    Page 1 has the URL of the card list. The dashboard mode of the queue
+    poll keys on it. Each card carries its file id and a version. The
+    poll matches the cards of a new list by them. The deeper pages are a
+    plain list."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
         movie = make_movie("Dashboard Film", 2012)
-        make_movie_file(
+        file = make_movie_file(
             movie, "Bluray-1080p", untouched_basename="Dashboard.Film.2012.mkv"
         )
         db.session.commit()
+        file_id = file.id
 
     page = admin_client.get("/file-activity").get_data(as_text=True)
     assert 'id="pipeline-files-section"' not in page
-    assert "window.fileActivityCardUrl = " in page
-    assert (
-        'data-file-basenames="Dashboard Film (2012) - [Bluray-1080p].mkv|Dashboard.Film.2012.mkv"'
-        in page
+    assert "window.fileActivityCardsUrl = " in page
+    assert re.search(
+        rf'data-card-key="{file_id}" data-card-version="[0-9a-f]{{12}}"', page
     )
     assert "data-trail" in page
 
-    # The card carries the file time in the clock of the trail stamps.
-    # The poll compares it with the trail stamps as text (#275).
-
-    import re
-    from datetime import timezone
-
-    from app.models import File
-
-    with app.app_context():
-        file = File.query.filter_by(untouched_basename="Dashboard.Film.2012.mkv").one()
-        expected = (
-            (file.date_updated or file.date_added)
-            .replace(tzinfo=timezone.utc)
-            .astimezone()
-            .strftime("%Y-%m-%d %H:%M:%S")
-        )
-    assert f'data-file-time="{expected}"' in page
-    assert re.search(r'data-file-time="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d"', page)
-
     deeper = admin_client.get("/file-activity?page=2").get_data(as_text=True)
-    assert "window.fileActivityCardUrl = " not in deeper
+    assert "window.fileActivityCardsUrl = " not in deeper
 
 
-def test_file_activity_card_carries_the_added_time(app, admin_client):
-    """Test that the card carries the added time next to the file time.
+def test_file_activity_cards_answer_304_until_a_card_changes(app, admin_client):
+    """Test that the card list answers 304 while no card changes.
 
-    A later stage (an audio rebuild, a track scan, the S3 archive) sets
-    date_updated. That moves data-file-time, the time that orders the
-    card. The watermark of the poll must not move with it. Otherwise
-    one rebuilt card blocks the cards of every trail that finished
-    before the rebuild. Thus, the card also carries data-file-added,
-    the arrival time of the file, and the poll reads its watermark from
-    that attribute."""
+    The poll sends the ETag of its last list. The server answers 304
+    with no body until a file or its trail changes. Then it sends the
+    new list with a new ETag. Only the version of the changed card
+    changes. Thus, the poll keeps the other cards."""
 
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime
 
     from app import db
     from app.models import File
     from tests.factories import make_movie, make_movie_file
 
-    def clock(moment):
-        return (
-            moment.replace(tzinfo=timezone.utc)
-            .astimezone()
-            .strftime("%Y-%m-%d %H:%M:%S")
+    with app.app_context():
+        first = make_movie_file(make_movie("Steady Film", 2010), "DVD")
+        second = make_movie_file(make_movie("Moving Film", 2011), "DVD")
+        db.session.commit()
+        steady_id, moving_id = first.id, second.id
+
+    def versions(body):
+        return dict(
+            re.findall(r'data-card-key="(\d+)" data-card-version="(\w+)"', body)
         )
 
+    response = admin_client.get("/file-activity/cards")
+    assert response.status_code == 200
+    etag = response.headers["ETag"]
+    body = response.get_data(as_text=True)
+    assert "Steady Film" in body and "Moving Film" in body
+    before = versions(body)
+
+    unchanged = admin_client.get(
+        "/file-activity/cards", headers={"If-None-Match": etag}
+    )
+    assert unchanged.status_code == 304
+    assert unchanged.get_data() == b""
+
     with app.app_context():
-        movie = make_movie("Rebuilt Film", 2014)
-        make_movie_file(movie, "Bluray-1080p", untouched_basename="Rebuilt.Film.mkv")
+        db.session.get(File, moving_id).date_updated = datetime.utcnow()
         db.session.commit()
-        file = File.query.filter_by(untouched_basename="Rebuilt.Film.mkv").one()
-        added = datetime(2026, 10, 14, 12, 0, 0)
-        file.date_added = added
-        file.date_updated = added + timedelta(hours=3)
-        db.session.commit()
-        basename = file.basename
 
-    page = admin_client.get("/file-activity").get_data(as_text=True)
-    assert (
-        f'data-file-time="{clock(added + timedelta(hours=3))}" '
-        f'data-file-added="{clock(added)}"'
-    ) in page
+    changed = admin_client.get("/file-activity/cards", headers={"If-None-Match": etag})
+    assert changed.status_code == 200
+    assert changed.headers["ETag"] != etag
+    after = versions(changed.get_data(as_text=True))
+    assert after[str(steady_id)] == before[str(steady_id)]
+    assert after[str(moving_id)] != before[str(moving_id)]
 
-    # The fragment that the poll fetches carries the same two stamps
+    # The updated file now sorts first, the same as on a reload
 
-    card = admin_client.get(
-        "/file-activity/card", query_string={"basename": basename}
-    ).get_data(as_text=True)
-    assert f'data-file-added="{clock(added)}"' in card
-    assert f'data-file-time="{clock(added + timedelta(hours=3))}"' in card
+    order = re.findall(r'data-card-key="(\d+)"', changed.get_data(as_text=True))
+    assert order.index(str(moving_id)) < order.index(str(steady_id))
 
 
-def test_file_activity_card_fragment_matches_trail_basenames(app, admin_client):
-    """Test that /file-activity/card matches the trail basenames.
+def test_file_activity_cards_match_the_page(app, admin_client):
+    """Test that the card list holds the same cards as page 1.
 
-    The route serves the card of one file that arrived. The poll knows
-    the trail basename. The basename can be the name of the File row,
-    the original import filename, or either name with the extension of
-    a converted container. The route returns 404 if no row matches."""
+    The poll replaces the cards of page 1 with this list. Thus, the list
+    must be the same cards, in the same order, with the same versions."""
 
     from app import db
     from tests.factories import make_movie, make_movie_file
 
     with app.app_context():
-        movie = make_movie("Fragment Film", 2013)
-        make_movie_file(
-            movie, "Bluray-1080p", untouched_basename="Fragment.Film.2013.avi"
-        )
+        for year in (2001, 2002, 2003):
+            make_movie_file(make_movie(f"Listed Film {year}", year), "DVD")
         db.session.commit()
 
-    for basename in (
-        "Fragment Film (2013) - [Bluray-1080p].mkv",  # the name of the File row
-        "Fragment.Film.2013.avi",  # the original import filename
-        "Fragment.Film.2013.mkv",  # the pipeline converted it to Matroska
-    ):
-        response = admin_client.get(
-            "/file-activity/card", query_string={"basename": basename}
-        )
-        assert response.status_code == 200, basename
-        body = response.get_data(as_text=True)
-        assert "data-file-basenames" in body
-        assert "Fragment Film" in body
-
-    assert (
-        admin_client.get(
-            "/file-activity/card", query_string={"basename": "No.Such.File.mkv"}
-        ).status_code
-        == 404
-    )
-    assert admin_client.get("/file-activity/card").status_code == 404
+    pattern = r'data-card-key="\d+" data-card-version="\w+"'
+    page = admin_client.get("/file-activity").get_data(as_text=True)
+    cards = admin_client.get("/file-activity/cards").get_data(as_text=True)
+    assert re.findall(pattern, page) == re.findall(pattern, cards)
+    assert len(re.findall(pattern, cards)) >= 3
 
 
 def test_genre_links_filter_the_library(app, admin_client):

@@ -4,6 +4,8 @@ The surfaces are the landing rails, the Recommendations page, and the
 TMDB log page. They also include the poster popover cards (film and
 series), the watchlist, and the Radarr hand-off."""
 
+import hashlib
+import json
 import os
 import traceback
 
@@ -721,45 +723,15 @@ def file_activity():
 
     This page merges the old Recently Added page and the Pipeline
     Activity trails (Glenn, 2026-08). A file that arrived renders as a
-    full card here. The server paints the trail chips of each card on
-    page 1. Thus, the chips are in place at the first paint. The queue
-    poll of base.html then repaints them with the live state. A file
-    still in flight shows as chips on the job rows of the queue page.
-    When the cataloging completes, the poll adds the card of the file
-    here through /file-activity/card."""
+    full card here, with the trail chips of the file. A file still in
+    flight shows as chips on the job rows of the queue page. On page 1,
+    the queue poll of base.html fetches /file-activity/cards. Thus, the
+    chips stay live, and the card of a new file appears in its place."""
 
     page = request.args.get("page", 1, type=int)
 
-    # Show only the files added or updated in the last 7 days. This is
-    # the recency horizon of the page. It matches
-    # pipeline.TRAIL_TTL_SECONDS. Thus, a card keeps its trail chips
-    # while it stays on the page. This window once meant "still in S3
-    # Standard, downloadable again without a Glacier thaw". But the live
-    # lifecycle rule has moved untouched/ to Deep Archive at 0 days for
-    # some time (verified against the bucket, 2026-08). Thus, the files
-    # here are usually already frozen after their first day.
-
-    # The cards read the tracks, film, and series of each file. The
-    # selectin loads fetch those per page instead of per file (291
-    # queries for 100 cards before 2026-08).
-
-    recently_added = (
-        File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
-        .distinct()  # .distinct() makes the result numbers per page correct
-        .outerjoin(Movie, (Movie.id == File.movie_id))
-        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
-        .options(
-            selectinload(File.audiotrack),
-            selectinload(File.subtrack),
-            selectinload(File.movie),
-            selectinload(File.tv_series),
-        )
-        .filter(
-            db.func.coalesce(File.date_updated, File.date_added)
-            >= db.func.adddate(db.func.current_date(), -7)
-        )
-        .order_by(db.func.coalesce(File.date_updated, File.date_added).desc())
-        .paginate(page=page, per_page=100, error_out=False)
+    recently_added = _recent_file_cards().paginate(
+        page=page, per_page=FILE_ACTIVITY_PER_PAGE, error_out=False
     )
 
     next_url = (
@@ -856,12 +828,15 @@ def file_activity():
                 "reject_count": reject_count,
             }
 
-    # The poll asks for 100 trails on page 1 only (window.pipelineTrailLimit).
-    # The server reads the same set. Thus, the first poll finds the same
-    # chips that the server painted. A deeper page gets no chips, the
-    # same as before.
+    # Only page 1 is live. A deeper page gets no chips and no card
+    # versions, the same as before.
 
-    trails = _trail_lookup() if page == 1 else _trail_lookup(trails=[])
+    if page == 1:
+        trail_for = _trail_lookup()
+        card_version, _ = _card_versions(trail_for)
+    else:
+        trail_for = _trail_lookup(trails=[])
+        card_version = {}
 
     return render_template(
         "file_activity.html",
@@ -873,8 +848,92 @@ def file_activity():
         prev_url=prev_url,
         pages=recently_added,
         upgrade_threshold=_upgrade_threshold(),
-        trail_for=trails,
+        trail_for=trail_for,
+        card_version=card_version,
     )
+
+
+# The File Activity page shows 100 cards per page. The live list of page 1
+# is the first page of the same query.
+
+FILE_ACTIVITY_PER_PAGE = 100
+
+
+def _recent_files(query):
+    """Return the query limited to the files of the last 7 days, newest first.
+
+    A file counts from its update time, or from its added time if it has
+    no update. This is the recency horizon of the page. It matches
+    pipeline.TRAIL_TTL_SECONDS. Thus, a card keeps its trail chips while
+    it stays on the page. The file id breaks a tie. Thus, the order is
+    the same at each poll. This window once meant "still in S3 Standard,
+    downloadable again without a Glacier thaw". But the live lifecycle
+    rule has moved untouched/ to Deep Archive at 0 days for some time
+    (verified against the bucket, 2026-08). Thus, the files here are
+    usually already frozen after their first day."""
+
+    recency = db.func.coalesce(File.date_updated, File.date_added)
+    return query.filter(
+        recency >= db.func.adddate(db.func.current_date(), -7)
+    ).order_by(recency.desc(), File.id.desc())
+
+
+def _recent_file_cards():
+    """Return the query of the File Activity cards.
+
+    The cards read the tracks, film, and series of each file. The
+    selectin loads fetch those per page instead of per file (291 queries
+    for 100 cards before 2026-08)."""
+
+    return _recent_files(
+        File.query.outerjoin(FileAudioTrack, (FileAudioTrack.file_id == File.id))
+        .distinct()  # .distinct() makes the result numbers per page correct
+        .outerjoin(Movie, (Movie.id == File.movie_id))
+        .outerjoin(TVSeries, (TVSeries.id == File.series_id))
+        .options(
+            selectinload(File.audiotrack),
+            selectinload(File.subtrack),
+            selectinload(File.movie),
+            selectinload(File.tv_series),
+        )
+    )
+
+
+def _card_versions(trail_for):
+    """Return the version of each card on page 1, and the version of the list.
+
+    The version of a card is a hash of the times of its file and of its
+    trail entries. It changes when a stage writes the file or the trail.
+    The version of the list is a hash of the card ids and versions in
+    their order. The cards route serves it as the ETag. This reads only
+    the ids, names, and times of the files. Thus, a poll that finds no
+    change does not render the cards (about 20 ms instead of 100 ms for
+    100 cards, measured 2026-10-14)."""
+
+    rows = (
+        _recent_files(
+            db.session.query(
+                File.id,
+                File.basename,
+                File.untouched_basename,
+                File.date_added,
+                File.date_updated,
+            )
+        )
+        .limit(FILE_ACTIVITY_PER_PAGE)
+        .all()
+    )
+    card_version = {}
+    for row in rows:
+        stamp = json.dumps(
+            [str(row.date_added), str(row.date_updated), trail_for(row)],
+            sort_keys=True,
+        )
+        card_version[row.id] = hashlib.sha1(stamp.encode()).hexdigest()[:12]
+    listing = "\n".join(
+        f"{file_id}:{version}" for file_id, version in card_version.items()
+    )
+    return card_version, hashlib.sha1(listing.encode()).hexdigest()
 
 
 def _trail_lookup(trails=None):
@@ -882,9 +941,8 @@ def _trail_lookup(trails=None):
 
     The File Activity card template calls it for each card. The function
     tries the basename of the row and the original import filename, each
-    as it is and as its stem. This is the server twin of the slot match
-    in renderFiles (base.html). With trails=None, this reads the newest
-    100 trails from Redis. That is the set that the poll asks for."""
+    as it is and as its stem. With trails=None, this reads the newest
+    100 trails from Redis."""
 
     from app.pipeline import index_trails, pipeline_trails, trail_entries_for
 
@@ -898,67 +956,39 @@ def _trail_lookup(trails=None):
     return trail_for
 
 
-def _file_for_trail_basename(basename):
-    """Return the File row that a pipeline trail belongs to, or None.
-
-    The basename of a trail can be the original import filename (the
-    localization stages). It can be that name with its extension changed
-    to .mkv (the container conversion). It can be the own basename of
-    the File row (every file_id-keyed stage). Thus, first match exactly
-    against both stored names. Then fall back to the stem, newest file
-    first.
-    """
-
-    recency = db.func.coalesce(File.date_updated, File.date_added).desc()
-    file = (
-        File.query.filter(
-            db.or_(File.basename == basename, File.untouched_basename == basename)
-        )
-        .order_by(recency)
-        .first()
-    )
-    if file is not None:
-        return file
-    stem = basename.rsplit(".", 1)[0]
-    if not stem:
-        return None
-    pattern = stem.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + ".%"
-    return (
-        File.query.filter(
-            db.or_(
-                File.basename.like(pattern, escape="\\"),
-                File.untouched_basename.like(pattern, escape="\\"),
-            )
-        )
-        .order_by(recency)
-        .first()
-    )
-
-
-@bp.route("/file-activity/card")
+@bp.route("/file-activity/cards")
 @login_required
-def file_activity_card():
-    """Render the card fragment of one file for the File Activity dashboard.
+def file_activity_cards():
+    """Render the cards of page 1 of the File Activity dashboard.
 
-    The queue poll fetches it when a trail with no card completes its
-    cataloging. The chips become the full card (poster, quality badge,
-    tracks, links) without a reload. The card arrives with its own trail
-    chips painted. The key is the basename of the trail. A 404 means
-    that the File row is not visible yet. Then the poll tries again."""
+    The queue poll of base.html fetches this list on page 1. It sends
+    the ETag of its last list. If no card changed, the answer is 304
+    with no body. Otherwise the poll keeps each card whose version did
+    not change, and it puts in the new cards in the order of this list.
+    Thus, the chips stay live, and the card of a new file appears in its
+    place. A file whose row is not committed yet is not in the list. It
+    appears at a later poll."""
 
-    basename = request.args.get("basename", "", type=str)
-    if not basename:
-        abort(404)
-    file = _file_for_trail_basename(basename)
-    if file is None:
-        abort(404)
-    return render_template(
-        "_file_activity_card.html",
-        file=file,
-        native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
-        upgrade_threshold=_upgrade_threshold(),
-        trail_for=_trail_lookup(),
+    trail_for = _trail_lookup()
+    card_version, etag = _card_versions(trail_for)
+    if request.if_none_match.contains_weak(etag):
+        response = current_app.response_class(status=304)
+        response.set_etag(etag)
+        return response
+
+    files = _recent_file_cards().limit(FILE_ACTIVITY_PER_PAGE).all()
+    response = current_app.make_response(
+        render_template(
+            "_file_activity_cards.html",
+            recently_added=files,
+            native_language=[current_app.config["NATIVE_LANGUAGE"], "und", "zxx"],
+            upgrade_threshold=_upgrade_threshold(),
+            trail_for=trail_for,
+            card_version=card_version,
+        )
     )
+    response.set_etag(etag)
+    return response
 
 
 @bp.route("/movie_card")

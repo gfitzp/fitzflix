@@ -1,26 +1,13 @@
 {# This is the card of one file on the File Activity dashboard. It
    shows the poster, the quality and track badges, and the library
-   links. The dashboard renders it inline for the list of arrived
-   files. /file-activity/card also serves it alone. Thus, the queue
-   poll can replace the chips of a finished import with its card
-   without a reload. The poll uses the data-file-basenames attribute
-   to match the pipeline trails to this card. The trail can be keyed
-   by the original filename, not by the name of the File row. Thus,
-   both names go with the card. The server paints the stage chips of
-   this file into the data-trail slot (the trail_for lookup of the
-   view). The slot is hidden when the file has no trail. The poll
-   repaints the slot while Redis keeps the trail. Thus, nothing moves
-   at the first poll. The data-file-time attribute is the time that orders this
-   card, in the clock of the trail stamps. The poll inserts a fetched
-   card at the place of that time. The data-file-added attribute is
-   the time that the file arrived. A later stage (an audio rebuild, a
-   track scan, the S3 archive) moves the first time, never the second.
-   The poll fetches the card of a trail only when its cataloging is
-   not older than the newest added time on the page. Thus, a file that
-   moved to page 2 does not come back to the top (#275). #}
+   links. It also shows the stage chips of the trail of the file (the
+   trail_for lookup of the view). The chip slot is hidden when the file has no trail. The
+   queue poll matches the cards of a new list to the cards on the page
+   by data-card-key. It keeps a card whose data-card-version did not
+   change. #}
 {% from "_trail_chips.html" import trail_chips %}
 {% set trail = trail_for(file) if trail_for is defined else [] %}
-<div class="list-group-item py-2 d-flex" data-file-basenames="{{ file.basename }}{% if file.untouched_basename and file.untouched_basename != file.basename %}|{{ file.untouched_basename }}{% endif %}" data-file-time="{{ (file.date_updated or file.date_added)|trail_clock }}" data-file-added="{{ file.date_added|trail_clock }}">
+<div class="list-group-item py-2 d-flex" data-card-key="{{ file.id }}" data-card-version="{{ card_version.get(file.id, '') if card_version is defined else '' }}">
 	{% if file.movie %}
 		{% set movie = file.movie %}
 		<a href="{{ url_for('main.movie', movie_id=movie.id) }}">
