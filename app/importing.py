@@ -1293,6 +1293,7 @@ def move_localized_file(
     hidden_output_file,
     transient_retries=0,
     space_waits=0,
+    vanished_retries=0,
 ):
     """Carry the localized output to a hidden name at its library destination.
 
@@ -1304,6 +1305,12 @@ def move_localized_file(
 
     A library volume without space for the copy makes the task wait. The
     output stays on staging, and the task keeps the title lock (#262).
+
+    After a copy to another volume, the output stays on staging until
+    finalize_localization renames the copy into place. An unstable NFS
+    mount can lose the just-written copy (the Movies share, Oct 2026).
+    Then finalize gives the copy back to this task. vanished_retries
+    counts those returns.
     """
 
     from app.videos import (
@@ -1343,6 +1350,7 @@ def move_localized_file(
                 lock,
                 hidden_output_file,
                 transient_retries=transient_retries,
+                vanished_retries=vanished_retries,
                 job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=retry_job_id(
                     "move_localized_file", f"'{basename}'", transient_retries
@@ -1368,6 +1376,7 @@ def move_localized_file(
                 lock,
                 hidden_output_file,
                 transient_retries=transient_retries,
+                vanished_retries=vanished_retries,
                 space_waits=space_waits + 1,
                 job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                 job_id=retry_job_id(
@@ -1405,6 +1414,7 @@ def move_localized_file(
                 f"{space_waits} wait(s). Copying"
             )
 
+        staged_output = None
         try:
             job = get_current_job()
 
@@ -1430,10 +1440,15 @@ def move_localized_file(
                     _rename_with_retries(hidden_output_file, destination_hidden)
 
                 else:
+                    # Keep the output on staging. finalize_localization
+                    # removes it after the rename into place. If the mount
+                    # loses the copy first, finalize copies it again from
+                    # here.
+
                     copy_with_progress(
                         hidden_output_file, destination_hidden, job, basename
                     )
-                    os.remove(hidden_output_file)
+                    staged_output = hidden_output_file
 
             except OSError as e:
                 if e.errno in SPACE_ERRNOS:
@@ -1481,6 +1496,7 @@ def move_localized_file(
                     lock,
                     hidden_output_file,
                     transient_retries=transient_retries + 1,
+                    vanished_retries=vanished_retries,
                     job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
                     job_id=retry_job_id(
                         "move_localized_file", f"'{basename}'", transient_retries + 1
@@ -1515,6 +1531,10 @@ def move_localized_file(
             current_app.sql_queue.enqueue(
                 "app.videos.finalize_localization",
                 args=(source_path, file_details, lock, destination_hidden, inspection),
+                kwargs={
+                    "staged_output": staged_output,
+                    "vanished_retries": vanished_retries,
+                },
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 description=f"'{basename}'",
             )
@@ -1554,8 +1574,41 @@ def _report_import_move_to_radarr(source_directory, output_directory):
         current_app.logger.warning(traceback.format_exc())
 
 
+# A just-written library copy that the mount loses is copied again from
+# staging at most this many times. Then the import fails as before.
+
+MAX_VANISHED_RETRIES = 2
+
+
+def _copy_vanished(hidden_output_file, staged_output, vanished_retries):
+    """Return True if the hidden library copy is gone and staging can replace it."""
+
+    return (
+        bool(staged_output)
+        and vanished_retries < MAX_VANISHED_RETRIES
+        and os.path.exists(staged_output)
+        and not os.path.exists(hidden_output_file)
+    )
+
+
+def _remove_staged_output(staged_output):
+    """Remove the staging copy of an output after the import is complete."""
+
+    if staged_output:
+        try:
+            os.remove(staged_output)
+        except OSError:
+            pass
+
+
 def finalize_localization(
-    file_path, file_details, lock, hidden_output_file=None, inspection=None
+    file_path,
+    file_details,
+    lock,
+    hidden_output_file=None,
+    inspection=None,
+    staged_output=None,
+    vanished_retries=0,
 ):
     """Add a localized file to the database and move it into position.
 
@@ -1569,6 +1622,14 @@ def finalize_localization(
     hidden_output_file is where localization put the processed file. If
     the caller omits it (a job from before local staging existed), the
     task assumes that the file is hidden in the destination directory.
+
+    staged_output is the same file on staging, when the library copy
+    crossed volumes. The Movies NFS mount can drop at the end of a large
+    write. Then macOS remounts it, and the just-written hidden copy is
+    gone (Fort Apache, 2026-10-15). If the rename finds no hidden copy,
+    the task gives the copy back to move_localized_file, which copies
+    again from staged_output. MAX_VANISHED_RETRIES limits the returns.
+    The task removes staged_output after the rename and the commit.
     """
 
     from app.videos import _dead_volumes, _rename_with_retries
@@ -1608,6 +1669,8 @@ def finalize_localization(
                 file_details,
                 lock,
                 hidden_output_file,
+                staged_output=staged_output,
+                vanished_retries=vanished_retries,
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
                 job_id=safe_job_id(
                     f"retry:finalize_localization:'{file_details.get('basename')}'"
@@ -1911,9 +1974,48 @@ def finalize_localization(
                 )
                 return False
 
-            _rename_with_retries(hidden_output_file, output_file)
+            try:
+                _rename_with_retries(hidden_output_file, output_file)
+            except OSError:
+                if not _copy_vanished(
+                    hidden_output_file, staged_output, vanished_retries
+                ):
+                    raise
+
+                # The mount lost the hidden copy, but the output is still on
+                # staging. Copy it again. Keep the title lock. Wait 1 minute.
+                # Thus, the mount is back before the copy starts.
+
+                current_app.logger.warning(
+                    f"'{file_details.get('basename')}' The library copy "
+                    f"disappeared from '{os.path.dirname(hidden_output_file)}'. "
+                    f"Copying it again from staging in 1 minute (attempt "
+                    f"{vanished_retries + 1} of {MAX_VANISHED_RETRIES})"
+                )
+                db.session.rollback()
+                handed_off = True
+                current_app.handoff_queue.enqueue_in(
+                    timedelta(minutes=1),
+                    "app.videos.move_localized_file",
+                    file_path,
+                    file_details,
+                    lock,
+                    staged_output,
+                    vanished_retries=vanished_retries + 1,
+                    job_timeout=current_app.config["MOVE_TASK_TIMEOUT"],
+                    job_id=retry_job_id(
+                        "move_localized_file",
+                        f"'{file_details.get('basename')}'",
+                        0,
+                        f"vanished{vanished_retries + 1}",
+                    ),
+                    result_ttl=86400,
+                    description=f"'{file_details.get('basename')}'",
+                )
+                return False
 
             db.session.commit()
+            _remove_staged_output(staged_output)
 
             # The commit succeeded. Thus, delete the AWS archives of the
             # replaced files. Do it from the file-operation queue. Then the
@@ -2071,6 +2173,7 @@ def finalize_localization(
             current_app.logger.error(traceback.format_exc())
             move_to_rejects(file_path, "exception")
             db.session.rollback()
+            _remove_staged_output(staged_output)
 
         else:
             current_app.logger.info(f"'{file_path}' processed as '{output_file}'")

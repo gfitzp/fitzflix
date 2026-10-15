@@ -505,7 +505,7 @@ def test_library_copy_transient_error_defers_and_keeps_lock(
 
         job = retries[0]
         assert list(job.args) == [source, file_details, "lock-sentinel", hidden]
-        assert job.kwargs == {"transient_retries": 1}
+        assert job.kwargs == {"transient_retries": 1, "vanished_retries": 0}
         inspect.signature(videos.move_localized_file).bind(
             *(job.args or ()), **(job.kwargs or {})
         )
@@ -1278,7 +1278,11 @@ def test_library_copy_waits_for_space_before_copying(app, incoming_dir, monkeypa
             retry_job_id("move_localized_file", f"'{basename}'", 0, "space1")
         ]
         assert list(waits[0].args) == [source, details, "lock-sentinel", hidden]
-        assert waits[0].kwargs == {"transient_retries": 0, "space_waits": 1}
+        assert waits[0].kwargs == {
+            "transient_retries": 0,
+            "space_waits": 1,
+            "vanished_retries": 0,
+        }
         inspect.signature(videos.move_localized_file).bind(
             *(waits[0].args or ()), **(waits[0].kwargs or {})
         )
@@ -1427,3 +1431,146 @@ def test_trail_names_a_retry_that_passes_the_path_by_keyword(app):
         kwargs={"file_path": "/import/Waiting (2021) - [DVD].mkv", "space_waits": 1},
     )
     assert _stage_for(job) == ("Waiting (2021) - [DVD].mkv", "Localizing")
+
+
+def _separate_library_volume(app, monkeypatch):
+    """Make the library directories report a device of their own.
+
+    The test tree keeps staging and the library on 1 disk. Thus, the
+    library copy is a plain rename. The real library is on the NAS, so
+    move_localized_file copies across volumes. This fake makes the test
+    take that path."""
+
+    import stat as stat_module
+
+    real_stat = os.stat
+    library = app.config["LIBRARY_DIR"]
+
+    def fake_stat(path, *args, **kwargs):
+        result = real_stat(path, *args, **kwargs)
+        if str(path).startswith(library) and stat_module.S_ISDIR(result.st_mode):
+            values = list(result)
+            values[2] = result.st_dev + 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(os, "stat", fake_stat)
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+
+
+def _finalize_jobs(app, vanished_retries):
+    return [
+        job
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.videos.finalize_localization"
+        and job.kwargs.get("vanished_retries") == vanished_retries
+    ]
+
+
+def test_a_vanished_library_copy_is_copied_again_from_staging(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Copy the output again when the mount loses the hidden library copy.
+
+    The Movies NFS mount can drop at the end of a large write. macOS
+    remounts it, and the just-written hidden copy is gone. Before, the
+    rename failed, the import went to rejects, and an error email went
+    out (Fort Apache, 2026-10-15). Now the output stays on staging until
+    the rename. finalize gives the copy back to the handoff queue."""
+
+    _separate_library_volume(app, monkeypatch)
+    basename = "Vanishing Copy (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        )
+        staged = move.args[3]
+        assert videos.move_localized_file(*move.args) is True
+
+        # The copy crossed volumes. The output stays on staging.
+
+        assert os.path.exists(staged)
+        (first,) = _finalize_jobs(app, 0)
+        assert first.kwargs["staged_output"] == staged
+        hidden = first.args[3]
+        assert hidden.startswith(app.config["LIBRARY_DIR"])
+
+        # The mount drops and loses the hidden copy.
+
+        os.remove(hidden)
+        assert finalize_localization(*first.args, **first.kwargs) is False
+        assert File.query.filter_by(basename=basename).first() is None
+        assert os.path.exists(source)
+        assert basename not in rejected_files(app)
+
+        (retry,) = [
+            job
+            for job in scheduled_jobs(app.handoff_queue)
+            if job.id
+            == retry_job_id("move_localized_file", f"'{basename}'", 0, "vanished1")
+        ]
+        assert retry.args[3] == staged
+        assert retry.kwargs["vanished_retries"] == 1
+
+        # The retry copies again, and the import completes. Staging is
+        # empty after the rename.
+
+        assert videos.move_localized_file(*retry.args, **retry.kwargs) is True
+        (second,) = _finalize_jobs(app, 1)
+        finalize_localization(*second.args, **second.kwargs)
+
+        output = os.path.join(
+            app.config["LIBRARY_DIR"],
+            "Movies/Vanishing Copy (2021)/Vanishing Copy (2021) - [DVD].mkv",
+        )
+        assert os.path.exists(output)
+        assert not os.path.exists(staged)
+        file = File.query.filter_by(basename=basename).one()
+        assert app.lock_manager.lock(file.file_identifier(), 1000)
+
+
+def test_a_library_copy_that_keeps_vanishing_fails_as_before(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Stop copying again after MAX_VANISHED_RETRIES.
+
+    A mount that loses every copy must not loop for ever. The import
+    goes to rejects with the error, as before. Staging is cleaned up."""
+
+    from app.importing import MAX_VANISHED_RETRIES
+
+    _separate_library_volume(app, monkeypatch)
+    basename = "Always Vanishing (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+        )
+        staged = move.args[3]
+        assert videos.move_localized_file(*move.args) is True
+        (job,) = _finalize_jobs(app, 0)
+        os.remove(job.args[3])
+
+        kwargs = dict(job.kwargs, vanished_retries=MAX_VANISHED_RETRIES)
+        finalize_localization(*job.args, **kwargs)
+
+        assert basename in rejected_files(app)
+        assert not os.path.exists(staged)
+        assert not any(
+            "vanished" in job.id for job in scheduled_jobs(app.handoff_queue)
+        )
+        assert File.query.filter_by(basename=basename).first() is None
+    os.remove(os.path.join(app.config["REJECTS_DIR"], "exception", basename))
