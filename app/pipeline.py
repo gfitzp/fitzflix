@@ -299,6 +299,7 @@ def _write_trail_entry(
                         if not before_job and entry.get("status") in (
                             "done",
                             "failed",
+                            "deferred",
                         ):
                             if status == "started" or (
                                 status in ("queued", "scheduled")
@@ -309,6 +310,17 @@ def _write_trail_entry(
                                 rerun = True
                                 break
 
+                        # A job that booked its own retry is "deferred". Its
+                        # worker still stamps it done when it returns. The
+                        # retry chip already stands for the stage. Thus,
+                        # the stamp of the worker changes nothing.
+
+                        if entry.get("status") == "deferred" and status in (
+                            "done",
+                            "failed",
+                        ):
+                            return
+
                         # A job can complete before its own enqueue-side
                         # stamp is written. The deferred re-archive skips
                         # a superseded key in milliseconds. A late
@@ -317,7 +329,7 @@ def _write_trail_entry(
                         # that the worker already made.
                         if status in ("queued", "scheduled") and entry.get(
                             "status"
-                        ) in ("started", "done", "failed"):
+                        ) in ("started", "done", "failed", "deferred"):
                             # Keep the enqueue time of the dropped stamp.
                             # hsetnx never moves an anchor that is set.
 
@@ -355,8 +367,30 @@ def _write_trail_entry(
                         fresh_journey = True
                     elif status in ("queued", "scheduled") and not before_job:
                         fresh_journey = not trail or all(
-                            existing.get("status") == "done" for existing in trail
+                            existing.get("status") in ("done", "deferred")
+                            for existing in trail
                         )
+
+                    # A running job that books a new job of its own stage
+                    # for the same file is deferring itself. Examples are a
+                    # file that is still copying in, a title lock that
+                    # another task holds, and a transient copy error. The
+                    # running job then returns without error, and its
+                    # worker stamped it done. A "Localized" chip showed
+                    # before "Localizing · waiting to retry" (NOVA,
+                    # 2026-10-15). Now the running entry is "deferred".
+                    # The trail does not show it. The retry chip stands for
+                    # the stage.
+
+                    if status in ("queued", "scheduled") and not before_job:
+                        for existing in trail:
+                            if (
+                                existing.get("stage") == stage
+                                and existing.get("job") != job_id
+                                and existing.get("status") == "started"
+                            ):
+                                existing["status"] = "deferred"
+                                existing["at"] = now
 
                     # A job can report more than 1 sub-stage. Each one
                     # goes directly before the own entry of the job.
@@ -985,6 +1019,9 @@ def pipeline_trails(connection, limit=25):
             )
             if raw_entries is None:
                 continue
+            # A deferred attempt does not show. Its retry chip stands for
+            # the stage.
+
             entries = [
                 {
                     "stage": entry.get("stage"),
@@ -993,6 +1030,7 @@ def pipeline_trails(connection, limit=25):
                     "job": entry.get("job"),
                 }
                 for entry in raw_entries
+                if entry.get("status") != "deferred"
             ]
             trails.append(
                 {

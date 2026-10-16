@@ -1294,3 +1294,73 @@ def test_a_job_that_starts_before_its_queued_stamp_keeps_its_enqueue_time(app):
             .strftime("%Y-%m-%d %H:%M:%S")
             .encode()
         )
+
+
+def test_a_job_that_books_its_own_retry_shows_only_the_retry(app):
+    """Hide an attempt that deferred itself. Show its retry.
+
+    The localization found a file that was still copying in. It booked a
+    retry and returned without error. Its worker stamped it done. Thus,
+    a "Localized" chip came before "Localizing · waiting to retry"
+    (NOVA, 2026-10-15)."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    path = "/import/Trail Deferral (2026) - [DVD].mkv"
+    with app.app_context():
+        first = app.import_queue.enqueue("app.videos.localization_task", args=(path,))
+        record_job_event(app.redis, first, "started")
+        app.import_queue.enqueue_in(
+            timedelta(minutes=2), "app.videos.localization_task", args=(path,)
+        )
+        record_job_event(app.redis, first, "done")
+
+    (trail,) = [
+        t
+        for t in pipeline_trails(app.redis, limit=100)
+        if t["basename"] == "Trail Deferral (2026) - [DVD].mkv"
+    ]
+    assert [(e["stage"], e["status"]) for e in trail["entries"]] == [
+        ("Localizing", "scheduled"),
+    ]
+
+
+def test_a_library_copy_that_books_a_retry_shows_only_the_retry(app):
+    """Hide a library copy that caught a transient error and booked a retry.
+
+    The copy returned without error after it booked the retry. Thus, its
+    chip read "Moved into the library" while the copy waited to try
+    again. The localization before it stays done."""
+
+    from app.pipeline import pipeline_trails, record_job_event
+
+    basename = "Trail Copy Retry (2026) - [DVD].mkv"
+    with app.app_context():
+        localize = app.import_queue.enqueue(
+            "app.videos.localization_task", args=(f"/import/{basename}",)
+        )
+        record_job_event(app.redis, localize, "started")
+        move = app.handoff_queue.enqueue(
+            "app.videos.move_localized_file",
+            args=(f"/staging/.{basename}", {"basename": basename}, None, None),
+        )
+        record_job_event(app.redis, localize, "done")
+        record_job_event(app.redis, move, "started")
+        app.handoff_queue.enqueue_in(
+            timedelta(minutes=5),
+            "app.videos.move_localized_file",
+            f"/staging/.{basename}",
+            {"basename": basename},
+            None,
+            None,
+            transient_retries=1,
+        )
+        record_job_event(app.redis, move, "done")
+
+    (trail,) = [
+        t for t in pipeline_trails(app.redis, limit=100) if t["basename"] == basename
+    ]
+    assert [(e["stage"], e["status"]) for e in trail["entries"]] == [
+        ("Localizing", "done"),
+        ("Moving into the library", "scheduled"),
+    ]
