@@ -37,6 +37,7 @@ from rq.registry import StartedJobRegistry
 
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.settings import get_setting
 from app.pipeline import TaskPhases, close_trail, keep_trail_open
 from app.plex_library import enqueue_plex_analyze
 
@@ -687,13 +688,13 @@ def _atmos_prepare(file_id, phases, staged_source=None):
                 Settings=mediaconvert_job_settings(
                     input_uri,
                     destination_uri,
-                    current_app.config["EAC3_ATMOS_BITRATE"],
+                    get_setting("EAC3_ATMOS_BITRATE"),
                 ),
             )
             mc_job_id = mc_job["Job"]["Id"]
             current_app.logger.info(
                 f"'{basename}' MediaConvert job {mc_job_id} submitted "
-                f"({current_app.config['EAC3_ATMOS_BITRATE']} bps 9.1.6)"
+                f"({get_setting('EAC3_ATMOS_BITRATE')} bps 9.1.6)"
             )
             for damf_path in damf_files:
                 os.remove(damf_path)
@@ -1135,7 +1136,7 @@ def _atmos_finish(state, phases):
     # committed. Thus, an upload failure fails the job, and the S3 sync
     # task repairs it.
 
-    if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+    if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
         phases.enter("Archiving to S3")
         try:
             (

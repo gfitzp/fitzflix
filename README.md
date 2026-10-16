@@ -401,7 +401,22 @@ TMDB_API_KEY=<your TMDB API key>
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |
 
-The on/off settings are `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `SKIP_FLAC_TWINS`, `SKIP_ATMOS_TWINS`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. A setting is on when it is in `.env` with a value of any kind. To turn a setting off, remove it from `.env`. Refer to [System requirements](#system-requirements) for the binary paths.
+The on/off settings are `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `SKIP_FLAC_TWINS`, `SKIP_ATMOS_TWINS`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. A setting is on when it is in `.env` with a value of any kind. To turn a setting off, remove it from `.env`. Refer to [System requirements](#system-requirements) for the binary paths.
+
+#### The Settings page
+
+Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process gets a saved value in approximately 5 seconds. The page settings are:
+
+- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `SKIP_FLAC_TWINS`, and `SKIP_ATMOS_TWINS`.
+- The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
+- The media settings `EAC3_ATMOS_BITRATE` and `HANDBRAKE_PRESET`.
+- The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
+
+`.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, and it is then on. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
+
+The page does not turn on `ARCHIVE_ORIGINAL_MEDIA` until `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are in `.env`. It does not turn on `AWS_DOWNLOAD_VIA_CDN` until the `CDN_*` settings are in `.env` and the private key can be read. With `HANDBRAKE_PRESET_FILE`, a preset name must be in that file.
+
+The page values are in the `app_setting` table of the database. Thus, they are in the nightly backup, and a Redis flush does not remove them. The secrets, the delete fences (`ARR_DOWNLOAD_FOLDERS`, `RADARR_ROOT_FOLDERS`, `SONARR_ROOT_FOLDERS`), `PROXY_HOPS`, the paths, the binaries, and the task timeouts stay in `.env` only. The database backups are not encrypted the way the `.env` backup is. Also, a stolen admin session must not make the delete fences wider.
 
 ## Installation
 
@@ -415,7 +430,7 @@ flask db upgrade
 
 ### First run
 
-The command `flask db upgrade` makes the database schema and adds the reference data (quality titles and special feature types). Thus, imports operate immediately. Start the application. [Supervisor](#running-via-supervisor) serves it at `http://localhost:8000`, and [`flask run`](#flask) serves it at `http://localhost:5000`. Open the application in a browser and register an account. **The first registered account becomes the admin.** Then set `PREVENT_ACCOUNT_CREATION` in `.env` to disable further registration.
+The command `flask db upgrade` makes the database schema and adds the reference data (quality titles and special feature types). Thus, imports operate immediately. Start the application. [Supervisor](#running-via-supervisor) serves it at `http://localhost:8000`, and [`flask run`](#flask) serves it at `http://localhost:5000`. Open the application in a browser and register an account. **The first registered account becomes the admin.** Then turn on `PREVENT_ACCOUNT_CREATION` on the **Admin > Settings** page, or set it in `.env`, to disable further registration.
 
 ## Running via supervisor
 

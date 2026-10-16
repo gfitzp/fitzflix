@@ -33,6 +33,7 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app
+from app.settings import get_setting
 
 app = LocalProxy(get_app)
 
@@ -184,10 +185,9 @@ def build_digest(config, now=None, previous=None):
 
     now = now or datetime.now()
     since = now - WINDOW
-    ignore = (
-        re.compile(config["LOG_DIGEST_IGNORE"]) if config["LOG_DIGEST_IGNORE"] else None
-    )
-    threshold = config["LOG_DIGEST_THRESHOLD"]
+    ignore_pattern = get_setting("LOG_DIGEST_IGNORE", config)
+    ignore = re.compile(ignore_pattern) if ignore_pattern else None
+    threshold = get_setting("LOG_DIGEST_THRESHOLD", config)
     previous_keys = {item["key"] for item in (previous or {}).get("flagged", [])}
 
     counts = Counter()

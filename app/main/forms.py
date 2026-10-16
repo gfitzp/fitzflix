@@ -18,6 +18,7 @@ from wtforms import (
 )
 from wtforms.validators import (
     DataRequired,
+    InputRequired,
     Email,
     EqualTo,
     Length,
@@ -27,6 +28,7 @@ from wtforms.validators import (
 )
 from wtforms.widgets import HiddenInput
 from app.models import User
+from app.settings import SETTINGS
 
 
 class ResetFrameScoresForm(FlaskForm):
@@ -479,6 +481,55 @@ class FailedJobForm(FlaskForm):
     failed_queue = HiddenField(validators=[DataRequired()])
     requeue_submit = SubmitField("Requeue")
     forget_submit = SubmitField("Forget")
+
+
+class SettingsForm(FlaskForm):
+    """Change the runtime settings (Settings page).
+
+    The fields come from app.settings.SETTINGS, one field for each
+    setting. The route removes the fields that .env locks."""
+
+    save_submit = SubmitField("Save")
+
+
+def _settings_field(setting):
+    """Return the form field for a setting."""
+
+    if setting.kind == "flag":
+        return BooleanField(setting.label)
+    if setting.kind == "int":
+        return IntegerField(
+            setting.label,
+            validators=[
+                InputRequired(),
+                NumberRange(min=setting.minimum, max=setting.maximum),
+            ],
+        )
+    if setting.kind == "choice":
+        return SelectField(
+            setting.label,
+            choices=[(choice, f"{choice:,}") for choice in setting.choices],
+            coerce=int,
+        )
+    # Strip a preset name. A space in a regular expression can be a part
+    # of the pattern.
+    filters = [] if setting.kind == "regex" else [lambda value: (value or "").strip()]
+    return StringField(
+        setting.label,
+        validators=[Optional() if setting.allow_empty else InputRequired()],
+        filters=filters,
+    )
+
+
+for _setting in SETTINGS.values():
+    setattr(SettingsForm, _setting.name, _settings_field(_setting))
+
+
+class ResetSettingForm(FlaskForm):
+    """Remove the page value of a setting (Settings page)."""
+
+    setting_name = HiddenField(validators=[DataRequired()])
+    reset_submit = SubmitField("Reset to default")
 
 
 class RejectActionForm(FlaskForm):

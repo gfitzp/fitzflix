@@ -39,6 +39,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app, importable_basename, retry_job_id, safe_job_id
 from app.aws_storage import aws_upload, untouched_key_still_claimed
+from app.settings import get_setting
 from app.criterion_catalog import (
     assign_criterion_release,
     criterion_release_lookups,
@@ -699,7 +700,7 @@ def localization_task(
 
             # Upload the untouched file to AWS S3 storage as a backup.
 
-            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+            if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 (
                     file_details["aws_untouched_key"],
                     file_details["aws_untouched_date_uploaded"],
@@ -793,7 +794,7 @@ def localization_task(
                 # a supplemented upload) passes through as it is.
                 # SKIP_FLAC_TWINS turns this step off for passthrough players.
 
-                if current_app.config["SKIP_FLAC_TWINS"]:
+                if get_setting("SKIP_FLAC_TWINS"):
                     current_app.logger.info(
                         f"'{basename}' SKIP_FLAC_TWINS is set. No FLAC twins"
                     )
@@ -2032,7 +2033,7 @@ def finalize_localization(
 
             atmos_handoff = (
                 None
-                if current_app.config["SKIP_ATMOS_TWINS"]
+                if get_setting("SKIP_ATMOS_TWINS")
                 else staged_handoff(staged_output, output_file)
             )
             if atmos_handoff is None:
@@ -2119,7 +2120,7 @@ def finalize_localization(
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
-            if current_app.config["SKIP_ATMOS_TWINS"]:
+            if get_setting("SKIP_ATMOS_TWINS"):
                 current_app.logger.info(
                     f"'{file.basename}' SKIP_ATMOS_TWINS is set. No E-AC-3 Atmos twins"
                 )
@@ -2446,7 +2447,7 @@ def transcode_task(file_id):
                 + preset_file
                 + [
                     "--preset",
-                    current_app.config["HANDBRAKE_PRESET"],
+                    get_setting("HANDBRAKE_PRESET"),
                     "-i",
                     input_file,
                     "-o",
@@ -2461,7 +2462,7 @@ def transcode_task(file_id):
                 + preset_file
                 + [
                     "--preset",
-                    current_app.config["HANDBRAKE_PRESET"],
+                    get_setting("HANDBRAKE_PRESET"),
                     "-i",
                     input_file,
                     "-o",

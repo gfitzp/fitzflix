@@ -127,6 +127,8 @@ class TestConfig(Config):
     ARR_DOWNLOAD_FOLDERS = [os.path.join(_TMP, "downloads")]
     WIKIDATA_SPARQL_URL = "http://127.0.0.1:1"
     HANDBRAKE_PRESET_FILE = None
+    # The developer .env must not lock a setting of the Settings page
+    ENV_LOCKED = frozenset()
 
 
 def _register_mysql_compat_functions(engine):
@@ -257,8 +259,12 @@ def app():
 def clean_state(app):
     """Start each test with an empty Redis. Delete its DB rows afterwards."""
 
+    from app.settings import clear_cache
+
     app.redis.flushdb()
+    clear_cache()
     yield
+    clear_cache()
     from app import db
 
     keep = {"ref_quality", "ref_feature_type", "user"}

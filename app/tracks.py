@@ -34,6 +34,7 @@ from werkzeug.local import LocalProxy
 from app import db, get_app, retry_job_id, safe_job_id
 from app.aws_storage import aws_upload, mark_archive_stale
 from app.models import File, FileAudioTrack, FileSubtitleTrack
+from app.settings import get_setting
 from app.plex_library import enqueue_plex_analyze
 from app.smb_probe import library_path, probe_and_record
 
@@ -1005,7 +1006,7 @@ def mkvpropedit_unlocked(
 
             enqueue_plex_analyze(file_path)
 
-        if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+        if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
             try:
                 (
                     file.aws_untouched_key,
@@ -1886,7 +1887,7 @@ def _remux_audio_plan_unlocked(file_id, plan):
 
             enqueue_plex_analyze(file_path)
 
-            if current_app.config["ARCHIVE_ORIGINAL_MEDIA"]:
+            if get_setting("ARCHIVE_ORIGINAL_MEDIA"):
                 try:
                     (
                         file.aws_untouched_key,

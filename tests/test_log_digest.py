@@ -95,7 +95,9 @@ def test_digest_counts_the_window_and_flags_the_repeats(app, tmp_path, monkeypat
     monkeypatch.setitem(app.config, "LOG_FILE", write_logs(tmp_path, archive, current))
     monkeypatch.setitem(app.config, "LOG_DIGEST_THRESHOLD", 20)
 
-    digest = build_digest(app.config, now=NOW)
+    # get_setting reads the page values from the database
+    with app.app_context():
+        digest = build_digest(app.config, now=NOW)
     assert digest["total"] == 26
     assert [item["count"] for item in digest["flagged"]] == [25]
     flagged = digest["flagged"][0]
@@ -104,7 +106,8 @@ def test_digest_counts_the_window_and_flags_the_repeats(app, tmp_path, monkeypat
     assert [item["count"] for item in digest["top"]] == [25, 1]
 
     # The next digest with the same repeat does not mark it new.
-    again = build_digest(app.config, now=NOW, previous=digest)
+    with app.app_context():
+        again = build_digest(app.config, now=NOW, previous=digest)
     assert again["flagged"][0]["new"] is False
 
 

@@ -36,6 +36,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.availability_alerts import _leaving_set
+from app.settings import get_setting
 from app.leaving_criterion import CRITERION_PROVIDER_ID
 from app.models import (
     DVRChannel,
@@ -617,9 +618,7 @@ def seed_default_channels():
             counts[name] = counts.get(name, 0) + 1
     deep = [name for name, count in counts.items() if count >= MIN_GENRE_FILMS]
     top_movie = sorted(
-        sorted(deep, key=counts.get, reverse=True)[
-            : current_app.config["DVR_GENRE_CHANNELS"]
-        ]
+        sorted(deep, key=counts.get, reverse=True)[: get_setting("DVR_GENRE_CHANNELS")]
     )
 
     rows = [
@@ -666,9 +665,7 @@ def seed_default_channels():
             totals[name] = totals.get(name, 0) + entry["episodes"]
     deep_tv = [name for name, count in totals.items() if count >= MIN_SERIES_EPISODES]
     top_tv = sorted(
-        sorted(deep_tv, key=totals.get, reverse=True)[
-            : current_app.config["DVR_TV_CHANNELS"]
-        ]
+        sorted(deep_tv, key=totals.get, reverse=True)[: get_setting("DVR_TV_CHANNELS")]
     )
     for offset, name in enumerate(top_tv):
         # The "TV" suffix makes sure that the guide never shows a movie
@@ -769,8 +766,8 @@ def build_channel_lineups(day=None):
     with app.app_context():
         redis_client = current_app.redis
         day = day or date.today()
-        film_cap = current_app.config["DVR_CHANNEL_FILMS"]
-        episode_cap = current_app.config["DVR_CHANNEL_EPISODES"]
+        film_cap = get_setting("DVR_CHANNEL_FILMS")
+        episode_cap = get_setting("DVR_CHANNEL_EPISODES")
 
         if not _library_online():
             current_app.logger.error(

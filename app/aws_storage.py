@@ -42,6 +42,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app, retry_job_id, safe_job_id
 from app.email import task_send_email as send_email
+from app.settings import get_setting
 from app.models import (
     File,
     Movie,
@@ -1077,7 +1078,7 @@ class CdnDownloadError(Exception):
 def cdn_download_enabled():
     """Return True if the restore downloads must go through CloudFront."""
 
-    return bool(current_app.config.get("AWS_DOWNLOAD_VIA_CDN"))
+    return bool(get_setting("AWS_DOWNLOAD_VIA_CDN"))
 
 
 def missing_cdn_settings():

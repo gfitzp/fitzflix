@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_page_header.html" import page_header %}
+
+{% block app_content %}
+{{ page_header(title) }}
+<p class="text-muted">These settings change without a restart. Each web and worker process gets a saved value in some seconds. A setting that <code>.env</code> sets is locked here, because <code>.env</code> has priority. To unlock it, remove it from <code>.env</code> and restart. A setting that has no value here and is not in <code>.env</code> uses its default.</p>
+
+{# The reset buttons are outside the main form, because a form cannot
+   contain a form. Each button names its form with the form attribute. #}
+<form action="" method="post" id="settings-form" novalidate>
+	{{ form.hidden_tag() }}
+	<div class="list-group mb-3">
+		{% for row in rows %}
+		{% set setting = row.setting %}
+		{% set field = row.field %}
+		<div class="list-group-item" id="setting-{{ setting.name }}">
+			<div class="row g-2 align-items-center">
+				<div class="col-md-6">
+					{% if setting.kind == "flag" %}
+					<div class="form-check form-switch mb-0">
+						{% if field %}
+						{{ field(class_="form-check-input", role="switch") }}
+						{% else %}
+						<input class="form-check-input" type="checkbox" role="switch" id="{{ setting.name }}" {% if row.value %}checked{% endif %} disabled>
+						{% endif %}
+						<label class="form-check-label fw-semibold" for="{{ setting.name }}">{{ setting.label }}</label>
+					</div>
+					{% else %}
+					<label class="form-label fw-semibold mb-0" for="{{ setting.name }}">{{ setting.label }}</label>
+					{% endif %}
+					<div class="small text-muted">{{ setting.help }}</div>
+					<div class="small"><code>{{ setting.name }}</code></div>
+				</div>
+				<div class="col-md-4">
+					{% if setting.kind != "flag" %}
+					{% if field %}
+					{% if setting.kind == "choice" %}
+					{{ field(class_="form-select form-select-sm" ~ (" is-invalid" if field.errors else "")) }}
+					{% elif setting.kind == "int" %}
+					{{ field(class_="form-control form-control-sm" ~ (" is-invalid" if field.errors else ""), min=setting.minimum, max=setting.maximum) }}
+					{% else %}
+					{{ field(class_="form-control form-control-sm" ~ (" is-invalid" if field.errors else ""), spellcheck="false") }}
+					{% endif %}
+					{% else %}
+					<input class="form-control form-control-sm" type="text" id="{{ setting.name }}" value="{{ '{:,}'.format(row.value) if setting.kind == 'choice' else row.value }}" disabled>
+					{% endif %}
+					{% endif %}
+					{% if field %}
+					{% for error in field.errors %}
+					<div class="small text-danger">{{ error }}</div>
+					{% endfor %}
+					{% endif %}
+				</div>
+				<div class="col-md-2 text-md-end">
+					{% if row.source == "env" %}
+					<span class="badge text-bg-warning">Set in .env</span>
+					{% elif row.source == "page" %}
+					<span class="badge text-bg-primary">Set on this page</span>
+					<div class="small text-muted mt-1">Default: {{ ("on" if row.default else "off") if setting.kind == "flag" else (row.default if row.default != "" else "empty") }}</div>
+					<button type="submit" form="reset-{{ setting.name }}" name="reset_submit" value="Reset to default" class="btn btn-sm btn-outline-secondary mt-1">Reset to default</button>
+					{% else %}
+					<span class="badge text-bg-secondary">Default</span>
+					{% endif %}
+				</div>
+			</div>
+		</div>
+		{% endfor %}
+	</div>
+	{{ form.save_submit(class_="btn btn-primary") }}
+</form>
+
+{% for row in rows if row.source == "page" %}
+<form action="" method="post" id="reset-{{ row.setting.name }}" hidden>
+	{{ reset_form.csrf_token(id=false) }}
+	<input type="hidden" name="setting_name" value="{{ row.setting.name }}">
+</form>
+{% endfor %}
+{% endblock %}

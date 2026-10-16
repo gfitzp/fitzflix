@@ -1,7 +1,7 @@
 import secrets
 
 from urllib.parse import urlparse
-from flask import render_template, flash, redirect, url_for, request, current_app
+from flask import render_template, flash, redirect, url_for, request
 from flask_login import current_user, login_user, logout_user
 
 from app import db
@@ -20,6 +20,7 @@ from app.auth.forms import (
     ResetPasswordRequestForm,
 )
 from app.models import User
+from app.settings import get_setting
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -56,7 +57,7 @@ def login():
                     "auth/login.html",
                     title="Sign In",
                     form=form,
-                    prevent_creation=current_app.config["PREVENT_ACCOUNT_CREATION"],
+                    prevent_creation=get_setting("PREVENT_ACCOUNT_CREATION"),
                 ),
                 429,
             )
@@ -79,7 +80,7 @@ def login():
         "auth/login.html",
         title="Sign In",
         form=form,
-        prevent_creation=current_app.config["PREVENT_ACCOUNT_CREATION"],
+        prevent_creation=get_setting("PREVENT_ACCOUNT_CREATION"),
     )
 
 
@@ -108,7 +109,7 @@ def register():
     # exists, do not show the registration page. Redirect to the login
     # page instead.
 
-    if current_app.config["PREVENT_ACCOUNT_CREATION"] and admin:
+    if get_setting("PREVENT_ACCOUNT_CREATION") and admin:
         return redirect(url_for("auth.login"))
 
     # The form to register a user.

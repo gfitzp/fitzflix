@@ -2634,6 +2634,23 @@ class CatalogExclusion(db.Model):
         return f"<CatalogExclusion '{self.tmdb_id}:{self.title}'>"
 
 
+class AppSetting(db.Model):
+    """A value that an admin set on the Settings page, one row per setting.
+
+    The value is text. app.settings parses it with the type of the
+    setting. The table is in MySQL, not in Redis. Thus, the values are in
+    the nightly backup, and a Redis flush does not remove them. A setting
+    that .env sets ignores its row, because .env wins."""
+
+    name = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.Text, nullable=False)
+    updated_by = db.Column(db.String(120))
+    date_updated = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def __repr__(self):
+        return f"<AppSetting '{self.name}'>"
+
+
 class UserMovieStatus(db.Model):
     """The standing flags of a user on films, one row per (user, film, kind).
 

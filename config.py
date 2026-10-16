@@ -35,6 +35,41 @@ def _mount_urls(raw):
     return urls
 
 
+# The settings that the Admin Settings page can change at runtime. A
+# setting that .env sets is locked on the page, because .env wins. The
+# on/off settings are set when the name is present. Each other setting
+# is set when its value is not empty, as the `or default` parsing below
+# also reads it.
+
+PAGE_FLAGS = (
+    "SKIP_FLAC_TWINS",
+    "SKIP_ATMOS_TWINS",
+    "ARCHIVE_ORIGINAL_MEDIA",
+    "PREVENT_ACCOUNT_CREATION",
+    "AWS_DOWNLOAD_VIA_CDN",
+)
+PAGE_TUNABLES = (
+    "DISK_ALERT_FREE_GB",
+    "LOG_DIGEST_THRESHOLD",
+    "LOG_DIGEST_IGNORE",
+    "EAC3_ATMOS_BITRATE",
+    "DVR_GENRE_CHANNELS",
+    "DVR_CHANNEL_FILMS",
+    "DVR_TV_CHANNELS",
+    "DVR_CHANNEL_EPISODES",
+    "HANDBRAKE_PRESET",
+)
+
+
+def _env_locked():
+    """Return the names of the page settings that the environment sets."""
+
+    return frozenset(
+        [name for name in PAGE_FLAGS if os.environ.get(name) is not None]
+        + [name for name in PAGE_TUNABLES if os.environ.get(name)]
+    )
+
+
 # Do not run the system proxy detection. On macOS it loads an Objective-C
 # framework. That load aborts the process if it occurs inside a forked
 # gunicorn worker.
@@ -305,6 +340,9 @@ class Config(object):
     # job, for example an S3 delete, needs only a stall detector.
     MOVE_TASK_TIMEOUT                   = int(os.environ.get("MOVE_TASK_TIMEOUT") or TWO_HOURS)
     FILE_TASK_TIMEOUT                   = int(os.environ.get("FILE_TASK_TIMEOUT") or TEN_MINUTES)
+
+    # The page settings that .env sets. The Settings page locks them.
+    ENV_LOCKED                          = _env_locked()
 
     # File upload settings
     MAX_CONTENT_LENGTH                  = 1024 * 1024 * 10 # 10 megabytes

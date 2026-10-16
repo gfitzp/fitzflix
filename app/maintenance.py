@@ -23,6 +23,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.email import task_send_email
+from app.settings import get_setting
 
 # This is the app instance of this process. Fitzflix resolves it lazily.
 # Thus, an import of this module from a process that already has an
@@ -272,7 +273,7 @@ def missing_volumes(config):
 def disk_health(config):
     """Report the usage of each distinct volume behind the directories of the app."""
 
-    alert_free_bytes = config["DISK_ALERT_FREE_GB"] * 1024**3
+    alert_free_bytes = get_setting("DISK_ALERT_FREE_GB", config) * 1024**3
     dead_mounts = missing_volumes(config)
     volumes = {}
     for path in _monitored_paths(config):
@@ -1678,7 +1679,7 @@ def health_probe():
                 issues[f"disk:{volume['mount']}"] = (
                     f"Volume {volume['mount']} has only {volume['free']} free "
                     f"({volume['percent']}% used), below the "
-                    f"{config['DISK_ALERT_FREE_GB']} GB alert threshold"
+                    f"{get_setting('DISK_ALERT_FREE_GB', config)} GB alert threshold"
                 )
 
         backup = backup_health(config)

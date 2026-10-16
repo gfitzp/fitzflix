@@ -37,6 +37,8 @@ from app.main.forms import (
     LibrarySearchForm,
     MovieMergeForm,
     RejectActionForm,
+    ResetSettingForm,
+    SettingsForm,
     SyncAWSStorageForm,
     QualityFilterForm,
     RuntimeMismatchForm,
@@ -75,6 +77,14 @@ from app.manual_imports import (
     video_candidates,
 )
 from app.missing_files import missing_best_report, missing_best_summary
+from app.settings import (
+    SETTINGS,
+    clear_setting,
+    locked,
+    resolve,
+    set_setting,
+    value_problem,
+)
 from app.triage import (
     forced_subtitle_candidates,
     lossy_audio_candidates,
@@ -509,6 +519,110 @@ def system_metrics():
     response = make_response(fragment)
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@bp.route("/settings", methods=["GET", "POST"])
+@login_required
+@admin_required
+def settings():
+    """Change the runtime settings. A setting that .env sets is locked.
+
+    A saved value gets to each web and worker process in some seconds,
+    without a restart. The page stores only the values that change."""
+
+    locked_names = [name for name in SETTINGS if locked(name)]
+
+    reset_form = ResetSettingForm()
+    if reset_form.reset_submit.data:
+        name = reset_form.setting_name.data
+        if not reset_form.validate_on_submit():
+            flash("The form is not valid. Load the page again.", "danger")
+        elif name not in SETTINGS:
+            flash("That setting does not exist.", "danger")
+        elif name in locked_names:
+            current_app.logger.warning(
+                f"Settings: {current_user.email} tried to reset {name}, "
+                f"which .env sets"
+            )
+            flash(f"{name} is set in .env. Change it there.", "danger")
+        elif clear_setting(name, current_user.email):
+            flash(f"{name} is now the default value.", "info")
+        else:
+            flash(f"{name} already has the default value.", "info")
+        return redirect(url_for("main.settings"))
+
+    form = SettingsForm()
+    if form.save_submit.data:
+        # A browser does not send a disabled field. Thus, a locked name in
+        # the request is an attempt to change a setting that .env sets.
+
+        tampered = [name for name in locked_names if name in request.form]
+        if tampered:
+            current_app.logger.warning(
+                f"Settings: {current_user.email} tried to change "
+                f"{', '.join(tampered)}, which .env sets"
+            )
+            flash(f"{', '.join(tampered)} is set in .env. Change it there.", "danger")
+            return redirect(url_for("main.settings"))
+
+    for name in locked_names:
+        del form[name]
+
+    if form.save_submit.data and form.validate_on_submit():
+        changes = {}
+        for name in SETTINGS:
+            if name in locked_names:
+                continue
+            value = form[name].data
+            if value == resolve(name)[0]:
+                continue
+            problem = value_problem(name, value)
+            if problem:
+                form[name].errors.append(problem)
+            changes[name] = value
+
+        if not any(form[name].errors for name in changes):
+            for name, value in changes.items():
+                set_setting(name, value, current_user.email)
+            if changes:
+                flash(
+                    f"Saved {len(changes)} change{'s' if len(changes) != 1 else ''}.",
+                    "info",
+                )
+            else:
+                flash("There are no changes to save.", "info")
+            return redirect(url_for("main.settings"))
+        flash("Nothing is saved. Correct the settings that show an error.", "danger")
+    elif form.save_submit.data and form.csrf_token.errors:
+        flash("The form is not valid. Load the page again.", "danger")
+        return redirect(url_for("main.settings"))
+    elif form.save_submit.data:
+        flash("Nothing is saved. Correct the settings that show an error.", "danger")
+    elif request.method == "GET":
+        for name in SETTINGS:
+            if name not in locked_names:
+                form[name].data = resolve(name)[0]
+
+    rows = []
+    for name, setting in SETTINGS.items():
+        value, source = resolve(name)
+        rows.append(
+            {
+                "setting": setting,
+                "value": value,
+                "source": source,
+                "default": current_app.config[name],
+                "field": None if name in locked_names else form[name],
+            }
+        )
+
+    return render_template(
+        "settings.html",
+        title="Settings",
+        form=form,
+        reset_form=reset_form,
+        rows=rows,
+    )
 
 
 @bp.route("/maintenance", methods=["GET", "POST"])
