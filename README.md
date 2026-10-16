@@ -395,6 +395,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `ARR_DOWNLOAD_FOLDERS` | The completed-download folders that the [Manual imports](#manual-imports) page may copy from and delete, separated by colons. Empty by default, so the page can list but not act. |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking. The URL and the token enable the 15-minute history poller. The webhook token protects the `/api/plex/webhook/<token>` endpoint (refer to [Tracking Plex watches](#tracking-plex-watches)). |
+| `PLEX_TRASH_LIMIT` | The Plex refresh empties the trash of each library each 15 minutes. It keeps the trash of a library that holds more items than this value, and it makes a health issue. It also keeps the trash for one run after a share remount. A share that drops during a scan puts the whole share in the trash, and an empty deletes it. The default is 25. |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
 | `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
 | `HANDBRAKE_PRESET_FILE`, `HANDBRAKE_PRESET`, `HANDBRAKE_EXTENSION` | The preset file, the transcode preset, and the output container. The preset file holds custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder, if it exists. With a preset file, select the preset on the Settings page. Without a selection, the first preset in the file applies. Without a preset file, `HANDBRAKE_PRESET` names a built-in HandBrake preset (default `Apple 1080p60 Surround`). |
@@ -409,6 +410,7 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 
 - The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, and `CREATE_ATMOS_TWINS`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
+- The Plex trash limit `PLEX_TRASH_LIMIT`.
 - The media settings `EAC3_ATMOS_BITRATE` and `HANDBRAKE_PRESET`.
 - The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
 

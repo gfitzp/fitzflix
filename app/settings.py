@@ -113,6 +113,16 @@ SETTINGS = {
             allow_empty=True,
         ),
         Setting(
+            "PLEX_TRASH_LIMIT",
+            "Plex trash limit",
+            "The Plex refresh does not empty the trash of a library that holds "
+            "more items. Then a share that drops during a scan cannot delete "
+            "the library.",
+            "int",
+            minimum=0,
+            maximum=100000,
+        ),
+        Setting(
             "EAC3_ATMOS_BITRATE",
             "E-AC-3 Atmos bitrate (bps)",
             "The bitrate of each new E-AC-3 Atmos twin from MediaConvert.",

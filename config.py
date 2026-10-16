@@ -52,6 +52,7 @@ PAGE_TUNABLES = (
     "DISK_ALERT_FREE_GB",
     "LOG_DIGEST_THRESHOLD",
     "LOG_DIGEST_IGNORE",
+    "PLEX_TRASH_LIMIT",
     "EAC3_ATMOS_BITRATE",
     "DVR_GENRE_CHANNELS",
     "DVR_CHANNEL_FILMS",
@@ -285,6 +286,11 @@ class Config(object):
     # this value, not on the percent used. The NAS library volumes are
     # almost full by design.
     DISK_ALERT_FREE_GB                  = int(os.environ.get("DISK_ALERT_FREE_GB") or 100)
+
+    # The Plex refresh does not empty the trash of a library that holds
+    # more items than this value (#280). A share that drops during a scan
+    # puts the whole share in the trash. An empty then deletes it.
+    PLEX_TRASH_LIMIT                    = int(os.environ.get("PLEX_TRASH_LIMIT") or 25)
 
     # The number of proxy hops in front of gunicorn. CloudFront uses 2:
     # the edge server of the viewer, then a second CloudFront layer. Each

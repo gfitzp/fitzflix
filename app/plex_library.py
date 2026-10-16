@@ -17,6 +17,16 @@ correctly has no Movies subfolder. A missing leaf on a healthy mount is
 safe to scan. The mount probes go through volume_alive. That function
 treats a hung SMB stat as dead. It does not hang the worker.
 
+The mount check cannot see a share that drops DURING the scan. The scan
+is asynchronous. Thus, the empty of the trash acts on the result of the
+previous scan. On 2026-10-15 the Movies share dropped for 1 second during
+a scan. Plex put 3,356 movies in the trash and deleted them (#280). Thus,
+the refresh keeps the trash in 2 cases. A mount of the section has a new
+device number since the previous run, which shows a remount. Or the trash
+holds more items than PLEX_TRASH_LIMIT. The second case also makes a
+health issue. The trash empties again on the first run that passes both
+checks.
+
 This module also owns the generic re-analyze. Every task that rewrites
 a library file IN PLACE calls enqueue_plex_analyze. Then Plex reads the
 file again immediately. It does not wait for its own scan and its
@@ -46,12 +56,19 @@ from flask import current_app
 from werkzeug.local import LocalProxy
 
 from app import get_app, retry_job_id, safe_job_id
-from app.maintenance import VOLUMES_ROOT, volume_alive
+from app.maintenance import PLEX_TRASH_HELD_KEY, VOLUMES_ROOT, volume_alive
 from app.plex_titles import _plex_get
+from app.settings import get_setting
 
 app = LocalProxy(get_app)
 
 PAGE_SIZE = 1000
+
+# The device number of each mount that the previous refresh saw (#280).
+# Each new mount gets a new number. Thus, a changed number shows that the
+# share dropped and came back.
+
+MOUNT_IDS_KEY = "fitzflix:plex:mount-ids"
 
 # The item type to page for in each kind of section. In a movie section,
 # the items carry the files. In a show section, the episodes carry them.
@@ -111,12 +128,45 @@ def _plex_command(method, path):
     r.raise_for_status()
 
 
+def _mount_ids(targets):
+    """Return {mount: device number} for each mount that stat can read."""
+
+    ids = {}
+    for target in targets:
+        try:
+            ids[target] = str(os.stat(target).st_dev)
+        except OSError:
+            pass
+    return ids
+
+
+def _trash_count(key, kind):
+    """Return the number of items in the trash of a section.
+
+    The trash filter of Plex also returns an item that keeps another file,
+    for example after an upgrade replaced one copy. Thus, the count can be
+    more than the number of items that an empty deletes. It is never less.
+    """
+
+    payload = _plex_get(
+        f"/library/sections/{key}/all",
+        params={
+            "type": SECTION_ITEM_TYPE[kind],
+            "trash": 1,
+            "X-Plex-Container-Start": 0,
+            "X-Plex-Container-Size": 0,
+        },
+    )
+    return int(payload.get("MediaContainer", {}).get("totalSize") or 0)
+
+
 def refresh_plex_libraries():
     """Scan each movie and show section for changes and empty its trash.
 
     This is a queue task. It works per section. It touches a section only
     when every location that the section declares is mounted and
-    present."""
+    present. It keeps the trash after a remount, and when the trash holds
+    more items than PLEX_TRASH_LIMIT (#280)."""
 
     with app.app_context():
         if not (
@@ -130,11 +180,21 @@ def refresh_plex_libraries():
             current_app.logger.warning(traceback.format_exc())
             return True
 
+        redis = current_app.redis
+        previous_ids = {
+            mount.decode(): device.decode()
+            for mount, device in redis.hgetall(MOUNT_IDS_KEY).items()
+        }
+        seen_ids = {}
+        titles = set()
+        limit = get_setting("PLEX_TRASH_LIMIT")
+
         for section in payload.get("MediaContainer", {}).get("Directory", []) or []:
             if section.get("type") not in ("movie", "show"):
                 continue
             key = section.get("key")
             title = section.get("title")
+            titles.add(title)
             locations = _section_locations(section)
 
             # A dead or hung mount makes a scan dangerous. Skip the whole
@@ -153,14 +213,75 @@ def refresh_plex_libraries():
                 )
                 continue
 
+            # A mount whose device number changed since the previous run
+            # dropped and came back. A scan that ran during the drop put its
+            # items in the trash. The next scan restores them.
+
+            ids = _mount_ids(sorted({_probe_target(path) for path in locations}))
+            seen_ids.update(ids)
+            remounted = sorted(
+                mount
+                for mount, device in ids.items()
+                if previous_ids.get(mount) not in (None, device)
+            )
+
             try:
                 _plex_command("GET", f"/library/sections/{key}/refresh")
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                continue
+
+            if remounted:
+                current_app.logger.warning(
+                    f"Plex library '{title}': scanned, trash kept because "
+                    f"{', '.join(remounted)} was remounted since the last refresh"
+                )
+                continue
+
+            try:
+                count = _trash_count(key, section["type"])
+            except Exception:
+                current_app.logger.warning(traceback.format_exc())
+                current_app.logger.warning(
+                    f"Plex library '{title}': scanned, trash kept because "
+                    f"the trash count is not available"
+                )
+                continue
+
+            if count > limit:
+                message = (
+                    f"Plex library '{title}' keeps its trash. It holds {count} "
+                    f"items, more than PLEX_TRASH_LIMIT ({limit}). A share that "
+                    f"drops during a scan causes this. If the deletions are "
+                    f"real, empty the trash in Plex."
+                )
+
+                # Log the first hold as a warning. The health check sends
+                # the alert and the daily reminder.
+
+                if redis.hset(PLEX_TRASH_HELD_KEY, title, message):
+                    current_app.logger.warning(message)
+                else:
+                    current_app.logger.info(message)
+                continue
+
+            try:
                 _plex_command("PUT", f"/library/sections/{key}/emptyTrash")
+                redis.hdel(PLEX_TRASH_HELD_KEY, title)
                 current_app.logger.info(
                     f"Plex library '{title}': scanned and emptied trash"
                 )
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+
+        if seen_ids:
+            redis.hset(MOUNT_IDS_KEY, mapping=seen_ids)
+
+        # A deleted or renamed library must not keep its health issue.
+
+        for held in redis.hkeys(PLEX_TRASH_HELD_KEY):
+            if held.decode() not in titles:
+                redis.hdel(PLEX_TRASH_HELD_KEY, held)
         return True
 
 

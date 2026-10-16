@@ -83,6 +83,12 @@ PROBES_KEY = "fitzflix:health:probes"
 FAILCOUNT_KEY = "fitzflix:health:failcount"
 ISSUES_KEY = "fitzflix:health:issues"
 ALERTED_KEY_PREFIX = "fitzflix:health:alerted:"
+
+# The Plex libraries whose trash the refresh keeps because it holds too
+# many items (#280). The field is the library title. The value is the
+# health message. The refresh removes the field when it empties the trash.
+
+PLEX_TRASH_HELD_KEY = "fitzflix:plex:trash-held"
 OBSERVER_KEY_PREFIX = "fitzflix:observer:"
 SCHEDULER_KEY_PREFIX = "rq:cron_scheduler:"
 
@@ -1729,6 +1735,11 @@ def health_probe():
 
         if not scheduler_health(redis)["ok"]:
             issues["scheduler"] = "The rq scheduler is not running"
+
+        # A Plex library whose refresh keeps its trash (#280).
+
+        for title, message in redis.hgetall(PLEX_TRASH_HELD_KEY).items():
+            issues[f"plex-trash:{title.decode()}"] = message.decode()
 
         # A warning that repeats all day is a problem that sends no email
         # of its own (#265). The nightly digest flags it. Each flagged

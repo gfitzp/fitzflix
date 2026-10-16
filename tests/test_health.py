@@ -508,3 +508,25 @@ def test_the_roster_matches_the_supervisor_configuration():
         assert roster[program][0] == "fitzflix-handoff"
     workers = sum(maintenance.PROGRAM_COUNTS.get(program, 1) for program in pipeline)
     assert maintenance.EXPECTED_WORKERS["fitzflix-handoff"] == workers == 5
+
+
+def test_health_probe_alerts_on_a_held_plex_trash(health_env):
+    """A Plex library that keeps its trash is a health issue (#280).
+
+    The alert goes out once. The recovery notice goes out when the
+    refresh empties the trash and removes the entry."""
+
+    health_env.redis.hset(
+        maintenance.PLEX_TRASH_HELD_KEY,
+        "Movies",
+        "Plex library 'Movies' keeps its trash. It holds 3356 items",
+    )
+    emails = health_env.run()
+    assert len(emails) == 1
+    assert "Plex library 'Movies' keeps its trash" in emails[0]["body"]
+    assert health_env.run() == []
+
+    health_env.redis.hdel(maintenance.PLEX_TRASH_HELD_KEY, "Movies")
+    recoveries = health_env.run()
+    assert len(recoveries) == 1
+    assert "Recovered:" in recoveries[0]["body"]
