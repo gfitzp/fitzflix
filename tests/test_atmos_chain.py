@@ -129,6 +129,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
 
     import app.atmos as atmos
     from app.pipeline import (
+        CONTINUES_KEY,
         pipeline_trails,
         queue_rows,
         record_job_event,
@@ -155,6 +156,21 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
         (check,) = _scheduled(app, "app.atmos.atmos_check_task")
         assert check.kwargs == {"checks": 0}
         assert check.meta["trail_job"] == job.id
+
+        # rq removes the hash of the first job after its result TTL. The
+        # trail healing took the open chips for orphans and removed them
+        # (Incredibles 2, 2026-10-15). The run keeps them open.
+
+        app.redis.delete(f"rq:job:{job.id}")
+        (trail,) = [
+            t
+            for t in pipeline_trails(app.redis, limit=100)
+            if t["basename"] == file.basename
+        ]
+        assert [(e["stage"], e["status"]) for e in trail["entries"]][-2:] == [
+            ("Encoding E-AC-3 Atmos", "started"),
+            ("Adding Atmos twin", "queued"),
+        ]
 
         # The queue page lists the booked check on the row of the run.
 
@@ -211,6 +227,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
         assert lock
         app.lock_manager.unlock(lock)
         assert not app.redis.exists(atmos.CHAIN_KEY.format(file_id=file.id))
+        assert not app.redis.exists(CONTINUES_KEY.format(job_id=job.id))
         assert not os.path.exists(finish.args[0]["workspace"])
 
 

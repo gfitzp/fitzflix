@@ -44,6 +44,13 @@ from rq import Queue, SimpleWorker
 
 FILE_KEY = "fitzflix:pipeline:file:{digest}"
 ALIAS_KEY = "fitzflix:pipeline:alias:{digest}"
+
+# A job whose chips a later job of the same run continues (the Atmos
+# twin). rq removes the hash of a finished job after its result TTL.
+# Without this key, the healing removed the open chips of the run while
+# MediaConvert encoded.
+
+CONTINUES_KEY = "fitzflix:pipeline:continues:{job_id}"
 ACTIVE_KEY = "fitzflix:pipeline:active"
 TRAIL_TTL_SECONDS = 7 * 86400
 ACTIVE_LIMIT = 100
@@ -706,6 +713,29 @@ def record_stage_for(job_id, basename, own_stage, stage, status):
             pass
 
 
+def keep_trail_open(connection, job_id, ttl):
+    """Keep the open chips of a finished job while a later job continues them."""
+
+    if job_id:
+        connection.set(CONTINUES_KEY.format(job_id=job_id), "1", ex=ttl)
+
+
+def close_trail(connection, job_id):
+    """End keep_trail_open. The run wrote its last chip."""
+
+    if job_id:
+        connection.delete(CONTINUES_KEY.format(job_id=job_id))
+
+
+def _job_alive(connection, job_id):
+    """Return True if rq knows the job, or a later job continues its chips."""
+
+    return bool(
+        connection.exists(f"rq:job:{job_id}")
+        or connection.exists(CONTINUES_KEY.format(job_id=job_id))
+    )
+
+
 def trail_continues(job):
     """Return True if a later job of the run closes the chips of this job.
 
@@ -797,7 +827,7 @@ def _heal_orphaned_entries(connection, digest, entries):
             if entry.get("status") in waiting and entry.get("job")
         }
         if not candidates or all(
-            connection.exists(f"rq:job:{job_id}") for job_id in candidates
+            _job_alive(connection, job_id) for job_id in candidates
         ):
             return entries
 
@@ -818,7 +848,7 @@ def _heal_orphaned_entries(connection, digest, entries):
                     if not (
                         entry.get("status") in waiting
                         and entry.get("job") in candidates
-                        and not pipe.exists(f"rq:job:{entry.get('job')}")
+                        and not _job_alive(pipe, entry.get("job"))
                     )
                 ]
                 if len(kept) == len(trail):

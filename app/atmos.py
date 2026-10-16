@@ -37,7 +37,7 @@ from rq.registry import StartedJobRegistry
 
 from app import db, get_app, safe_job_id
 from app.models import File, FileAudioTrack, FileSubtitleTrack
-from app.pipeline import TaskPhases
+from app.pipeline import TaskPhases, close_trail, keep_trail_open
 from app.plex_library import enqueue_plex_analyze
 
 app = get_app()
@@ -743,6 +743,15 @@ def _start_checks(state, lock):
         state["chain"],
         ex=current_app.config["TRANSCODE_TASK_TIMEOUT"],
     )
+
+    # rq removes the hash of this job soon after it returns. The trail
+    # healing must not take the open chips of the run for orphans.
+
+    keep_trail_open(
+        current_app.redis,
+        state["trail_job"],
+        current_app.config["TRANSCODE_TASK_TIMEOUT"],
+    )
     _book_check(state, lock, 0, None)
 
 
@@ -785,6 +794,7 @@ def _close_run(state, lock):
     except Exception:
         current_app.logger.error(traceback.format_exc())
     current_app.redis.delete(CHAIN_KEY.format(file_id=state["file_id"]))
+    close_trail(current_app.redis, state["trail_job"])
     if lock:
         current_app.lock_manager.unlock(lock)
 
