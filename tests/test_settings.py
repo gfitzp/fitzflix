@@ -9,6 +9,8 @@ settings.
 
 import logging
 
+import pytest
+
 from tests.conftest import ADMIN_EMAIL, page_csrf_token
 
 
@@ -53,11 +55,53 @@ def test_env_locked_reads_presence_for_flags_and_values_for_tunables(monkeypatch
 
     for name in config.PAGE_FLAGS + config.PAGE_TUNABLES:
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("SKIP_FLAC_TWINS", "")
+    monkeypatch.setenv("CREATE_FLAC_TWINS", "")
     monkeypatch.setenv("DISK_ALERT_FREE_GB", "")
     monkeypatch.setenv("HANDBRAKE_PRESET", "Fast 1080p30")
 
-    assert config._env_locked() == {"SKIP_FLAC_TWINS", "HANDBRAKE_PRESET"}
+    assert config._env_locked() == {"CREATE_FLAC_TWINS", "HANDBRAKE_PRESET"}
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, True),
+        ("", True),
+        ("1", True),
+        ("yes", True),
+        ("0", False),
+        ("false", False),
+        (" Off ", False),
+        ("NO", False),
+    ],
+)
+def test_on_by_default_flags_turn_off_only_for_an_off_value(monkeypatch, raw, expected):
+    import config
+
+    if raw is None:
+        monkeypatch.delenv("CREATE_FLAC_TWINS", raising=False)
+    else:
+        monkeypatch.setenv("CREATE_FLAC_TWINS", raw)
+
+    assert config._on_by_default("CREATE_FLAC_TWINS") is expected
+
+
+@pytest.mark.parametrize("aws", [True, False])
+def test_archive_default_follows_the_aws_settings(monkeypatch, aws):
+    """Archival is on by default only when the uploads can succeed."""
+
+    import config
+
+    monkeypatch.delenv("ARCHIVE_ORIGINAL_MEDIA", raising=False)
+    monkeypatch.setenv("AWS_BUCKET", "bucket" if aws else "")
+    monkeypatch.setenv("AWS_ACCESS_KEY", "key")
+    monkeypatch.setenv("AWS_SECRET_KEY", "secret")
+    default = config._aws_uploads_configured()
+
+    assert default is aws
+    assert config._on_by_default("ARCHIVE_ORIGINAL_MEDIA", default) is aws
+    monkeypatch.setenv("ARCHIVE_ORIGINAL_MEDIA", "0")
+    assert config._on_by_default("ARCHIVE_ORIGINAL_MEDIA", default) is False
 
 
 def test_precedence_env_then_page_then_default(app, monkeypatch):
@@ -104,11 +148,11 @@ def test_cache_holds_for_some_seconds(app, monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(settings.time, "monotonic", lambda: clock[0])
     with app.app_context():
-        assert settings.get_setting("SKIP_FLAC_TWINS") is False
-        _store(app, "SKIP_FLAC_TWINS", "1", expire=False)
-        assert settings.get_setting("SKIP_FLAC_TWINS") is False
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
+        _store(app, "CREATE_FLAC_TWINS", "0", expire=False)
+        assert settings.get_setting("CREATE_FLAC_TWINS") is True
         clock[0] += settings.CACHE_SECONDS
-        assert settings.get_setting("SKIP_FLAC_TWINS") is True
+        assert settings.get_setting("CREATE_FLAC_TWINS") is False
 
 
 def _row(page, name):
@@ -161,37 +205,38 @@ def _form(app, client, **changes):
 
 
 def test_save_stores_only_the_changes_and_logs_them(app, admin_client, log_capture):
-    data = _form(app, admin_client, SKIP_ATMOS_TWINS=True, DVR_CHANNEL_FILMS=25)
+    data = _form(app, admin_client, CREATE_ATMOS_TWINS=False, DVR_CHANNEL_FILMS=25)
 
     response = admin_client.post("/settings", data=data)
 
     assert response.status_code == 302
-    assert _stored(app, "SKIP_ATMOS_TWINS") == "1"
+    assert _stored(app, "CREATE_ATMOS_TWINS") == "0"
     assert _stored(app, "DVR_CHANNEL_FILMS") == "25"
-    assert _stored(app, "SKIP_FLAC_TWINS") is None
+    assert _stored(app, "CREATE_FLAC_TWINS") is None
     assert _stored(app, "DISK_ALERT_FREE_GB") is None
     messages = [r.getMessage() for r in log_capture if r.levelno == logging.INFO]
     assert any(
-        ADMIN_EMAIL in m and "SKIP_ATMOS_TWINS" in m and "True" in m for m in messages
+        ADMIN_EMAIL in m and "CREATE_ATMOS_TWINS" in m and "False" in m
+        for m in messages
     )
 
     from app.settings import get_setting
 
     with app.app_context():
-        assert get_setting("SKIP_ATMOS_TWINS") is True
+        assert get_setting("CREATE_ATMOS_TWINS") is False
         assert get_setting("DVR_CHANNEL_FILMS") == 25
 
 
 def test_post_that_changes_a_locked_setting_is_refused(app, admin_client, monkeypatch):
-    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"SKIP_FLAC_TWINS"}))
-    data = _form(app, admin_client, SKIP_ATMOS_TWINS=True)
-    data["SKIP_FLAC_TWINS"] = "y"
+    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"CREATE_FLAC_TWINS"}))
+    data = _form(app, admin_client, CREATE_ATMOS_TWINS=False)
+    data["CREATE_FLAC_TWINS"] = "y"
 
     response = admin_client.post("/settings", data=data, follow_redirects=True)
 
     assert "is set in .env" in response.get_data(as_text=True)
-    assert _stored(app, "SKIP_FLAC_TWINS") is None
-    assert _stored(app, "SKIP_ATMOS_TWINS") is None
+    assert _stored(app, "CREATE_FLAC_TWINS") is None
+    assert _stored(app, "CREATE_ATMOS_TWINS") is None
 
 
 def test_archive_needs_the_aws_settings(app, admin_client, monkeypatch):
@@ -302,13 +347,13 @@ def test_reset_of_a_locked_setting_is_refused(app, admin_client, monkeypatch):
 
 
 def test_post_without_csrf_is_refused(app, admin_client):
-    data = _form(app, admin_client, SKIP_FLAC_TWINS=True)
+    data = _form(app, admin_client, CREATE_FLAC_TWINS=False)
     del data["csrf_token"]
 
     response = admin_client.post("/settings", data=data, follow_redirects=True)
 
     assert "The form is not valid" in response.get_data(as_text=True)
-    assert _stored(app, "SKIP_FLAC_TWINS") is None
+    assert _stored(app, "CREATE_FLAC_TWINS") is None
 
 
 def test_registration_follows_the_page_value(app, client, monkeypatch):

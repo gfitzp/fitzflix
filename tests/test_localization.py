@@ -1641,24 +1641,24 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
         os.remove(staged)
 
 
-@pytest.mark.parametrize("skip", [False, True])
-def test_skip_flac_twins_turns_off_the_flac_step(
-    app, sample_mkv, incoming_dir, monkeypatch, skip
+@pytest.mark.parametrize("create", [True, False])
+def test_create_flac_twins_off_turns_off_the_flac_step(
+    app, sample_mkv, incoming_dir, monkeypatch, create
 ):
-    """SKIP_FLAC_TWINS stops the import from adding FLAC twins.
+    """CREATE_FLAC_TWINS off stops the import from adding FLAC twins.
 
     A passthrough player plays the lossless original. Thus, the FLAC
     twins have no use for it."""
 
     import app.importing as importing
 
-    monkeypatch.setitem(app.config, "SKIP_FLAC_TWINS", skip)
+    monkeypatch.setitem(app.config, "CREATE_FLAC_TWINS", create)
     calls = []
     monkeypatch.setattr(
         importing, "supplement_lossless_tracks", lambda path: calls.append(path)
     )
 
-    basename = f"Flac Skip {skip} (2021) - [DVD].mkv"
+    basename = f"Flac Create {create} (2021) - [DVD].mkv"
     source = os.path.join(incoming_dir, basename)
     with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
         f_out.write(f_in.read())
@@ -1673,17 +1673,17 @@ def test_skip_flac_twins_turns_off_the_flac_step(
         )
         staged = move.args[3]
 
-    assert len(calls) == (0 if skip else 1)
+    assert len(calls) == (1 if create else 0)
     move.delete()
     os.remove(staged)
     if os.path.exists(source):
         os.remove(source)
 
 
-def test_skip_atmos_twins_turns_off_the_atmos_step(
+def test_create_atmos_twins_off_turns_off_the_atmos_step(
     app, sample_mkv, incoming_dir, monkeypatch
 ):
-    """SKIP_ATMOS_TWINS stops the import from queueing the Atmos job.
+    """CREATE_ATMOS_TWINS off stops the import from queueing the Atmos job.
 
     Finalize does not ask for the job, and it does not keep the staged
     copy for it."""
@@ -1691,7 +1691,7 @@ def test_skip_atmos_twins_turns_off_the_atmos_step(
     import app.atmos as atmos
 
     _separate_library_volume(app, monkeypatch)
-    monkeypatch.setitem(app.config, "SKIP_ATMOS_TWINS", True)
+    monkeypatch.setitem(app.config, "CREATE_ATMOS_TWINS", False)
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     offers = []
 

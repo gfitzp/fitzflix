@@ -792,11 +792,11 @@ def localization_task(
                 # future passthrough. A file whose twins already exist (a
                 # MakeMKV "FLAC Plus Original Audio" rip, or a re-download of
                 # a supplemented upload) passes through as it is.
-                # SKIP_FLAC_TWINS turns this step off for passthrough players.
+                # CREATE_FLAC_TWINS turns this step off for passthrough players.
 
-                if get_setting("SKIP_FLAC_TWINS"):
+                if not get_setting("CREATE_FLAC_TWINS"):
                     current_app.logger.info(
-                        f"'{basename}' SKIP_FLAC_TWINS is set. No FLAC twins"
+                        f"'{basename}' CREATE_FLAC_TWINS is off. No FLAC twins"
                     )
                 else:
                     supplement_lossless_tracks(file_path)
@@ -2027,14 +2027,14 @@ def finalize_localization(
             # that job does not read the file back from the NAS. The
             # Atmos decision comes at the end of this task. Until then,
             # keep the staged copy only if staging has space for it. With
-            # SKIP_ATMOS_TWINS, no Atmos job comes. Thus, keep nothing.
+            # CREATE_ATMOS_TWINS off, no Atmos job comes. Thus, keep nothing.
 
             from app.atmos import staged_handoff
 
             atmos_handoff = (
-                None
-                if get_setting("SKIP_ATMOS_TWINS")
-                else staged_handoff(staged_output, output_file)
+                staged_handoff(staged_output, output_file)
+                if get_setting("CREATE_ATMOS_TWINS")
+                else None
             )
             if atmos_handoff is None:
                 _remove_staged_output(staged_output)
@@ -2116,13 +2116,13 @@ def finalize_localization(
             # A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
             # MediaConvert supplement (#55b). The task queues it after the
             # commit. Then the transcode worker sees the complete records.
-            # SKIP_ATMOS_TWINS turns this step off for passthrough players.
+            # CREATE_ATMOS_TWINS turns this step off for passthrough players.
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
-            if get_setting("SKIP_ATMOS_TWINS"):
+            if not get_setting("CREATE_ATMOS_TWINS"):
                 current_app.logger.info(
-                    f"'{file.basename}' SKIP_ATMOS_TWINS is set. No E-AC-3 Atmos twins"
+                    f"'{file.basename}' CREATE_ATMOS_TWINS is off. No E-AC-3 Atmos twins"
                 )
                 _remove_staged_output(staged_output)
             elif not maybe_enqueue_atmos_supplement(

@@ -42,8 +42,8 @@ def _mount_urls(raw):
 # also reads it.
 
 PAGE_FLAGS = (
-    "SKIP_FLAC_TWINS",
-    "SKIP_ATMOS_TWINS",
+    "CREATE_FLAC_TWINS",
+    "CREATE_ATMOS_TWINS",
     "ARCHIVE_ORIGINAL_MEDIA",
     "PREVENT_ACCOUNT_CREATION",
     "AWS_DOWNLOAD_VIA_CDN",
@@ -59,6 +59,32 @@ PAGE_TUNABLES = (
     "DVR_CHANNEL_EPISODES",
     "HANDBRAKE_PRESET",
 )
+
+
+# The values that turn off an on/off setting that is on by default.
+
+OFF_VALUES = ("0", "false", "no", "off")
+
+
+def _on_by_default(name, default=True):
+    """Return an on/off setting that the environment can turn off.
+
+    Without the name, the default applies. With the name, the setting
+    is off for 0, false, no, or off, and on for each other value."""
+
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in OFF_VALUES
+
+
+def _aws_uploads_configured():
+    """Return True if the environment has each AWS upload setting."""
+
+    return all(
+        os.environ.get(key)
+        for key in ("AWS_BUCKET", "AWS_ACCESS_KEY", "AWS_SECRET_KEY")
+    )
 
 
 def _env_locked():
@@ -152,7 +178,9 @@ class Config(object):
     TRUEHDD_BIN                         = os.environ.get("TRUEHDD_BIN") or "/Users/server/bin/truehdd"
 
     # AWS configuration
-    ARCHIVE_ORIGINAL_MEDIA              = os.environ.get("ARCHIVE_ORIGINAL_MEDIA") is not None
+    # On by default when the AWS upload settings are all in .env. Without
+    # them, each upload fails. Thus, the default is off.
+    ARCHIVE_ORIGINAL_MEDIA              = _on_by_default("ARCHIVE_ORIGINAL_MEDIA", _aws_uploads_configured())
     AWS_BUCKET                          = os.environ.get("AWS_BUCKET") or None
     AWS_ACCESS_KEY                      = os.environ.get("AWS_ACCESS_KEY") or None
     AWS_SECRET_KEY                      = os.environ.get("AWS_SECRET_KEY") or None
@@ -176,10 +204,10 @@ class Config(object):
 
     # Audio twins. The import gives each lossless track a FLAC twin, and
     # each TrueHD Atmos track an E-AC-3 Atmos twin. The twins are for
-    # players that cannot pass the original bitstream through. With a
-    # passthrough player, set these to skip the twins.
-    SKIP_FLAC_TWINS                     = os.environ.get("SKIP_FLAC_TWINS") is not None
-    SKIP_ATMOS_TWINS                    = os.environ.get("SKIP_ATMOS_TWINS") is not None
+    # players that cannot pass the original bitstream through. Both are
+    # on by default. With a passthrough player, turn them off.
+    CREATE_FLAC_TWINS                   = _on_by_default("CREATE_FLAC_TWINS")
+    CREATE_ATMOS_TWINS                  = _on_by_default("CREATE_ATMOS_TWINS")
 
     # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
     AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"

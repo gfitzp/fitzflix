@@ -60,7 +60,8 @@ SETTINGS = {
             "ARCHIVE_ORIGINAL_MEDIA",
             "Archive original media",
             "Uploads each imported original file to AWS S3 for archival. "
-            "This needs AWS_BUCKET, AWS_ACCESS_KEY, and AWS_SECRET_KEY in .env.",
+            "This needs AWS_BUCKET, AWS_ACCESS_KEY, and AWS_SECRET_KEY in .env. "
+            "It is on by default when they are there.",
             "flag",
         ),
         Setting(
@@ -71,17 +72,19 @@ SETTINGS = {
             "flag",
         ),
         Setting(
-            "SKIP_FLAC_TWINS",
-            "Skip FLAC twins",
-            "The import does not add a FLAC twin to each lossless track. "
-            "Use this with a passthrough player.",
+            "CREATE_FLAC_TWINS",
+            "Create FLAC twins",
+            "The import adds a FLAC twin to each lossless track, for players "
+            "that cannot play the original. Turn this off with a passthrough "
+            "player.",
             "flag",
         ),
         Setting(
-            "SKIP_ATMOS_TWINS",
-            "Skip E-AC-3 Atmos twins",
-            "The import does not add an E-AC-3 Atmos twin to each TrueHD Atmos "
-            "track. Use this with a passthrough player.",
+            "CREATE_ATMOS_TWINS",
+            "Create E-AC-3 Atmos twins",
+            "The import adds an E-AC-3 Atmos twin to each TrueHD Atmos track, "
+            "for players that cannot play TrueHD. Each twin costs some "
+            "MediaConvert time. Turn this off with a passthrough player.",
             "flag",
         ),
         Setting(

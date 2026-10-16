@@ -388,10 +388,10 @@ TMDB_API_KEY=<your TMDB API key>
 | `ISO_639_2_NATIVE_LANGUAGE` | The three-letter code of *your* language (default `eng`). The import removes the audio tracks and the subtitle tracks in other languages. Foreign-language films are an exception. |
 | `SERVER_NAME`, `PREFERRED_URL_SCHEME` | The hostname and the scheme for the links in emails |
 | `PREVENT_ACCOUNT_CREATION` | Disables the registration page when an admin account exists |
-| `ARCHIVE_ORIGINAL_MEDIA` | Uploads each imported original file to AWS S3 for archival |
+| `ARCHIVE_ORIGINAL_MEDIA` | Uploads each imported original file to AWS S3 for archival. It is on by default when `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are set. To turn it off, set it to `0`. |
 | `AWS_BUCKET`, `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` | The credentials for the archival bucket. Uploads need all three. |
 | `AWS_DOWNLOAD_VIA_CDN`, `CDN_DOMAIN`, `CDN_KEY_PAIR_ID`, `CDN_PRIVATE_KEY` | The CloudFront download path for a library rebuild. The flag turns it on. The other three name the distribution, the CloudFront key pair, and the local private key file (refer to [Downloading through CloudFront](#downloading-through-cloudfront)). |
-| `SKIP_FLAC_TWINS`, `SKIP_ATMOS_TWINS` | Stop the import from adding audio twins. By default, each lossless track gets a FLAC twin, and each TrueHD Atmos track gets an E-AC-3 Atmos twin from MediaConvert. The twins are for players that cannot pass the original audio through. With a passthrough player, the twins have no use. The `flask audio atmos` command still adds an Atmos twin on request. |
+| `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS` | The import adds audio twins. Each lossless track gets a FLAC twin, and each TrueHD Atmos track gets an E-AC-3 Atmos twin from MediaConvert. Both are on by default. The twins are for players that cannot pass the original audio through. With a passthrough player, the twins have no use. To turn one off, set it to `0`. The `flask audio atmos` command still adds an Atmos twin on request. |
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `ARR_DOWNLOAD_FOLDERS` | The completed-download folders that the [Manual imports](#manual-imports) page may copy from and delete, separated by colons. Empty by default, so the page can list but not act. |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking. The URL and the token enable the 15-minute history poller. The webhook token protects the `/api/plex/webhook/<token>` endpoint (refer to [Tracking Plex watches](#tracking-plex-watches)). |
@@ -401,18 +401,18 @@ TMDB_API_KEY=<your TMDB API key>
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |
 
-The on/off settings are `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `SKIP_FLAC_TWINS`, `SKIP_ATMOS_TWINS`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. A setting is on when it is in `.env` with a value of any kind. To turn a setting off, remove it from `.env`. Refer to [System requirements](#system-requirements) for the binary paths.
+The on/off settings that are off by default are `PREVENT_ACCOUNT_CREATION`, `AWS_DOWNLOAD_VIA_CDN`, `MAIL_USE_TLS`, `IGNORE_ETAGS`, and `FORCE_UPLOAD`. Such a setting is on when it is in `.env` with a value of any kind. To turn it off, remove it from `.env`. The on/off settings that are on by default are `CREATE_FLAC_TWINS`, `CREATE_ATMOS_TWINS`, and `ARCHIVE_ORIGINAL_MEDIA`. Such a setting is off when its value in `.env` is `0`, `false`, `no`, or `off`. Each other value turns it on. Refer to [System requirements](#system-requirements) for the binary paths.
 
 #### The Settings page
 
 Some settings can also change on the **Admin > Settings** page, without a restart. Each web and worker process gets a saved value in approximately 5 seconds. The page settings are:
 
-- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `SKIP_FLAC_TWINS`, and `SKIP_ATMOS_TWINS`.
+- The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, and `CREATE_ATMOS_TWINS`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
 - The media settings `EAC3_ATMOS_BITRATE` and `HANDBRAKE_PRESET`.
 - The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
 
-`.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, and it is then on. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
+`.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, with the value that the list above gives. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
 
 The page does not turn on `ARCHIVE_ORIGINAL_MEDIA` until `AWS_BUCKET`, `AWS_ACCESS_KEY`, and `AWS_SECRET_KEY` are in `.env`. It does not turn on `AWS_DOWNLOAD_VIA_CDN` until the `CDN_*` settings are in `.env` and the private key can be read. With `HANDBRAKE_PRESET_FILE`, a preset name must be in that file.
 
