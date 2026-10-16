@@ -1271,7 +1271,24 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
     # done. Thus, only a job with no phases shows this label.
 
     assert server["Adding Atmos twin"] == "Atmos twin complete"
-    sub_stages = {"Copying to staging", "Decoding TrueHD", "Encoding E-AC-3 Atmos"}
+
+    # The Atmos step that writes the result over the library file is not
+    # the move of an import. 2 chips with the same label read as the same
+    # step (Glenn, 2026-10-16).
+
+    assert server["Replacing the library file"] == "Replaced the library file"
+
+    # Each sub-stage that the tasks record needs a past tense. The test
+    # reads the labels from the source. Thus, a new phase cannot skip it.
+
+    app_dir = templates.parent
+    phase = re.compile(r'(?:phases\.enter|record_task_stage)\(\s*"([^"]+)"')
+    sub_stages = {
+        label
+        for path in app_dir.glob("*.py")
+        for label in phase.findall(path.read_text())
+    }
+    assert {"Decoding TrueHD", "Replacing the library file"} <= sub_stages
     labels = {label for label, _ in STAGES.values()} | sub_stages
     assert labels <= set(server)
 

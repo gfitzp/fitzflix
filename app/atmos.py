@@ -1072,14 +1072,14 @@ def _atmos_finish(state, phases):
         # sits next to the real file.
 
         hidden_output = os.path.join(os.path.dirname(file_path), f".{basename}")
-        phases.enter("Moving into the library")
+        phases.enter("Replacing the library file")
         try:
             copy_with_progress(
                 final_staging,
                 hidden_output,
                 job,
                 basename,
-                "Moving supplemented file into the library",
+                "Replacing the library file with the supplemented file",
             )
             os.rename(hidden_output, file_path)
         except BaseException:

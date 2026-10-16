@@ -209,7 +209,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
 
         def fake_finish(state, phases):
             phases.enter("Remuxing")
-            phases.enter("Moving into the library")
+            phases.enter("Replacing the library file")
             return True
 
         monkeypatch.setattr(atmos, "_atmos_finish", fake_finish)
@@ -220,7 +220,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
             ("Decoding TrueHD", "done"),
             ("Encoding E-AC-3 Atmos", "done"),
             ("Remuxing", "done"),
-            ("Moving into the library", "done"),
+            ("Replacing the library file", "done"),
             ("Adding Atmos twin", "done"),
         ]
 
@@ -232,7 +232,7 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
             for t in pipeline_trails(app.redis, limit=100)
             if t["basename"] == file.basename
         ]
-        assert trail["entries"][-1]["stage"] == "Moving into the library"
+        assert trail["entries"][-1]["stage"] == "Replacing the library file"
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
         app.lock_manager.unlock(lock)
