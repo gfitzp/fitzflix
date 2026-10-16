@@ -40,7 +40,7 @@ class Setting:
     name: str
     label: str
     help: str
-    kind: str  # flag, int, choice, text, or regex
+    kind: str  # flag, int, choice, text, regex, or preset
     minimum: int = None
     maximum: int = None
     choices: tuple = ()
@@ -154,9 +154,10 @@ SETTINGS = {
         Setting(
             "HANDBRAKE_PRESET",
             "HandBrake preset",
-            "The name of the transcode preset. With HANDBRAKE_PRESET_FILE, "
-            "the name must be in that file.",
-            "text",
+            "The transcode preset. The list comes from HANDBRAKE_PRESET_FILE. "
+            "Without a selection, the first preset in the file applies. "
+            "Without a file, enter the name of a built-in HandBrake preset.",
+            "preset",
         ),
     )
 }
@@ -238,13 +239,36 @@ def resolve(name, config=None):
     text = _page_values().get(name)
     if text is not None:
         try:
-            return parse_value(SETTINGS[name], text), "page"
+            value = parse_value(SETTINGS[name], text)
         except ValueError:
             current_app.logger.warning(
                 f"The page value of {name} ({text!r}) does not parse, "
                 f"using the default"
             )
-    return config[name], "default"
+        else:
+            presets = handbrake_presets(config) if name == "HANDBRAKE_PRESET" else None
+            if not presets or value in presets:
+                return value, "page"
+            current_app.logger.warning(
+                f"The page value of {name} ({value!r}) is not in "
+                f"HANDBRAKE_PRESET_FILE, using the default"
+            )
+    return default_value(name, config), "default"
+
+
+def default_value(name, config=None):
+    """Return the default of a setting when .env and the page do not set it.
+
+    This is the config.py value. The exception is HANDBRAKE_PRESET with a
+    preset file. If the file does not contain the config.py value, the
+    default is the first preset in the file."""
+
+    config = current_app.config if config is None else config
+    if name == "HANDBRAKE_PRESET":
+        presets = handbrake_presets(config)
+        if presets and config[name] not in presets:
+            return presets[0]
+    return config[name]
 
 
 def get_setting(name, config=None):
@@ -263,6 +287,29 @@ def get_setting(name, config=None):
     return resolve(name, config)[0]
 
 
+def preset_names(export):
+    """Return the preset names in a HandBrake preset export, in file order.
+
+    HandBrake can export a folder of presets. The folder is an entry with
+    "Folder" true, and its presets are in "ChildrenArray". The names of
+    the folders are not presets. Thus, the list has only the presets in
+    them."""
+
+    names = []
+
+    def collect(entries):
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("Folder"):
+                collect(entry.get("ChildrenArray"))
+            elif entry.get("PresetName"):
+                names.append(entry["PresetName"])
+
+    collect(export.get("PresetList") if isinstance(export, dict) else None)
+    return names
+
+
 def handbrake_presets(config=None):
     """Return the preset names in HANDBRAKE_PRESET_FILE, or None without a file."""
 
@@ -272,10 +319,7 @@ def handbrake_presets(config=None):
         return None
     try:
         with open(path) as preset_file:
-            return [
-                preset.get("PresetName")
-                for preset in json.load(preset_file).get("PresetList", [])
-            ]
+            return preset_names(json.load(preset_file))
     except (OSError, ValueError):
         return None
 
@@ -310,7 +354,7 @@ def value_problem(name, value, config=None):
         if not value.strip():
             return "Enter a preset name."
         presets = handbrake_presets(config)
-        if presets is not None and value not in presets:
+        if presets and value not in presets:
             return f"HANDBRAKE_PRESET_FILE does not contain this preset: {presets}."
     return None
 
@@ -351,6 +395,6 @@ def clear_setting(name, username):
     clear_cache()
     current_app.logger.info(
         f"Settings: {username} reset {name} to the default "
-        f"{current_app.config[name]!r} (was {old!r})"
+        f"{default_value(name)!r} (was {old!r})"
     )
     return True

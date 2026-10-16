@@ -87,6 +87,13 @@ def _aws_uploads_configured():
     )
 
 
+def _default_preset_file():
+    """Return handbrake_presets.json in this folder, or None if it is missing."""
+
+    path = os.path.join(basedir, "handbrake_presets.json")
+    return path if os.path.isfile(path) else None
+
+
 def _env_locked():
     """Return the names of the page settings that the environment sets."""
 
@@ -287,8 +294,13 @@ class Config(object):
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
     # Transcoding configuration
+    # The preset file holds the custom presets, exported from HandBrake.
+    # The default is handbrake_presets.json in this folder, if it exists.
+    # The Settings page selects a preset from the file. Without a choice,
+    # the first preset in the file applies. Without a file,
+    # HANDBRAKE_PRESET names a built-in HandBrake preset.
     HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
-    HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or None
+    HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or _default_preset_file()
     HANDBRAKE_EXTENSION                 = os.environ.get("HANDBRAKE_EXTENSION") or "mp4"
 
     # Sonarr configuration

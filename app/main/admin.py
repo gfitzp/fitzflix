@@ -80,6 +80,8 @@ from app.missing_files import missing_best_report, missing_best_summary
 from app.settings import (
     SETTINGS,
     clear_setting,
+    default_value,
+    handbrake_presets,
     locked,
     resolve,
     set_setting,
@@ -611,7 +613,7 @@ def settings():
                 "setting": setting,
                 "value": value,
                 "source": source,
-                "default": current_app.config[name],
+                "default": default_value(name),
                 "field": None if name in locked_names else form[name],
             }
         )
@@ -622,6 +624,7 @@ def settings():
         form=form,
         reset_form=reset_form,
         rows=rows,
+        presets=handbrake_presets(),
     )
 
 

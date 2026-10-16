@@ -36,6 +36,14 @@
 					{% if field %}
 					{% if setting.kind == "choice" %}
 					{{ field(class_="form-select form-select-sm" ~ (" is-invalid" if field.errors else "")) }}
+					{% elif setting.kind == "preset" and presets %}
+					{# The presets come from HANDBRAKE_PRESET_FILE. Without the file,
+					   the field is a text box for a built-in preset name. #}
+					<select class="form-select form-select-sm{{ ' is-invalid' if field.errors else '' }}" id="{{ field.id }}" name="{{ field.name }}">
+						{% for preset in presets %}
+						<option value="{{ preset }}"{% if preset == field.data %} selected{% endif %}>{{ preset }}</option>
+						{% endfor %}
+					</select>
 					{% elif setting.kind == "int" %}
 					{{ field(class_="form-control form-control-sm" ~ (" is-invalid" if field.errors else ""), min=setting.minimum, max=setting.maximum) }}
 					{% else %}

@@ -553,19 +553,24 @@ def check_config(app):
                 f"transcodes will not use the custom preset"
             )
         else:
+            from app.settings import preset_names
+
             try:
                 with open(preset_file) as f:
-                    presets = [
-                        preset.get("PresetName")
-                        for preset in json.load(f).get("PresetList", [])
-                    ]
+                    presets = preset_names(json.load(f))
             except (OSError, ValueError):
                 app.logger.warning(
                     f"HANDBRAKE_PRESET_FILE '{preset_file}' is not a valid "
                     f"HandBrake preset export"
                 )
             else:
-                if app.config["HANDBRAKE_PRESET"] not in presets:
+                # Without a preset in .env, the Settings page selects one
+                # from the file. Thus, only a preset from .env can be
+                # missing from the file.
+                if (
+                    "HANDBRAKE_PRESET" in app.config["ENV_LOCKED"]
+                    and app.config["HANDBRAKE_PRESET"] not in presets
+                ):
                     app.logger.warning(
                         f"HANDBRAKE_PRESET '{app.config['HANDBRAKE_PRESET']}' "
                         f"is not in HANDBRAKE_PRESET_FILE (contains {presets})"
