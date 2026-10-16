@@ -223,6 +223,16 @@ def test_the_run_hands_off_around_the_mediaconvert_wait(app, admin_client, monke
             ("Moving into the library", "done"),
             ("Adding Atmos twin", "done"),
         ]
+
+        # The stored trail keeps the own chip. The painters do not show
+        # it, because the phase chips tell the full story.
+
+        (trail,) = [
+            t
+            for t in pipeline_trails(app.redis, limit=100)
+            if t["basename"] == file.basename
+        ]
+        assert trail["entries"][-1]["stage"] == "Moving into the library"
         lock = app.lock_manager.lock(file.file_identifier(), 1000)
         assert lock
         app.lock_manager.unlock(lock)

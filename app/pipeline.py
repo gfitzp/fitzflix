@@ -152,6 +152,15 @@ CONTINUATIONS = {
 }
 
 
+# The own chips of jobs that record all of their work as TaskPhases
+# chips. While the job waits or runs, its own chip shows that more work
+# comes. When the job is done, its phase chips tell the full story.
+# Thus, pipeline_trails hides the own chip when it is done (Incredibles
+# 2, 2026-10-15). A failed own chip stays red.
+
+PHASED_STAGES = frozenset({"Adding Atmos twin"})
+
+
 def _file_of(job):
     """Return the basename of the file of a pipeline or continuation job, or None."""
 
@@ -1020,8 +1029,15 @@ def pipeline_trails(connection, limit=25):
             if raw_entries is None:
                 continue
             # A deferred attempt does not show. Its retry chip stands for
-            # the stage.
+            # the stage. The done own chip of a phased job does not show
+            # when the job has phase chips. A job with no phase chips
+            # keeps it, because it is the only record of the job.
 
+            phased_jobs = {
+                entry.get("job")
+                for entry in raw_entries
+                if entry.get("job") and entry.get("stage") not in PHASED_STAGES
+            }
             entries = [
                 {
                     "stage": entry.get("stage"),
@@ -1031,6 +1047,11 @@ def pipeline_trails(connection, limit=25):
                 }
                 for entry in raw_entries
                 if entry.get("status") != "deferred"
+                and not (
+                    entry.get("status") == "done"
+                    and entry.get("stage") in PHASED_STAGES
+                    and entry.get("job") in phased_jobs
+                )
             ]
             trails.append(
                 {

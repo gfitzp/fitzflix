@@ -252,6 +252,68 @@ def test_task_sub_stage_rides_the_jobs_trail(app, monkeypatch):
     ]
 
 
+def test_a_phased_jobs_done_own_chip_hides(app, monkeypatch):
+    """Hide the own chip of a phased job when it is done.
+
+    The Atmos job records all of its work as phase chips. Its own chip
+    shows that more work comes while the job waits or runs. When the job
+    is done, the chip tells nothing more (Incredibles 2, 2026-10-15). A
+    failed chip and the chip of a job with no phases stay."""
+
+    import rq
+
+    from app import db
+    from app.pipeline import TaskPhases, pipeline_trails, record_job_event
+
+    def chips(basename):
+        (trail,) = [t for t in pipeline_trails(app.redis) if t["basename"] == basename]
+        return [(entry["stage"], entry["status"]) for entry in trail["entries"]]
+
+    def start(title):
+        with app.app_context():
+            file = make_movie_file(make_movie(title, 2018), "WEBDL-1080p")
+            db.session.commit()
+            job = app.handoff_queue.enqueue(
+                "app.atmos.atmos_supplement_task", args=(file.id,)
+            )
+            basename = file.basename
+        record_job_event(app.redis, job, "started")
+        monkeypatch.setattr(rq, "get_current_job", lambda: job)
+        return job, basename
+
+    job, basename = start("Phased Done")
+    phases = TaskPhases()
+    with app.app_context():
+        phases.enter("Decoding TrueHD")
+    assert chips(basename) == [
+        ("Decoding TrueHD", "started"),
+        ("Adding Atmos twin", "queued"),
+    ]
+    with app.app_context():
+        phases.finish()
+    assert chips(basename) == [
+        ("Decoding TrueHD", "done"),
+        ("Adding Atmos twin", "started"),
+    ]
+    record_job_event(app.redis, job, "done")
+    assert chips(basename) == [("Decoding TrueHD", "done")]
+
+    job, basename = start("Phased Failed")
+    phases = TaskPhases()
+    with app.app_context():
+        phases.enter("Decoding TrueHD")
+        phases.fail()
+    record_job_event(app.redis, job, "failed")
+    assert chips(basename) == [
+        ("Decoding TrueHD", "failed"),
+        ("Adding Atmos twin", "failed"),
+    ]
+
+    job, basename = start("Phased Skip")
+    record_job_event(app.redis, job, "done")
+    assert chips(basename) == [("Adding Atmos twin", "done")]
+
+
 def test_a_mid_flight_rename_merges_the_trail(app):
     """Merge the trail under the new name when the parse renames a file.
 
@@ -1205,7 +1267,8 @@ def test_both_chip_painters_know_the_past_tense_of_each_stage():
 
     # The own chip of the Atmos job comes after all its steps. It reads as
     # the end of the job. "Added Atmos twin" read as 1 more step after the
-    # S3 archive (Glenn, 2026-10-15).
+    # S3 archive (Glenn, 2026-10-15). A job with phase chips hides it when
+    # done. Thus, only a job with no phases shows this label.
 
     assert server["Adding Atmos twin"] == "Atmos twin complete"
     sub_stages = {"Copying to staging", "Decoding TrueHD", "Encoding E-AC-3 Atmos"}
