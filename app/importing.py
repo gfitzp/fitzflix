@@ -791,8 +791,14 @@ def localization_task(
                 # future passthrough. A file whose twins already exist (a
                 # MakeMKV "FLAC Plus Original Audio" rip, or a re-download of
                 # a supplemented upload) passes through as it is.
+                # SKIP_FLAC_TWINS turns this step off for passthrough players.
 
-                supplement_lossless_tracks(file_path)
+                if current_app.config["SKIP_FLAC_TWINS"]:
+                    current_app.logger.info(
+                        f"'{basename}' SKIP_FLAC_TWINS is set. No FLAC twins"
+                    )
+                else:
+                    supplement_lossless_tracks(file_path)
 
                 # Sometimes the input mkv file has no track details, for example
                 # the number of subtitle elements in a subtitle track. Fitzflix
@@ -2019,11 +2025,16 @@ def finalize_localization(
             # The staged copy can go to the Atmos job of this file. Then
             # that job does not read the file back from the NAS. The
             # Atmos decision comes at the end of this task. Until then,
-            # keep the staged copy only if staging has space for it.
+            # keep the staged copy only if staging has space for it. With
+            # SKIP_ATMOS_TWINS, no Atmos job comes. Thus, keep nothing.
 
             from app.atmos import staged_handoff
 
-            atmos_handoff = staged_handoff(staged_output, output_file)
+            atmos_handoff = (
+                None
+                if current_app.config["SKIP_ATMOS_TWINS"]
+                else staged_handoff(staged_output, output_file)
+            )
             if atmos_handoff is None:
                 _remove_staged_output(staged_output)
 
@@ -2104,10 +2115,18 @@ def finalize_localization(
             # A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
             # MediaConvert supplement (#55b). The task queues it after the
             # commit. Then the transcode worker sees the complete records.
+            # SKIP_ATMOS_TWINS turns this step off for passthrough players.
 
             from app.atmos import maybe_enqueue_atmos_supplement
 
-            if not maybe_enqueue_atmos_supplement(file.id, staged_source=atmos_handoff):
+            if current_app.config["SKIP_ATMOS_TWINS"]:
+                current_app.logger.info(
+                    f"'{file.basename}' SKIP_ATMOS_TWINS is set. No E-AC-3 Atmos twins"
+                )
+                _remove_staged_output(staged_output)
+            elif not maybe_enqueue_atmos_supplement(
+                file.id, staged_source=atmos_handoff
+            ):
                 _remove_staged_output(staged_output)
 
             if possibly_foreign_language == True and len(output_audio_tracks) > 1:

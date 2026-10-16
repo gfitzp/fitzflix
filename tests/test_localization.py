@@ -1641,6 +1641,95 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
         os.remove(staged)
 
 
+@pytest.mark.parametrize("skip", [False, True])
+def test_skip_flac_twins_turns_off_the_flac_step(
+    app, sample_mkv, incoming_dir, monkeypatch, skip
+):
+    """SKIP_FLAC_TWINS stops the import from adding FLAC twins.
+
+    A passthrough player plays the lossless original. Thus, the FLAC
+    twins have no use for it."""
+
+    import app.importing as importing
+
+    monkeypatch.setitem(app.config, "SKIP_FLAC_TWINS", skip)
+    calls = []
+    monkeypatch.setattr(
+        importing, "supplement_lossless_tracks", lambda path: calls.append(path)
+    )
+
+    basename = f"Flac Skip {skip} (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+            and job.args[0] == source
+        )
+        staged = move.args[3]
+
+    assert len(calls) == (0 if skip else 1)
+    move.delete()
+    os.remove(staged)
+    if os.path.exists(source):
+        os.remove(source)
+
+
+def test_skip_atmos_twins_turns_off_the_atmos_step(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """SKIP_ATMOS_TWINS stops the import from queueing the Atmos job.
+
+    Finalize does not ask for the job, and it does not keep the staged
+    copy for it."""
+
+    import app.atmos as atmos
+
+    _separate_library_volume(app, monkeypatch)
+    monkeypatch.setitem(app.config, "SKIP_ATMOS_TWINS", True)
+    monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
+    offers = []
+
+    def fake_enqueue(file_id, staged_source=None):
+        offers.append(staged_source)
+        return True
+
+    monkeypatch.setattr(atmos, "maybe_enqueue_atmos_supplement", fake_enqueue)
+
+    basename = "Atmos Skip (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+            and job.args[0] == source
+        )
+        staged = move.args[3]
+        assert videos.move_localized_file(*move.args) is True
+        job = next(
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.finalize_localization"
+            and job.args[0] == source
+        )
+        finalize_localization(*job.args, **job.kwargs)
+
+        output = os.path.join(app.config["LIBRARY_DIR"], job.args[1]["file_path"])
+        assert os.path.exists(output)
+        assert offers == []
+        assert not os.path.exists(staged)
+
+
 def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
     app, sample_mkv, incoming_dir
 ):

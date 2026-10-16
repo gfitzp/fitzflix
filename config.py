@@ -139,6 +139,13 @@ class Config(object):
     CDN_PRIVATE_KEY                     = os.environ.get("CDN_PRIVATE_KEY") or None
     CDN_URL_EXPIRY                      = int(os.environ.get("CDN_URL_EXPIRY") or 3600)
 
+    # Audio twins. The import gives each lossless track a FLAC twin, and
+    # each TrueHD Atmos track an E-AC-3 Atmos twin. The twins are for
+    # players that cannot pass the original bitstream through. With a
+    # passthrough player, set these to skip the twins.
+    SKIP_FLAC_TWINS                     = os.environ.get("SKIP_FLAC_TWINS") is not None
+    SKIP_ATMOS_TWINS                    = os.environ.get("SKIP_ATMOS_TWINS") is not None
+
     # MediaConvert (TrueHD Atmos -> E-AC-3 Atmos supplement pipeline)
     AWS_MEDIACONVERT_PREFIX             = os.environ.get("AWS_MEDIACONVERT_PREFIX") or "mediaconvert-scratch"
     MEDIACONVERT_ENDPOINT               = os.environ.get("MEDIACONVERT_ENDPOINT") or "https://mediaconvert.us-east-1.amazonaws.com"
