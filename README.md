@@ -196,6 +196,8 @@ The **Criterion Collection** page lists the full spine catalog from Wikidata (ap
 
 Fitzflix also keeps a **Criterion Collection collection in Plex**, in each Plex movie library. A film is in the collection when its best copy comes from physical media. The movie must also have a custom poster and a spine number that no other movie shares. The members of a box set share 1 spine, so they are not included. The collection is a mirror. A nightly task at 05:50 adds the films that the rule selects and removes the films that it no longer selects. A change to a custom movie poster runs the task immediately. The task matches each film to its Plex item by the file path. If more than 10% of the films have no Plex item, the task adds films but removes none. `PLEX_CRITERION_COLLECTION` sets the name of the collection.
 
+Each **Criterion box set** also gets a Plex collection, with the name of the set. A film is in it when the movie has the set title and at least 1 main-feature copy on physical media. That copy does not have to be the best copy. A set needs 2 films or more in the library. The box-set collections are mirrors too, and they sort by release date. If a set falls under 2 films, the task does not change its collection.
+
 ## Name That Frame
 
 The library also operates as a guessing game. A nightly task extracts a pool of frames from the films in the library. The task discards black frames and frames with almost no content. An authenticated route serves the pool, so the filename of a frame cannot give a clue to the answer. The **Name That Frame** page shows the frames one at a time. It records the win rate for each difficulty, and you can reset the score.

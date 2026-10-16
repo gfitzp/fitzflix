@@ -1,25 +1,34 @@
-"""Keep the Criterion Collection collection of Plex in step with the library.
+"""Keep the Criterion collections of Plex in step with the library.
 
 Plex collections belong to one library. They do not sync between
-libraries. Thus, this module puts the same collection in every Plex
-movie library from one rule (#281). The rule is the rule of the
-criterion_collection reporting view. A main-feature file belongs in the
-collection when it is the best copy of its title group. Its quality must
-be physical media. Its movie must have a custom poster and a Criterion
-spine number that no other movie shares. Box sets that share 1 spine are not included. There
-is no extras rule, because some box-set films have no extras of their
-own.
+libraries. Thus, this module puts the same collections in every Plex
+movie library from rules in the database.
 
-The collection is a mirror. The task adds the films that the rule
+The main collection (#281) uses the rule of the criterion_collection
+reporting view. A main-feature file belongs in it when it is the best
+copy of its title group. Its quality must be physical media. Its movie
+must have a custom poster and a Criterion spine number that no other
+movie shares. Box sets that share 1 spine are not included. There is no
+extras rule, because some box-set films have no extras of their own.
+
+Each Criterion box set gets its own collection (#282), named for the
+set. A film belongs in it when its movie has the set title and at least
+1 main-feature file on physical media. That file does not have to be
+the best copy. A set needs 2 films or more. The box-set collections sort
+by release date.
+
+Each collection is a mirror. The task adds the films that the rule
 selects, and it removes the films that it no longer selects. The match
 uses the file path, because the guid lookup of this Plex server returns
-nothing. If many selected files have no Plex item, the match is broken.
-Then the task adds only. It does not empty the collection.
+nothing. A film matches through any of its files. If many films have no
+Plex item, the match is broken. Then the task adds only. It does not
+empty the collection.
 """
 
 import os
 import traceback
 import unicodedata
+from collections import defaultdict
 
 import requests
 
@@ -34,14 +43,22 @@ app = LocalProxy(get_app)
 
 PAGE_SIZE = 500
 
-# The task removes nothing from a library where more than this part of
-# the selected files has no Plex item.
+# The task removes nothing from a collection when more than this part of
+# its selected films has no Plex item.
 
 MAX_UNMATCHED_FRACTION = 0.1
 
 # The number of items in each add request. This keeps the URL short.
 
 ADD_BATCH = 100
+
+# A box set with fewer films than this in the library gets no collection.
+
+BOX_SET_MIN_FILMS = 2
+
+# The collectionSort value of Plex for release date.
+
+SORT_RELEASE = "0"
 
 
 def _normal(path):
@@ -82,6 +99,40 @@ def criterion_paths():
     )
     library = current_app.config["LIBRARY_DIR"]
     return {_normal(os.path.join(library, path)) for (path,) in rows}
+
+
+def box_set_groups():
+    """Return {set title: [paths of 1 film, ...]} for each box set.
+
+    A film is in its set when it has at least 1 main-feature file on
+    physical media. Each film gives all of its main-feature paths. Then
+    a film matches through the file that Plex has, also a digital copy.
+    """
+
+    on_disc = (
+        db.session.query(File.movie_id)
+        .join(RefQuality, RefQuality.id == File.quality_id)
+        .filter(File.feature_type_id.is_(None), RefQuality.physical_media == True)
+    )
+    rows = (
+        db.session.query(Movie.criterion_set_title, Movie.id, File.file_path)
+        .join(File, File.movie_id == Movie.id)
+        .filter(
+            Movie.criterion_set_title.isnot(None),
+            File.feature_type_id.is_(None),
+            Movie.id.in_(on_disc),
+        )
+        .all()
+    )
+    library = current_app.config["LIBRARY_DIR"]
+    sets = defaultdict(lambda: defaultdict(set))
+    for set_title, movie_id, path in rows:
+        sets[set_title][movie_id].add(_normal(os.path.join(library, path)))
+    return {
+        set_title: list(films.values())
+        for set_title, films in sets.items()
+        if len(films) >= BOX_SET_MIN_FILMS
+    }
 
 
 def _plex_request(method, path, params=None):
@@ -142,27 +193,20 @@ def _uri(machine, keys):
     )
 
 
-def _sync_section(section, wanted_paths, name, machine):
-    """Make the collection of one movie section match the selected paths."""
+def _sync_collection(section, collections, by_path, groups, name, machine, sort=None):
+    """Make 1 collection of 1 movie section match the selected films.
+
+    Each group holds the paths of 1 film. A film is in the collection
+    through each Plex item that one of its paths matches. The collections
+    argument maps the titles of the section to its collection entries.
+    """
 
     key = section["key"]
     title = section.get("title")
-    by_path = _items_by_path(key)
-    wanted = {by_path[path] for path in wanted_paths if path in by_path}
-    unmatched = len([path for path in wanted_paths if path not in by_path])
+    wanted = {by_path[path] for group in groups for path in group if path in by_path}
+    unmatched = len([group for group in groups if not any(p in by_path for p in group)])
 
-    collection = next(
-        (
-            entry
-            for entry in _plex_get(f"/library/sections/{key}/collections")
-            .get("MediaContainer", {})
-            .get("Metadata", [])
-            or []
-            if entry.get("title") == name
-        ),
-        None,
-    )
-
+    collection = collections.get(name)
     if collection is None:
         if not wanted:
             return
@@ -178,7 +222,8 @@ def _sync_section(section, wanted_paths, name, machine):
                 "uri": _uri(machine, first),
             },
         )
-        collection_key = created["MediaContainer"]["Metadata"][0]["ratingKey"]
+        collection = created["MediaContainer"]["Metadata"][0]
+        collection_key = collection["ratingKey"]
         members = set(first)
         added = len(first)
         current_app.logger.info(f"Plex collection '{name}' created in '{title}'")
@@ -218,25 +263,34 @@ def _sync_section(section, wanted_paths, name, machine):
     # would empty the collection. Remove nothing in that case.
 
     to_remove = sorted(members - wanted)
-    if wanted_paths and unmatched > len(wanted_paths) * MAX_UNMATCHED_FRACTION:
+    if groups and unmatched > len(groups) * MAX_UNMATCHED_FRACTION:
         current_app.logger.warning(
             f"Plex collection '{name}' in '{title}': {unmatched} of "
-            f"{len(wanted_paths)} selected files have no Plex item. The sync "
+            f"{len(groups)} selected films have no Plex item. The sync "
             f"added films but removed none"
         )
         to_remove = []
     for member in to_remove:
         _plex_request("DELETE", f"/library/collections/{collection_key}/items/{member}")
 
+    if sort is not None and collection.get("collectionSort") != sort:
+        _plex_request(
+            "PUT",
+            f"/library/metadata/{collection_key}/prefs",
+            {"collectionSort": sort},
+        )
+
     current_app.logger.info(
-        f"Plex collection '{name}' in '{title}': {len(wanted)} films, "
-        f"{added} added, "
-        f"{len(to_remove)} removed"
+        f"Plex collection '{name}' in '{title}': {len(wanted)} items, "
+        f"{added} added, {len(to_remove)} removed"
     )
 
 
 def sync_criterion_collection():
-    """Mirror the Criterion selection into each Plex movie library (a queue task)."""
+    """Mirror the Criterion collections into each Plex movie library (a queue task).
+
+    These are the main collection (#281) and 1 collection for each box
+    set (#282)."""
 
     with app.app_context():
         if not (
@@ -247,8 +301,18 @@ def sync_criterion_collection():
         try:
             from app.plex_player import _server_machine_id
 
-            name = current_app.config["PLEX_CRITERION_COLLECTION"]
-            wanted_paths = criterion_paths()
+            # The main collection: 1 group for each file. Each edition is
+            # its own Plex item.
+
+            plans = [
+                (
+                    current_app.config["PLEX_CRITERION_COLLECTION"],
+                    [{path} for path in sorted(criterion_paths())],
+                    None,
+                )
+            ]
+            for set_title, groups in sorted(box_set_groups().items()):
+                plans.append((set_title, groups, SORT_RELEASE))
             machine = _server_machine_id()
             sections = _plex_get("/library/sections").get("MediaContainer", {})
         except Exception:
@@ -259,9 +323,26 @@ def sync_criterion_collection():
             if section.get("type") != "movie":
                 continue
             try:
-                _sync_section(section, wanted_paths, name, machine)
+                by_path = _items_by_path(section["key"])
+                collections = {
+                    entry.get("title"): entry
+                    for entry in _plex_get(
+                        f"/library/sections/{section['key']}/collections"
+                    )
+                    .get("MediaContainer", {})
+                    .get("Metadata", [])
+                    or []
+                }
             except Exception:
                 current_app.logger.warning(traceback.format_exc())
+                continue
+            for name, groups, sort in plans:
+                try:
+                    _sync_collection(
+                        section, collections, by_path, groups, name, machine, sort
+                    )
+                except Exception:
+                    current_app.logger.warning(traceback.format_exc())
         return True
 
 
@@ -275,5 +356,5 @@ def enqueue_criterion_sync():
     current_app.maintenance_queue.enqueue(
         "app.plex_collections.sync_criterion_collection",
         job_timeout=600,
-        description="Syncing the Criterion collection into Plex",
+        description="Syncing the Criterion collections into Plex",
     )

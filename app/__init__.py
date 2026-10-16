@@ -407,8 +407,8 @@ def cron_table(config):
             )
         )
 
-        # Mirror the Criterion selection into the collection of each Plex
-        # movie library (#281). It runs after the TMDB renames and the
+        # Mirror the Criterion selections into the collections of each Plex
+        # movie library (#281, #282). It runs after the TMDB renames and the
         # Radarr path check. Then the file paths match the paths of Plex.
 
         table.append(
@@ -416,7 +416,7 @@ def cron_table(config):
                 "50 5 * * *",
                 "app.plex_collections.sync_criterion_collection",
                 600,
-                "Syncing the Criterion collection into Plex",
+                "Syncing the Criterion collections into Plex",
             )
         )
 

@@ -23,6 +23,8 @@ class FakePlex:
         self.collections = {}
         self.writes = []
         self.next_key = 9000
+        # The collectionSort value of each collection ratingKey (#282).
+        self.sorts = {}
 
     def get(self, path, params=None):
         params = params or {}
@@ -46,7 +48,11 @@ class FakePlex:
             return {
                 "MediaContainer": {
                     "Metadata": [
-                        {"title": title, "ratingKey": rk}
+                        {
+                            "title": title,
+                            "ratingKey": rk,
+                            "collectionSort": self.sorts.get(rk),
+                        }
                         for title, (rk, _) in self.collections.get(parts[3], {}).items()
                     ]
                 }
@@ -90,6 +96,9 @@ class FakePlex:
         parts = path.split("/")
         if method == "PUT" and path.endswith("/items"):
             self._members(parts[3]).update(keys)
+            return {}
+        if method == "PUT" and path.endswith("/prefs"):
+            self.sorts[parts[3]] = params["collectionSort"]
             return {}
         if method == "DELETE":
             self._members(parts[3]).discard(parts[5])
@@ -278,3 +287,89 @@ def test_sync_explains_a_collection_that_refuses_items(app, monkeypatch, caplog)
     assert "(ratingKey 500) refuses new items" in caplog.text
     assert fake.collections["5"][NAME][1] == {"12"}
     assert fake.collections["7"][NAME][1] == {"21"}
+
+
+def _box_sets(app):
+    """Make 1 box set with 3 films, and 2 sets that get no collection."""
+
+    from app import db
+
+    with app.app_context():
+        both = make_movie("Olympia Part One", 1938, criterion_set_title="Olympia Films")
+        # The disc copy of this film is gone from the disk. Plex has the
+        # digital copy.
+        disc = make_movie_file(both, "DVD", plex_title="Olympia Part One (1938) disc")
+        web = make_movie_file(both, "WEBDL-1080p")
+        second = make_movie(
+            "Olympia Part Two", 1938, criterion_set_title="Olympia Films"
+        )
+        bluray = make_movie_file(second, "Bluray-1080p")
+
+        # A digital-only film of the set is not in the collection.
+        digital = make_movie(
+            "Olympia Outtakes", 1938, criterion_set_title="Olympia Films"
+        )
+        digital_only = make_movie_file(digital, "WEBRip-1080p")
+
+        # A set with 1 film on disc gets no collection.
+        alone = make_movie("Solo", 1950, criterion_set_title="Lonely Set")
+        lonely = make_movie_file(alone, "Bluray-1080p")
+        db.session.commit()
+        return {
+            "disc": _path(disc),
+            "web": _path(web),
+            "bluray": _path(bluray),
+            "digital_only": _path(digital_only),
+            "lonely": _path(lonely),
+        }
+
+
+def test_box_set_rule(app, monkeypatch):
+    """A set film needs any main-feature file on disc. A set needs 2 films."""
+
+    import app.plex_collections as plex_collections
+
+    paths = _box_sets(app)
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
+    with app.app_context():
+        groups = plex_collections.box_set_groups()
+    assert set(groups) == {"Olympia Films"}
+    assert sorted(sorted(group) for group in groups["Olympia Films"]) == sorted(
+        [sorted([paths["disc"], paths["web"]]), [paths["bluray"]]]
+    )
+
+
+def test_box_set_collection_mirrors_and_sorts_by_release(app, monkeypatch):
+    """The set collection matches a film through its digital copy.
+
+    It removes a stale member, and it sorts by release date. A second
+    run writes nothing."""
+
+    paths = _box_sets(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {
+            "5": (
+                "movie",
+                "Movies",
+                {
+                    "31": paths["web"],
+                    "32": paths["bluray"],
+                    "33": paths["digital_only"],
+                    "34": paths["lonely"],
+                },
+            ),
+        },
+    )
+    fake.collections["5"] = {"Olympia Films": ["600", {"33"}]}
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"]["Olympia Films"][1] == {"31", "32"}
+    assert fake.sorts["600"] == "0"
+    assert "Lonely Set" not in fake.collections["5"]
+    assert NAME not in fake.collections["5"]
+
+    fake.writes.clear()
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.writes == []
