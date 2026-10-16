@@ -43,6 +43,7 @@ from app.models import (
 )
 from app.main import bp
 from app.main.helpers import admin_required
+from app.plex_collections import enqueue_criterion_sync
 
 
 def save_custom_poster(uploaded_data, poster_filename, custom_poster_dir):
@@ -156,6 +157,11 @@ def _assign_movie_poster(movie, uploaded_data):
         movie.custom_poster = poster_filename
         db.session.commit()
 
+        # A custom poster is part of the Criterion rule (#281).
+
+        if movie.criterion_spine_number:
+            enqueue_criterion_sync()
+
     except Exception:
         current_app.logger.error(traceback.format_exc())
         db.session.rollback()
@@ -245,6 +251,8 @@ def _remove_movie_poster(movie):
         shutil.rmtree(_custom_poster_dir("movie", movie.id), ignore_errors=True)
         movie.custom_poster = None
         db.session.commit()
+        if movie.criterion_spine_number:
+            enqueue_criterion_sync()
 
     except Exception:
         current_app.logger.error(traceback.format_exc())

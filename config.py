@@ -292,6 +292,10 @@ class Config(object):
     # puts the whole share in the trash. An empty then deletes it.
     PLEX_TRASH_LIMIT                    = int(os.environ.get("PLEX_TRASH_LIMIT") or 25)
 
+    # The Plex collection that the Criterion sync keeps in each movie
+    # library (#281).
+    PLEX_CRITERION_COLLECTION           = os.environ.get("PLEX_CRITERION_COLLECTION") or "Criterion Collection Films"
+
     # The number of proxy hops in front of gunicorn. CloudFront uses 2:
     # the edge server of the viewer, then a second CloudFront layer. Each
     # adds 1 X-Forwarded-For entry (measured 2026-09-25, #263). ProxyFix

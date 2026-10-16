@@ -407,6 +407,19 @@ def cron_table(config):
             )
         )
 
+        # Mirror the Criterion selection into the collection of each Plex
+        # movie library (#281). It runs after the TMDB renames and the
+        # Radarr path check. Then the file paths match the paths of Plex.
+
+        table.append(
+            (
+                "50 5 * * *",
+                "app.plex_collections.sync_criterion_collection",
+                600,
+                "Syncing the Criterion collection into Plex",
+            )
+        )
+
     # Reconcile the Plex and Fitzflix watchlists in both directions. The
     # account-level discover API needs only the token, not the server.
 
