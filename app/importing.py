@@ -43,7 +43,7 @@ from app.settings import get_setting
 from app.criterion_catalog import (
     assign_criterion_release,
     criterion_release_lookups,
-    get_criterion_collection_from_wikidata,
+    stored_criterion_releases,
 )
 from app.email import send_email as send_email_async
 from app.email import task_send_email as send_email
@@ -1737,12 +1737,12 @@ def finalize_localization(
                     )
                     current_app.logger.info(f"{file} Creating {movie}")
 
-                    # Check the new movie against the (cached) Criterion list.
-                    # A Wikidata error must never fail an import. The monthly
+                    # Check the new movie against the stored Criterion list.
+                    # The import never queries Wikidata (#283). The monthly
                     # refresh updates the movie later.
 
                     try:
-                        criterion_collection = get_criterion_collection_from_wikidata()
+                        criterion_collection = stored_criterion_releases()
                     except Exception:
                         current_app.logger.warning(traceback.format_exc())
                         criterion_collection = []

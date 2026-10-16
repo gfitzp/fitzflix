@@ -530,3 +530,21 @@ def test_health_probe_alerts_on_a_held_plex_trash(health_env):
     recoveries = health_env.run()
     assert len(recoveries) == 1
     assert "Recovered:" in recoveries[0]["body"]
+
+
+def test_health_probe_alerts_on_old_criterion_releases(health_env):
+    """A stored copy older than 15 days means the weekly fetch fails (#283)."""
+
+    import time
+
+    from app.criterion_catalog import CRITERION_FETCHED_KEY
+
+    health_env.redis.set(CRITERION_FETCHED_KEY, int(time.time()) - 20 * 86400)
+    emails = health_env.run()
+    assert len(emails) == 1
+    assert "The stored Criterion releases are 20 days old" in emails[0]["body"]
+
+    health_env.redis.set(CRITERION_FETCHED_KEY, int(time.time()))
+    recoveries = health_env.run()
+    assert len(recoveries) == 1
+    assert "Recovered:" in recoveries[0]["body"]

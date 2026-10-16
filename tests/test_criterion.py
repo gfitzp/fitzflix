@@ -879,3 +879,86 @@ def test_box_set_members_get_set_spine_and_title(app, monkeypatch):
         curated = db.session.get(Movie, curated_id)
         assert curated.criterion_spine_number == 1000
         assert curated.criterion_set_title == "My Own Set Name"
+
+
+def _no_wikidata(monkeypatch):
+    """Make any Wikidata query fail the test."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    def explode(*args, **kwargs):
+        raise AssertionError("a reader queried Wikidata")
+
+    monkeypatch.setattr(criterion_catalog.requests, "get", explode)
+
+
+def test_stored_releases_never_query_wikidata(app, monkeypatch):
+    """A reader gets the stored copy. Without one, it queues 1 refresh (#283)."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
+    _no_wikidata(monkeypatch)
+    with app.app_context():
+        assert criterion_catalog.stored_criterion_releases() == []
+        assert criterion_catalog.stored_criterion_releases() == []
+        assert len(app.request_queue) == 1
+        job = app.request_queue.jobs[0]
+        assert job.func_name == "app.criterion_catalog.refresh_criterion_releases"
+        app.request_queue.empty()
+
+        app.redis.set(videos.CRITERION_CACHE_KEY, json.dumps([{"spine_number": 7}]))
+        assert criterion_catalog.stored_criterion_releases() == [{"spine_number": 7}]
+
+
+def test_refresh_stores_a_copy_with_no_expiry(app, monkeypatch):
+    """The weekly task stores the releases with no TTL and a fetch time."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
+    fake_sparql(monkeypatch)
+    app.redis.set(criterion_catalog.CRITERION_QUEUED_KEY, 1)
+
+    assert criterion_catalog.refresh_criterion_releases() is True
+    assert len(json.loads(app.redis.get(videos.CRITERION_CACHE_KEY))) == 3
+    assert app.redis.ttl(videos.CRITERION_CACHE_KEY) == -1
+    assert app.redis.get(criterion_catalog.CRITERION_FETCHED_KEY)
+    assert not app.redis.exists(criterion_catalog.CRITERION_QUEUED_KEY)
+    with app.app_context():
+        assert criterion_catalog.criterion_releases_age_days(app.redis) < 0.01
+
+
+def test_failed_or_short_fetch_keeps_the_last_good_copy(app, monkeypatch):
+    """An error, or a list under half of the stored size, keeps the old copy."""
+
+    import app.criterion_catalog as criterion_catalog
+
+    monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
+    good = json.dumps([{"spine_number": n} for n in range(10)])
+    app.redis.set(videos.CRITERION_CACHE_KEY, good)
+
+    # The fake returns 3 releases. That is less than half of the 10 stored.
+    fake_sparql(monkeypatch)
+    assert criterion_catalog.refresh_criterion_releases() is True
+    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+
+    def explode(*args, **kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(criterion_catalog.requests, "get", explode)
+    assert criterion_catalog.refresh_criterion_releases() is True
+    assert app.redis.get(videos.CRITERION_CACHE_KEY).decode() == good
+
+
+def test_criterion_page_without_a_copy_does_not_wait(app, admin_client, monkeypatch):
+    """The page renders the library rows and queues the fetch (#283)."""
+
+    monkeypatch.setitem(app.config, "WIKIDATA_SPARQL_URL", "https://wikidata.test")
+    _no_wikidata(monkeypatch)
+
+    response = admin_client.get("/library/criterion-collection")
+    assert response.status_code == 200
+    with app.app_context():
+        assert len(app.request_queue) == 1
+        app.request_queue.empty()

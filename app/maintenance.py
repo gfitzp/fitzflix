@@ -1736,6 +1736,21 @@ def health_probe():
         if not scheduler_health(redis)["ok"]:
             issues["scheduler"] = "The rq scheduler is not running"
 
+        # The stored Criterion releases are old. The weekly fetch failed
+        # 2 times or more (#283). The page still works from the old copy.
+
+        from app.criterion_catalog import (
+            CRITERION_STALE_DAYS,
+            criterion_releases_age_days,
+        )
+
+        age = criterion_releases_age_days(redis)
+        if age is not None and age > CRITERION_STALE_DAYS:
+            issues["criterion-releases"] = (
+                f"The stored Criterion releases are {int(age)} days old. The "
+                f"weekly Wikidata fetch is failing"
+            )
+
         # A Plex library whose refresh keeps its trash (#280).
 
         for title, message in redis.hgetall(PLEX_TRASH_HELD_KEY).items():

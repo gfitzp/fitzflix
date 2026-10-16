@@ -134,8 +134,8 @@ from app.videos import (
     clear_not_interested,
     clear_watchlist,
     criterion_release_lookups,
-    get_criterion_collection_from_wikidata,
     language_names,
+    stored_criterion_releases,
     library_language_choices,
     resolve_language_code,
     star_rating_fields,
@@ -902,12 +902,12 @@ def criterion_collection():
         filter_status = "all"
     page = max(request.args.get("page", 1, type=int) or 1, 1)
 
-    # The whole spine catalog from the weekly Wikidata cache. The page
-    # degrades to library-only rows if the cache is cold and Fitzflix
-    # cannot reach Wikidata.
+    # The whole spine catalog from the stored Wikidata copy. The page never
+    # queries Wikidata (#283). Without a stored copy, the page shows the
+    # library rows only, and a refresh goes on the queue.
 
     try:
-        releases = get_criterion_collection_from_wikidata()
+        releases = stored_criterion_releases()
     except Exception:
         current_app.logger.warning(traceback.format_exc())
         releases = []

@@ -159,6 +159,14 @@ def cron_table(config):
             3600,
             "Refreshing Criterion Collection information",
         ),
+        # Fetch the Criterion releases from Wikidata each Thursday (#283). The
+        # page and the import read only this stored copy.
+        (
+            "20 4 * * 4",
+            "app.criterion_catalog.refresh_criterion_releases",
+            900,
+            "Fetching the Criterion Collection releases from Wikidata",
+        ),
         # Sweep orphaned partial files weekly, after the backup window.
         (
             "0 1 * * 0",

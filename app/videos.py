@@ -59,12 +59,14 @@ from app.aws_storage import (
 
 from app.criterion_catalog import (
     CRITERION_CACHE_KEY,
-    CRITERION_CACHE_SECONDS,
+    CRITERION_FETCHED_KEY,
     assign_criterion_release,
     create_criterion_catalog_records,
     criterion_release_lookups,
     get_criterion_collection_from_wikidata,
     refresh_criterion_collection_info,
+    refresh_criterion_releases,
+    stored_criterion_releases,
     wikidata_retry_after_seconds,
 )
 from app.diary import (
@@ -158,12 +160,14 @@ __all__ = [
     "untouched_key_still_claimed",
     "upload_task",
     "CRITERION_CACHE_KEY",
-    "CRITERION_CACHE_SECONDS",
+    "CRITERION_FETCHED_KEY",
     "assign_criterion_release",
     "create_criterion_catalog_records",
     "criterion_release_lookups",
     "get_criterion_collection_from_wikidata",
     "refresh_criterion_collection_info",
+    "refresh_criterion_releases",
+    "stored_criterion_releases",
     "wikidata_retry_after_seconds",
     "_normalize_title",
     "_pick_tmdb_match",

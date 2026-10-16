@@ -551,6 +551,8 @@ The Criterion data comes from [Wikidata](https://www.wikidata.org). Fitzflix mat
 
 The refresh only adds to the values that you set by hand. It never clears a spine number, and it never replaces a set title that you entered. The in-print flag and the disc-owned flag keep their values. A full refresh also makes library records for the spine releases that Fitzflix did not know before. Thus, new titles show on the Criterion catalog page automatically.
 
+Fitzflix keeps the last good copy of the Wikidata release list in Redis, with no expiry. A task fetches the list again each Thursday at 04:20. A failed fetch keeps the old copy. A fetch that returns less than half of the stored releases also keeps it. The Criterion page and the import read only the stored copy, so a slow Wikidata cannot stall them. If there is no stored copy, the page shows the library rows only, and 1 fetch goes on the queue. The health check reports a copy that is more than 15 days old.
+
 ## AWS infrastructure
 
 Fitzflix keeps all its AWS data in one S3 bucket (`AWS_BUCKET`). The bucket has these prefixes:

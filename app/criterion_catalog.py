@@ -8,6 +8,12 @@ the list to the library. It marks the releases of owned films. It
 creates file-less catalog records for spines that the library does not
 have. It keeps the inventory of /library/criterion-collection current.
 
+The release list is the last good copy (#283). It has no expiry. A
+weekly task fetches it again. A failed fetch keeps the old copy. The
+page and the import never query Wikidata. They read the stored copy
+through stored_criterion_releases. If there is no copy, they get an
+empty list, and 1 refresh goes on the user-request queue.
+
 app.videos exports every name in this module again. Thus, stored rq
 job strings ("app.videos.refresh_criterion_collection_info") and
 import sites continue to resolve. The record-creation path uses the
@@ -66,8 +72,16 @@ GROUP BY ?spine ?set ?setLabel ?film ?filmLabel ?tmdbId
 
 CRITERION_CACHE_KEY = "fitzflix:criterion:releases"
 
+# The time of the last good fetch, in seconds since the epoch (#283). The
+# health check reports a copy that is older than CRITERION_STALE_DAYS.
 
-CRITERION_CACHE_SECONDS = 7 * 86400
+CRITERION_FETCHED_KEY = "fitzflix:criterion:fetched-at"
+CRITERION_STALE_DAYS = 15
+
+# A queued refresh holds this key. Thus, many page views queue 1 refresh.
+
+CRITERION_QUEUED_KEY = "fitzflix:criterion:refresh-queued"
+CRITERION_QUEUED_SECONDS = 3600
 
 
 def wikidata_retry_after_seconds(response, default=60, cap=300):
@@ -146,9 +160,10 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
 
     Access obeys the data-access guidelines of Wikidata. The client sends
     a descriptive User-Agent with a contact address. It sends 1 SPARQL
-    query with a narrow scope. Redis caches the results for 1 week. Thus,
-    the per-import lookups never query the endpoint again. The monthly
-    scheduled refresh forces a new fetch.
+    query with a narrow scope. Redis keeps the last good result with no
+    expiry. The weekly refresh and the monthly refresh force a new fetch.
+    Only the queue tasks call this function. The page and the import
+    call stored_criterion_releases.
     """
 
     url = current_app.config["WIKIDATA_SPARQL_URL"]
@@ -178,16 +193,83 @@ def get_criterion_collection_from_wikidata(force_refresh=False):
             ).strip() or None
             criterion_collection.append(release)
 
-    current_app.redis.set(
-        CRITERION_CACHE_KEY,
-        json.dumps(criterion_collection),
-        ex=CRITERION_CACHE_SECONDS,
-    )
+    # A glitch of the endpoint can return few rows or none. Such a list
+    # must not replace the last good copy.
+
+    stored = current_app.redis.get(CRITERION_CACHE_KEY)
+    stored_count = len(json.loads(stored)) if stored else 0
+    if len(criterion_collection) < max(1, stored_count // 2):
+        raise ValueError(
+            f"Wikidata returned {len(criterion_collection)} Criterion releases, "
+            f"against {stored_count} stored. The stored copy stays"
+        )
+
+    current_app.redis.set(CRITERION_CACHE_KEY, json.dumps(criterion_collection))
+    current_app.redis.set(CRITERION_FETCHED_KEY, int(time.time()))
     current_app.logger.info(
         f"Fetched {len(criterion_collection)} Criterion Collection releases "
         f"from Wikidata"
     )
     return criterion_collection
+
+
+def stored_criterion_releases():
+    """Return the stored releases. Never query Wikidata (#283).
+
+    If there is no stored copy, return an empty list and queue 1 refresh.
+    The page and the import call this function. Then a slow Wikidata
+    cannot stall a web request or an import.
+    """
+
+    cached = current_app.redis.get(CRITERION_CACHE_KEY)
+    if cached:
+        return json.loads(cached)
+    enqueue_criterion_releases_refresh()
+    return []
+
+
+def enqueue_criterion_releases_refresh():
+    """Queue 1 fetch of the releases, unless a fetch is already queued."""
+
+    if not current_app.config.get("WIKIDATA_SPARQL_URL"):
+        return
+    if not current_app.redis.set(
+        CRITERION_QUEUED_KEY, 1, nx=True, ex=CRITERION_QUEUED_SECONDS
+    ):
+        return
+    current_app.request_queue.enqueue(
+        "app.criterion_catalog.refresh_criterion_releases",
+        job_timeout=900,
+        description="Fetching the Criterion Collection releases from Wikidata",
+    )
+
+
+def refresh_criterion_releases():
+    """Fetch the releases again and store them (a queue task, #283).
+
+    A failed fetch keeps the last good copy. The task runs weekly, and
+    when a reader finds no stored copy."""
+
+    with app.app_context():
+        try:
+            get_criterion_collection_from_wikidata(force_refresh=True)
+        except Exception:
+            current_app.logger.warning(traceback.format_exc())
+            current_app.logger.warning(
+                "The Criterion releases fetch failed. The last good copy stays"
+            )
+        finally:
+            current_app.redis.delete(CRITERION_QUEUED_KEY)
+        return True
+
+
+def criterion_releases_age_days(redis):
+    """Return the age in days of the stored releases, or None if unknown."""
+
+    fetched = redis.get(CRITERION_FETCHED_KEY)
+    if not fetched:
+        return None
+    return (time.time() - int(fetched)) / 86400
 
 
 def criterion_release_lookups(criterion_collection):
