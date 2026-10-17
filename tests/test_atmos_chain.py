@@ -280,3 +280,29 @@ def test_a_run_between_its_jobs_is_not_queued_again(app, monkeypatch):
         assert atmos.atmos_supplement_task(file.id) is True
         app.import_queue.remove(job.id)
         assert atmos.maybe_enqueue_atmos_supplement(file.id) is False
+
+
+def test_the_import_queues_the_twin_on_the_handoff_queue(app, monkeypatch):
+    """Put the twin of a new import on the handoff queue, and a sweep on the import queue.
+
+    The file of a new import is already in the pipeline. On the import
+    queue, its twin waited behind each new import (High Society: 5
+    hours). A library sweep stays on the import queue. A job on either
+    queue stops a second job for the same file."""
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, job, _ = _setup(app, monkeypatch, "Chain Queue")
+        assert job.origin == "fitzflix-import"
+        app.import_queue.remove(job.id)
+
+        assert (
+            atmos.maybe_enqueue_atmos_supplement(file.id, queue=app.handoff_queue)
+            is True
+        )
+        (handoff,) = [j for j in app.handoff_queue.jobs if j.args == (file.id,)]
+        assert handoff.func_name == "app.atmos.atmos_supplement_task"
+        assert atmos.maybe_enqueue_atmos_supplement(file.id) is False
+        assert not [j for j in app.import_queue.jobs if j.args == (file.id,)]
+        handoff.delete()

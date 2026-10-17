@@ -2115,7 +2115,9 @@ def finalize_localization(
 
             # A TrueHD Atmos track without its E-AC-3 Atmos twin gets the
             # MediaConvert supplement (#55b). The task queues it after the
-            # commit. Then the transcode worker sees the complete records.
+            # commit. Then the Atmos job sees the complete records. The job
+            # goes on the handoff queue. The file is already in the
+            # pipeline. Thus, its twin does not wait behind the new imports.
             # CREATE_ATMOS_TWINS turns this step off for passthrough players.
 
             from app.atmos import maybe_enqueue_atmos_supplement
@@ -2126,7 +2128,9 @@ def finalize_localization(
                 )
                 _remove_staged_output(staged_output)
             elif not maybe_enqueue_atmos_supplement(
-                file.id, staged_source=atmos_handoff
+                file.id,
+                staged_source=atmos_handoff,
+                queue=current_app.handoff_queue,
             ):
                 _remove_staged_output(staged_output)
 

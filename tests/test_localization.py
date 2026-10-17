@@ -1597,9 +1597,11 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
     _separate_library_volume(app, monkeypatch)
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", reserve)
     offers = []
+    queues = []
 
-    def fake_enqueue(file_id, staged_source=None):
+    def fake_enqueue(file_id, staged_source=None, queue=None):
         offers.append(staged_source)
+        queues.append(queue.name if queue else None)
         return queued
 
     monkeypatch.setattr(atmos, "maybe_enqueue_atmos_supplement", fake_enqueue)
@@ -1630,6 +1632,7 @@ def test_finalize_gives_the_staged_copy_to_the_atmos_job(
         output = os.path.join(app.config["LIBRARY_DIR"], job.args[1]["file_path"])
         assert os.path.exists(output)
         assert len(offers) == 1
+        assert queues == ["fitzflix-handoff"]
         if offered:
             assert offers[0]["path"] == staged
             assert offers[0]["size"] == os.path.getsize(output)
@@ -1695,7 +1698,7 @@ def test_create_atmos_twins_off_turns_off_the_atmos_step(
     monkeypatch.setattr(atmos, "STAGED_HANDOFF_RESERVE_BYTES", 0)
     offers = []
 
-    def fake_enqueue(file_id, staged_source=None):
+    def fake_enqueue(file_id, staged_source=None, queue=None):
         offers.append(staged_source)
         return True
 

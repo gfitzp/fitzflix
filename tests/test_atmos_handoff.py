@@ -167,6 +167,40 @@ def test_a_deferred_atmos_job_keeps_its_staged_copy(app):
     os.remove(staged)
 
 
+def test_a_deferred_handoff_job_retries_on_the_handoff_queue(app, monkeypatch):
+    """Book the retry of a handoff-queue job on the handoff queue.
+
+    A retry on the import queue puts the twin behind the new imports
+    again."""
+
+    from rq.registry import ScheduledJobRegistry
+
+    import app.atmos as atmos
+
+    with app.app_context():
+        file, library, staged = _library_and_staged(app, "Handoff Origin")
+        os.remove(staged)
+        app.request_queue.enqueue(
+            "app.videos.refresh_tmdb_info",
+            args=("Movies", file.movie_id, None),
+            description="Refreshing TMDB data for 'Handoff Origin (2021)'",
+        )
+        monkeypatch.setattr(atmos, "atmos_supplement_candidates", lambda rows: True)
+        assert (
+            atmos.maybe_enqueue_atmos_supplement(file.id, queue=app.handoff_queue)
+            is True
+        )
+        (job,) = [j for j in app.handoff_queue.jobs if j.args == (file.id,)]
+        monkeypatch.setattr(atmos, "get_current_job", lambda: job)
+        assert atmos.atmos_supplement_task(file.id) is True
+
+        (job_id,) = ScheduledJobRegistry(queue=app.handoff_queue).get_job_ids()
+        retry = app.handoff_queue.fetch_job(job_id)
+        assert retry.func_name == "app.atmos.atmos_supplement_task"
+        assert not ScheduledJobRegistry(queue=app.import_queue).get_job_ids()
+        job.delete()
+
+
 def test_a_gone_file_row_removes_the_staged_copy(app):
     """Remove the staged copy when the File row of the job is gone."""
 

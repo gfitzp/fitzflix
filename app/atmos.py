@@ -378,12 +378,16 @@ OWN_STAGE = "Adding Atmos twin"
 NO_STAGING_SPACE = "no staging space"
 
 
-def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
+def maybe_enqueue_atmos_supplement(file_id, staged_source=None, queue=None):
     """Queue the supplement if the file needs an E-AC-3 Atmos twin.
 
     The import calls this after its track scan. If the file carries a
     TrueHD Atmos track without its E-AC-3 Atmos twin, this queues the
-    first job of the supplement on the import queue. The run is 3 jobs.
+    first job of the supplement on queue. The default is the import
+    queue, for the library sweep of "flask audio atmos". The import
+    gives the handoff queue. The file is already in the pipeline. Thus,
+    its twin does not wait behind the new imports (Glenn, 2026-10-17).
+    The run is 3 jobs.
     atmos_supplement_task decodes the track and submits it to
     MediaConvert. atmos_check_task asks MediaConvert about the encode
     every 2 minutes. atmos_finish_task muxes the twin in and moves the
@@ -410,11 +414,15 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
     if current_app.redis.exists(CHAIN_KEY.format(file_id=int(file_id))):
         return False
     job_id = safe_job_id(f"atmos_supplement:{file_id}")
-    for queue in (current_app.import_queue, current_app.transcode_queue):
-        started = StartedJobRegistry(queue=queue)
-        if job_id in queue.job_ids or job_id in started.get_job_ids():
+    for queued in (
+        current_app.handoff_queue,
+        current_app.import_queue,
+        current_app.transcode_queue,
+    ):
+        started = StartedJobRegistry(queue=queued)
+        if job_id in queued.job_ids or job_id in started.get_job_ids():
             return False
-    current_app.import_queue.enqueue(
+    (queue or current_app.import_queue).enqueue(
         "app.atmos.atmos_supplement_task",
         args=(int(file_id),),
         kwargs={"staged_source": staged_source} if staged_source else None,
@@ -423,6 +431,20 @@ def maybe_enqueue_atmos_supplement(file_id, staged_source=None):
         description=f"E-AC-3 Atmos twin for '{file.basename}'",
     )
     return True
+
+
+def _origin_queue():
+    """Return the queue of the current job, or the import queue.
+
+    A retry goes back to the queue that its job came from. Thus, the
+    twin of a new import stays on the handoff queue, and a library
+    sweep stays on the import queue."""
+
+    job = get_current_job()
+    for queue in (current_app.handoff_queue, current_app.transcode_queue):
+        if job is not None and job.origin == queue.name:
+            return queue
+    return current_app.import_queue
 
 
 def atmos_supplement_task(file_id, staged_source=None):
@@ -445,6 +467,7 @@ def atmos_supplement_task(file_id, staged_source=None):
             return True
 
         retry_kwargs = {"staged_source": staged_source} if staged_source else None
+        queue = _origin_queue()
 
         # The import queues the TMDB refresh and this task together. The
         # refresh must apply first. It can rename the title, and it holds
@@ -454,7 +477,7 @@ def atmos_supplement_task(file_id, staged_source=None):
 
         if file.movie_id and tmdb_refresh_pending("Movies", file.movie_id):
             schedule_retry(
-                current_app.import_queue,
+                queue,
                 "app.atmos.atmos_supplement_task",
                 (1, 3),
                 current_app.config["TRANSCODE_TASK_TIMEOUT"],
@@ -471,7 +494,7 @@ def atmos_supplement_task(file_id, staged_source=None):
         lock = acquire_lock_or_defer(
             file.file_identifier(),
             current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-            current_app.import_queue,
+            queue,
             "app.atmos.atmos_supplement_task",
             minutes=(5, 15),
             timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
@@ -511,7 +534,7 @@ def atmos_supplement_task(file_id, staged_source=None):
             # give up on the twin.
 
             schedule_retry(
-                current_app.import_queue,
+                queue,
                 "app.atmos.atmos_supplement_task",
                 (15, 30),
                 current_app.config["TRANSCODE_TASK_TIMEOUT"],

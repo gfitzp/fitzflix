@@ -502,7 +502,8 @@ def register(app):
 
         With FILE_ID, this queues that one file. Without it, this sweeps
         the whole library for TrueHD Atmos tracks that have no twin. The
-        serial transcode queue converts 1 film at a time. Each film costs
+        jobs go on the import queue. Thus, a sweep does not delay the
+        files that are already in the pipeline. Each film costs
         approximately 1 dollar of MediaConvert time.
         """
 
