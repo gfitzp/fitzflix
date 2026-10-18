@@ -443,8 +443,11 @@ def _editions(app):
         }
 
 
-def test_collections_take_1_version_of_each_film(app, monkeypatch):
-    """The version with no edition wins. Else the first edition by name."""
+def test_main_collection_takes_1_version_and_sets_take_all(app, monkeypatch):
+    """The main collection takes 1 version of each film (#284).
+
+    The version with no edition wins. Else the first edition by name. A
+    box set takes every edition of its films (#286)."""
 
     import app.plex_collections as plex_collections
 
@@ -457,12 +460,15 @@ def test_collections_take_1_version_of_each_film(app, monkeypatch):
         }
         groups = plex_collections.box_set_groups()["Tati Set"]
     assert sorted(sorted(group) for group in groups) == sorted(
-        [[paths["plain"]], [paths["cut_a"]]]
+        [
+            sorted([paths["plain"], paths["re_edit"]]),
+            sorted([paths["cut_a"], paths["cut_b"]]),
+        ]
     )
 
 
 def test_sync_removes_edition_items(app, monkeypatch):
-    """An edition item that is already in a collection leaves it (#284)."""
+    """An edition item leaves the main collection (#284), not a set (#286)."""
 
     paths = _editions(app)
     plex_collections, fake = _setup(
@@ -485,7 +491,7 @@ def test_sync_removes_edition_items(app, monkeypatch):
 
     assert plex_collections.sync_criterion_collection() is True
     assert fake.collections["5"][NAME][1] == {"41", "43"}
-    assert fake.collections["5"]["Tati Set"][1] == {"41", "43"}
+    assert fake.collections["5"]["Tati Set"][1] == {"41", "42", "43", "44"}
 
 
 def test_main_collection_follows_spine_order(app, monkeypatch):

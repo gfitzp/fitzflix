@@ -20,9 +20,11 @@ by release date.
 The main collection sorts by spine number (#285). The sync keeps that
 custom order, and a new film lands at its spine.
 
-Each film is 1 item in a collection (#284). Plex makes 1 item for each
-edition of a film. The collections use the version with no edition. A
-film with editions only uses the first edition by name.
+Each film is 1 item in the main collection (#284). Plex makes 1 item
+for each edition of a film. The main collection uses the version with
+no edition. A film with editions only uses the first edition by name.
+The box-set collections show each edition as its own item, because the
+discs of a set hold each version (#286).
 
 Each collection is a mirror. The task adds the films that the rule
 selects, and it removes the films that it no longer selects. The match
@@ -142,8 +144,9 @@ def box_set_groups():
     """Return {set title: [paths of 1 film, ...]} for each box set.
 
     A film is in its set when it has at least 1 main-feature file on
-    physical media. Each film gives all of its main-feature paths. Then
-    a film matches through the file that Plex has, also a digital copy.
+    physical media. Each film gives all of its main-feature paths, of
+    every edition (#286). Then each edition is an item of the set, and a
+    film matches through the file that Plex has, also a digital copy.
     """
 
     on_disc = (
@@ -152,9 +155,7 @@ def box_set_groups():
         .filter(File.feature_type_id.is_(None), RefQuality.physical_media == True)
     )
     rows = (
-        db.session.query(
-            Movie.criterion_set_title, Movie.id, File.edition, File.file_path
-        )
+        db.session.query(Movie.criterion_set_title, Movie.id, File.file_path)
         .join(File, File.movie_id == Movie.id)
         .filter(
             Movie.criterion_set_title.isnot(None),
@@ -163,13 +164,10 @@ def box_set_groups():
         )
         .all()
     )
-    titles = {movie_id: set_title for set_title, movie_id, _, _ in rows}
-    films = _one_version(
-        [(movie_id, edition, path) for _, movie_id, edition, path in rows]
-    )
+    library = current_app.config["LIBRARY_DIR"]
     sets = defaultdict(lambda: defaultdict(set))
-    for movie_id, paths in films.items():
-        sets[titles[movie_id]][movie_id] = paths
+    for set_title, movie_id, path in rows:
+        sets[set_title][movie_id].add(_normal(os.path.join(library, path)))
     return {
         set_title: list(films.values())
         for set_title, films in sets.items()
