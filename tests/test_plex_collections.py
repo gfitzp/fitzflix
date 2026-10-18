@@ -25,6 +25,9 @@ class FakePlex:
         self.next_key = 9000
         # The collectionSort value of each collection ratingKey (#282).
         self.sorts = {}
+        # The item order of each collection ratingKey (#285). New members
+        # go to the end, as in Plex.
+        self.orders = {}
 
     def get(self, path, params=None):
         params = params or {}
@@ -58,8 +61,8 @@ class FakePlex:
                 }
             }
         if path.endswith("/children"):
-            members = self._members(parts[3])
-            return self._page([{"ratingKey": rk} for rk in sorted(members)], params)
+            order = self.order(parts[3])
+            return self._page([{"ratingKey": rk} for rk in order], params)
         raise AssertionError(f"unexpected GET {path}")
 
     def _page(self, items, params):
@@ -71,6 +74,15 @@ class FakePlex:
                 "Metadata": items[start : start + size],
             }
         }
+
+    def order(self, collection_key):
+        """Return the item order of a collection, kept in step with its members."""
+
+        members = self._members(collection_key)
+        order = self.orders.setdefault(collection_key, sorted(members))
+        order[:] = [rk for rk in order if rk in members]
+        order += sorted(members - set(order))
+        return order
 
     def _members(self, collection_key):
         for by_title in self.collections.values():
@@ -96,6 +108,12 @@ class FakePlex:
         parts = path.split("/")
         if method == "PUT" and path.endswith("/items"):
             self._members(parts[3]).update(keys)
+            return {}
+        if method == "PUT" and path.endswith("/move"):
+            order = self.order(parts[3])
+            order.remove(parts[5])
+            after = params.get("after")
+            order.insert(order.index(after) + 1 if after else 0, parts[5])
             return {}
         if method == "PUT" and path.endswith("/prefs"):
             self.sorts[parts[3]] = params["collectionSort"]
@@ -173,7 +191,7 @@ def test_the_rule_matches_the_view(app, monkeypatch):
 
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
     with app.app_context():
-        assert plex_collections.criterion_paths() == {paths["selected"]}
+        assert plex_collections.criterion_paths() == {paths["selected"]: 1}
 
 
 def test_sync_creates_fills_and_trims_each_movie_library(app, monkeypatch):
@@ -433,7 +451,10 @@ def test_collections_take_1_version_of_each_film(app, monkeypatch):
     paths = _editions(app)
     monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
     with app.app_context():
-        assert plex_collections.criterion_paths() == {paths["plain"], paths["cut_a"]}
+        assert plex_collections.criterion_paths() == {
+            paths["plain"]: 10,
+            paths["cut_a"]: 11,
+        }
         groups = plex_collections.box_set_groups()["Tati Set"]
     assert sorted(sorted(group) for group in groups) == sorted(
         [[paths["plain"]], [paths["cut_a"]]]
@@ -465,3 +486,54 @@ def test_sync_removes_edition_items(app, monkeypatch):
     assert plex_collections.sync_criterion_collection() is True
     assert fake.collections["5"][NAME][1] == {"41", "43"}
     assert fake.collections["5"]["Tati Set"][1] == {"41", "43"}
+
+
+def test_main_collection_follows_spine_order(app, monkeypatch):
+    """The main collection uses custom order by spine number (#285).
+
+    A new film lands at its spine. A second run writes nothing."""
+
+    from app import db
+
+    with app.app_context():
+        late = make_movie(
+            "Paper Moon", 1973, criterion_spine_number=1241, custom_poster="p"
+        )
+        early = make_movie(
+            "Seven Samurai", 1954, criterion_spine_number=2, custom_poster="p"
+        )
+        middle = make_movie(
+            "Ikiru", 1952, criterion_spine_number=221, custom_poster="p"
+        )
+        late_file = make_movie_file(late, "Bluray-1080p")
+        early_file = make_movie_file(early, "Bluray-1080p")
+        db.session.commit()
+        middle_id = middle.id
+        paths = {"late": _path(late_file), "early": _path(early_file)}
+
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {"5": ("movie", "Movies", {"90": paths["late"], "10": paths["early"]})},
+    )
+    fake.collections["5"] = {NAME: ["800", {"90"}]}
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.sorts["800"] == "2"
+    assert fake.order("800") == ["10", "90"]
+
+    fake.writes.clear()
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.writes == []
+
+    # A new film arrives. Plex adds it at the end. The sync moves it to its
+    # spine.
+
+    with app.app_context():
+        from app.models import Movie
+
+        middle_file = make_movie_file(db.session.get(Movie, middle_id), "Bluray-1080p")
+        db.session.commit()
+        fake.sections["5"][2]["50"] = _path(middle_file)
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.order("800") == ["10", "50", "90"]
