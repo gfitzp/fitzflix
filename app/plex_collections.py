@@ -17,6 +17,10 @@ set. A film belongs in it when its movie has the set title and at least
 the best copy. A set needs 2 films or more. The box-set collections sort
 by release date.
 
+Each film is 1 item in a collection (#284). Plex makes 1 item for each
+edition of a film. The collections use the version with no edition. A
+film with editions only uses the first edition by name.
+
 Each collection is a mirror. The task adds the films that the rule
 selects, and it removes the films that it no longer selects. The match
 uses the file path, because the guid lookup of this Plex server returns
@@ -67,6 +71,25 @@ def _normal(path):
     return unicodedata.normalize("NFC", path)
 
 
+def _one_version(rows):
+    """Return {movie id: paths} with 1 version of each film (#284).
+
+    The rows are (movie id, edition, path). The version with no edition
+    has priority. A film with editions only keeps the first edition by
+    name. Thus, an alternate cut does not become a second item."""
+
+    editions = defaultdict(lambda: defaultdict(set))
+    for movie_id, edition, path in rows:
+        editions[movie_id][edition or ""].add(path)
+    library = current_app.config["LIBRARY_DIR"]
+    return {
+        movie_id: {
+            _normal(os.path.join(library, path)) for path in versions[min(versions)]
+        }
+        for movie_id, versions in editions.items()
+    }
+
+
 def criterion_paths():
     """Return the absolute paths of the files that belong in the collection."""
 
@@ -83,7 +106,7 @@ def criterion_paths():
         .subquery()
     )
     rows = (
-        db.session.query(File.file_path)
+        db.session.query(File.movie_id, File.edition, File.file_path)
         .join(ranked, ranked.c.id == File.id)
         .join(Movie, Movie.id == File.movie_id)
         .join(RefQuality, RefQuality.id == File.quality_id)
@@ -97,8 +120,7 @@ def criterion_paths():
         )
         .all()
     )
-    library = current_app.config["LIBRARY_DIR"]
-    return {_normal(os.path.join(library, path)) for (path,) in rows}
+    return {path for paths in _one_version(rows).values() for path in paths}
 
 
 def box_set_groups():
@@ -115,7 +137,9 @@ def box_set_groups():
         .filter(File.feature_type_id.is_(None), RefQuality.physical_media == True)
     )
     rows = (
-        db.session.query(Movie.criterion_set_title, Movie.id, File.file_path)
+        db.session.query(
+            Movie.criterion_set_title, Movie.id, File.edition, File.file_path
+        )
         .join(File, File.movie_id == Movie.id)
         .filter(
             Movie.criterion_set_title.isnot(None),
@@ -124,10 +148,13 @@ def box_set_groups():
         )
         .all()
     )
-    library = current_app.config["LIBRARY_DIR"]
+    titles = {movie_id: set_title for set_title, movie_id, _, _ in rows}
+    films = _one_version(
+        [(movie_id, edition, path) for _, movie_id, edition, path in rows]
+    )
     sets = defaultdict(lambda: defaultdict(set))
-    for set_title, movie_id, path in rows:
-        sets[set_title][movie_id].add(_normal(os.path.join(library, path)))
+    for movie_id, paths in films.items():
+        sets[titles[movie_id]][movie_id] = paths
     return {
         set_title: list(films.values())
         for set_title, films in sets.items()

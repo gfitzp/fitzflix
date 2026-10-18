@@ -373,3 +373,95 @@ def test_box_set_collection_mirrors_and_sorts_by_release(app, monkeypatch):
     fake.writes.clear()
     assert plex_collections.sync_criterion_collection() is True
     assert fake.writes == []
+
+
+def _editions(app):
+    """Make 2 Criterion films with editions, also in 1 box set (#284)."""
+
+    from app import db
+
+    with app.app_context():
+        jour = make_movie(
+            "Jour de fete",
+            1949,
+            criterion_spine_number=10,
+            custom_poster="p.jpg",
+            criterion_set_title="Tati Set",
+        )
+        plain = make_movie_file(jour, "Bluray-1080p")
+        re_edit = make_movie_file(
+            jour,
+            "Bluray-1080p",
+            plex_title="Jour de fete (1949) {edition-1964 Re-Edit}",
+            edition="1964 Re-Edit",
+        )
+
+        # This film exists only as editions. The first edition by name stays.
+        only = make_movie(
+            "Playtime",
+            1967,
+            criterion_spine_number=11,
+            custom_poster="p.jpg",
+            criterion_set_title="Tati Set",
+        )
+        cut_a = make_movie_file(
+            only,
+            "Bluray-1080p",
+            plex_title="Playtime (1967) {edition-A Cut}",
+            edition="A Cut",
+        )
+        cut_b = make_movie_file(
+            only,
+            "Bluray-1080p",
+            plex_title="Playtime (1967) {edition-B Cut}",
+            edition="B Cut",
+        )
+        db.session.commit()
+        return {
+            "plain": _path(plain),
+            "re_edit": _path(re_edit),
+            "cut_a": _path(cut_a),
+            "cut_b": _path(cut_b),
+        }
+
+
+def test_collections_take_1_version_of_each_film(app, monkeypatch):
+    """The version with no edition wins. Else the first edition by name."""
+
+    import app.plex_collections as plex_collections
+
+    paths = _editions(app)
+    monkeypatch.setitem(app.config, "LIBRARY_DIR", LIBRARY)
+    with app.app_context():
+        assert plex_collections.criterion_paths() == {paths["plain"], paths["cut_a"]}
+        groups = plex_collections.box_set_groups()["Tati Set"]
+    assert sorted(sorted(group) for group in groups) == sorted(
+        [[paths["plain"]], [paths["cut_a"]]]
+    )
+
+
+def test_sync_removes_edition_items(app, monkeypatch):
+    """An edition item that is already in a collection leaves it (#284)."""
+
+    paths = _editions(app)
+    plex_collections, fake = _setup(
+        app,
+        monkeypatch,
+        {
+            "5": (
+                "movie",
+                "Movies",
+                {
+                    "41": paths["plain"],
+                    "42": paths["re_edit"],
+                    "43": paths["cut_a"],
+                    "44": paths["cut_b"],
+                },
+            ),
+        },
+    )
+    fake.collections["5"] = {NAME: ["700", {"41", "42", "43", "44"}]}
+
+    assert plex_collections.sync_criterion_collection() is True
+    assert fake.collections["5"][NAME][1] == {"41", "43"}
+    assert fake.collections["5"]["Tati Set"][1] == {"41", "43"}
