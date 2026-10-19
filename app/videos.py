@@ -246,7 +246,7 @@ TRANSIENT_COPY_ERRNOS = {
 MAX_TRANSIENT_RETRIES = 3
 
 
-def copy_with_progress(src, dst, job, name, activity="Moving to library"):
+def copy_with_progress(src, dst, job, name, activity="Moving into the library"):
     """Copy a file in chunks and report the progress like the external tools."""
 
     total = os.path.getsize(src)

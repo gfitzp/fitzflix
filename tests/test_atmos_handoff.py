@@ -120,7 +120,7 @@ def test_a_changed_library_file_is_copied_again(app, monkeypatch):
     _no_network(monkeypatch)
     copied = []
 
-    def fake_copy(src, dst, job, name, activity="Moving to library"):
+    def fake_copy(src, dst, job, name, activity="Moving into the library"):
         copied.append(src)
         shutil.copyfile(src, dst)
 
