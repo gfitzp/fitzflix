@@ -1,5 +1,4 @@
 import os
-import shutil
 
 from datetime import date, datetime
 
@@ -12,8 +11,8 @@ from app.api.arr import (
     import_event_webhook,
     import_source_incomplete,
     reject_incomplete_download,
-    send_arr_command,
 )
+from app.sonarr_push import rename_download_locally, sonarr_configured
 
 
 @bp.route("/sonarr/add", methods=["POST"])
@@ -47,7 +46,7 @@ def sonarr_add(payload):
         )
         return response
 
-    # Rename the downloaded file with a downgraded quality title
+    # Find the name with the downgraded quality title.
 
     original_quality = payload["episodeFile"].get("quality")
     new_quality = downgrade_quality_title(
@@ -60,11 +59,6 @@ def sonarr_add(payload):
     sonarr_file_path = os.path.join(
         os.path.dirname(downloaded_file_path), sonarr_file_name
     )
-    if downloaded_file_path != sonarr_file_path:
-        shutil.move(downloaded_file_path, sonarr_file_path)
-        current_app.logger.info(
-            f"'{downloaded_file_path}' renamed as '{sonarr_file_path}'"
-        )
 
     # If the episode aired in the last 14 days, add it to the front of the queue.
 
@@ -75,38 +69,58 @@ def sonarr_add(payload):
         airdate = datetime.strptime(airdate, "%Y-%m-%d").date()
         aired_days_ago = (today - airdate).days
         current_app.logger.info(
-            f"'{os.path.basename(sonarr_file_path)}' aired {aired_days_ago} day(s) ago"
+            f"'{sonarr_file_name}' aired {aired_days_ago} day(s) ago"
         )
         if aired_days_ago <= 14:
             at_front = True
-            current_app.logger.info(
-                f"'{os.path.basename(sonarr_file_path)}' Import will be prioritized"
-            )
+            current_app.logger.info(f"'{sonarr_file_name}' Import will be prioritized")
 
-    # Ask Sonarr to refresh its series data, because the file possibly has a new
-    # name.
+    series = payload.get("series") or {}
+    series_id = series.get("id")
+    episode_file_id = payload["episodeFile"].get("id")
 
-    series = payload.get("series")
-    id = series.get("id")
-    if id:
-        current_app.logger.info(f"Rescanning series '{series.get('title')}'")
-        send_arr_command(
-            "Sonarr",
-            current_app.config["SONARR_URL"] + "/api/v3/command",
-            current_app.config["SONARR_API_KEY"],
-            {"name": "RescanSeries", "seriesId": int(id)},
+    # A rename in Fitzflix can make Sonarr lose its file, as it did for
+    # Radarr (#288). Thus, Sonarr changes the quality of its own record
+    # and renames the file, in a task. The task then queues the import
+    # (#289).
+
+    if (
+        downloaded_file_path != sonarr_file_path
+        and series_id
+        and episode_file_id
+        and sonarr_configured()
+    ):
+        current_app.request_queue.enqueue(
+            "app.sonarr_push.adopt_episode_task",
+            args=(
+                int(series_id),
+                int(episode_file_id),
+                downloaded_file_path,
+                sonarr_file_path,
+                new_quality,
+                at_front,
+            ),
+            job_timeout=300,
+            result_ttl=86400,
+            description=f"'{sonarr_file_name}' Setting the Sonarr quality",
         )
+        current_app.logger.info(
+            f"'{downloaded_file_path}' Sonarr renames it as '{sonarr_file_name}'"
+        )
+        return response
 
     # Pass the file to Fitzflix for processing. The first attempt copied the
     # file to the import directory. If a second file arrived during the copy,
     # the first copy stopped and was lost. The second attempt made a hard link
     # in the import directory. The NAS did not support hard links. Thus,
-    # Fitzflix imports the downloaded file directly, in place.
-
-    # A second webhook for the same file adds no second job (#287).
+    # Fitzflix imports the downloaded file directly, in place. A second
+    # webhook for the same file adds no second job (#287).
 
     from app.importing import enqueue_localization
 
+    rename_download_locally(
+        downloaded_file_path, sonarr_file_path, series_id, series.get("title")
+    )
     if enqueue_localization(sonarr_file_path, at_front=at_front):
         current_app.logger.info(f"'{sonarr_file_path}' Sent to Fitzflix")
     return response
