@@ -3,7 +3,6 @@ import shutil
 
 from flask import current_app, jsonify, request
 
-from app import safe_job_id
 from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
@@ -86,17 +85,10 @@ def radarr_add(payload):
     # the import directory. But the NAS did not support hard links. Thus,
     # Fitzflix now imports the downloaded file in place.
 
-    job = current_app.import_queue.enqueue(
-        "app.videos.localization_task",
-        args=(radarr_file_path,),
-        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-        description=f"'{os.path.basename(radarr_file_path)}'",
-        job_id=safe_job_id(os.path.basename(radarr_file_path)),
-    )
-    if job:
+    # A second webhook for the same file adds no second job (#287).
+
+    from app.importing import enqueue_localization
+
+    if enqueue_localization(radarr_file_path):
         current_app.logger.info(f"'{radarr_file_path}' Sent to Fitzflix")
-
-    else:
-        response.status_code = 500
-
     return response

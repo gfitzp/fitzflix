@@ -31,7 +31,12 @@ from datetime import datetime, timedelta, timezone
 from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
 from rq import get_current_job
-from rq.registry import StartedJobRegistry
+from rq.registry import (
+    FailedJobRegistry,
+    FinishedJobRegistry,
+    ScheduledJobRegistry,
+    StartedJobRegistry,
+)
 from unidecode import unidecode
 
 from flask import current_app, render_template
@@ -131,6 +136,73 @@ def space_wait_pending(redis, basename):
     """Return True if a wait chain for space holds this source file."""
 
     return bool(redis.exists(SPACE_WAIT_KEY.format(basename)))
+
+
+def localization_pending(queue, basename):
+    """Return True if a localization of this file is waiting or running (#287).
+
+    The fixed job id of the file can be in the queue list or in the
+    StartedJobRegistry. It can also be in the intermediate queue, which is
+    the gap between the list and the worker. A retry of the file has its own id, with the
+    prefix of retry_job_id. It can be scheduled, queued, or running."""
+
+    job_id = safe_job_id(basename)
+    # With no attempt counters, retry_job_id ends with the separator of
+    # the counters. Thus, it is the prefix of each retry id of the file.
+
+    retry_prefix = retry_job_id("localization_task", f"'{basename}'")
+    ids = set(queue.job_ids)
+    ids.update(queue.intermediate_queue.get_job_ids())
+    ids.update(StartedJobRegistry(queue=queue).get_job_ids())
+    ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+    return any(i == job_id or i.startswith(retry_prefix) for i in ids)
+
+
+def enqueue_localization(path, at_front=False, quiet=False):
+    """Queue the localization of a file once. Return the job, or None (#287).
+
+    The function does nothing if a localization of the same file waits or
+    runs, or if a space wait holds it. Otherwise it removes an old entry
+    of the fixed job id from the finished and failed registries. Without
+    that, the expiry of the old entry deletes the new job by its id. With
+    quiet, a skip writes no log line. The import watcher uses it, because
+    it sees many events for 1 file."""
+
+    queue = current_app.import_queue
+    basename = os.path.basename(path)
+    if localization_pending(queue, basename) or space_wait_pending(
+        current_app.redis, basename
+    ):
+        if not quiet:
+            current_app.logger.info(f"'{basename}' Already waiting for import")
+        return None
+
+    job_id = safe_job_id(basename)
+    FinishedJobRegistry(queue=queue).remove(job_id)
+    FailedJobRegistry(queue=queue).remove(job_id)
+    return queue.enqueue(
+        "app.videos.localization_task",
+        args=(path,),
+        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+        description=f"'{basename}'",
+        job_id=job_id,
+        at_front=at_front,
+    )
+
+
+def already_cataloged(file_path):
+    """Return True if this file is already the library file at its path (#287).
+
+    An in-place import (Radarr, Sonarr) reads the file at its library
+    path. A File row at the same path with the same size is that file
+    after its import. A second job or a late retry must not import it
+    again."""
+
+    relative = os.path.relpath(file_path, current_app.config["LIBRARY_DIR"])
+    if relative.startswith(".."):
+        return False
+    file = File.query.filter_by(file_path=relative).first()
+    return file is not None and file.filesize_bytes == os.path.getsize(file_path)
 
 
 def _hold_title_lock(lock, basename):
@@ -389,6 +461,15 @@ def localization_task(
             # If the incoming file does not exist, there is nothing to do.
 
             if not os.path.exists(file_path):
+                return False
+
+            # A duplicate job or a late retry can reach a file that an
+            # earlier job already imported in place (#287).
+
+            if already_cataloged(file_path):
+                current_app.logger.info(
+                    f"'{basename}' Is already in the library; nothing to import"
+                )
                 return False
 
             # If the file name contains "temp-1234.", ignore the file.
@@ -2343,32 +2424,12 @@ def manual_import_task():
                             os.path.basename(file), 30000
                         )
                         if lock:
-                            job_queue = []
-                            localization_tasks_running = StartedJobRegistry(
-                                "fitzflix-import", connection=current_app.redis
-                            )
-                            job_queue.extend(localization_tasks_running.get_job_ids())
-                            job_queue.extend(current_app.import_queue.job_ids)
-                            if safe_job_id(
-                                os.path.basename(file)
-                            ) not in job_queue and not space_wait_pending(
-                                current_app.redis, os.path.basename(file)
+                            if enqueue_localization(
+                                os.path.join(current_app.config["IMPORT_DIR"], file),
+                                quiet=True,
                             ):
                                 current_app.logger.info(
                                     f"'{os.path.basename(file)}' Found in import directory"
-                                )
-                                current_app.import_queue.enqueue(
-                                    "app.videos.localization_task",
-                                    args=(
-                                        os.path.join(
-                                            current_app.config["IMPORT_DIR"], file
-                                        ),
-                                    ),
-                                    job_timeout=current_app.config[
-                                        "LOCALIZATION_TASK_TIMEOUT"
-                                    ],
-                                    description=f"'{os.path.basename(file)}'",
-                                    job_id=safe_job_id(os.path.basename(file)),
                                 )
 
                             current_app.lock_manager.unlock(lock)

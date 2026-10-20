@@ -522,16 +522,12 @@ def sync_aws_s3_storage_task():
                 if not File.query.filter_by(
                     file_path=file_path
                 ).first() and os.path.isfile(library_file):
-                    job = current_app.import_queue.enqueue(
-                        "app.videos.localization_task",
-                        args=(library_file,),
-                        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        description=f"'{os.path.basename(library_file)}'",
-                        job_id=safe_job_id(os.path.basename(library_file)),
-                    )
-                    current_app.logger.info(
-                        f"'{library_file}' isn't in library; added to import queue"
-                    )
+                    from app.importing import enqueue_localization
+
+                    if enqueue_localization(library_file):
+                        current_app.logger.info(
+                            f"'{library_file}' isn't in library; added to import queue"
+                        )
 
         except Exception:
             app.logger.error(traceback.format_exc())

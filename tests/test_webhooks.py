@@ -358,3 +358,25 @@ def test_root_folder_lists_strip_whitespace():
     ]
     assert _path_list("", ["/default"]) == ["/default"]
     assert _path_list(None, ["/default"]) == ["/default"]
+
+
+def test_a_second_webhook_adds_no_second_job(app, client, tmp_path):
+    """Radarr can send the import webhook of 1 file more than once (#287).
+
+    The second call answers 200 and adds nothing to the queue."""
+
+    movie_dir = tmp_path / "Heat (1995)"
+    movie_dir.mkdir(parents=True)
+    original = "Heat (1995) - [WEBDL-1080p].mkv"
+    (movie_dir / original).write_bytes(b"movie")
+    payload = {
+        "eventType": "Download",
+        "movie": {"id": 3, "folderPath": str(movie_dir)},
+        "movieFile": {"relativePath": original, "quality": "WEBDL-1080p"},
+        "customFormatInfo": {"customFormatScore": 2000},
+    }
+
+    for _ in range(3):
+        response = client.post("/api/radarr/add", json=payload, headers=auth_header())
+        assert response.status_code == 200
+    assert app.import_queue.job_ids == [safe_job_id(original)]

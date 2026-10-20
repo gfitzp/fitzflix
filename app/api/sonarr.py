@@ -5,7 +5,6 @@ from datetime import date, datetime
 
 from flask import current_app, jsonify, request
 
-from app import safe_job_id
 from app.api import bp
 from app.api.arr import (
     downgrade_quality_title,
@@ -104,18 +103,10 @@ def sonarr_add(payload):
     # in the import directory. The NAS did not support hard links. Thus,
     # Fitzflix imports the downloaded file directly, in place.
 
-    job = current_app.import_queue.enqueue(
-        "app.videos.localization_task",
-        args=(sonarr_file_path,),
-        job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
-        description=f"'{os.path.basename(sonarr_file_path)}'",
-        job_id=safe_job_id(os.path.basename(sonarr_file_path)),
-        at_front=at_front,
-    )
-    if job:
+    # A second webhook for the same file adds no second job (#287).
+
+    from app.importing import enqueue_localization
+
+    if enqueue_localization(sonarr_file_path, at_front=at_front):
         current_app.logger.info(f"'{sonarr_file_path}' Sent to Fitzflix")
-
-    else:
-        response.status_code = 500
-
     return response

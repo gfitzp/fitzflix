@@ -15,7 +15,6 @@ from redis import Redis
 from redlock import Redlock
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
-from rq.registry import StartedJobRegistry
 from watchdog.events import (
     FileCreatedEvent,
     FileMovedEvent,
@@ -652,38 +651,17 @@ def create_app(config_class=Config, watch_import_dir=False):
 
             lock = app.lock_manager.lock(os.path.basename(path), 30000)
             if lock:
-                job_queue = []
-                localization_tasks_running = StartedJobRegistry(
-                    "fitzflix-import", connection=app.redis
-                )
-                job_queue.extend(localization_tasks_running.get_job_ids())
-                job_queue.extend(app.import_queue.job_ids)
-                app.logger.debug(job_queue)
+                # The job id is the file basename. enqueue_localization adds
+                # the file only if no localization of it waits or runs, and
+                # no space wait holds it (#262 review, #287).
 
-                # Use the file basename as the job id. Then the handler can
-                # see if this file is already in the job_queue. It adds the
-                # file only if the file is not there.
+                from app.importing import enqueue_localization
 
-                # A file that waits for library space has its own chain.
-                # It must not get a second one (#262 review).
-
-                from app.importing import space_wait_pending
-
-                if safe_job_id(
-                    os.path.basename(path)
-                ) not in job_queue and not space_wait_pending(
-                    app.redis, os.path.basename(path)
-                ):
-                    app.logger.info(
-                        f"'{os.path.basename(path)}' Found in import directory"
-                    )
-                    app.import_queue.enqueue(
-                        "app.videos.localization_task",
-                        args=(path,),
-                        job_timeout=app.config["LOCALIZATION_TASK_TIMEOUT"],
-                        description=f"'{os.path.basename(path)}'",
-                        job_id=safe_job_id(os.path.basename(path)),
-                    )
+                with app.app_context():
+                    if enqueue_localization(path, quiet=True):
+                        app.logger.info(
+                            f"'{os.path.basename(path)}' Found in import directory"
+                        )
 
                 app.lock_manager.unlock(lock)
 
