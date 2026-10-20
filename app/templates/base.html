@@ -521,6 +521,32 @@
 				return cell;
 			}
 
+			// An admin can move a waiting job to the front of its queue
+			// (#236). queue.html sets window.queueFront for an admin only.
+			// This is the twin of the queue-front form in queue.html.
+
+			function frontForm(task) {
+				var form = document.createElement("form");
+				form.method = "post";
+				form.action = window.queueFront.url;
+				form.className = "queue-front";
+				[["csrf_token", window.queueFront.token], ["job_id", task.id]].forEach(function(pair) {
+					var input = document.createElement("input");
+					input.type = "hidden";
+					input.name = pair[0];
+					input.value = pair[1];
+					form.appendChild(input);
+				});
+				var button = document.createElement("button");
+				button.type = "submit";
+				button.className = "btn btn-sm btn-outline-secondary";
+				button.title = "Move to the front of its queue";
+				button.setAttribute("aria-label", "Move to front");
+				button.textContent = "\u2912";
+				form.appendChild(button);
+				return form;
+			}
+
 			function trailSettled(trail) {
 				var last = trail.entries[trail.entries.length - 1];
 				return !last || last.status === "done";
@@ -548,7 +574,7 @@
 
 				var signature = tasks.map(function(task) {
 					var trail = trailByJob[task.trail_job || task.id];
-					return task.position + "|" + task.id + "|" + task.description
+					return task.position + "|" + task.id + "|" + task.status + "|" + task.description
 						+ "|" + task.started_at + "|" + task.scheduled_for
 						+ "|" + (trail ? trail.updated + "|" + trail.entries.length : "");
 				}).concat(orphans.map(function(trail) {
@@ -561,7 +587,11 @@
 				tasks.forEach(function(task) {
 					var row = document.createElement("tr");
 					row.className = "d-flex";
-					row.appendChild(positionCell(task.position === null ? "—" : task.position));
+					var position = positionCell(task.position === null ? "—" : task.position);
+					if (window.queueFront && task.status === "queued") {
+						position.appendChild(frontForm(task));
+					}
+					row.appendChild(position);
 					var fileCell = trailCell(task, trailByJob[task.trail_job || task.id]);
 					fileCell.appendChild(phoneTimes(task, trailByJob[task.trail_job || task.id]));
 					row.appendChild(fileCell);

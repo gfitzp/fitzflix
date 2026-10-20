@@ -261,6 +261,11 @@
 		   made the File column narrow, and each row was very tall
 		   (Glenn, 2026-10-15) */
 		.queue-times { margin-top: .5rem; }
+		/* The button that moves a waiting job to the front of its queue
+		   (#236). It sits below the position number. It must fit the
+		   narrow position column on a phone */
+		.queue-front { margin-top: .25rem; }
+		.queue-front .btn { padding: 0 .3rem; line-height: 1.3; }
 		@media (max-width: 575.98px) {
 			.queue-table .queue-file { flex: 0 0 91.667%; max-width: 91.667%; width: 91.667%; }
 			.queue-table .queue-enqueued, .queue-table .queue-started { display: none; }

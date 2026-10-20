@@ -15,6 +15,14 @@
    wording with moment.js. #}
 <script>
 	window.pipelineTrailLimit = 100;
+	{% if front_form %}
+	{# An admin can move a waiting job to the front of its queue (#236).
+	   renderAll in base.html builds the same form on each repaint. #}
+	window.queueFront = {
+		url: {{ url_for('main.queue_front')|tojson }},
+		token: {{ csrf_token()|tojson }}
+	};
+	{% endif %}
 </script>
 <div class="table-responsive">
 {# On a phone, the 2 time columns do not show (the queue-table rules in
@@ -33,7 +41,14 @@
 	<tbody id="all-tasks">
 		{% for row in rows %}
 		<tr class="d-flex">
-			<th scope="row" class="col-1 queue-position">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}</th>
+			<th scope="row" class="col-1 queue-position">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}
+				{%- if front_form and row.task and row.task.status == "queued" %}
+				<form method="post" action="{{ url_for('main.queue_front') }}" class="queue-front">
+					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+					<input type="hidden" name="job_id" value="{{ row.task.id }}">
+					<button type="submit" class="btn btn-sm btn-outline-secondary" title="Move to the front of its queue" aria-label="Move to front">&#x2912;</button>
+				</form>
+				{%- endif %}</th>
 			<td class="col-5 col-sm-5 col-lg-7 queue-file">
 				{% if row.task %}<div>{{ row.task.description }}</div>{% else %}<div class="text-muted">{{ row.trail.basename }}</div>{% endif %}
 				{% if row.trail %}<div class="mt-1">{{ trail_chips(row.trail.entries) }}</div>{% endif %}

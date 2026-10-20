@@ -1376,7 +1376,7 @@ class User(UserMixin, db.Model):
         # the pipeline trail survives the steps. A job without a trail
         # uses its own start.
 
-        from app.pipeline import first_enqueued, first_run
+        from app.pipeline import first_enqueued, first_run, front_times
 
         def file_started(job):
             """Return the time that the FILE of the job first started to run.
@@ -1465,8 +1465,23 @@ class User(UserMixin, db.Model):
         details["count"] = len(running_jobs) + len(queued_jobs)
         details["running"] = [item for job, item in running if banner_worthy(job)]
 
-        queued = [row(job, None) for job in queued_jobs]
-        queued.sort(key=lambda item: time_key(item["enqueued_at"]))
+        # A job that an admin moved to the front of its queue (#236) lists
+        # before the other waiting jobs. The newest move is at the top,
+        # because each move pushes the job onto the head of its queue.
+
+        fronted = front_times(current_app.redis, [job.id for job in queued_jobs])
+        queued = []
+        for job in queued_jobs:
+            item = row(job, None)
+            item["fronted"] = job.id in fronted
+            queued.append(item)
+        queued.sort(
+            key=lambda item: (
+                (0, -fronted[item["id"]])
+                if item["fronted"]
+                else (1, time_key(item["enqueued_at"]))
+            )
+        )
 
         details["all"] = [
             {

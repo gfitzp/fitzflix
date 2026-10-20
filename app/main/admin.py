@@ -30,6 +30,7 @@ from app.main.forms import (
     FilenameTestForm,
     LossyAudioTriageForm,
     ManualImportForm,
+    QueueFrontForm,
     MissingRestoreForm,
     MissingScanForm,
     SubtitleTriageForm,
@@ -1605,8 +1606,57 @@ def queue():
     details = current_user.get_queue_details()
     trails = pipeline_trails(current_app.redis, limit=100)
     return render_template(
-        "queue.html", title="Queue", rows=queue_rows(details["all"], trails)
+        "queue.html",
+        title="Queue",
+        rows=queue_rows(details["all"], trails),
+        front_form=QueueFrontForm() if current_user.admin else None,
     )
+
+
+@bp.route("/queue/front", methods=["POST"])
+@login_required
+@admin_required
+def queue_front():
+    """Move a waiting job to the front of its queue (#236).
+
+    Only a job that waits in a queue that the queue page lists can move.
+    The move is atomic. A job that a worker took before the request
+    arrived does not move."""
+
+    from app.pipeline import move_to_front
+
+    form = QueueFrontForm()
+    if not form.validate_on_submit():
+        flash("The form is not valid. Load the page again.", "danger")
+        return redirect(url_for("main.queue"))
+
+    job_id = form.job_id.data
+    try:
+        job = Job.fetch(job_id, connection=current_app.redis)
+    except NoSuchJobError:
+        job = None
+
+    queue = None
+    if job is not None:
+        for listed, only in current_user._listed_queues():
+            if listed.name == job.origin and (only is None or job.func_name in only):
+                queue = listed
+                break
+
+    index = move_to_front(queue, job_id) if queue is not None else None
+    if index is None:
+        flash(
+            "That job does not wait in a queue now. A worker started it, or it is gone.",
+            "warning",
+        )
+        return redirect(url_for("main.queue"))
+
+    # Most import descriptions are the file name in single quotes
+
+    name = str(job.meta.get("description", job.description) or job_id).strip("'")
+    queue_label = queue.name.removeprefix("fitzflix-")
+    flash(f"Moved '{name}' to the front of the {queue_label} queue.", "info")
+    return redirect(url_for("main.queue"))
 
 
 @bp.route("/library/files", methods=["GET", "POST"])

@@ -483,6 +483,13 @@ class FailedJobForm(FlaskForm):
     forget_submit = SubmitField("Forget")
 
 
+class QueueFrontForm(FlaskForm):
+    """Move a waiting job to the front of its queue (Queue page, #236)."""
+
+    job_id = HiddenField(validators=[DataRequired()])
+    front_submit = SubmitField("Move to front")
+
+
 class SettingsForm(FlaskForm):
     """Change the runtime settings (Settings page).
 

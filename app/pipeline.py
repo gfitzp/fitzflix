@@ -55,6 +55,33 @@ ACTIVE_KEY = "fitzflix:pipeline:active"
 TRAIL_TTL_SECONDS = 7 * 86400
 ACTIVE_LIMIT = 100
 
+# The waiting jobs that an admin moved to the front of their queue
+# (#236). The score is the time of the move. The queue page lists these
+# jobs first, the newest move at the top. A worker removes the entry
+# when it starts the job.
+
+FRONT_KEY = "fitzflix:queue:front"
+FRONT_TTL_SECONDS = 30 * 86400
+
+# Move 1 waiting job to the head of its rq queue in 1 atomic step. rq
+# pops from the head. A remove and a push in 2 round trips can lose the
+# job if the second step fails. The result is the old index of the job,
+# or -1 when the job does not wait in the queue.
+
+_MOVE_TO_FRONT = """
+local index = redis.call('LPOS', KEYS[1], ARGV[1])
+if not index then
+    return -1
+end
+if index > 0 then
+    redis.call('LREM', KEYS[1], 0, ARGV[1])
+    redis.call('LPUSH', KEYS[1], ARGV[1])
+end
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[2] - ARGV[3])
+return index
+"""
+
 
 def _basename_from_path(args, kwargs):
     """Return the basename of the file from a leading path argument.
@@ -1094,6 +1121,37 @@ class TrackedQueue(Queue):
         return job
 
 
+def move_to_front(queue, job_id):
+    """Move a waiting job to the front of its queue (#236).
+
+    The return value is the old index of the job in the queue. It is
+    None when the job does not wait in the queue. A worker possibly
+    started it already. Only the queue of the job changes. A worker
+    that also takes jobs from other queues takes their jobs first."""
+
+    index = queue.connection.eval(
+        _MOVE_TO_FRONT,
+        2,
+        queue.key,
+        FRONT_KEY,
+        job_id,
+        time.time(),
+        FRONT_TTL_SECONDS,
+    )
+    return None if index < 0 else index
+
+
+def front_times(connection, job_ids):
+    """Return {job_id: time of the move} for the jobs that an admin moved."""
+
+    if not job_ids:
+        return {}
+    scores = connection.zmscore(FRONT_KEY, job_ids)
+    return {
+        job_id: score for job_id, score in zip(job_ids, scores) if score is not None
+    }
+
+
 class PipelineWorker(SimpleWorker):
     """A SimpleWorker that stamps the trail around the execution.
 
@@ -1101,9 +1159,10 @@ class PipelineWorker(SimpleWorker):
     when the job completes."""
 
     def execute_job(self, job, queue):
-        """Stamp started. Then run the job as SimpleWorker does."""
+        """Stamp started and clear a front mark. Then run the job as SimpleWorker does."""
 
         record_job_event(self.connection, job, "started")
+        self.connection.zrem(FRONT_KEY, job.id)
         return super().execute_job(job, queue)
 
     def handle_job_success(self, job, queue, started_job_registry):
