@@ -82,9 +82,28 @@ Add these lines to the `.env` file of Fitzflix, and restart the workers:
 
 **A separate step, in the CloudFront console only:** enroll in a flat-rate pricing plan on the "Pricing plans" page. The Pro plan at $15 a month covers 50 TB of transfer and 10M requests. Without a plan, the transfers cost about $0.085 for each GB. The plan is a monthly commitment. Enroll when the restores start, and cancel when the rebuild is complete.
 
-To test one signed URL, ask Fitzflix for it, and send it with curl. A restored object answers 200. An object that is still in cold storage answers 403.
+To test one signed URL, ask Fitzflix for it, and send it with curl. Do these steps after you add the `CDN_*` lines to `.env`. The test does not need a worker restart.
 
-    flask aws cdn-url "untouched/<key>" | xargs curl -sI | head -5
+1. Go to the project root, one level above this `infra` directory:
+
+       cd ..
+
+2. Activate the virtual environment of the project:
+
+       source venv/bin/activate
+
+3. Get an object key. Open the page of an archived file in Fitzflix. The text "Archived offsite ... as" shows its key.
+
+4. Ask for a signed URL, and send a HEAD request with it. Put the key in double quotes, because keys usually contain spaces, brackets, and apostrophes:
+
+       flask aws cdn-url "untouched/Film (2021) - [Bluray-1080p].mkv" | xargs curl -sI | head -5
+
+The first line of the output is the HTTP status:
+
+- `200`: the object is in S3 Standard or is restored. The CDN path operates.
+- `403`: the object is still in cold storage, or the key is incorrect. S3 also answers 403 for a key that does not exist. A WAF block of your IP address also gives 403.
+
+The signed URL expires after 600 seconds. To change this, add `--expires <seconds>` after `cdn-url`.
 
 If your public IP changes during the rebuild, update the WAF IP set in the console (WAF & Shield, IP sets, `fitzflix-cdn-ipset`). Fitzflix signs a new URL for each download attempt. Thus, nothing else needs a change.
 
