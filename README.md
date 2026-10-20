@@ -227,7 +227,7 @@ When a download completes, Fitzflix renames the file with a *lower* quality titl
 | `Bluray-1080p` | `WEBDL-1080p` |
 | `Bluray-1080p Remux` | `WEBDL-1080p` |
 
-A download with a custom format score below 1600 gets the label `WEBRip` in place of `WEBDL`. Fitzflix imports the file from the folder of the download client, and does not copy it to the import directory. A TV episode that aired in the last 14 days goes to the front of the import queue. After the rename, Fitzflix asks Sonarr to scan the series again, so the Sonarr records stay correct.
+A download with a custom format score below the minimum gets the label `WEBRip` in place of `WEBDL`. The minimum is `RADARR_WEBDL_MIN_SCORE` for Radarr and `SONARR_WEBDL_MIN_SCORE` for Sonarr, 1600 by default. Fitzflix imports the file from the folder of the download client, and does not copy it to the import directory. A TV episode that aired in the last 14 days goes to the front of the import queue. After the rename, Fitzflix asks Sonarr to scan the series again, so the Sonarr records stay correct.
 
 For the series that Sonarr manages, Sonarr is also the **episode-data authority**. Fitzflix matches its series to the Sonarr series by the library folder. A file coverage check protects the match, so a folder name that matches by chance cannot claim a show. For a matched series, Fitzflix takes the episode titles from the TVDB records of Sonarr. This function exists for the shows where the TMDB numbers are different from the numbers in the files. Daily shows and panel shows are examples. For these shows, the episode files follow the TVDB sequence.
 
@@ -399,6 +399,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` | The SMTP server for error notifications and password-reset emails. Fitzflix sends them from `SERVER_EMAIL` to `ADMIN_EMAIL`. Both default to `MAIL_USERNAME`. |
 | `ARR_DOWNLOAD_FOLDERS` | The completed-download folders that the [Manual imports](#manual-imports) page may copy from and delete, separated by colons. Empty by default, so the page can list but not act. |
 | `PLEX_URL`, `PLEX_TOKEN`, `PLEX_WEBHOOK_TOKEN` | Direct Plex watch tracking. The URL and the token enable the 15-minute history poller. The webhook token protects the `/api/plex/webhook/<token>` endpoint (refer to [Tracking Plex watches](#tracking-plex-watches)). |
+| `RADARR_WEBDL_MIN_SCORE`, `SONARR_WEBDL_MIN_SCORE` | The import webhooks label a download `WEBRip` in place of `WEBDL` when its custom format score in Radarr or Sonarr is below this value. The default is 1600 for each. A score can be negative. |
 | `PLEX_TRASH_LIMIT` | The Plex refresh empties the trash of each library each 15 minutes. It keeps the trash of a library that holds more items than this value, and it makes a health issue. It also keeps the trash for one run after a share remount. A share that drops during a scan puts the whole share in the trash, and an empty deletes it. The default is 25. |
 | `PLEX_CRITERION_COLLECTION` | The name of the Plex collection that the Criterion sync keeps in each movie library. The default is `Criterion Collection Films`. |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
@@ -416,6 +417,7 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 - The on/off settings `PREVENT_ACCOUNT_CREATION`, `ARCHIVE_ORIGINAL_MEDIA`, `AWS_DOWNLOAD_VIA_CDN`, `CREATE_FLAC_TWINS`, and `CREATE_ATMOS_TWINS`.
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
 - The Plex trash limit `PLEX_TRASH_LIMIT`.
+- The download labels `RADARR_WEBDL_MIN_SCORE` and `SONARR_WEBDL_MIN_SCORE`.
 - The media settings `EAC3_ATMOS_BITRATE` and `HANDBRAKE_PRESET`.
 - The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
 

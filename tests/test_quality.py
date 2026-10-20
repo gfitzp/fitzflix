@@ -4,6 +4,7 @@ import pytest
 
 from app.api.arr import downgrade_quality_title
 
+MIN_SCORE = 1600  # the default of RADARR_WEBDL_MIN_SCORE and SONARR_WEBDL_MIN_SCORE
 HIGH_SCORE = 2000  # at or above the custom-format threshold. Result: WEBDL
 LOW_SCORE = 100  # below the threshold. Result: WEBRip
 
@@ -25,7 +26,7 @@ LOW_SCORE = 100  # below the threshold. Result: WEBRip
     ],
 )
 def test_high_score_downgrades(original, expected):
-    assert downgrade_quality_title(original, HIGH_SCORE) == expected
+    assert downgrade_quality_title(original, HIGH_SCORE, MIN_SCORE) == expected
 
 
 @pytest.mark.parametrize(
@@ -41,9 +42,17 @@ def test_high_score_downgrades(original, expected):
     ],
 )
 def test_low_score_becomes_webrip(original, expected):
-    assert downgrade_quality_title(original, LOW_SCORE) == expected
+    assert downgrade_quality_title(original, LOW_SCORE, MIN_SCORE) == expected
 
 
 def test_threshold_boundary():
-    assert downgrade_quality_title("Bluray-1080p", 1600) == "WEBDL-1080p"
-    assert downgrade_quality_title("Bluray-1080p", 1599) == "WEBRip-1080p"
+    assert downgrade_quality_title("Bluray-1080p", 1600, MIN_SCORE) == "WEBDL-1080p"
+    assert downgrade_quality_title("Bluray-1080p", 1599, MIN_SCORE) == "WEBRip-1080p"
+
+
+def test_the_threshold_is_an_argument():
+    """The callers pass the setting of their service (#290). It can be negative."""
+
+    assert downgrade_quality_title("Bluray-1080p", 100, 50) == "WEBDL-1080p"
+    assert downgrade_quality_title("Bluray-1080p", 100, 500) == "WEBRip-1080p"
+    assert downgrade_quality_title("Bluray-1080p", -20, -50) == "WEBDL-1080p"

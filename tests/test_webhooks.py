@@ -380,3 +380,49 @@ def test_a_second_webhook_adds_no_second_job(app, client, tmp_path):
         response = client.post("/api/radarr/add", json=payload, headers=auth_header())
         assert response.status_code == 200
     assert app.import_queue.job_ids == [safe_job_id(original)]
+
+
+def test_each_service_uses_its_own_minimum_score(app, client, tmp_path, monkeypatch):
+    """RADARR_WEBDL_MIN_SCORE and SONARR_WEBDL_MIN_SCORE are separate (#290)."""
+
+    monkeypatch.setitem(app.config, "RADARR_WEBDL_MIN_SCORE", 50)
+    monkeypatch.setitem(app.config, "SONARR_WEBDL_MIN_SCORE", 5000)
+
+    movie_dir = tmp_path / "Heat (1995)"
+    movie_dir.mkdir(parents=True)
+    (movie_dir / "Heat (1995) - [Bluray-1080p].mkv").write_bytes(b"movie")
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 3, "folderPath": str(movie_dir)},
+            "movieFile": {
+                "relativePath": "Heat (1995) - [Bluray-1080p].mkv",
+                "quality": "Bluray-1080p",
+            },
+            "customFormatInfo": {"customFormatScore": 100},
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert (movie_dir / "Heat (1995) - [WEBDL-1080p].mkv").exists()
+
+    season = tmp_path / "Columbo (1971)" / "Season 01"
+    season.mkdir(parents=True)
+    (season / "Columbo (1971) - S01E01 - [Bluray-1080p].mkv").write_bytes(b"ep")
+    response = client.post(
+        "/api/sonarr/add",
+        json={
+            "eventType": "Download",
+            "series": {"title": "Columbo", "path": str(tmp_path / "Columbo (1971)")},
+            "episodes": [{"airDate": "1971-09-15"}],
+            "episodeFile": {
+                "relativePath": "Season 01/Columbo (1971) - S01E01 - [Bluray-1080p].mkv",
+                "quality": "Bluray-1080p",
+            },
+            "customFormatInfo": {"customFormatScore": 100},
+        },
+        headers=auth_header(),
+    )
+    assert response.status_code == 200
+    assert (season / "Columbo (1971) - S01E01 - [WEBRip-1080p].mkv").exists()

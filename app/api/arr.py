@@ -118,7 +118,7 @@ def downloaded_path(service, folder, relative):
     return None
 
 
-def downgrade_quality_title(original_quality, custom_format_score):
+def downgrade_quality_title(original_quality, custom_format_score, min_score):
     """Downgrade a Sonarr/Radarr quality title to its web-sourced equivalent.
 
     If Fitzflix does not know that a file came from physical media, it must
@@ -132,8 +132,9 @@ def downgrade_quality_title(original_quality, custom_format_score):
         - Bluray-1080p Remux  -> WEBDL-1080p
         - Remux-1080p         -> WEBDL-1080p
 
-    A download with a score below the custom-format threshold gets the
-    label WEBRip instead of WEBDL.
+    A download with a custom-format score below min_score gets the label
+    WEBRip instead of WEBDL. The callers read min_score from the setting
+    of their service (#290).
     """
 
     new_quality = (
@@ -142,7 +143,7 @@ def downgrade_quality_title(original_quality, custom_format_score):
         .replace("Remux-", "WEBDL-")
         .replace(" Remux", "")
     )
-    if custom_format_score < 1600:
+    if custom_format_score < min_score:
         new_quality = new_quality.replace("WEBDL", "WEBRip")
     return new_quality
 

@@ -153,7 +153,9 @@ def test_stale_manual_interaction_event_is_ignored(
     assert len(sent) == 1
 
 
-def test_proposed_names():
+def test_proposed_names(app, monkeypatch):
+    app_context = app.app_context()
+    app_context.push()
     movie = {
         "quality": "Remux-1080p",
         "score": 2175,
@@ -185,6 +187,18 @@ def test_proposed_names():
         manual_imports.proposed_name(unmatched, None)
         == "Some.Release.2020 - [WEBDL-1080p].mkv"
     )
+
+    # Each service uses its own minimum score (#290).
+    monkeypatch.setitem(app.config, "SONARR_WEBDL_MIN_SCORE", 50)
+    sonarr_entry = dict(episodes, service="Sonarr")
+    radarr_entry = dict(episodes, service="Radarr")
+    assert manual_imports.proposed_name(sonarr_entry, ".mkv").endswith(
+        "[WEBDL-1080p].mkv"
+    )
+    assert manual_imports.proposed_name(radarr_entry, ".mkv").endswith(
+        "[WEBRip-1080p].mkv"
+    )
+    app_context.pop()
 
 
 def test_page_lists_blocked_downloads_with_candidates(

@@ -53,6 +53,8 @@ PAGE_TUNABLES = (
     "LOG_DIGEST_THRESHOLD",
     "LOG_DIGEST_IGNORE",
     "PLEX_TRASH_LIMIT",
+    "RADARR_WEBDL_MIN_SCORE",
+    "SONARR_WEBDL_MIN_SCORE",
     "EAC3_ATMOS_BITRATE",
     "DVR_GENRE_CHANNELS",
     "DVR_CHANNEL_FILMS",
@@ -291,6 +293,11 @@ class Config(object):
     # more items than this value (#280). A share that drops during a scan
     # puts the whole share in the trash. An empty then deletes it.
     PLEX_TRASH_LIMIT                    = int(os.environ.get("PLEX_TRASH_LIMIT") or 25)
+
+    # The webhooks label a download WEBRip, not WEBDL, when its custom-format
+    # score is below this value (#290). Radarr and Sonarr have 1 value each.
+    RADARR_WEBDL_MIN_SCORE              = int(os.environ.get("RADARR_WEBDL_MIN_SCORE") or 1600)
+    SONARR_WEBDL_MIN_SCORE              = int(os.environ.get("SONARR_WEBDL_MIN_SCORE") or 1600)
 
     # The Plex collection that the Criterion sync keeps in each movie
     # library (#281).

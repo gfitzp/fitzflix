@@ -123,6 +123,24 @@ SETTINGS = {
             maximum=100000,
         ),
         Setting(
+            "RADARR_WEBDL_MIN_SCORE",
+            "Radarr WEBDL minimum score",
+            "A Radarr download with a lower custom-format score gets the label "
+            "WEBRip, not WEBDL.",
+            "int",
+            minimum=-100000,
+            maximum=100000,
+        ),
+        Setting(
+            "SONARR_WEBDL_MIN_SCORE",
+            "Sonarr WEBDL minimum score",
+            "A Sonarr download with a lower custom-format score gets the label "
+            "WEBRip, not WEBDL.",
+            "int",
+            minimum=-100000,
+            maximum=100000,
+        ),
+        Setting(
             "EAC3_ATMOS_BITRATE",
             "E-AC-3 Atmos bitrate (bps)",
             "The bitrate of each new E-AC-3 Atmos twin from MediaConvert.",

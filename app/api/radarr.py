@@ -3,6 +3,7 @@ import os
 from flask import current_app, jsonify, request
 
 from app.api import bp
+from app.settings import get_setting
 from app.radarr_push import (
     enqueue_radarr_push,
     radarr_configured,
@@ -54,6 +55,7 @@ def radarr_add(payload):
     new_quality = downgrade_quality_title(
         original_quality,
         (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
+        get_setting("RADARR_WEBDL_MIN_SCORE"),
     )
     radarr_file_name = os.path.basename(downloaded_file_path).replace(
         f"[{original_quality}]", f"[{new_quality}]"

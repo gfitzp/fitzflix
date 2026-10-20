@@ -242,9 +242,16 @@ def proposed_name(entry, extension):
 
     from app.importing import sanitize_string
 
+    from app.settings import get_setting
+
     quality = "WEBDL-1080p"
     if entry.get("quality"):
-        quality = downgrade_quality_title(entry["quality"], entry.get("score") or 0)
+        service = "SONARR" if entry.get("service") == "Sonarr" else "RADARR"
+        quality = downgrade_quality_title(
+            entry["quality"],
+            entry.get("score") or 0,
+            get_setting(f"{service}_WEBDL_MIN_SCORE"),
+        )
     extension = (extension or "mkv").lstrip(".")
     record = entry.get("record")
     if not record or not record.get("title"):

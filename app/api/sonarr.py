@@ -5,6 +5,7 @@ from datetime import date, datetime
 from flask import current_app, jsonify, request
 
 from app.api import bp
+from app.settings import get_setting
 from app.api.arr import (
     downgrade_quality_title,
     downloaded_path,
@@ -52,6 +53,7 @@ def sonarr_add(payload):
     new_quality = downgrade_quality_title(
         original_quality,
         (payload.get("customFormatInfo") or {}).get("customFormatScore", 0),
+        get_setting("SONARR_WEBDL_MIN_SCORE"),
     )
     sonarr_file_name = os.path.basename(downloaded_file_path).replace(
         f"[{original_quality}]", f"[{new_quality}]"
