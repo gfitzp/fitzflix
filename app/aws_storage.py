@@ -105,6 +105,58 @@ def delete_sqs_message(sqs_client, receipt_handle, note="message"):
     return True
 
 
+# The time of each restore request. A Deep Archive restore takes up to 12
+# hours, and the restored copy stays for some days. During that time, a
+# new download of the same title can replace the file. Then the restored
+# copy is old, and an import of it would replace the new file. The entry
+# expires after the restored copy does.
+
+RESTORE_REQUESTED_KEY = "fitzflix:restore-requested:{}"
+RESTORE_REQUEST_TTL = timedelta(days=7)
+
+
+def record_restore_request(redis, key, requested=None):
+    """Record the time of a restore request for an S3 key."""
+
+    requested = requested or datetime.now(timezone.utc)
+    redis.set(
+        RESTORE_REQUESTED_KEY.format(key),
+        requested.isoformat(),
+        ex=int(RESTORE_REQUEST_TTL.total_seconds()),
+    )
+
+
+def restore_requested_at(redis, key):
+    """Return the time of the restore request for an S3 key, or None."""
+
+    raw = redis.get(RESTORE_REQUESTED_KEY.format(key))
+    if not raw:
+        return None
+    return datetime.fromisoformat(raw.decode() if isinstance(raw, bytes) else raw)
+
+
+def overtaken_by_import(redis, file, key):
+    """Return True if an import replaced the file after its restore request.
+
+    The record must claim the key, and its library file must be present.
+    A restore of a present file that was imported before the request is
+    on purpose (for example, a replacement of a bad copy). Thus, it
+    continues.
+    """
+
+    requested = restore_requested_at(redis, key)
+    if file is None or requested is None or file.date_localized is None:
+        return False
+    localized = file.date_localized
+    if localized.tzinfo is None:
+        localized = localized.replace(tzinfo=timezone.utc)
+    if localized <= requested:
+        return False
+    return os.path.isfile(
+        os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
+    )
+
+
 class UploadProgressPercentage(object):
     """Report the upload progress as a callback during an upload to AWS S3."""
 
@@ -550,6 +602,22 @@ def download_task(key, basename, sqs_receipt_handle=None, transient_retries=0):
         file = File.query.filter_by(aws_untouched_key=key).first()
         if file:
             basename = file.untouched_basename
+
+        # An import replaced the file after the restore request. The
+        # download would replace the new file with the old one, and an
+        # object in cold storage would start a new restore. Thus, drop
+        # the message and download nothing.
+
+        if overtaken_by_import(current_app.redis, file, key):
+            current_app.logger.info(
+                f"'{basename}' was imported again after its restore request, "
+                f"skipping the download"
+            )
+            if sqs_receipt_handle:
+                return delete_sqs_message(
+                    aws_sqs_client(), sqs_receipt_handle, note="overtaken restore"
+                )
+            return True
 
         if job:
             job.meta["description"] = f"'{basename}' — Downloading from AWS"
@@ -1329,7 +1397,7 @@ def _defer_to_restore(sqs_client, key, basename, sqs_receipt_handle, head_respon
             f"'{basename}' restored copy expired before download, "
             f"requesting a new restore"
         )
-        aws_restore(key)
+        aws_restore(key, record_request=False)
 
     if sqs_receipt_handle:
         if not delete_sqs_message(sqs_client, sqs_receipt_handle, note="stale message"):
@@ -1540,8 +1608,13 @@ def aws_download(key, basename, sqs_receipt_handle=None):
     return False
 
 
-def aws_restore(key, days=2, tier="Standard"):
-    """Request a restore of a file at AWS from Glacier status for a download."""
+def aws_restore(key, days=2, tier="Standard", record_request=True):
+    """Request a restore of a file at AWS from Glacier status for a download.
+
+    The request time goes to Redis. Then download_task can tell if an
+    import replaced the file during the restore. A request again for an
+    expired restored copy keeps the time of the first request.
+    """
 
     with app.app_context():
         try:
@@ -1593,6 +1666,8 @@ def aws_restore(key, days=2, tier="Standard"):
                     current_app.logger.info(
                         f"Requested '{key}' to be restored for {days} day(s) using tier '{tier}'"
                     )
+                    if record_request:
+                        record_restore_request(current_app.redis, key)
 
             else:
                 current_app.logger.warning(

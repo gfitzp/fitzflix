@@ -803,7 +803,9 @@ def test_aws_download_expired_restore_requests_new_restore(app, monkeypatch):
     restored = []
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
@@ -836,7 +838,9 @@ def test_aws_download_waits_for_restore_already_underway(app, monkeypatch):
     restored = []
     monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
     monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
@@ -1296,3 +1300,150 @@ def test_apply_tmdb_refresh_saves_the_payload_when_apply_raises(app, monkeypatch
         assert len(dumps) == 1
         with gzip.open(dumps[0], "rb") as saved:
             assert json.loads(saved.read()) == info
+
+
+def _overtaken_fixture(app, title, localized, present=True):
+    """Make an archived movie file, and optionally its library copy."""
+
+    from app import db
+    from tests.factories import make_movie, make_movie_file
+
+    key = f"untouched/{title} (1950) - [WEBDL-1080p].mkv"
+    file = make_movie_file(
+        make_movie(title, 1950),
+        "WEBDL-1080p",
+        aws_untouched_key=key,
+        date_localized=localized,
+    )
+    db.session.commit()
+    if present:
+        path = os.path.join(app.config["LIBRARY_DIR"], file.file_path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as handle:
+            handle.write(b"x")
+    return key
+
+
+def test_aws_restore_records_the_request_time(app, monkeypatch):
+    """Test that a restore request stores its time for download_task.
+
+    A request again for an expired restored copy keeps the first time."""
+
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    class FakeS3:
+        def list_objects(self, **kwargs):
+            return {
+                "Contents": [{"Key": kwargs["Prefix"], "StorageClass": "DEEP_ARCHIVE"}]
+            }
+
+        def head_object(self, **kwargs):
+            return {}
+
+        def restore_object(self, **kwargs):
+            return {}
+
+    monkeypatch.setattr(aws_storage, "aws_s3_client", lambda **kwargs: FakeS3())
+    key = "untouched/Recorded (1950) - [DVD].mkv"
+    first = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    with app.app_context():
+        aws_storage.record_restore_request(app.redis, key, first)
+        videos.aws_restore(key, record_request=False)
+        assert aws_storage.restore_requested_at(app.redis, key) == first
+
+        videos.aws_restore(key)
+        assert aws_storage.restore_requested_at(app.redis, key) > first
+
+
+def test_download_task_skips_a_restore_that_an_import_overtook(app, monkeypatch):
+    """Test that download_task drops a restore of a replaced file.
+
+    The record was imported after the restore request, and its file is
+    present. The download would replace the new file with the old one."""
+
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    downloads = []
+    deleted = []
+    monkeypatch.setattr(
+        aws_storage, "aws_download", lambda *args, **kwargs: downloads.append(args)
+    )
+
+    class FakeSQS:
+        def delete_message(self, **kwargs):
+            deleted.append(kwargs["ReceiptHandle"])
+            return {}
+
+    monkeypatch.setattr(aws_storage, "aws_sqs_client", lambda: FakeSQS())
+    with app.app_context():
+        key = _overtaken_fixture(app, "Overtaken", datetime(2026, 10, 20, 18, 0))
+        aws_storage.record_restore_request(
+            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+        )
+        assert videos.download_task(key, os.path.basename(key), "receipt-1") is True
+
+    assert downloads == []
+    assert deleted == ["receipt-1"]
+
+
+def test_download_task_keeps_a_restore_of_a_file_imported_before(app, monkeypatch):
+    """Test that a restore of a present file continues when it is on purpose.
+
+    The record was imported before the restore request. For example, the
+    operator replaces a bad local copy."""
+
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    downloads = []
+    monkeypatch.setattr(
+        aws_storage,
+        "aws_download",
+        lambda *args, **kwargs: downloads.append(args) or aws_storage.DOWNLOAD_COMPLETE,
+    )
+    with app.app_context():
+        key = _overtaken_fixture(app, "Kept On Purpose", datetime(2026, 10, 19, 18, 0))
+        aws_storage.record_restore_request(
+            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+        )
+        assert videos.download_task(key, os.path.basename(key), "receipt-2") is True
+
+    assert len(downloads) == 1
+
+
+def test_download_task_keeps_a_restore_of_an_absent_file(app, monkeypatch):
+    """Test that a restore continues when the library file is absent."""
+
+    from datetime import datetime, timezone
+
+    import app.videos as videos
+
+    from app import aws_storage
+
+    downloads = []
+    monkeypatch.setattr(
+        aws_storage,
+        "aws_download",
+        lambda *args, **kwargs: downloads.append(args) or aws_storage.DOWNLOAD_COMPLETE,
+    )
+    with app.app_context():
+        key = _overtaken_fixture(
+            app, "Kept Absent", datetime(2026, 10, 20, 18, 0), present=False
+        )
+        aws_storage.record_restore_request(
+            app.redis, key, datetime(2026, 10, 20, 13, 0, tzinfo=timezone.utc)
+        )
+        assert videos.download_task(key, os.path.basename(key), "receipt-3") is True
+
+    assert len(downloads) == 1

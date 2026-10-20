@@ -292,7 +292,9 @@ def test_cdn_403_on_a_cold_object_requests_a_restore(app, monkeypatch, cdn):
     sqs = _FakeSQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
@@ -323,7 +325,9 @@ def test_cdn_403_during_a_restore_waits(app, monkeypatch, cdn):
     sqs = _FakeSQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
@@ -357,7 +361,9 @@ def test_cdn_403_on_an_expired_restore_requests_a_restore(app, monkeypatch, cdn)
     sqs = _FakeSQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
@@ -390,7 +396,9 @@ def test_cdn_403_on_a_readable_object_gives_up(app, monkeypatch, cdn):
     sqs = _FakeSQS()
     restored = []
     _wire(monkeypatch, s3, sqs)
-    monkeypatch.setattr(aws_storage, "aws_restore", lambda key: restored.append(key))
+    monkeypatch.setattr(
+        aws_storage, "aws_restore", lambda key, **kwargs: restored.append(key)
+    )
 
     with app.app_context():
         assert (
