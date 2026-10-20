@@ -94,14 +94,23 @@ To test one signed URL, ask Fitzflix for it, and send it with curl. Do these ste
 
 3. Get an object key. Open the page of an archived file in Fitzflix. The text "Archived offsite ... as" shows its key.
 
-4. Ask for a signed URL, and send a HEAD request with it. Put the key in double quotes, because keys usually contain spaces, brackets, and apostrophes:
+4. Ask for a signed URL, and download the first byte of the object with it. Put the key in double quotes, because keys usually contain spaces, brackets, and apostrophes:
 
-       flask aws cdn-url "untouched/Film (2021) - [Bluray-1080p].mkv" | xargs curl -sI | head -5
+       flask aws cdn-url "untouched/Film (2021) - [Bluray-1080p].mkv" | xargs curl -s -r 0-0 -o /dev/null -w '%{http_code}\n'
 
-The first line of the output is the HTTP status:
+The output is the "Fitzflix startup" log line and then the HTTP status:
 
-- `200`: the object is in S3 Standard or is restored. The CDN path operates.
-- `403`: the object is still in cold storage, or the key is incorrect. S3 also answers 403 for a key that does not exist. A WAF block of your IP address also gives 403.
+- `206`: CloudFront sent the byte. The object is in S3 Standard, or its restore is complete. The CDN path operates.
+- `403`: CloudFront did not send the byte. The object is still in cold storage, the key is incorrect, or the WAF blocks your IP address. S3 answers 403, not 404, for a key that does not exist.
+
+Do not use a HEAD request (`curl -I`) for this test. S3 answers a HEAD request with 200 for an object in Glacier Deep Archive also, because a HEAD request reads only the metadata.
+
+A HEAD request can help you find the cause of a 403, however. Send one with a new signed URL for the same key:
+
+    flask aws cdn-url "untouched/Film (2021) - [Bluray-1080p].mkv" | xargs curl -sI
+
+- `200` with `x-amz-storage-class: DEEP_ARCHIVE` or `GLACIER`: the key is correct, and the object is in cold storage. Request a restore, and wait for it to complete. After a restore, the response also has an `x-amz-restore` line.
+- `403`: the key is incorrect, or the WAF blocks your IP address.
 
 The signed URL expires after 600 seconds. To change this, add `--expires <seconds>` after `cdn-url`.
 
