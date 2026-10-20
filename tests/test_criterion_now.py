@@ -1,8 +1,9 @@
 """Test the Criterion 24/7 now-playing card.
 
-These tests cover the parse of the whatsonnow page and of the film
-page. The whatsonnow page is a Next.js app since 2026-09-24. It
-embeds the schedule as data. The film page has a schema.org block. They also cover the self-scheduling
+These tests cover the parse of the now-playing page and of the film
+page. The now-playing page is a Next.js app since 2026-09-24. It
+embeds the schedule as data. Since 2026-10-19 it is the Watch Live
+page of the Channel (#291). The film page has a schema.org block. They also cover the self-scheduling
 poller and the card on the landing page. For the card they cover the
 gating, the staleness, the star row, and the credits with filmography
 links."""
@@ -283,7 +284,7 @@ def test_poller_stores_film_and_reschedules(app, monkeypatch):
 
     def fake_requests_get(url, timeout=None):
         class FakeResponse:
-            text = WHATSON_HTML if "whatsonnow" in url else INFO_HTML
+            text = WHATSON_HTML if url == criterion_now.WHATSON_URL else INFO_HTML
 
             def raise_for_status(self):
                 """Never an HTTP error."""
@@ -1033,11 +1034,11 @@ def fake_feed(monkeypatch, criterion_now, fetched):
     """Serve the now-playing page and the film pages. Record each film fetch."""
 
     def fake_requests_get(url, timeout=None):
-        if "whatsonnow" not in url:
+        if url != criterion_now.WHATSON_URL:
             fetched.append(url)
 
         class FakeResponse:
-            text = WHATSON_HTML if "whatsonnow" in url else INFO_HTML
+            text = WHATSON_HTML if url == criterion_now.WHATSON_URL else INFO_HTML
 
             def raise_for_status(self):
                 """Never an HTTP error."""
@@ -1242,3 +1243,54 @@ def test_failed_tmdb_call_is_enriched_again(app, monkeypatch):
     assert len(fetched) == 2
     stored = json.loads(app.redis.get(criterion_now.NOW_KEY))
     assert stored["tmdb_id"] == 33667 and "retry" not in stored
+
+
+LIVE_FIXTURE = "tests/fixtures/criterion_live_2026-10-20.html"
+LIVE_NOW = datetime(2026, 10, 20, 17, 0, tzinfo=timezone.utc)
+
+
+def test_parse_the_watch_live_page_of_2026_10_20(app):
+    """The real page of 2026-10-20, reduced to the parts that the parser reads.
+
+    The heading class is "epcjfa_title", with 1 underscore (#291)."""
+
+    from app.criterion_now import parse_watch_live_url, parse_whatson_page
+
+    page = open(LIVE_FIXTURE).read()
+    with app.app_context():
+        parsed = parse_whatson_page(page, LIVE_NOW)
+        live = parse_watch_live_url(page)
+    assert parsed["title"] == "Bleak Moments"
+    assert parsed["heading"] is True
+    assert parsed["more_url"] == (
+        "https://www.criterionchannel.com/films/kTz05rvG/bleak-moments"
+    )
+    assert parsed["ends_at"] == datetime(2026, 10, 20, 17, 57, 57, tzinfo=timezone.utc)
+    assert [film["title"] for film in parsed["upcoming"]][:2] == [
+        "Drylongso",
+        "24 Frames",
+    ]
+    assert live == "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
+
+
+def test_a_page_without_a_heading_uses_the_schedule(app):
+    """The schedule entry that plays now names the film (#291)."""
+
+    from app.criterion_now import parse_whatson_page
+
+    page = re.sub(r"<h1[^>]*>.*?</h1>", "", open(LIVE_FIXTURE).read())
+    with app.app_context():
+        parsed = parse_whatson_page(page, LIVE_NOW)
+        assert parsed["title"] == "Bleak Moments"
+        assert parsed["heading"] is False
+        assert parsed["ends_at"].hour == 17
+
+        # With no heading and no film on now, there is nothing to show.
+        assert parse_whatson_page(page, LIVE_NOW + timedelta(days=3)) is None
+
+
+def test_the_poller_reads_the_watch_live_page():
+    from app.criterion_now import WATCH_LIVE_URL, WHATSON_URL
+
+    assert WHATSON_URL == WATCH_LIVE_URL
+    assert "whatsonnow" not in WHATSON_URL

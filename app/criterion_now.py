@@ -1,8 +1,11 @@
 """The "On Criterion 24/7 now" card of the landing page.
 
-whatsonnow.criterionchannel.com is the public now-playing page of the
-Channel for its 24/7 feed. Since 2026-09-24 it is a Next.js app. The
-title of the current film is the page heading. The page also embeds
+The Watch Live page of the Channel is the now-playing page of its 24/7
+feed. whatsonnow.criterionchannel.com was that page until 2026-10-19.
+Now it redirects to the Watch Live page, and the poller reads that page
+directly (#291). It is a Next.js app. The title of the current film is
+the page heading. If the page has no heading, the schedule entry that
+plays now names the film. The page also embeds
 the schedule of the feed as data. Each entry has a start time and an
 end time. The page has a Film Page link. A poller scrapes the page. It
 follows the Film Page link for the schema.org block of the film. That
@@ -40,7 +43,6 @@ from app.streaming_rail import enriched_movie
 
 app = LocalProxy(get_app)
 
-WHATSON_URL = "https://whatsonnow.criterionchannel.com"
 CHANNEL_ORIGIN = "https://www.criterionchannel.com"
 
 # The fallback for the Watch Live link. The page carries the current
@@ -48,6 +50,11 @@ CHANNEL_ORIGIN = "https://www.criterionchannel.com"
 # poll has stored a link yet.
 
 WATCH_LIVE_URL = "https://www.criterionchannel.com/live/1emmgvqX/criterion-24-7"
+
+# The page that the poller reads (#291). The old whatsonnow address
+# redirects here.
+
+WHATSON_URL = WATCH_LIVE_URL
 NOW_KEY = "fitzflix:criterion:now"
 SCHEDULE_KEY = "fitzflix:criterion:schedule"
 POLL_JOB_ID = "fitzflix-criterion-now-poll"
@@ -110,7 +117,11 @@ STALE_LIMIT = timedelta(hours=3)
 
 EARLY_START = timedelta(minutes=5)
 
-TITLE_RE = re.compile(r'<h1 class="[^"]*__title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.S)
+# The heading class has a hashed prefix that changes with each release of
+# the site, for example "epcjfa_title" (2026-10-19) after "Hero__title".
+# Thus, the pattern needs only "_title" (#291).
+
+TITLE_RE = re.compile(r'<h1 class="[^"]*_title[^"]*"[^>]*>\s*(.*?)\s*</h1>', re.S)
 
 # The schedule of the feed sits in the data of the Next.js app. The
 # page sends that data as JavaScript string literals in
@@ -265,15 +276,20 @@ def parse_whatson_page(page_html, now=None):
     ends_at as UTC stamps. The result is None if the title is not
     found. An end time that does not parse comes back as None. Then the
     poller does a short retry. It does not trust a guess. Stale is True
-    when the heading names a film that just ended."""
-
-    title_match = TITLE_RE.search(page_html)
-    if not title_match:
-        return None
-    title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
+    when the heading names a film that just ended. If the page has no
+    heading, the schedule entry that plays now names the film, and
+    heading is False (#291)."""
 
     now = now or datetime.now(timezone.utc)
     entries = _schedule_entries(page_html)
+    title_match = TITLE_RE.search(page_html)
+    if title_match:
+        title = _clean_text(re.sub(r"<[^>]+>", "", title_match.group(1)))
+    else:
+        playing = [entry for entry in entries if entry[0] <= now < entry[1]]
+        if not playing:
+            return None
+        title = playing[0][2]
     slot, stale_end = _current_slot(entries, title, now)
 
     starts_at = ends_at = guid = None
@@ -320,6 +336,7 @@ def parse_whatson_page(page_html, now=None):
         "upcoming": upcoming,
         "stale": stale_end is not None,
         "stale_since": stale_end,
+        "heading": title_match is not None,
     }
 
 
@@ -625,9 +642,14 @@ def poll_criterion_now():
                     if ends_at
                     else "end time unreadable"
                 )
+                source = (
+                    ""
+                    if parsed.get("heading", True)
+                    else " (no title heading on the page; the schedule names the film)"
+                )
                 current_app.logger.info(
                     f"Criterion 24/7 now: '{title}', {end_note}, "
-                    f"{len(upcoming)} upcoming"
+                    f"{len(upcoming)} upcoming{source}"
                 )
             else:
                 current_app.logger.warning(
