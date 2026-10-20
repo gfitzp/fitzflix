@@ -271,6 +271,10 @@
 		@media (max-width: 575.98px) {
 			.queue-table .queue-file { flex: 0 0 91.667%; max-width: 91.667%; width: 91.667%; }
 			.queue-table .queue-enqueued, .queue-table .queue-started { display: none; }
+			/* The number and the button stack in 1 column, both centered.
+			   The column does not wrap. A wrapped column packs its line at
+			   the left edge (align-content), not at the center */
+			.queue-table .queue-position { flex-direction: column; flex-wrap: nowrap; align-items: center; }
 		}
 		/* The label block of the film card shows only when it holds a
 		   badge. The rule above it goes with it. Thus, a card with no
