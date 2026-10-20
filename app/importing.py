@@ -1942,7 +1942,19 @@ def finalize_localization(
             file.date_localized = datetime.now(timezone.utc)
 
             # Set the AWS archived fields if the task uploaded the file to AWS
-            # S3 storage.
+            # S3 storage. A reused record can have the archive of its old file
+            # under a different key. No record claims that key after the
+            # commit. A later restore of that key would import the old file
+            # under the old name (Sapphire, 2026-10-20). Thus, the key goes
+            # with the archives of the worse files.
+
+            replaced_key = None
+            if (
+                file.aws_untouched_date_uploaded
+                and file.aws_untouched_key
+                and file.aws_untouched_key != file_details.get("aws_untouched_key")
+            ):
+                replaced_key = file.aws_untouched_key
 
             file.aws_untouched_key = file_details.get("aws_untouched_key")
             file.aws_untouched_date_uploaded = file_details.get(
@@ -1964,7 +1976,7 @@ def finalize_localization(
             worse_files = file.find_worse_files()
             current_app.logger.info(f"{file} worse files: {worse_files}")
 
-            worse_aws_keys = []
+            worse_aws_keys = [replaced_key] if replaced_key else []
             worse_derived_paths = []
 
             for worse in worse_files:

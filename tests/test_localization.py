@@ -1791,3 +1791,70 @@ def test_a_replaced_files_archive_is_deleted_from_the_handoff_queue(
 
         assert deletes(app.handoff_queue) == [(key,)]
         assert deletes(app.file_queue) == []
+
+
+def test_a_reused_records_old_archive_key_is_deleted(
+    app, sample_mkv, incoming_dir, monkeypatch
+):
+    """Retire the old archive key when an import reuses a File record.
+
+    The new file has the same library path. Thus, the import updates the
+    record, and the record claims the new key. No record claims the old
+    key after the commit. A later restore of it would import the old file
+    under its old name (Sapphire, 2026-10-20)."""
+
+    from datetime import datetime, timezone
+
+    from app import db, importing
+    from app.models import File
+    from tests.factories import make_movie, make_movie_file
+
+    old_key = "untouched/Reuse Archive (2021) - [WEBDL-1080p].mkv"
+    new_key = "untouched/Reuse Archive (2021) - [DVD].mkv"
+    with app.app_context():
+        movie = make_movie("Reuse Archive", 2021)
+        row = make_movie_file(
+            movie,
+            "DVD",
+            aws_untouched_key=old_key,
+            aws_untouched_date_uploaded=datetime.now(timezone.utc),
+        )
+        db.session.commit()
+        row_id = row.id
+
+    monkeypatch.setitem(app.config, "ARCHIVE_ORIGINAL_MEDIA", True)
+    monkeypatch.setattr(
+        importing,
+        "aws_upload",
+        lambda *a, **k: (new_key, datetime.now(timezone.utc), 1),
+    )
+
+    basename = "Reuse Archive (2021) - [DVD].mkv"
+    source = os.path.join(incoming_dir, basename)
+    with open(sample_mkv, "rb") as f_in, open(source, "wb") as f_out:
+        f_out.write(f_in.read())
+
+    with app.app_context():
+        assert localization_task(source) is True
+        move = next(
+            job
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.move_localized_file"
+            and job.args[0] == source
+        )
+        assert videos.move_localized_file(*move.args) is True
+        finalize = next(
+            job
+            for job in app.sql_queue.jobs
+            if job.func_name == "app.videos.finalize_localization"
+            and job.args[0] == source
+        )
+        finalize_localization(*finalize.args, **finalize.kwargs)
+
+        assert db.session.get(File, row_id).aws_untouched_key == new_key
+        deletes = [
+            job.args
+            for job in app.handoff_queue.jobs
+            if job.func_name == "app.videos.aws_delete"
+        ]
+        assert deletes == [(old_key,)]
