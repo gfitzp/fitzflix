@@ -1,16 +1,19 @@
 import os
-import shutil
 
 from flask import current_app, jsonify, request
 
 from app.api import bp
+from app.radarr_push import (
+    enqueue_radarr_push,
+    radarr_configured,
+    rename_download_locally,
+)
 from app.api.arr import (
     downgrade_quality_title,
     downloaded_path,
     import_event_webhook,
     import_source_incomplete,
     reject_incomplete_download,
-    send_arr_command,
 )
 
 
@@ -58,37 +61,44 @@ def radarr_add(payload):
     radarr_file_path = os.path.join(
         os.path.dirname(downloaded_file_path), radarr_file_name
     )
-    if downloaded_file_path != radarr_file_path:
-        shutil.move(downloaded_file_path, radarr_file_path)
-        current_app.logger.info(
-            f"'{downloaded_file_path}' renamed as '{radarr_file_path}'"
-        )
+    movie_id = payload["movie"].get("id")
+    movie_file_id = payload["movieFile"].get("id")
 
-    # Ask Radarr to refresh its movie data, because the file possibly has
-    # a new name.
+    # A rename in Fitzflix made Radarr lose its file. Radarr then
+    # downloaded the film again (#288). Thus, Radarr changes the quality
+    # of its own record and renames the file, in a task. The task then
+    # queues the import. This keeps the webhook short.
 
-    id = payload["movie"].get("id")
-    if id:
+    if (
+        downloaded_file_path != radarr_file_path
+        and movie_id
+        and movie_file_id
+        and radarr_configured()
+    ):
+        enqueue_radarr_push(
+            "app.radarr_push.adopt_download_task",
+            int(movie_id),
+            int(movie_file_id),
+            downloaded_file_path,
+            radarr_file_path,
+            new_quality,
+            description=f"'{radarr_file_name}' Setting the Radarr quality",
+        )
         current_app.logger.info(
-            f"Rescanning movie '{os.path.dirname(downloaded_file_path)}'"
+            f"'{downloaded_file_path}' Radarr renames it as '{radarr_file_name}'"
         )
-        send_arr_command(
-            "Radarr",
-            current_app.config["RADARR_URL"] + "/api/v3/command",
-            current_app.config["RADARR_API_KEY"],
-            {"name": "RefreshMovie", "movieIds": [int(id)]},
-        )
+        return response
 
     # Send the file to Fitzflix for processing. An earlier version copied the
     # file to the import directory. But if a second file arrived during the
     # copy, the first copy was abandoned. A later version made a hard link in
     # the import directory. But the NAS did not support hard links. Thus,
-    # Fitzflix now imports the downloaded file in place.
-
-    # A second webhook for the same file adds no second job (#287).
+    # Fitzflix now imports the downloaded file in place. A second webhook for
+    # the same file adds no second job (#287).
 
     from app.importing import enqueue_localization
 
+    rename_download_locally(downloaded_file_path, radarr_file_path, movie_id)
     if enqueue_localization(radarr_file_path):
         current_app.logger.info(f"'{radarr_file_path}' Sent to Fitzflix")
     return response

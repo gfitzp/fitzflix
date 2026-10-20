@@ -25,6 +25,9 @@ finds the profile by name, never by a hardcoded id.
 
 import json
 import os
+import shutil
+import time
+import traceback
 
 import requests
 
@@ -44,6 +47,11 @@ QUALITY_PROFILE_NAME = "Fitzflix"
 # The read stays long for the full movie list (#268).
 
 RADARR_TIMEOUT = (5, 30)
+
+# The longest wait for the RenameFiles command of Radarr, in seconds
+# (#288).
+
+RADARR_RENAME_WAIT = 120
 
 
 class RadarrError(Exception):
@@ -374,3 +382,103 @@ def reconcile_radarr_paths():
             f"{ambiguous} left for review"
         )
         return f"{fixed} repointed, {ambiguous} for review"
+
+
+def _quality_resource(name):
+    """Return the Radarr quality resource of a quality title, revision 1."""
+
+    for definition in _radarr("GET", "/api/v3/qualitydefinition"):
+        if definition["quality"]["name"] == name:
+            return {
+                "quality": definition["quality"],
+                "revision": {"version": 1, "real": 0, "isRepack": False},
+            }
+    raise RadarrError(f"Radarr has no quality named {name!r}")
+
+
+def _radarr_rename_to_quality(movie_id, movie_file_id, quality_name):
+    """Give a Radarr movie file a new quality, and let Radarr rename it.
+
+    Return the new absolute path from the record of Radarr. Radarr names
+    the file with its naming format, which holds the quality title. Thus,
+    Radarr keeps its record of the file. It does not see a missing file
+    (#288)."""
+
+    record = _radarr("GET", f"/api/v3/moviefile/{int(movie_file_id)}")
+    record["quality"] = _quality_resource(quality_name)
+    _radarr("PUT", f"/api/v3/moviefile/{int(movie_file_id)}", record)
+    command = _radarr(
+        "POST",
+        "/api/v3/command",
+        {
+            "name": "RenameFiles",
+            "movieId": int(movie_id),
+            "files": [int(movie_file_id)],
+        },
+    )
+    deadline = time.monotonic() + RADARR_RENAME_WAIT
+    while True:
+        status = _radarr("GET", f"/api/v3/command/{command['id']}").get("status")
+        if status == "completed":
+            break
+        if status in ("failed", "aborted", "cancelled", "orphaned"):
+            raise RadarrError(f"The Radarr rename ended with the status {status!r}")
+        if time.monotonic() > deadline:
+            raise RadarrError("The Radarr rename did not end in time")
+        time.sleep(1)
+    return _radarr("GET", f"/api/v3/moviefile/{int(movie_file_id)}")["path"]
+
+
+def rename_download_locally(downloaded_path, new_path, movie_id):
+    """Rename a Radarr download in Fitzflix, then ask Radarr to rescan.
+
+    This was the only way before #288. It stays as the fallback when
+    Radarr cannot rename its own file. Then Radarr can lose the file."""
+
+    from app.api.arr import send_arr_command
+
+    if downloaded_path != new_path:
+        shutil.move(downloaded_path, new_path)
+        current_app.logger.info(f"'{downloaded_path}' renamed as '{new_path}'")
+    if movie_id:
+        current_app.logger.info(
+            f"Rescanning movie '{os.path.dirname(downloaded_path)}'"
+        )
+        send_arr_command(
+            "Radarr",
+            current_app.config["RADARR_URL"] + "/api/v3/command",
+            current_app.config["RADARR_API_KEY"],
+            {"name": "RefreshMovie", "movieIds": [int(movie_id)]},
+        )
+
+
+def adopt_download_task(movie_id, movie_file_id, downloaded_path, new_path, quality):
+    """Give a Radarr download the quality of Fitzflix, then queue its import.
+
+    This is a task (#288). Radarr changes the quality of its file record
+    and renames the file. Thus, Radarr keeps the file, and it does not
+    download the film again. If Radarr cannot do it, Fitzflix renames the
+    file as before. In both cases the import of the file goes on the
+    queue after the rename."""
+
+    from app import get_app
+    from app.importing import enqueue_localization
+
+    with get_app().app_context():
+        try:
+            path = _radarr_rename_to_quality(movie_id, movie_file_id, quality)
+            if not os.path.exists(path):
+                raise RadarrError(f"Radarr reports {path!r}, which does not exist")
+            current_app.logger.info(
+                f"'{downloaded_path}' Radarr renamed it as '{path}' ({quality})"
+            )
+        except Exception:
+            current_app.logger.warning(
+                f"Radarr could not rename '{downloaded_path}'. Fitzflix renames "
+                f"it: " + traceback.format_exc()
+            )
+            rename_download_locally(downloaded_path, new_path, movie_id)
+            path = new_path
+        if enqueue_localization(path):
+            current_app.logger.info(f"'{path}' Sent to Fitzflix")
+        return True

@@ -1,0 +1,137 @@
+"""Test that Radarr keeps its file after the quality downgrade (#288).
+
+Before #288 Fitzflix renamed a Radarr download itself. Radarr then saw
+its file as missing and downloaded the film again. Now Radarr changes
+the quality of its own record and renames the file, in a task. The task
+queues the import after the rename. If Radarr cannot do it, Fitzflix
+renames the file as before.
+"""
+
+import base64
+import os
+
+import pytest
+
+from app import safe_job_id
+from tests.conftest import ADMIN_API_KEY, ADMIN_EMAIL
+
+ORIGINAL = "Paths of Glory (1957) - [Remux-1080p].mkv"
+RENAMED = "Paths of Glory (1957) - [WEBDL-1080p].mkv"
+
+
+@pytest.fixture(autouse=True)
+def radarr_root(app, monkeypatch, tmp_path):
+    monkeypatch.setitem(app.config, "RADARR_ROOT_FOLDERS", [str(tmp_path)])
+    monkeypatch.setitem(app.config, "RADARR_URL", "http://radarr.test")
+    monkeypatch.setitem(app.config, "RADARR_API_KEY", "key")
+
+
+def _download(tmp_path):
+    folder = tmp_path / "Paths of Glory (1957)"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ORIGINAL).write_bytes(b"movie")
+    return folder
+
+
+class FakeRadarr:
+    """Fake the Radarr API calls of the adopt task. RenameFiles renames."""
+
+    def __init__(self, folder, rename_status="completed"):
+        self.folder = folder
+        self.rename_status = rename_status
+        self.record = {"id": 7, "path": str(folder / ORIGINAL), "quality": {}}
+        self.calls = []
+
+    def __call__(self, method, path, payload=None):
+        self.calls.append((method, path))
+        if path == "/api/v3/qualitydefinition":
+            return [{"quality": {"id": 3, "name": "WEBDL-1080p"}}]
+        if path == "/api/v3/moviefile/7" and method == "GET":
+            return dict(self.record)
+        if path == "/api/v3/moviefile/7" and method == "PUT":
+            self.record = payload
+            return payload
+        if path == "/api/v3/command":
+            assert payload == {"name": "RenameFiles", "movieId": 3, "files": [7]}
+            if self.rename_status == "completed":
+                os.rename(self.folder / ORIGINAL, self.folder / RENAMED)
+                self.record["path"] = str(self.folder / RENAMED)
+            return {"id": 55}
+        if path == "/api/v3/command/55":
+            return {"status": self.rename_status}
+        raise AssertionError(f"unexpected {method} {path}")
+
+
+def test_webhook_leaves_the_rename_to_radarr(app, client, tmp_path):
+    folder = _download(tmp_path)
+    token = base64.b64encode(f"{ADMIN_EMAIL}:{ADMIN_API_KEY}".encode()).decode()
+    response = client.post(
+        "/api/radarr/add",
+        json={
+            "eventType": "Download",
+            "movie": {"id": 3, "folderPath": str(folder)},
+            "movieFile": {"id": 7, "relativePath": ORIGINAL, "quality": "Remux-1080p"},
+            "customFormatInfo": {"customFormatScore": 2000},
+        },
+        headers={"Authorization": f"Basic {token}"},
+    )
+    assert response.status_code == 200
+
+    # The file keeps its Radarr name until Radarr renames it. Nothing is
+    # imported yet. The adopt task waits on the request queue.
+    assert (folder / ORIGINAL).exists()
+    assert app.import_queue.job_ids == []
+    jobs = app.request_queue.jobs
+    assert [job.func_name for job in jobs] == ["app.radarr_push.adopt_download_task"]
+    assert jobs[0].args == (
+        3,
+        7,
+        str(folder / ORIGINAL),
+        str(folder / RENAMED),
+        "WEBDL-1080p",
+    )
+
+
+def test_adopt_task_lets_radarr_rename_then_queues_the_import(
+    app, monkeypatch, tmp_path
+):
+    import app.radarr_push as radarr_push
+
+    folder = _download(tmp_path)
+    fake = FakeRadarr(folder)
+    monkeypatch.setattr(radarr_push, "_radarr", fake)
+    monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
+
+    assert radarr_push.adopt_download_task(
+        3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
+    )
+
+    assert fake.record["quality"]["quality"]["name"] == "WEBDL-1080p"
+    assert fake.record["quality"]["revision"]["version"] == 1
+    assert (folder / RENAMED).exists()
+    job = app.import_queue.fetch_job(safe_job_id(RENAMED))
+    assert job is not None and job.args == (str(folder / RENAMED),)
+
+
+def test_adopt_task_falls_back_to_a_fitzflix_rename(app, monkeypatch, tmp_path):
+    """A failed Radarr rename leaves the file. Fitzflix renames it."""
+
+    import app.radarr_push as radarr_push
+
+    folder = _download(tmp_path)
+    fake = FakeRadarr(folder, rename_status="failed")
+    refreshes = []
+    monkeypatch.setattr(radarr_push, "_radarr", fake)
+    monkeypatch.setattr(radarr_push.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "app.api.arr.send_arr_command",
+        lambda service, url, key, payload: refreshes.append(payload),
+    )
+
+    assert radarr_push.adopt_download_task(
+        3, 7, str(folder / ORIGINAL), str(folder / RENAMED), "WEBDL-1080p"
+    )
+
+    assert (folder / RENAMED).exists() and not (folder / ORIGINAL).exists()
+    assert refreshes == [{"name": "RefreshMovie", "movieIds": [3]}]
+    assert app.import_queue.fetch_job(safe_job_id(RENAMED)) is not None
