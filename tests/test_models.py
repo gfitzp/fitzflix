@@ -154,3 +154,41 @@ def test_movie_replacement_still_respects_editions(app):
         final_cut = make_movie_file(movie, "DVD", edition="Final Cut")
         assert final_cut not in theatrical.find_worse_files()
         assert theatrical not in final_cut.find_worse_files()
+
+
+def test_a_tie_goes_to_the_lowest_file_id(app):
+    """2 copies of the same quality never share rank 1 (#273).
+
+    The lowest file id wins, in the app and in the ranked_files view."""
+
+    from tests.factories import make_file
+
+    with app.app_context():
+        movie = make_movie("Jaws", 1975)
+        first = make_movie_file(movie, "Bluray-1080p")
+        second = make_file(
+            "Jaws (1975) - [Bluray-1080p].mp4",
+            "Movies/Jaws (1975)",
+            "Jaws (1975)",
+            "Movies",
+            "Bluray-1080p",
+            movie_id=movie.id,
+        )
+        ranks = ranked_movie_files(db.session)
+        assert (ranks[first.id], ranks[second.id]) == (1, 2)
+
+        series = make_tv_series("Columbo")
+        episode = make_tv_file(series, 1, 1, "Bluray-1080p")
+        copy = make_file(
+            "Columbo - S01E01 - [Bluray-1080p].mp4",
+            "TV Shows/Columbo/Season 01",
+            "Columbo - S01E01",
+            "TV Shows",
+            "Bluray-1080p",
+            series_id=series.id,
+            season=1,
+            episode=1,
+            last_episode=1,
+        )
+        tv_ranks = ranked_tv_files(db.session)
+        assert (tv_ranks[episode.id], tv_ranks[copy.id]) == (1, 2)

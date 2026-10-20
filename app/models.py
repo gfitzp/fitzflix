@@ -2929,7 +2929,10 @@ class DVRChannel(db.Model):
 
 
 def movie_file_rank():
-    """Rank each movie file in its title/feature/edition group by quality."""
+    """Rank each movie file in its title/feature/edition group by quality.
+
+    A tie goes to the lowest file id. Thus, the winner is always the same.
+    The ranked_files reporting view uses the same rule (#273)."""
 
     return (
         db.func.row_number()
@@ -2940,7 +2943,11 @@ def movie_file_rank():
                 File.plex_title,
                 File.edition,
             ),
-            order_by=(File.fullscreen.asc(), RefQuality.preference.desc()),
+            order_by=(
+                File.fullscreen.asc(),
+                RefQuality.preference.desc(),
+                File.id.asc(),
+            ),
         )
         .label("rank")
     )
@@ -2952,7 +2959,8 @@ def tv_file_rank():
     The edition is not part of the group. That is intentional. For a TV
     file, it only carries the optional episode title. Thus, 2 copies of
     the same episode compete, with or without a title in their
-    filenames.
+    filenames. A tie goes to the lowest file id. The ranked_files
+    reporting view uses the same rule (#273).
     """
 
     return (
@@ -2963,6 +2971,7 @@ def tv_file_rank():
                 File.fullscreen.asc(),
                 RefQuality.preference.desc(),
                 File.last_episode.desc(),
+                File.id.asc(),
             ),
         )
         .label("rank")
