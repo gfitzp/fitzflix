@@ -184,12 +184,22 @@ def stored_scan(redis):
 
 
 def missing_best_summary(redis):
-    """Return the count and the scan time for a badge, or None before a scan."""
+    """Return the count and the scan time for a badge, or None before a scan.
+
+    The count includes only the files that are still in the database. An
+    import that replaces a file deletes its row. Thus, the badge agrees
+    with the page until the next scan.
+    """
 
     result = stored_scan(redis)
     if result is None:
         return None
-    return {"count": len(result["missing"]), "checked": result["checked"]}
+    count = (
+        File.query.filter(File.id.in_(result["missing"])).count()
+        if result["missing"]
+        else 0
+    )
+    return {"count": count, "checked": result["checked"]}
 
 
 def missing_best_report(redis):

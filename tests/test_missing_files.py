@@ -103,9 +103,10 @@ def test_task_stores_the_result_and_the_report_loads_the_rows(app, monkeypatch):
         summary = missing_files.missing_best_summary(app.redis)
         assert summary["count"] == 2
 
-        # A row deleted after the scan is not in the report
+        # A row deleted after the scan is not in the report or the count
         db.session.delete(gone)
         db.session.commit()
+        assert missing_files.missing_best_summary(app.redis)["count"] == 1
         report = missing_files.missing_best_report(app.redis)
 
         assert [row["file"].id for row in report["rows"]] == [absent.id]

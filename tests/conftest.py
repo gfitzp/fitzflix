@@ -105,6 +105,10 @@ class TestConfig(Config):
     AWS_ACCESS_KEY = None
     AWS_SECRET_KEY = None
     AWS_SQS_URL = None
+    AWS_DOWNLOAD_VIA_CDN = False
+    CDN_DOMAIN = None
+    CDN_KEY_PAIR_ID = None
+    CDN_PRIVATE_KEY = None
 
     # This port is unroutable. Thus, external calls fail immediately. They
     # do not reach a real service and do not hang on a timeout
