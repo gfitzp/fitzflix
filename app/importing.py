@@ -2170,6 +2170,13 @@ def finalize_localization(
 
             file.converted_from_quality = file_details.get("converted_from_quality")
             file.converted_from_format = file_details.get("converted_from_format")
+
+            # A reused record gets the untouched name of the new source.
+            # A conversion that reuses the record of a real rip must not
+            # keep the name of the rip (#292).
+
+            if file_details.get("untouched_basename"):
+                file.untouched_basename = file_details["untouched_basename"]
             file.replace_existing = file_details.get("replace_existing", False)
 
             # The media details arrive precomputed from move_localized_file.
@@ -3578,12 +3585,18 @@ def reconstruct_filename(file_id):
 
     beginning = f"{beginning} - "
 
+    # The untouched file of a conversion is its original (#292). Its name
+    # keeps the quality of the original, not the 1080p quality of the
+    # library file. Else a rename moves the archive to the wrong key.
+
+    quality_title = f.converted_from_quality or q.quality_title
+
     if f.fullscreen == True:
-        ending = f"Full Screen [{q.quality_title}]{ext}"
+        ending = f"Full Screen [{quality_title}]{ext}"
     elif f.feature_type_id != None:
-        ending = f"{ft.feature_type} - {f.plex_title} [{q.quality_title}]{ext}"
+        ending = f"{ft.feature_type} - {f.plex_title} [{quality_title}]{ext}"
     else:
-        ending = f"[{q.quality_title}]{ext}"
+        ending = f"[{quality_title}]{ext}"
 
     reconstructed_filename = sanitize_filename(f"{beginning}{ending}")
     reconstructed_filename = " ".join(reconstructed_filename.split()).strip()

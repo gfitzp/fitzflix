@@ -823,3 +823,97 @@ def test_a_restore_needs_the_password(app, admin_client):
     with app.app_context():
         (job,) = _jobs(app.request_queue, "app.videos.aws_restore")
         assert job.args == ("untouched/Restore Test (1984) - [Bluray-2160p].mkv",)
+
+
+def test_the_untouched_name_of_a_conversion_keeps_the_original_quality(app):
+    """A TMDB rename must not move the archive of a conversion to a 1080p key."""
+
+    from app.importing import reconstruct_filename
+
+    with app.app_context():
+        movie = make_movie("Renamed Original", 1941)
+        conversion = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            converted_from_quality="Bluray-2160p",
+            untouched_basename="Renamed Original (1941) - [Bluray-2160p].mkv",
+        )
+        real = make_file(
+            "Renamed Original (1941) - [DVD].mkv",
+            "Movies/Renamed Original (1941)",
+            "Renamed Original (1941)",
+            "Movies",
+            "DVD",
+            movie_id=movie.id,
+            untouched_basename="Renamed Original (1941) - [DVD].mkv",
+        )
+        db.session.commit()
+        assert reconstruct_filename(conversion.id) == (
+            "Renamed Original (1941) - [Bluray-2160p].mkv"
+        )
+        assert reconstruct_filename(real.id) == "Renamed Original (1941) - [DVD].mkv"
+
+
+def test_a_conversion_that_reuses_a_record_takes_the_untouched_name(app):
+    """The Import choice reuses the record of the real rip at the same path."""
+
+    with app.app_context():
+        movie = make_movie("Reused Record", 1984)
+        real = make_movie_file(
+            movie,
+            "Bluray-1080p",
+            untouched_basename="Reused Record (1984) - [Bluray-1080p].mkv",
+            aws_untouched_key="untouched/Reused Record (1984) - [Bluray-1080p].mkv",
+            aws_untouched_date_uploaded=datetime.utcnow(),
+        )
+        db.session.commit()
+
+        output_dir = os.path.join(app.config["LIBRARY_DIR"], real.dirname)
+        os.makedirs(output_dir, exist_ok=True)
+        hidden = os.path.join(output_dir, f".{real.basename}")
+        with open(hidden, "wb") as f:
+            f.write(b"conversion")
+        source = os.path.join(
+            _TMP, "incoming", "Reused Record (1984) - [Bluray-2160p].mkv"
+        )
+        os.makedirs(os.path.dirname(source), exist_ok=True)
+        with open(source, "wb") as f:
+            f.write(b"4k original")
+
+        details = {
+            "media_library": "Movies",
+            "file_path": real.file_path,
+            "dirname": real.dirname,
+            "basename": real.basename,
+            "plex_title": real.plex_title,
+            "title": "Reused Record",
+            "year": 1984,
+            "edition": None,
+            "quality_title": "Bluray-1080p",
+            "fullscreen": False,
+            "extension": "mkv",
+            "converted_from_quality": "Bluray-2160p",
+            "converted_from_format": "HDR10",
+            "replace_existing": True,
+            "untouched_basename": "Reused Record (1984) - [Bluray-2160p].mkv",
+            "aws_untouched_key": "untouched/Reused Record (1984) - [Bluray-2160p].mkv",
+            "aws_untouched_date_uploaded": datetime.utcnow(),
+            "aws_untouched_filesize_bytes": 11,
+        }
+        inspection = {
+            "video": {"format": "AVC", "color_primaries": "BT.709"},
+            "audio_tracks": [],
+            "subtitle_tracks": [],
+            "filesize_bytes": 10,
+        }
+        lock = app.lock_manager.lock(json.dumps({"title": "Reused Record"}), 10000)
+        videos.finalize_localization(source, details, lock, hidden, inspection)
+
+        db.session.expire_all()
+        file = File.query.filter_by(file_path=real.file_path).one()
+        assert file.converted_from_quality == "Bluray-2160p"
+        assert file.untouched_basename == "Reused Record (1984) - [Bluray-2160p].mkv"
+        assert file.aws_untouched_key == (
+            "untouched/Reused Record (1984) - [Bluray-2160p].mkv"
+        )
+        os.remove(os.path.join(app.config["LIBRARY_DIR"], file.file_path))
