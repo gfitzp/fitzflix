@@ -104,6 +104,17 @@ tv_seasons = db.Table(
 )
 
 
+def _clear_links(links):
+    """Remove every link of a dynamic relationship of 1 record.
+
+    This goes through the links of the record only. The old clear-outs
+    loaded every row of the table and asked about each row with 1
+    query. That was approximately 23,700 queries for each film (#295)."""
+
+    for linked in links.all():
+        links.remove(linked)
+
+
 class Utilities(object):
     """Static string helpers shared by the import pipeline."""
 
@@ -279,12 +290,10 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
-        # Delete the existing records associated with this movie.
+        # Delete the existing records associated with this movie. Each
+        # clear-out goes through the links of this film only (#295).
 
-        tmdb_collections = TMDBMovieCollection.query.all()
-        for collection in tmdb_collections:
-            if collection in self.collections:
-                self.collections.remove(collection)
+        _clear_links(self.collections)
 
         # Cast and crew get the same empty-payload guard as the association
         # groups below (#252). Before, the bulk delete ran before any
@@ -325,9 +334,7 @@ class TMDBMixin(object):
         # data from TMDB for a short time.
 
         if tmdb_info.get("genres") or self.genres.count() == 0:
-            for genre in TMDBGenre.query.all():
-                if genre in self.genres:
-                    self.genres.remove(genre)
+            _clear_links(self.genres)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
@@ -336,9 +343,7 @@ class TMDBMixin(object):
         if (tmdb_info.get("keywords") or {}).get(
             "keywords"
         ) or self.keywords.count() == 0:
-            for keyword in TMDBKeyword.query.all():
-                if keyword in self.keywords:
-                    self.keywords.remove(keyword)
+            _clear_links(self.keywords)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
@@ -352,9 +357,7 @@ class TMDBMixin(object):
             tmdb_info.get("production_companies")
             or self.production_companies.count() == 0
         ):
-            for company in TMDBProductionCompany.query.all():
-                if company in self.production_companies:
-                    self.production_companies.remove(company)
+            _clear_links(self.production_companies)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no production companies; "
@@ -365,9 +368,7 @@ class TMDBMixin(object):
             tmdb_info.get("production_countries")
             or self.production_countries.count() == 0
         ):
-            for country in TMDBProductionCountry.query.all():
-                if country in self.production_countries:
-                    self.production_countries.remove(country)
+            _clear_links(self.production_countries)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no production countries; "
@@ -375,9 +376,7 @@ class TMDBMixin(object):
             )
 
         if tmdb_info.get("spoken_languages") or self.spoken_languages.count() == 0:
-            for language in TMDBSpokenLanguage.query.all():
-                if language in self.spoken_languages:
-                    self.spoken_languages.remove(language)
+            _clear_links(self.spoken_languages)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no spoken languages; "
@@ -387,9 +386,7 @@ class TMDBMixin(object):
         if (tmdb_info.get("release_dates") or {}).get(
             "results"
         ) or self.certifications.count() == 0:
-            for certification in RefTMDBCertification.query.all():
-                if certification in self.certifications:
-                    self.certifications.remove(certification)
+            _clear_links(self.certifications)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no release dates; "
@@ -811,9 +808,7 @@ class TMDBMixin(object):
         # tmdb_movie_apply (#251). The TV keyword lists are in "results".
 
         if tmdb_info.get("genres") or self.genres.count() == 0:
-            for genre in TMDBGenre.query.all():
-                if genre in self.genres:
-                    self.genres.remove(genre)
+            _clear_links(self.genres)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no genres; " f"keeping the stored ones"
@@ -822,18 +817,14 @@ class TMDBMixin(object):
         if (tmdb_info.get("keywords") or {}).get(
             "results"
         ) or self.keywords.count() == 0:
-            for keyword in TMDBKeyword.query.all():
-                if keyword in self.keywords:
-                    self.keywords.remove(keyword)
+            _clear_links(self.keywords)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no keywords; " f"keeping the stored ones"
             )
 
         if tmdb_info.get("networks") or self.networks.count() == 0:
-            for network in TMDBNetwork.query.all():
-                if network in self.networks:
-                    self.networks.remove(network)
+            _clear_links(self.networks)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no networks; keeping the stored ones"
@@ -843,9 +834,7 @@ class TMDBMixin(object):
             tmdb_info.get("production_companies")
             or self.production_companies.count() == 0
         ):
-            for company in TMDBProductionCompany.query.all():
-                if company in self.production_companies:
-                    self.production_companies.remove(company)
+            _clear_links(self.production_companies)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no production companies; "
@@ -853,9 +842,7 @@ class TMDBMixin(object):
             )
 
         if tmdb_info.get("seasons") or self.seasons.count() == 0:
-            for season in TMDBSeason.query.all():
-                if season in self.seasons:
-                    self.seasons.remove(season)
+            _clear_links(self.seasons)
         else:
             current_app.logger.warning(
                 f"{self} TMDB payload carries no seasons; keeping the stored ones"

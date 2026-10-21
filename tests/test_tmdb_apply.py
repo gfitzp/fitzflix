@@ -200,3 +200,54 @@ def test_tv_apply_empty_aggregate_cast_keeps_stored_rows(app):
         )
         db.session.commit()
         assert TVCast.query.filter_by(tv_id=series.id).count() == 1
+
+
+def _count_queries(work):
+    """Run work and return the number of SQL statements that it sent."""
+
+    from sqlalchemy import event
+
+    statements = []
+
+    def record(conn, cursor, statement, *args):
+        statements.append(statement)
+
+    engine = db.engine
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        work()
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+    return len(statements)
+
+
+def test_the_clear_out_does_not_scan_unrelated_rows(app):
+    """The clear-out goes through the links of the film only (#295).
+
+    The old clear-out sent 1 query for each keyword of the whole library.
+    Thus, the query count of an apply must not grow with unrelated rows."""
+
+    from app.models import TMDBProductionCompany
+
+    payload = {
+        "id": 990001,
+        "genres": [{"id": 18, "name": "Drama"}],
+        "keywords": {"keywords": [{"id": 9714, "name": "remake"}]},
+    }
+    with app.app_context():
+        movie = _movie_with_associations("Few Rows", 1990)
+        before = _count_queries(lambda: movie.tmdb_movie_apply(payload))
+        db.session.commit()
+
+        for n in range(300):
+            db.session.add(TMDBKeyword(id=500000 + n, name=f"unrelated {n}"))
+            db.session.add(TMDBProductionCompany(id=500000 + n, name=f"studio {n}"))
+        db.session.commit()
+
+        after = _count_queries(lambda: movie.tmdb_movie_apply(payload))
+        db.session.commit()
+        assert after <= before + 5
+
+        stored = db.session.get(Movie, movie.id)
+        assert [g.name for g in stored.genres] == ["Drama"]
+        assert [k.name for k in stored.keywords] == ["remake"]
