@@ -123,7 +123,7 @@ def test_the_route_refuses_a_job_that_does_not_wait(app, admin_client):
     response = admin_client.post(
         "/queue/front",
         data={
-            "csrf_token": page_csrf_token(admin_client, "/queue"),
+            "csrf_token": page_csrf_token(admin_client),
             "job_id": "no-such-job",
         },
         follow_redirects=True,
@@ -188,11 +188,12 @@ def test_a_member_cannot_move_a_job(app, user_client):
 def test_only_an_admin_sees_the_button_on_waiting_rows(app, admin_client, user_client):
     """Show the button on the waiting rows for an admin only.
 
-    A deferred retry is not in line. Thus, it gets no button."""
+    The job at the head of its queue and a deferred retry get no button."""
 
     from datetime import timedelta
 
     _enqueue(app, "Button One (2001)")
+    _enqueue(app, "Button Two (2002)")
     with app.app_context():
         app.import_queue.enqueue_in(
             timedelta(minutes=10),
@@ -209,3 +210,32 @@ def test_only_an_admin_sees_the_button_on_waiting_rows(app, admin_client, user_c
     member_page = user_client.get("/queue").get_data(as_text=True)
     assert 'class="queue-front"' not in member_page
     assert "window.queueFront =" not in member_page
+
+
+def test_the_head_job_of_each_queue_gets_no_button(app, admin_client):
+    """Show no button on a job that is next in its own queue.
+
+    A moved job becomes the head. Thus, its button goes away, and the
+    old head gets one."""
+
+    from app.pipeline import move_to_front
+
+    first = _enqueue(app, "Head One (2001)")
+    second = _enqueue(app, "Head Two (2002)")
+    other = _enqueue(app, "Head Transcode (2003)", queue=app.transcode_queue)
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    heads = {task["id"]: task["at_head"] for task in payload["all"]}
+    assert heads == {first.id: True, second.id: False, other.id: True}
+    page = admin_client.get("/queue").get_data(as_text=True)
+    assert page.count('class="queue-front"') == 1
+    assert f'name="job_id" value="{second.id}"' in page
+
+    move_to_front(app.import_queue, second.id)
+
+    payload = admin_client.get("/api/queue-details").get_json()
+    heads = {task["id"]: task["at_head"] for task in payload["all"]}
+    assert heads == {first.id: False, second.id: True, other.id: True}
+    page = admin_client.get("/queue").get_data(as_text=True)
+    assert page.count('class="queue-front"') == 1
+    assert f'name="job_id" value="{first.id}"' in page

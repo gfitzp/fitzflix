@@ -1054,9 +1054,9 @@ def test_queue_page_renders_its_rows_on_the_server(app, admin_client):
     assert "text-bg-secondary" in page
     assert "Localizing &middot; queued" in page
     assert 'id="all-tasks">' in page
-    # The queued job holds position 1 in the live queue. An admin also
-    # gets the button that moves it to the front (#236)
-    assert '<th scope="row" class="col-1 queue-position">1\n' in page
+    # The queued job holds position 1 in the live queue. It is at the
+    # head of its queue. Thus, it gets no front button (#236)
+    assert '<th scope="row" class="col-1 queue-position">1</th>' in page
 
 
 def test_queue_rows_list_the_orphan_trails_after_the_jobs():

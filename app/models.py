@@ -1456,11 +1456,20 @@ class User(UserMixin, db.Model):
         # before the other waiting jobs. The newest move is at the top,
         # because each move pushes the job onto the head of its queue.
 
+        # The job at the head of its queue gets no front button. A move
+        # does not change which job of that queue a worker takes next.
+
         fronted = front_times(current_app.redis, [job.id for job in queued_jobs])
+        heads = set()
+        for queue, only in self._listed_queues():
+            head = current_app.redis.lindex(queue.key, 0)
+            if head is not None:
+                heads.add(head.decode() if isinstance(head, bytes) else head)
         queued = []
         for job in queued_jobs:
             item = row(job, None)
             item["fronted"] = job.id in fronted
+            item["at_head"] = job.id in heads
             queued.append(item)
         queued.sort(
             key=lambda item: (

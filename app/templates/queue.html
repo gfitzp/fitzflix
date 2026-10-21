@@ -42,7 +42,7 @@
 		{% for row in rows %}
 		<tr class="d-flex">
 			<th scope="row" class="col-1 queue-position">{% if row.task and row.task.position is not none %}{{ row.task.position }}{% else %}&mdash;{% endif %}
-				{%- if front_form and row.task and row.task.status == "queued" %}
+				{%- if front_form and row.task and row.task.status == "queued" and not row.task.at_head %}
 				<form method="post" action="{{ url_for('main.queue_front') }}" class="queue-front">
 					<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 					<input type="hidden" name="job_id" value="{{ row.task.id }}">

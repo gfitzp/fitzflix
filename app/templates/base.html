@@ -574,7 +574,7 @@
 
 				var signature = tasks.map(function(task) {
 					var trail = trailByJob[task.trail_job || task.id];
-					return task.position + "|" + task.id + "|" + task.status + "|" + task.description
+					return task.position + "|" + task.id + "|" + task.status + "|" + task.at_head + "|" + task.description
 						+ "|" + task.started_at + "|" + task.scheduled_for
 						+ "|" + (trail ? trail.updated + "|" + trail.entries.length : "");
 				}).concat(orphans.map(function(trail) {
@@ -588,7 +588,8 @@
 					var row = document.createElement("tr");
 					row.className = "d-flex";
 					var position = positionCell(task.position === null ? "—" : task.position);
-					if (window.queueFront && task.status === "queued") {
+					// The head job of a queue is next in its queue already
+					if (window.queueFront && task.status === "queued" && !task.at_head) {
 						position.appendChild(frontForm(task));
 					}
 					row.appendChild(position);
