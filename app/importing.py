@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathvalidate import sanitize_filename
 from pymediainfo import MediaInfo
 from rq import get_current_job
+from rq.job import Job
 from rq.registry import (
     FailedJobRegistry,
     FinishedJobRegistry,
@@ -170,6 +171,36 @@ def localization_pending(queue, basename):
     return any(i == job_id or i.startswith(retry_prefix) for i in ids)
 
 
+# The stages after the localization. Each one has the source path as its
+# first argument. The source stays in the import directory until the
+# cataloging removes it. A conversion (#292) keeps it there for hours.
+
+LATER_STAGES = {
+    "app.videos.convert_localized_file": "transcode_queue",
+    "app.videos.move_localized_file": "handoff_queue",
+    "app.videos.finalize_localization": "sql_queue",
+}
+
+
+def later_stage_holds(path):
+    """Return True if a conversion, move, or cataloging job still holds this source (#296).
+
+    The job can be queued, running, or scheduled for a retry."""
+
+    for queue_attr in set(LATER_STAGES.values()):
+        queue = getattr(current_app, queue_attr)
+        ids = set(queue.job_ids)
+        ids.update(StartedJobRegistry(queue=queue).get_job_ids())
+        ids.update(ScheduledJobRegistry(queue=queue).get_job_ids())
+        for job in Job.fetch_many(list(ids), connection=current_app.redis):
+            if job is None or job.func_name not in LATER_STAGES:
+                continue
+            source = job.args[0] if job.args else job.kwargs.get("source_path")
+            if source == path:
+                return True
+    return False
+
+
 def enqueue_localization(path, at_front=False, quiet=False):
     """Queue the localization of a file once. Return the job, or None (#287).
 
@@ -182,8 +213,10 @@ def enqueue_localization(path, at_front=False, quiet=False):
 
     queue = current_app.import_queue
     basename = os.path.basename(path)
-    if localization_pending(queue, basename) or space_wait_pending(
-        current_app.redis, basename
+    if (
+        localization_pending(queue, basename)
+        or space_wait_pending(current_app.redis, basename)
+        or later_stage_holds(path)
     ):
         if not quiet:
             current_app.logger.info(f"'{basename}' Already waiting for import")

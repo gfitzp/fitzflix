@@ -103,3 +103,45 @@ def test_localization_skips_a_cataloged_file(app, monkeypatch, tmp_path, caplog)
         assert importing.localization_task(str(path)) is False
     assert "Is already in the library; nothing to import" in caplog.text
     assert path.exists()
+
+
+def test_enqueue_skips_a_source_that_a_later_stage_holds(app, tmp_path):
+    """A conversion, move, or cataloging job still holds the source (#296).
+
+    The source stays in the import directory until the cataloging. A
+    conversion keeps it there for hours. The hourly sweep must not queue
+    it again."""
+
+    from app.importing import enqueue_localization
+
+    path = str(tmp_path / NAME)
+    other = str(tmp_path / "Ronin (1998) - [WEBDL-1080p].mkv")
+    details = {"basename": NAME}
+    with app.app_context():
+        for queue, func in (
+            (app.transcode_queue, "app.videos.convert_localized_file"),
+            (app.handoff_queue, "app.videos.move_localized_file"),
+            (app.sql_queue, "app.videos.finalize_localization"),
+        ):
+            job = queue.enqueue(func, args=(path, details, None, "/staging/x"))
+            assert enqueue_localization(path) is None
+            assert app.import_queue.job_ids == []
+            job.delete()
+
+        # A retry that waits in the scheduled registry holds the source too.
+        retry = app.handoff_queue.enqueue_in(
+            timedelta(minutes=5),
+            "app.videos.move_localized_file",
+            path,
+            details,
+            None,
+            "/staging/x",
+        )
+        assert enqueue_localization(path) is None
+        retry.delete()
+
+        # Another file is not held.
+        app.transcode_queue.enqueue(
+            "app.videos.convert_localized_file", args=(other, details, None, "/x")
+        )
+        assert enqueue_localization(path) is not None
