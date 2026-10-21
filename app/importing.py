@@ -279,6 +279,133 @@ def library_space_shortfall(directory, needed_bytes):
     return max(0, needed_bytes - free)
 
 
+# Staging reservations (#294). Up to 5 workers localize at the same
+# time. Each staged import records its peak need on staging and the
+# name stems of its staging files. A new import counts what the others
+# still need: their reservation minus the bytes that their files already
+# use. A reservation with no files on staging expires after the grace
+# period. Thus, a finished or failed import releases its space.
+
+STAGING_RESERVED_KEY = "fitzflix:staging:reserved"
+STAGING_RESERVE_LOCK = "fitzflix:staging:reserve-lock"
+STAGING_FACTOR = 2.5
+CONVERSION_STAGING_FACTOR = 1.8
+STAGING_MARGIN = 20 * 1024**3
+STAGING_GRACE_SECONDS = 600
+
+
+def _name_stem(name):
+    """Return a file name without its extension. A staging file name starts with it."""
+
+    return os.path.splitext(name)[0]
+
+
+def _staging_bytes(staging_dir, stems):
+    """Return the bytes of the staging files whose names start with one of the stems."""
+
+    total = 0
+    try:
+        entries = list(os.scandir(staging_dir))
+    except OSError:
+        return 0
+    for entry in entries:
+        name = entry.name.lstrip(".")
+        if any(name.startswith(stem) for stem in stems):
+            try:
+                total += entry.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def staging_outstanding(staging_dir, exclude=None):
+    """Return the bytes that the other staging reservations still need.
+
+    This also removes the reservations that have had no files on
+    staging for longer than STAGING_GRACE_SECONDS."""
+
+    redis = current_app.redis
+    total = 0
+    for field, raw in redis.hgetall(STAGING_RESERVED_KEY).items():
+        name = field.decode() if isinstance(field, bytes) else field
+        if name == exclude:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            redis.hdel(STAGING_RESERVED_KEY, name)
+            continue
+        used = _staging_bytes(staging_dir, entry.get("stems", []))
+        if used == 0 and time.time() - entry.get("at", 0) > STAGING_GRACE_SECONDS:
+            redis.hdel(STAGING_RESERVED_KEY, name)
+            continue
+        total += max(0, entry.get("bytes", 0) - used)
+    return total
+
+
+def set_staging_reservation(basename, needed_bytes, names):
+    """Record or change the staging reservation of an import (#294)."""
+
+    current_app.redis.hset(
+        STAGING_RESERVED_KEY,
+        basename,
+        json.dumps(
+            {
+                "bytes": int(needed_bytes),
+                "stems": sorted({_name_stem(name) for name in names}),
+                "at": time.time(),
+            }
+        ),
+    )
+
+
+def release_staging_reservation(basename):
+    """Remove the staging reservation of an import."""
+
+    current_app.redis.hdel(STAGING_RESERVED_KEY, basename)
+
+
+def _staging_usage(staging_dir):
+    """Return (total, free) bytes of the staging volume."""
+
+    usage = shutil.disk_usage(staging_dir)
+    return usage.total, usage.free
+
+
+def reserve_staging(basename, needed_bytes, names, staging_dir):
+    """Reserve staging space for an import. Return "ok", "wait", or "too big".
+
+    "too big" means that the file cannot fit on the staging volume even
+    with nothing else there. A short Redis lock makes the check and the
+    reservation one step. Thus, 2 imports cannot take the same space."""
+
+    try:
+        total, free = _staging_usage(staging_dir)
+    except OSError:
+        return "too big"
+    if needed_bytes > total - STAGING_MARGIN:
+        return "too big"
+
+    lock = None
+    for _ in range(20):
+        lock = current_app.lock_manager.lock(STAGING_RESERVE_LOCK, 30000)
+        if lock:
+            break
+        time.sleep(0.5)
+    try:
+        total, free = _staging_usage(staging_dir)
+        available = (
+            free - staging_outstanding(staging_dir, exclude=basename) - STAGING_MARGIN
+        )
+        if needed_bytes > available:
+            return "wait"
+        set_staging_reservation(basename, needed_bytes, names)
+        return "ok"
+    finally:
+        if lock:
+            current_app.lock_manager.unlock(lock)
+
+
 def _gigabytes(size):
     """Return a byte count as a short GB text."""
 
@@ -737,8 +864,8 @@ def localization_task(
             if space_waits:
                 clear_space_wait(basename)
                 current_app.logger.info(
-                    f"'{basename}' The library volume has space again after "
-                    f"{space_waits} wait(s). Continuing the import"
+                    f"'{basename}' Continuing the import after {space_waits} "
+                    f"wait(s) for space"
                 )
 
             # Save the untouched filename. Fitzflix can need it to recreate the
@@ -750,13 +877,53 @@ def localization_task(
             # localization tools do their heavy I/O on the local disk. A
             # network failure then costs a retry, not a stranded partial file.
 
-            staging_dir = current_app.config["STAGING_DIR"]
-            try:
-                staging_free = shutil.disk_usage(staging_dir).free
-            except OSError:
-                staging_free = 0
+            # The space check counts what the other imports on staging still
+            # need (#294). Without enough space, the import waits. Only a file
+            # that cannot fit on the staging volume at all is processed on
+            # its source volume.
 
-            if staging_free > os.path.getsize(file_path) * 2.5:
+            staging_dir = current_app.config["STAGING_DIR"]
+            staging_needed = int(os.path.getsize(file_path) * STAGING_FACTOR)
+            staging = reserve_staging(
+                basename,
+                staging_needed,
+                [basename, file_details["basename"]],
+                staging_dir,
+            )
+            if staging == "wait":
+                current_app.logger.info(
+                    f"'{basename}' Needs {_gigabytes(staging_needed)} on staging. "
+                    f"The other imports still need "
+                    f"{_gigabytes(staging_outstanding(staging_dir, exclude=basename))}. "
+                    f"Trying again in {int(SPACE_WAIT.total_seconds() // 60)} minutes"
+                )
+                mark_space_wait(basename)
+                current_app.lock_manager.unlock(lock)
+                current_app.logger.info(f"Removed lock {lock}")
+                lock = None
+                current_app.import_queue.enqueue_in(
+                    SPACE_WAIT,
+                    "app.videos.localization_task",
+                    file_path=file_path,
+                    force_upload=force_upload,
+                    ignore_etag=ignore_etag,
+                    transient_retries=transient_retries,
+                    completeness_retries=completeness_retries,
+                    space_waits=space_waits + 1,
+                    job_timeout=current_app.config["LOCALIZATION_TASK_TIMEOUT"],
+                    job_id=retry_job_id(
+                        "localization_task",
+                        f"'{basename}'",
+                        transient_retries,
+                        completeness_retries,
+                        f"staging{space_waits + 1}",
+                    ),
+                    result_ttl=86400,
+                    description=f"'{basename}'",
+                )
+                return True
+
+            if staging == "ok":
                 staged_path = os.path.join(staging_dir, basename)
                 staging_paths.append(staged_path)
                 record_task_stage("Copying to staging", "started")
@@ -819,7 +986,7 @@ def localization_task(
 
             else:
                 current_app.logger.warning(
-                    f"'{basename}' Staging space is insufficient, "
+                    f"'{basename}' Does not fit on the staging volume, "
                     f"processing on the source volume instead"
                 )
 
@@ -1242,6 +1409,7 @@ def localization_task(
 
         except Exception:
             current_app.logger.error(traceback.format_exc())
+            release_staging_reservation(os.path.basename(source_path))
 
             # Remove the staged copies. Fitzflix rejects the original source.
             # Nothing has changed the source since staging.
@@ -1284,6 +1452,18 @@ def localization_task(
 
             if file_details.get("basename") != basename:
                 migrate_trail(current_app.redis, basename, file_details.get("basename"))
+
+            # The localized file stays on staging until its move, and a
+            # conversion writes more next to it. Shrink the reservation to
+            # what remains (#294).
+
+            if staged:
+                output_size = os.path.getsize(hidden_output_file)
+                set_staging_reservation(
+                    basename,
+                    output_size * (CONVERSION_STAGING_FACTOR if conversion else 1),
+                    [basename, file_details["basename"]],
+                )
 
             # A conversion first goes to the transcode queue. That task
             # gives the file to move_localized_file after the encode.

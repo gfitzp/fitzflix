@@ -472,12 +472,20 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
     A failure rejects the import and releases the lock. The original is
     still in the import directory, and its archive is in S3."""
 
-    from app.importing import _hold_title_lock, move_to_rejects
+    from app.importing import (
+        _hold_title_lock,
+        move_to_rejects,
+        release_staging_reservation,
+        set_staging_reservation,
+    )
     from app.videos import wait_for_subprocess
 
     with app.app_context():
         job = get_current_job()
         basename = file_details.get("basename")
+        source_name = file_details.get("untouched_basename") or os.path.basename(
+            source_path
+        )
         work_dir = os.path.dirname(hidden_output_file)
         video_only = os.path.join(work_dir, f".{basename}.sdr-video.mkv")
         muxed = os.path.join(work_dir, f".{basename}.sdr.mkv")
@@ -542,9 +550,16 @@ def convert_localized_file(source_path, file_details, lock, hidden_output_file, 
             os.replace(muxed, hidden_output_file)
             _remove_quietly(video_only)
 
+            # Only the converted file stays on staging now (#294).
+
+            set_staging_reservation(
+                source_name, os.path.getsize(hidden_output_file), [basename]
+            )
+
         except Exception:
             current_app.logger.error(traceback.format_exc())
             _remove_quietly(video_only, muxed, hidden_output_file)
+            release_staging_reservation(source_name)
             try:
                 move_to_rejects(source_path, "conversion failed")
             except Exception:

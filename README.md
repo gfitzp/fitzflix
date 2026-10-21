@@ -114,6 +114,10 @@ Fitzflix records the quality of each file. Thus, the library pages show the best
 
 On the file detail page, you can set the default audio track and the default subtitle track. You can also remove unwanted tracks and manage the AWS archive copy. The track scan also records the video format, the bitrate, and the HDR format of each file. The HDR format includes the Dolby Vision profile (profile 5, 7, 8.1, and so on), which Fitzflix reads from MediaInfo. The file page shows the profile as a badge.
 
+### Space for imports
+
+An import never fails for lack of space. It waits and tries again every 30 minutes. Each import first copies its file to the local staging directory (`STAGING_DIR`). The import reserves 2.5 times the size of the file there. The check counts what the other imports and the waiting conversions still need. Thus, imports that start at the same time cannot fill the staging volume. A file that cannot fit on the staging volume at all is processed on its source volume. Before the copy into the library, the import also waits for space on the library volume.
+
 ### HDR and BT.2020 imports
 
 The library holds only Rec.709 SDR files. Thus, each file plays on the least capable equipment of the Fitzflix users. An import with HDR10, HDR10+, HLG, Dolby Vision, or BT.2020 colors becomes a 1080p SDR conversion:

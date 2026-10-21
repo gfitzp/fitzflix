@@ -426,7 +426,16 @@ def test_an_hdr_import_becomes_a_1080p_sdr_conversion(
         # The archive is the untouched original.
         assert [os.path.basename(path) for path in archive_on] == [basename]
 
+        # The reservation covers the localized file and the conversion (#294).
+        from app.importing import STAGING_RESERVED_KEY
+
+        hidden = convert_job.args[3]
+        entry = json.loads(app.redis.hget(STAGING_RESERVED_KEY, basename))
+        assert entry["bytes"] == int(os.path.getsize(hidden) * 1.8)
+
         assert videos.convert_localized_file(*convert_job.args) is True
+        entry = json.loads(app.redis.hget(STAGING_RESERVED_KEY, basename))
+        assert entry["bytes"] == os.path.getsize(hidden)
         (move_job,) = _jobs(app.handoff_queue, "app.videos.move_localized_file")
         assert videos.move_localized_file(*move_job.args) is True
         (finalize_job,) = _jobs(app.sql_queue, "app.videos.finalize_localization")
