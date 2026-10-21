@@ -61,7 +61,6 @@ PAGE_TUNABLES = (
     "DVR_CHANNEL_FILMS",
     "DVR_TV_CHANNELS",
     "DVR_CHANNEL_EPISODES",
-    "HANDBRAKE_PRESET",
 )
 
 
@@ -161,7 +160,6 @@ class Config(object):
     MEDIA_LOCATION                      = os.environ.get("MEDIA_LOCATION") or os.path.join(basedir, "..", "fitzflix")
     IMPORT_DIR                          = os.environ.get("IMPORT_DIR") or os.path.join(MEDIA_LOCATION, "import")
     REJECTS_DIR                         = os.environ.get("REJECTS_DIR") or os.path.join(MEDIA_LOCATION, "rejects")
-    TRANSCODES_DIR                      = os.environ.get("TRANSCODES_DIR") or os.path.join(MEDIA_LOCATION, "transcoded")
 
     # Local scratch space. Localization copies each source here and does its
     # processing on the local disk. Thus, sustained tool I/O never runs over
@@ -326,18 +324,12 @@ class Config(object):
     PROXY_HOPS                          = int(os.environ.get("PROXY_HOPS") or 2)
     SUPERVISORCTL_BIN                   = os.environ.get("SUPERVISORCTL_BIN") or "/opt/homebrew/bin/supervisorctl"
 
-    # Transcoding configuration
+    # Conversion configuration (#292)
     # The preset file holds the custom presets, exported from HandBrake.
     # The default is handbrake_presets.json in this folder, if it exists.
-    # The Settings page selects a preset from the file. Without a choice,
-    # the first preset in the file applies. Without a file,
-    # HANDBRAKE_PRESET names a built-in HandBrake preset.
-    HANDBRAKE_PRESET                    = os.environ.get("HANDBRAKE_PRESET") or "Apple 1080p60 Surround"
+    # CONVERSION_PRESET is the preset in the file that makes the SDR video
+    # of a conversion.
     HANDBRAKE_PRESET_FILE               = os.environ.get("HANDBRAKE_PRESET_FILE") or _default_preset_file()
-    HANDBRAKE_EXTENSION                 = os.environ.get("HANDBRAKE_EXTENSION") or "mp4"
-
-    # The preset in HANDBRAKE_PRESET_FILE that makes the SDR video of a
-    # conversion (#292).
     CONVERSION_PRESET                   = os.environ.get("CONVERSION_PRESET") or "HDR to 1080p SDR"
 
     # Sonarr configuration

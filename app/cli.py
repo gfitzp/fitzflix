@@ -315,27 +315,6 @@ def register(app):
         click.echo("Watchlist availability checked")
 
     @app.cli.group()
-    def transcodes():
-        """Manage the derived transcoded copies."""
-        pass
-
-    @transcodes.command()
-    def adopt():
-        """Adopt the untracked transcodes.
-
-        Walk TRANSCODES_DIR and create DerivedFile rows for every copy
-        whose source is identifiable."""
-
-        from flask import current_app
-
-        job = current_app.file_queue.enqueue(
-            "app.transcodes.adopt_transcodes_task",
-            job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-            description="Adopting untracked transcoded copies",
-        )
-        click.echo(f"Enqueued transcode adoption as {job.id}")
-
-    @app.cli.group()
     def frames():
         """Manage the Name That Frame pool."""
         pass

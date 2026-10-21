@@ -22,6 +22,9 @@
 	Fullscreen: {% if file.fullscreen == True %}<span class="badge text-bg-danger">{{ file.fullscreen }}</span>{% else %}<span class="badge text-bg-secondary">{{ file.fullscreen }}</span>{% endif %}<br>
 	Container: {{ file.container }}<br>
 	Codec: {{ file.codec }}
+	{% if file.converted_from_quality %}
+		<br>Converted to SDR from: <span class="badge text-bg-info align-text-bottom">{{ file.converted_from_quality }}</span> <span class="badge text-bg-secondary align-text-bottom">{{ file.converted_from_format }}</span> <span class="small text-muted">The S3 archive is the original.</span>
+	{% endif %}
 	{% if file.hdr_format %}
 		<br>HDR Format: {{ file.hdr_format }}{% if file.dolby_vision_profile %} <span class="badge text-bg-dark align-text-bottom" title="Dolby Vision profile">DV Profile {{ file.dolby_vision_profile }}</span>{% endif %}
 	{% endif %}
@@ -41,7 +44,7 @@
 </p>
 {% if not file_exists_locally %}
 <div class="alert alert-warning" role="alert">
-	This file is not in the local library. Restore it from AWS before you edit, transcode, or upload it.
+	This file is not in the local library. Restore it from AWS before you edit or upload it.
 </div>
 {% endif %}
 {% if audio_tracks or subtitle_tracks %}
@@ -183,23 +186,11 @@
 {# g-3: the gutters keep a gap between the columns when a phone
    stacks them. Thus, the buttons never touch. #}
 <div class="row g-3">
-	<div class="col-sm-4">
+	<div class="col-sm-6">
+		{# The archive of a conversion is its original (#292). The library
+		   file must not replace it. Thus, the upload is off for it. #}
 		<form action="" method="post">
-			<fieldset {% if not file_exists_locally %}disabled{% endif %}>
-				{{ transcode_form.hidden_tag() }}
-				{{ transcode_form.transcode_submit(class_="btn btn-sm btn-success") }}
-			</fieldset>
-		</form>
-		{% if file.date_transcoded %}<em class="small">Transcoded {{ moment(file.date_transcoded).fromNow() }}</em>{% endif %}
-		{# The tracked derived copies. They cascade away with this
-		   record. Fitzflix purges their physical files with it #}
-		{% for derived in file.derived_files %}
-		<div class="small text-muted">Copy: {{ derived.basename }}{% if derived.filesize_bytes %} &middot; {% if derived.filesize_bytes >= 1073741824 %}{{ "%.1f"|format(derived.filesize_bytes / 1073741824) }} GB{% else %}{{ "%.0f"|format(derived.filesize_bytes / 1048576) }} MB{% endif %}{% endif %}</div>
-		{% endfor %}
-	</div>
-	<div class="col-sm-4">
-		<form action="" method="post">
-			<fieldset {% if not file_exists_locally or not best_file %}disabled{% endif %}>
+			<fieldset {% if not file_exists_locally or not best_file or not file.archive_is_library_copy %}disabled{% endif %}>
 				{{ upload_form.hidden_tag() }}
 				{{ upload_form.s3_upload_submit(class_="btn btn-sm btn-success") }}
 			</fieldset>
@@ -216,7 +207,7 @@
 		<em class="small text-muted">Restore ≈ ${{ "%.2f"|format(file_restore_estimate.cost) }} (~{{ "%.1f"|format(file_restore_estimate.gigabytes) }} GB)</em>
 		{% endif %}
 	</div>
-	<div class="col-sm-4">
+	<div class="col-sm-6">
 		<form action="" method="post">
 			{{ delete_form.hidden_tag() }}
 			{{ delete_form.delete_submit(class_="btn btn-sm btn-danger") }}

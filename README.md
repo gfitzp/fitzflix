@@ -112,7 +112,7 @@ Season `00` identifies a special. Fitzflix puts a special into the `Specials` fo
 
 Fitzflix records the quality of each file. Thus, the library pages show the best copy that you own of each title. The shopping list pages show the titles that you can upgrade. For example, the list shows a full screen DVD that you can replace with a widescreen Blu-ray. Fitzflix matches each movie to TMDB for the artwork, the cast and crew, and the review records.
 
-On the file detail page, you can set the default audio track and the default subtitle track. You can also remove unwanted tracks, transcode the file with HandBrake, and manage the AWS archive copy. The track scan also records the video format, the bitrate, and the HDR format of each file. The HDR format includes the Dolby Vision profile (profile 5, 7, 8.1, and so on), which Fitzflix reads from MediaInfo. The file page shows the profile as a badge.
+On the file detail page, you can set the default audio track and the default subtitle track. You can also remove unwanted tracks and manage the AWS archive copy. The track scan also records the video format, the bitrate, and the HDR format of each file. The HDR format includes the Dolby Vision profile (profile 5, 7, 8.1, and so on), which Fitzflix reads from MediaInfo. The file page shows the profile as a badge.
 
 ### HDR and BT.2020 imports
 
@@ -374,7 +374,7 @@ Fitzflix is developed and operated on macOS with [Homebrew](https://brew.sh). Th
 | [MediaInfo](https://mediaarea.net/MediaInfo) (`libmediainfo`) | — (`pymediainfo` loads it as a library) | Scans the video, audio, and subtitle tracks of each imported file |
 | [mkvmerge](https://mkvtoolnix.download) (MKVToolNix) | `MKVMERGE_BIN` | Remuxes Matroska files: removes the tracks that are not in your language and the empty tracks, and converts other containers to Matroska |
 | [mkvpropedit](https://mkvtoolnix.download) (MKVToolNix) | `MKVPROPEDIT_LOCATION` | Edits Matroska properties in place: the default and forced track flags, and the track statistics |
-| [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Transcodes library files to smaller versions for Plex (refer to `HANDBRAKE_PRESET` and `HANDBRAKE_PRESET_FILE` for the preset) |
+| [HandBrakeCLI](https://handbrake.fr) | `HANDBRAKE_BIN` | Converts HDR and BT.2020 imports to 1080p SDR (refer to `CONVERSION_PRESET` and `HANDBRAKE_PRESET_FILE` for the preset) |
 | [ffmpeg](https://ffmpeg.org) | `FFMPEG_BIN` | Converts video |
 | [AtomicParsley](https://github.com/wez/atomicparsley) | `ATOMICPARSLEY_BIN` | Removes the embedded metadata from MP4 files that Fitzflix cannot convert to Matroska |
 
@@ -409,7 +409,7 @@ TMDB_API_KEY=<your TMDB API key>
 
 | Setting | Function |
 | --- | --- |
-| `MEDIA_LOCATION` | The root of the media folders. `IMPORT_DIR`, `LIBRARY_DIR`, `REJECTS_DIR`, and `TRANSCODES_DIR` default to `import`, `library`, `rejects`, and `transcoded` in this root. You can set each one separately. Fitzflix creates the `import`, `staging`, `rejects`, and `transcoded` directories at startup when they are missing. It does not create a directory on a volume that is not mounted. The library directories are never created, because an empty library folder would hide a lost volume. |
+| `MEDIA_LOCATION` | The root of the media folders. `IMPORT_DIR`, `LIBRARY_DIR`, `REJECTS_DIR`, and `HELD_DIR` default to `import`, `library`, `rejects`, and `held` in this root. You can set each one separately. Fitzflix creates the `import`, `staging`, `rejects`, and `held` directories at startup when they are missing. It does not create a directory on a volume that is not mounted. The library directories are never created, because an empty library folder would hide a lost volume. |
 | `ISO_639_2_NATIVE_LANGUAGE` | The three-letter code of *your* language (default `eng`). The import removes the audio tracks and the subtitle tracks in other languages. Foreign-language films are an exception. |
 | `SERVER_NAME`, `PREFERRED_URL_SCHEME` | The hostname and the scheme for the links in emails |
 | `PREVENT_ACCOUNT_CREATION` | Disables the registration page when an admin account exists |
@@ -426,7 +426,7 @@ TMDB_API_KEY=<your TMDB API key>
 | `PLEX_CRITERION_COLLECTION` | The name of the Plex collection that the Criterion sync keeps in each movie library. The default is `Criterion Collection Films`. |
 | `PLEX_PLAYER_SERVER_URI` | Remote playback. This is an HTTPS server address that the playback devices can reach. Each user selects a device on the Profile page (refer to [Playing films on an Apple TV](#playing-films-on-an-apple-tv)). |
 | `DVR_TOKEN`, `DVR_TUNER_URL` | Virtual DVR channels. The token protects the tuner, guide, and stream endpoints. If the token is not set, the function is disabled. The tuner URL is the Fitzflix origin as Plex reaches it (refer to [Virtual DVR](#virtual-dvr-live-tv-channels-in-plex)). |
-| `HANDBRAKE_PRESET_FILE`, `HANDBRAKE_PRESET`, `HANDBRAKE_EXTENSION` | The preset file, the transcode preset, and the output container. The preset file holds custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder, if it exists. With a preset file, select the preset on the Settings page. Without a selection, the first preset in the file applies. Without a preset file, `HANDBRAKE_PRESET` names a built-in HandBrake preset (default `Apple 1080p60 Surround`). |
+| `HANDBRAKE_PRESET_FILE` | The file of custom presets that you export from HandBrake. It can hold more than one preset, also in folders. The default file is `handbrake_presets.json` in the Fitzflix folder. The SDR conversion uses its `CONVERSION_PRESET`. |
 | `LOG_FILE`, `LOG_RETENTION_DAYS` | The location of the application log (default `logs/fitzflix.log`) and the number of days of rotated archives to keep (default 14) |
 | `*_TASK_TIMEOUT` | The job timeouts for each queue, in seconds (`LOCALIZATION_TASK_TIMEOUT`, `SQL_TASK_TIMEOUT`, `UPLOAD_TASK_TIMEOUT`, `TRANSCODE_TASK_TIMEOUT`, `MKVPROPEDIT_TASK_TIMEOUT`) |
 
@@ -440,7 +440,7 @@ Some settings can also change on the **Admin > Settings** page, without a restar
 - The health and log alerts `DISK_ALERT_FREE_GB`, `LOG_DIGEST_THRESHOLD`, and `LOG_DIGEST_IGNORE`.
 - The Plex trash limit `PLEX_TRASH_LIMIT`.
 - The download labels `RADARR_WEBDL_MIN_SCORE` and `SONARR_WEBDL_MIN_SCORE`.
-- The media settings `EAC3_ATMOS_BITRATE` and `HANDBRAKE_PRESET`.
+- The media setting `EAC3_ATMOS_BITRATE`.
 - The DVR sizes `DVR_GENRE_CHANNELS`, `DVR_TV_CHANNELS`, `DVR_CHANNEL_FILMS`, and `DVR_CHANNEL_EPISODES`.
 
 `.env` has priority. A setting that `.env` sets is locked on the page, and its field shows "Set in .env". For an on/off setting, the name in `.env` sets it, with the value that the list above gives. For each other setting, a value that is not empty sets it. To control a locked setting from the page, remove it from `.env` and restart. A setting that is not in `.env` uses the page value. When the page has no value, the setting uses its default. The page shows the source of each value: `.env`, the page, or the default. **Reset to default** removes the page value. The page stores only the values that change, and the log records each change with the email of the admin.
@@ -482,14 +482,12 @@ Fitzflix divides the background work across seven Redis queues. The supervisor c
 | `fitzflix-handoff` | Holds the next stage of a file that is already in the pipeline: the copy of a localized file from the staging area into the library, the S3 delete of the archive of a file that the import replaced, and each job of the E-AC-3 Atmos twin of a new import (the decode and the MediaConvert submit, the MediaConvert checks every 2 minutes, and the final mux). No worker waits while MediaConvert encodes, and more than one film can encode at a time. The first job of a library sweep (`flask audio atmos`) runs on `fitzflix-import`. Thus, a sweep does not delay the files that are already in the pipeline. Each import, transcode, and file-operation worker takes from this queue first. Thus, a file that started finishes before a new file starts. |
 | `fitzflix-import` | Imports new files: parses the name, removes the tracks that are not in your language, and sorts the file into the library |
 | `fitzflix-file-operation` | Does the operations on single files: S3 uploads and downloads, and Matroska property edits |
-| `fitzflix-transcode` | Does the HandBrake transcodes (high CPU load; usually one worker) |
+| `fitzflix-transcode` | Does the SDR conversions, the triage clips, and the frame extractions (high CPU load; usually one worker) |
 | `fitzflix-sql` | Writes to the database, including the database half of the TMDB refreshes. Start exactly one worker, so the writes occur in sequence. |
 | `fitzflix-user-request` | Does the jobs from the web UI and the CLI: manual scans, S3 sync, SQS polls, and the network half of the TMDB refreshes |
 | `fitzflix-maintenance` | Does the scheduled maintenance: nightly log rotation and backups, recommendation recomputes, awards and Criterion refreshes, and availability cache warms. One worker. |
 
-Fitzflix records the transcoded copies as **derived files**. Each HandBrake output gets a database record with a link to its library original. The command `flask transcodes adopt` adds records for the copies on the transcoded tree that have no record. The page of a file lists its copies. When you delete or replace an original, Fitzflix also removes its derived copies, the rows and the physical files. The derived files are not in the File table, on purpose. Thus, they can never show in the quality rankings, the shopping lists, or the replace logic of the import.
-
-Each file that moves through the pipeline leaves a **trail** with a sequence of stages: Localizing → Moving into the library → Cataloging → Archiving to S3. Remuxes, transcodes, and restores also leave a trail. The **Pipeline Activity** page shows the trails. The link to the page is on the Library Maintenance page. The page shows a status chip for each stage: green for done, blue for running, gray for queued, amber for a retry that waits, and red for failed. The page refreshes each five seconds. The trails come from the job-lifecycle hooks around the queues and the workers. Thus, they record the deferred retries and the failures without instrumentation in the tasks. The trails stay for three days.
+Each file that moves through the pipeline leaves a **trail** with a sequence of stages: Localizing → Moving into the library → Cataloging → Archiving to S3. Conversions to SDR, remuxes, and restores also leave a trail. The **Pipeline Activity** page shows the trails. The link to the page is on the Library Maintenance page. The page shows a status chip for each stage: green for done, blue for running, gray for queued, amber for a retry that waits, and red for failed. The page refreshes each five seconds. The trails come from the job-lifecycle hooks around the queues and the workers. Thus, they record the deferred retries and the failures without instrumentation in the tasks. The trails stay for three days.
 
 A TMDB refresh has two phases. The API queries run on `fitzflix-user-request`. You can run some of them at the same time, because they do not touch the database. Then the `fitzflix-sql` queue applies the payload: the record updates, the file renames, and the duplicate merges. This queue has one worker, so the database writes never run at the same time. All TMDB API traffic goes through a shared Redis rate limiter. The limit is `TMDB_REQUESTS_PER_SECOND` (default 10) across all processes. This keeps Fitzflix below the [TMDB limit of approximately 40 to 50 requests each second](https://developer.themoviedb.org/docs/rate-limiting). Fitzflix does not store the poster and cast artwork locally. The pages link to the [TMDB image CDN](https://developer.themoviedb.org/docs/image-basics) directly. The setting `TMDB_IMAGE_URL` gives the base URL. The cross-origin cache of the service worker keeps the artwork that you saw recently available offline.
 
@@ -678,7 +676,7 @@ You can rebuild Fitzflix on a new machine from three items that you keep away fr
 
    Then run `flask db upgrade` to update the schema to the current code. If the code is not newer than the dump, this command changes nothing.
 5. **Restore the custom posters.** Copy the `custom-posters/` prefix of the bucket back to `app/static/custom/`. For example, run `aws s3 sync s3://<bucket>/custom-posters/ app/static/custom/`. The TMDB artwork does not need a restore. The pages link to the TMDB image CDN, and Fitzflix never stores the artwork locally.
-6. **Mount the NAS volumes.** Refer to the SMB notes: put the NAS hostname in `/etc/hosts`, and set `protocol_vers_map` and the signing settings in `/etc/nsmb.conf`. Fitzflix makes the import, staging, rejects, and transcoded directories again at the next startup.
+6. **Mount the NAS volumes.** Refer to the SMB notes: put the NAS hostname in `/etc/hosts`, and set `protocol_vers_map` and the signing settings in `/etc/nsmb.conf`. Fitzflix makes the import, staging, rejects, and held directories again at the next startup.
 7. **Start the workers** with supervisor. Make sure that the health card on the System page is green. The scheduled jobs register themselves again at startup. Redis needs no restore. The only important data in Redis is the recommendation rankings and the availability caches. This data rebuilds itself in one day, or immediately with the `flask recs` commands.
 8. **Only if the NAS is also lost:** you can rebuild the localized library from the untouched archives. The S3 sync task queues a Bulk restore for each rank-1 file that is not on the local disk. The file `inventory/rank_1.csv` in the bucket supports an S3 Batch Operations restore of all files at the same time.
 

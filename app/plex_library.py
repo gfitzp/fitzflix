@@ -11,10 +11,10 @@ library from zero when the mount returns.
 This version asks Plex for the OWN location paths of each movie and
 show section. It requires the MOUNT of every location to be alive
 before it touches that section. The old script checked one mount per
-section. But the Movies section has 2 roots on 2 volumes. The guard is
-at the mount level, not at the leaf level. An empty transcodes volume
-correctly has no Movies subfolder. A missing leaf on a healthy mount is
-safe to scan. The mount probes go through volume_alive. That function
+section. But a section can have 2 roots on 2 volumes. The guard is
+at the mount level, not at the leaf level. A root can correctly have
+no subfolder for a title. A missing leaf on a healthy mount is safe to
+scan. The mount probes go through volume_alive. That function
 treats a hung SMB stat as dead. It does not hang the worker.
 
 The mount check cannot see a share that drops DURING the scan. The scan

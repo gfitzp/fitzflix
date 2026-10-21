@@ -560,7 +560,6 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
     for control in (
         "lookup_submit",
         "remove_submit",
-        "transcode_all",
         "series_restore_submit",
         "delete_submit",
     ):
@@ -571,7 +570,6 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
     for control in (
         "lookup_submit",
         "remove_submit",
-        "transcode_all",
         "series_restore_submit",
         "delete_submit",
     ):
@@ -584,7 +582,6 @@ def test_tv_management_forms_are_admin_only(app, admin_client, user_client):
     for tampered in (
         {"tmdb_id": "999", "lookup_submit": "Refresh TMDB Data"},
         {"remove_submit": "Remove TMDB ID"},
-        {"transcode_all": "Transcode All"},
         {"password": "hunter2", "series_restore_submit": "Bulk restore"},
         {"delete_submit": "Delete Series"},
     ):

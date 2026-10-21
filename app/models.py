@@ -1934,7 +1934,6 @@ class File(db.Model):
     )
     date_updated = db.Column(db.DateTime, index=True)
     date_localized = db.Column(db.DateTime, index=True)
-    date_transcoded = db.Column(db.DateTime, index=True)
 
     # The time that the subtitle triage marked the tracks of this file as
     # reviewed ("nothing forced here"). It is on the file, not on the
@@ -1976,17 +1975,6 @@ class File(db.Model):
         "FileAudioTrack", backref="file", lazy="select", cascade="all,delete"
     )
 
-    # The derived copies. These are the Handbrake transcodes made FROM
-    # this file. The rows cascade away with their source. The physical
-    # delete is the job of the delete sites (see app.transcodes).
-
-    derived_files = db.relationship(
-        "DerivedFile",
-        backref="source_file",
-        lazy="select",
-        cascade="all,delete-orphan",
-        passive_deletes=True,
-    )
     custom_poster = db.Column(db.String(64))
 
     # These keys are not mapped columns. The import pipeline includes them
@@ -2052,18 +2040,13 @@ class File(db.Model):
             setattr(self, key, kwargs[key])
 
     def delete_local_file(self, delete_directory_tree=False):
-        """Delete the library copy and the transcoded sibling, if any.
+        """Delete the library copy.
 
         A missing file is not an error. With delete_directory_tree, this
         method also deletes the folders that became empty.
         """
 
         file_to_delete = os.path.join(current_app.config["LIBRARY_DIR"], self.file_path)
-        transcoded_file = os.path.join(
-            current_app.config["TRANSCODES_DIR"],
-            self.dirname,
-            f"{self.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}",
-        )
         try:
             os.remove(file_to_delete)
 
@@ -2072,18 +2055,6 @@ class File(db.Model):
 
         else:
             current_app.logger.info(f"Deleted local file '{file_to_delete}'")
-
-        # Delete the transcoded file and its directory if they exist.
-
-        try:
-            os.remove(transcoded_file)
-        except FileNotFoundError:
-            pass
-
-        try:
-            os.removedirs(os.path.dirname(transcoded_file))
-        except OSError:
-            pass
 
         # The triage snapshots are useful only while the local copy exists.
 
@@ -2485,44 +2456,6 @@ class File(db.Model):
             )
 
         return worse_files
-
-
-class DerivedFile(db.Model):
-    """A file derived from a library original.
-
-    Today these are the Handbrake transcodes under TRANSCODES_DIR. In
-    the future they include the 4K to SDR and the Dolby Vision
-    conversions.
-
-    This is NOT a File row. That is intentional. File.file_path is
-    relative to LIBRARY_DIR and unique. Every ranking, shopping, and
-    import-replace query treats a File row as an original. Derived
-    copies in that table would need a filter at every one of those
-    sites, with no exception. A missed filter aims a delete at the
-    wrong root. Their own table keeps the derived copies invisible to
-    all of that. The source_file_id link gives the movie and file pages
-    and the linked delete all that they need. file_path here is
-    relative to TRANSCODES_DIR."""
-
-    id = db.Column(db.Integer, primary_key=True)
-    source_file_id = db.Column(
-        db.Integer,
-        db.ForeignKey("file.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    kind = db.Column(db.String(32), nullable=False, default="handbrake")
-    file_path = db.Column(db.String(512), nullable=False, unique=True, index=True)
-    basename = db.Column(db.String(255), nullable=False)
-    filesize_bytes = db.Column(db.BigInteger)
-    date_created = db.Column(
-        db.DateTime, nullable=False, default=db.func.utc_timestamp()
-    )
-
-    def __repr__(self):
-        """Return the path of the derived copy, marked by kind."""
-
-        return f"<DerivedFile {self.kind} '{self.file_path}'>"
 
 
 class ArchivedOriginal(db.Model):

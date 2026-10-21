@@ -7,7 +7,6 @@ without the AWS settings and the CloudFront path without the CDN
 settings.
 """
 
-import json
 import logging
 
 import pytest
@@ -58,9 +57,9 @@ def test_env_locked_reads_presence_for_flags_and_values_for_tunables(monkeypatch
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CREATE_FLAC_TWINS", "")
     monkeypatch.setenv("DISK_ALERT_FREE_GB", "")
-    monkeypatch.setenv("HANDBRAKE_PRESET", "Fast 1080p30")
+    monkeypatch.setenv("EAC3_ATMOS_BITRATE", "768000")
 
-    assert config._env_locked() == {"CREATE_FLAC_TWINS", "HANDBRAKE_PRESET"}
+    assert config._env_locked() == {"CREATE_FLAC_TWINS", "EAC3_ATMOS_BITRATE"}
 
 
 @pytest.mark.parametrize(
@@ -164,15 +163,15 @@ def _row(page, name):
 
 
 def test_page_shows_sources_and_locks_env_fields(app, admin_client, monkeypatch):
-    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"HANDBRAKE_PRESET"}))
+    monkeypatch.setitem(app.config, "ENV_LOCKED", frozenset({"EAC3_ATMOS_BITRATE"}))
     _store(app, "LOG_DIGEST_THRESHOLD", "30")
 
     page = admin_client.get("/settings").get_data(as_text=True)
 
-    preset = _row(page, "HANDBRAKE_PRESET")
-    assert "disabled" in preset
-    assert "Set in .env" in preset
-    assert 'name="HANDBRAKE_PRESET"' not in preset
+    bitrate = _row(page, "EAC3_ATMOS_BITRATE")
+    assert "disabled" in bitrate
+    assert "Set in .env" in bitrate
+    assert 'name="EAC3_ATMOS_BITRATE"' not in bitrate
 
     threshold = _row(page, "LOG_DIGEST_THRESHOLD")
     assert "Set on this page" in threshold
@@ -299,24 +298,6 @@ def test_bad_regex_and_bad_range_are_refused(app, admin_client):
     assert _stored(app, "LOG_DIGEST_IGNORE") is None
 
 
-def test_preset_must_be_in_the_preset_file(app, admin_client, monkeypatch, tmp_path):
-    preset_file = tmp_path / "presets.json"
-    preset_file.write_text(
-        '{"PresetList": [{"PresetName": "Fitzflix 1080p"}, '
-        '{"PresetName": "Fitzflix 720p"}]}'
-    )
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET_FILE", str(preset_file))
-
-    data = _form(app, admin_client, HANDBRAKE_PRESET="Other preset")
-    response = admin_client.post("/settings", data=data)
-    assert "does not contain this preset" in response.get_data(as_text=True)
-    assert _stored(app, "HANDBRAKE_PRESET") is None
-
-    data = _form(app, admin_client, HANDBRAKE_PRESET="Fitzflix 720p")
-    assert admin_client.post("/settings", data=data).status_code == 302
-    assert _stored(app, "HANDBRAKE_PRESET") == "Fitzflix 720p"
-
-
 _FOLDER_EXPORT = {
     "PresetList": [
         {"PresetName": "Fitzflix 1080p"},
@@ -329,81 +310,12 @@ _FOLDER_EXPORT = {
 }
 
 
-def _preset_file(app, monkeypatch, tmp_path):
-    """Point HANDBRAKE_PRESET_FILE at a file with a top preset and a folder."""
-
-    preset_file = tmp_path / "presets.json"
-    preset_file.write_text(json.dumps(_FOLDER_EXPORT))
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET_FILE", str(preset_file))
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET", "Apple 1080p60 Surround")
-
-
 def test_preset_names_include_the_presets_in_folders():
     from app.settings import preset_names
 
     assert preset_names(_FOLDER_EXPORT) == ["Fitzflix 1080p", "Fitzflix 720p"]
     assert preset_names({}) == []
     assert preset_names([]) == []
-
-
-def test_preset_default_is_the_first_preset_in_the_file(app, monkeypatch, tmp_path):
-    from app.settings import resolve
-
-    _preset_file(app, monkeypatch, tmp_path)
-    with app.app_context():
-        assert resolve("HANDBRAKE_PRESET") == ("Fitzflix 1080p", "default")
-
-    _store(app, "HANDBRAKE_PRESET", "Fitzflix 720p")
-    with app.app_context():
-        assert resolve("HANDBRAKE_PRESET") == ("Fitzflix 720p", "page")
-
-
-def test_preset_page_value_missing_from_the_file_uses_the_default(
-    app, monkeypatch, tmp_path, log_capture
-):
-    """A preset that the file no longer contains falls back to the default."""
-
-    from app.settings import resolve
-
-    _preset_file(app, monkeypatch, tmp_path)
-    _store(app, "HANDBRAKE_PRESET", "Removed preset")
-    with app.app_context():
-        assert resolve("HANDBRAKE_PRESET") == ("Fitzflix 1080p", "default")
-    assert any("Removed preset" in r.getMessage() for r in log_capture)
-
-
-def test_preset_without_a_file_uses_the_config_value(app, monkeypatch):
-    from app.settings import resolve
-
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET_FILE", None)
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET", "Fast 1080p30")
-    with app.app_context():
-        assert resolve("HANDBRAKE_PRESET") == ("Fast 1080p30", "default")
-
-
-def test_page_shows_a_dropdown_of_the_presets_in_the_file(
-    app, admin_client, monkeypatch, tmp_path
-):
-    _preset_file(app, monkeypatch, tmp_path)
-    _store(app, "HANDBRAKE_PRESET", "Fitzflix 720p")
-
-    page = admin_client.get("/settings").get_data(as_text=True)
-    preset = _row(page, "HANDBRAKE_PRESET")
-
-    assert '<select class="form-select form-select-sm" id="HANDBRAKE_PRESET"' in preset
-    assert '<option value="Fitzflix 1080p">' in preset
-    assert '<option value="Fitzflix 720p" selected>' in preset
-    assert "My Presets" not in preset
-
-
-def test_page_shows_a_text_box_without_a_preset_file(app, admin_client, monkeypatch):
-    monkeypatch.setitem(app.config, "HANDBRAKE_PRESET_FILE", None)
-
-    page = admin_client.get("/settings").get_data(as_text=True)
-    preset = _row(page, "HANDBRAKE_PRESET")
-
-    assert "<select" not in preset
-    assert 'type="text"' in preset
 
 
 def test_reset_removes_the_page_value(app, admin_client, log_capture):

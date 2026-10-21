@@ -86,7 +86,6 @@ from app.settings import (
     SETTINGS,
     clear_setting,
     default_value,
-    handbrake_presets,
     locked,
     resolve,
     set_setting,
@@ -629,7 +628,6 @@ def settings():
         form=form,
         reset_form=reset_form,
         rows=rows,
-        presets=handbrake_presets(),
     )
 
 

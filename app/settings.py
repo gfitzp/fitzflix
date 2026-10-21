@@ -12,8 +12,6 @@ own connection, not the session. A long worker transaction thus sees
 each change, and a failed read does not touch the session of the task.
 """
 
-import json
-import os
 import re
 import threading
 import time
@@ -40,7 +38,7 @@ class Setting:
     name: str
     label: str
     help: str
-    kind: str  # flag, int, choice, text, regex, or preset
+    kind: str  # flag, int, choice, text, or regex
     minimum: int = None
     maximum: int = None
     choices: tuple = ()
@@ -187,14 +185,6 @@ SETTINGS = {
             minimum=1,
             maximum=1000,
         ),
-        Setting(
-            "HANDBRAKE_PRESET",
-            "HandBrake preset",
-            "The transcode preset. The list comes from HANDBRAKE_PRESET_FILE. "
-            "Without a selection, the first preset in the file applies. "
-            "Without a file, enter the name of a built-in HandBrake preset.",
-            "preset",
-        ),
     )
 }
 
@@ -282,28 +272,16 @@ def resolve(name, config=None):
                 f"using the default"
             )
         else:
-            presets = handbrake_presets(config) if name == "HANDBRAKE_PRESET" else None
-            if not presets or value in presets:
-                return value, "page"
-            current_app.logger.warning(
-                f"The page value of {name} ({value!r}) is not in "
-                f"HANDBRAKE_PRESET_FILE, using the default"
-            )
+            return value, "page"
     return default_value(name, config), "default"
 
 
 def default_value(name, config=None):
     """Return the default of a setting when .env and the page do not set it.
 
-    This is the config.py value. The exception is HANDBRAKE_PRESET with a
-    preset file. If the file does not contain the config.py value, the
-    default is the first preset in the file."""
+    This is the config.py value."""
 
     config = current_app.config if config is None else config
-    if name == "HANDBRAKE_PRESET":
-        presets = handbrake_presets(config)
-        if presets and config[name] not in presets:
-            return presets[0]
     return config[name]
 
 
@@ -346,20 +324,6 @@ def preset_names(export):
     return names
 
 
-def handbrake_presets(config=None):
-    """Return the preset names in HANDBRAKE_PRESET_FILE, or None without a file."""
-
-    config = current_app.config if config is None else config
-    path = config.get("HANDBRAKE_PRESET_FILE")
-    if not path or not os.path.isfile(path):
-        return None
-    try:
-        with open(path) as preset_file:
-            return preset_names(json.load(preset_file))
-    except (OSError, ValueError):
-        return None
-
-
 def value_problem(name, value, config=None):
     """Return why the page cannot set the value, or None if it can.
 
@@ -386,12 +350,6 @@ def value_problem(name, value, config=None):
             re.compile(value)
         except re.error as error:
             return f"This is not a valid regular expression: {error}."
-    if name == "HANDBRAKE_PRESET":
-        if not value.strip():
-            return "Enter a preset name."
-        presets = handbrake_presets(config)
-        if presets and value not in presets:
-            return f"HANDBRAKE_PRESET_FILE does not contain this preset: {presets}."
     return None
 
 

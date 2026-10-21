@@ -2,7 +2,7 @@
 
 Each file that moves through the import pipeline leaves 1 ordered trail
 in Redis. The stages are Localizing, Moving into the library,
-Cataloging, and Archiving to S3, plus remuxes, transcodes, and
+Cataloging, and Archiving to S3, plus SDR conversions, remuxes, and
 restores. Thus, the queue page can answer "where is my file now"
 without the worker logs.
 
@@ -166,7 +166,6 @@ STAGES = {
         "Rebuilding audio",
         _basename_from_file_id,
     ),
-    "app.videos.transcode_task": ("Transcoding", _basename_from_file_id),
     "app.videos.download_task": ("Restoring from S3", _basename_from_second_arg),
     "app.atmos.atmos_supplement_task": ("Adding Atmos twin", _basename_from_file_id),
 }

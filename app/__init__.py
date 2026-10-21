@@ -559,7 +559,6 @@ def check_config(app):
         "MOVIE_LIBRARY",
         "TV_LIBRARY",
         "REJECTS_DIR",
-        "TRANSCODES_DIR",
     ):
         path = app.config[key]
         if not os.path.isdir(path):
@@ -570,7 +569,7 @@ def check_config(app):
         if not os.path.isfile(preset_file):
             app.logger.warning(
                 f"HANDBRAKE_PRESET_FILE '{preset_file}' does not exist, "
-                f"transcodes will not use the custom preset"
+                f"HDR imports cannot be converted to SDR"
             )
         else:
             from app.settings import preset_names
@@ -584,15 +583,9 @@ def check_config(app):
                     f"HandBrake preset export"
                 )
             else:
-                # Without a preset in .env, the Settings page selects one
-                # from the file. Thus, only a preset from .env can be
-                # missing from the file.
-                if (
-                    "HANDBRAKE_PRESET" in app.config["ENV_LOCKED"]
-                    and app.config["HANDBRAKE_PRESET"] not in presets
-                ):
+                if app.config["CONVERSION_PRESET"] not in presets:
                     app.logger.warning(
-                        f"HANDBRAKE_PRESET '{app.config['HANDBRAKE_PRESET']}' "
+                        f"CONVERSION_PRESET '{app.config['CONVERSION_PRESET']}' "
                         f"is not in HANDBRAKE_PRESET_FILE (contains {presets})"
                     )
 
@@ -887,7 +880,6 @@ def create_app(config_class=Config, watch_import_dir=False):
         "IMPORT_DIR",
         "STAGING_DIR",
         "REJECTS_DIR",
-        "TRANSCODES_DIR",
         "HELD_DIR",
     ):
         create_work_directory(app, key)

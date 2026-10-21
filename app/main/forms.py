@@ -239,13 +239,6 @@ class CriterionForm(FlaskForm):
             raise ValidationError("Enter a positive spine number.")
 
 
-class TranscodeForm(FlaskForm):
-    """Queue transcodes, from the movie and file pages."""
-
-    transcode_submit = SubmitField("Create Transcoded File")
-    transcode_all = SubmitField("Transcode All")
-
-
 class LibrarySearchForm(FlaskForm):
     """Show the search box of the library listings."""
 
@@ -518,7 +511,7 @@ def _settings_field(setting):
             choices=[(choice, f"{choice:,}") for choice in setting.choices],
             coerce=int,
         )
-    # Strip a preset name. A space in a regular expression can be a part
+    # Strip a text value. A space in a regular expression can be a part
     # of the pattern.
     filters = [] if setting.kind == "regex" else [lambda value: (value or "").strip()]
     return StringField(

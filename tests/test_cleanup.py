@@ -36,7 +36,6 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
     staging = app.config["STAGING_DIR"]
     movies = app.config["MOVIE_LIBRARY"]
     rejects = app.config["REJECTS_DIR"]
-    transcodes = app.config["TRANSCODES_DIR"]
 
     doomed = [
         plant(os.path.join(staging, ".Stranded (2020) - [DVD].mkv"), 8),
@@ -45,7 +44,6 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
             os.path.join(movies, "Stranded (2020)", ".Stranded (2020) - [DVD].mkv"), 8
         ),
         plant(os.path.join(rejects, "exception", ".Bad (2020).mkv.partial"), 8),
-        plant(os.path.join(transcodes, "Stranded (2020)", ".Stranded (2020).m4v"), 8),
     ]
     kept = [
         # This file is below the age gate. It can be a copy in progress.
@@ -70,7 +68,7 @@ def test_cleanup_deletes_only_old_hidden_partials(app, monkeypatch):
             assert os.path.exists(path), path
 
         assert len(sent) == 1
-        assert "5 orphaned partial file(s)" in sent[0]["body"]
+        assert "4 orphaned partial file(s)" in sent[0]["body"]
         assert "scratch database" not in sent[0]["body"]
     finally:
         for path in kept:

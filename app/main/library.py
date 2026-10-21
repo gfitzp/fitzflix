@@ -32,7 +32,7 @@ from markupsafe import Markup
 from flask_login import current_user, login_required
 from flask_sqlalchemy.pagination import Pagination
 
-from app import db, safe_job_id
+from app import db
 from app.main.forms import (
     CriterionForm,
     FileDeleteForm,
@@ -51,7 +51,6 @@ from app.main.forms import (
     TMDBLookupForm,
     TMDBRemoveForm,
     TrackMetadataScanForm,
-    TranscodeForm,
     WatchlistForm,
 )
 from app.models import (
@@ -1597,8 +1596,6 @@ def movie(movie_id):
         is not None
     )
 
-    transcode_form = TranscodeForm()
-
     # The Movie Data forms are admin tools (#186 follow-up). The section
     # renders only for admins. Each branch rejects a stray post from a
     # different user. It does not process the post silently.
@@ -1925,7 +1922,6 @@ def movie(movie_id):
         features=features,
         movie_shopping_exclude_form=movie_shopping_exclude_form,
         movie_review_form=movie_review_form,
-        transcode_form=transcode_form,
         tmdb_lookup_form=tmdb_lookup_form,
         tmdb_remove_form=tmdb_remove_form,
         criterion_form=criterion_form,
@@ -2323,54 +2319,10 @@ def tv(series_id):
     seasons.sort()
     seasons = list(set(seasons))
 
-    # The series management forms (transcode, restore, delete, TMDB)
+    # The series management forms (restore, delete, TMDB)
     # are admin tools, like the Movie Data section of the movie page
     # (#186 follow-up). The template hides them. Each branch rejects a
     # stray post from a different user.
-
-    # The form to request a transcode of all the files of this TV series
-
-    transcode_form = TranscodeForm()
-    if transcode_form.transcode_all.data and transcode_form.validate_on_submit():
-        if not current_user.admin:
-            flash("Need to be an admin user to do that!", "danger")
-            return redirect(url_for("main.tv", series_id=tv.id))
-
-        # This subquery gets the best files of this TV series.
-
-        ranked_files = (
-            db.session.query(
-                File.id,
-                tv_file_rank(),
-            )
-            .join(TVSeries, (TVSeries.id == File.series_id))
-            .join(RefQuality, (RefQuality.id == File.quality_id))
-            .subquery()
-        )
-
-        # Get the details of all the best files of this TV series.
-
-        files = (
-            File.query.join(ranked_files, (ranked_files.c.id == File.id))
-            .filter(File.series_id == series_id)
-            .filter(ranked_files.c.rank == 1)
-            .order_by(File.season.asc(), File.episode.asc())
-            .all()
-        )
-
-        # Enqueue a transcode task for each best file of this TV show.
-
-        for file in files:
-            current_app.transcode_queue.enqueue(
-                "app.videos.transcode_task",
-                args=(file.id,),
-                job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                description=f"'{file.plex_title}'",
-                job_id=safe_job_id(file.plex_title),
-            )
-
-        flash(f"Added all files for '{title}' to transcoding queue", "success")
-        return redirect(url_for("main.tv", series_id=tv.id))
 
     # The form to request a restore of each archived file of this series
     # from AWS Glacier. The hourly SQS poll downloads each file when it is
@@ -2438,17 +2390,13 @@ def tv(series_id):
             flash("Need to be an admin user to do that!", "danger")
             return redirect(url_for("main.tv", series_id=tv.id))
         aws_untouched_keys = []
-        derived_paths = []
         leftover_dirs = set()
-
-        from app.transcodes import derived_paths_for, purge_derived_paths
 
         try:
             files = File.query.filter(File.series_id == series_id).all()
             for file in files:
                 if file.aws_untouched_key:
                     aws_untouched_keys.append(file.aws_untouched_key)
-                derived_paths += derived_paths_for(file)
                 leftover_dirs.add(
                     os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
                 )
@@ -2475,8 +2423,6 @@ def tv(series_id):
                 args=(aws_untouched_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
-
-        purge_derived_paths(derived_paths)
 
         # The folders themselves. delete_local_file removes only EMPTY
         # directories. Poster art sits beside the episodes (placed by
@@ -2640,7 +2586,6 @@ def tv(series_id):
             tv.tmdb_number_of_episodes,
             [genre.name for genre in tv.genres],
         ),
-        transcode_form=transcode_form,
         series_restore_form=series_restore_form,
         series_restore_estimate=series_restore_estimate,
         tmdb_lookup_form=tmdb_lookup_form,
@@ -2759,7 +2704,7 @@ def file(file_id):
     """Show the details for a particular video file.
 
     This is an admin page (#186 follow-up). All on it (track edits,
-    remux, transcode, upload/download, delete) is library management.
+    remux, upload/download, delete) is library management.
     Thus, the whole page is gated, and not each form."""
 
     # if request.form:
@@ -3121,26 +3066,6 @@ def file(file_id):
 
     mkvmerge_form.process()
 
-    # The form to request a transcode of this file
-
-    transcode_form = TranscodeForm()
-    if transcode_form.transcode_submit.data and transcode_form.validate_on_submit():
-        if not file_exists_locally:
-            flash(f"'{file.basename}' is not present locally.", "warning")
-            return redirect(url_for("main.file", file_id=file.id))
-
-        # Enqueue a transcode task for this file
-
-        current_app.transcode_queue.enqueue(
-            "app.videos.transcode_task",
-            args=(file.id,),
-            job_timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-            description=f"'{file.plex_title}'",
-            job_id=safe_job_id(file.plex_title),
-        )
-        flash(f"Added '{file.plex_title}' to transcoding queue", "success")
-        return redirect(url_for("main.file", file_id=file.id))
-
     # The form to request an upload of this file to AWS S3 storage
 
     upload_form = S3UploadForm()
@@ -3199,15 +3124,6 @@ def file(file_id):
         aws_untouched_key = file.aws_untouched_key
         leftover_dir = os.path.join(current_app.config["LIBRARY_DIR"], file.dirname)
 
-        # The transcoded copies of the file go with it. Fitzflix notes
-        # the paths before the delete (the rows cascade away with the
-        # File). It removes them only after the commit. This is the same
-        # posture as for the AWS key.
-
-        from app.transcodes import derived_paths_for, purge_derived_paths
-
-        derived_paths = derived_paths_for(file)
-
         try:
             file.delete_local_file(delete_directory_tree=True)
             db.session.delete(file)
@@ -3228,8 +3144,6 @@ def file(file_id):
                 args=(aws_untouched_key,),
                 job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
             )
-
-        purge_derived_paths(derived_paths)
 
         # Clear the folder if only placed poster art and OS metadata
         # remain. A delete of the last file of a movie used to leave its
@@ -3294,7 +3208,6 @@ def file(file_id):
         ),
         language_names=language_names(),
         mkvmerge_form=mkvmerge_form,
-        transcode_form=transcode_form,
         upload_form=upload_form,
         download_form=download_form,
         file_restore_estimate=file_restore_estimate,

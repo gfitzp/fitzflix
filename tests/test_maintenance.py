@@ -602,7 +602,7 @@ def test_heal_mounts_forces_a_duplicate_that_wont_unmount_cleanly(
     """Force-unmount a duplicate that refuses a clean unmount.
 
     To keep the duplicate is worse than to interrupt it. Each config path
-    stays aimed at an empty directory on the boot disk. A TRANSCODES_DIR
+    stays aimed at an empty directory on the boot disk. A STAGING_DIR
     that points there fills the boot disk."""
 
     import subprocess as subprocess_module

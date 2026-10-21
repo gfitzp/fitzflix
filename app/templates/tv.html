@@ -58,18 +58,12 @@
 	<div class="col-sm-3 col-md-2">
 		{{ find_button(tv=tv, block=true) }}
 	</div>
-	{# The series management tools are admin tools. These are transcode,
-	   restore, delete, and the TMDB forms below. They are like the Movie
+	{# The series management tools are admin tools. These are restore,
+	   delete, and the TMDB forms below. They are like the Movie
 	   Data section of the movie page (#186 follow-up). The route rejects
 	   stray posts from all other users. Thus, to hide the tools here is
 	   presentation, not the protection #}
 	{% if current_user.admin %}
-	<div class="col-sm-3 col-md-2">
-		<form action="" method="post">
-			{{ transcode_form.hidden_tag() }}
-			{{ transcode_form.transcode_all(class_="btn btn-sm btn-success container") }}
-		</form>
-	</div>
 	<div class="col-sm-3 col-md-2">
 		<form action="" method="post">
 			{{ series_restore_form.hidden_tag() }}

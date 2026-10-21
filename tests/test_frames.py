@@ -1575,7 +1575,7 @@ def test_frame_pool_tasks_stay_off_the_running_banners(app):
             description="Extracting a frame from 'Secret Answer'",
         )
         visible_job = app.transcode_queue.enqueue(
-            "app.videos.transcode_task",
+            "app.triage.generate_audio_comparison",
             args=(1,),
             description="Transcoding a visible file",
         )

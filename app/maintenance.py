@@ -251,9 +251,9 @@ def _monitored_paths(config):
         config["IMPORT_DIR"],
         config["MOVIE_LIBRARY"],
         config["TV_LIBRARY"],
-        config["TRANSCODES_DIR"],
         config["REJECTS_DIR"],
         config["STAGING_DIR"],
+        config["HELD_DIR"],
         config["DB_BACKUP_DIR"],
         os.path.dirname(config["LOG_FILE"]),
     )
@@ -315,7 +315,7 @@ def disk_health(config):
                 "danger" if percent >= 95 else "warning" if percent >= 90 else "success"
             ),
             # The library volumes are almost full by design. Thus, alert
-            # on the absolute free space that imports and transcodes need,
+            # on the absolute free space that imports and conversions need,
             # not on the percentage.
             "ok": usage.free >= alert_free_bytes,
         }
@@ -609,7 +609,7 @@ def heal_mounts(dead_mounts, connection, config):
             # shares. Thus, force is the last resort, not the first step.
             # But to keep the duplicate is worse than to interrupt it.
             # Every config path stays pointed at an empty directory on the
-            # boot disk. A TRANSCODES_DIR that points there fills the boot
+            # boot disk. A STAGING_DIR that points there fills the boot
             # disk.
             freed = False
             for command in (
@@ -1232,7 +1232,7 @@ def clear_leftover_directory(path):
             "TV_LIBRARY",
             "IMPORT_DIR",
             "REJECTS_DIR",
-            "TRANSCODES_DIR",
+            "HELD_DIR",
         )
         if config.get(name)
     }
@@ -1270,7 +1270,7 @@ def cleanup_orphaned_files():
     a dot-prefixed name first. Examples are the localization staging
     file (and its .convert.mkv scratch file) and cross-volume library
     copies. Other examples are AWS downloads into the import directory,
-    reject moves (.partial), and transcode outputs. The stage promotes
+    reject moves (.partial), and SDR conversion outputs. The stage promotes
     the file to the visible name only on success. Thus, a hidden file
     that is 1 week old can only be the residue of a failed task. The
     deletions have an age condition. They are limited to those
@@ -1288,7 +1288,6 @@ def cleanup_orphaned_files():
             config["TV_LIBRARY"],
             config["IMPORT_DIR"],
             config["REJECTS_DIR"],
-            config["TRANSCODES_DIR"],
         )
         for root in roots:
             if not os.path.isdir(root):

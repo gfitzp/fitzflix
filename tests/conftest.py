@@ -81,7 +81,6 @@ class TestConfig(Config):
     MOVIE_LIBRARY = os.path.join(LIBRARY_DIR, "Movies")
     TV_LIBRARY = os.path.join(LIBRARY_DIR, "TV Shows")
     REJECTS_DIR = os.path.join(MEDIA_LOCATION, "rejects")
-    TRANSCODES_DIR = os.path.join(MEDIA_LOCATION, "transcoded")
     STAGING_DIR = os.path.join(_TMP, "staging")
     HELD_DIR = os.path.join(MEDIA_LOCATION, "held")
     TRIAGE_SNAPSHOT_DIR = os.path.join(_TMP, "triage")
@@ -200,7 +199,6 @@ def app():
         TestConfig.MOVIE_LIBRARY,
         TestConfig.TV_LIBRARY,
         TestConfig.REJECTS_DIR,
-        TestConfig.TRANSCODES_DIR,
         TestConfig.STAGING_DIR,
         TestConfig.HELD_DIR,
         TestConfig.DB_BACKUP_DIR,

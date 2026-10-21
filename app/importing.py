@@ -4,9 +4,9 @@ This is the chain that a file follows from the import directory to the
 library. evaluate_filename parses and prices the name.
 localization_task archives the untouched original and removes the
 non-native tracks. inspect, move, and finalize carry the localized
-output to its library home and catalog it. transcode_task and
-finalize_transcoding produce the Handbrake copies. manual_import_task
-is the hourly sweep. The rejects door, the language functions, and the
+output to its library home and catalog it. A conversion to SDR runs
+between them (app.sdr_conversion). manual_import_task is the hourly
+sweep. The rejects door, the language functions, and the
 filename sanitizers are also here.
 
 app.videos re-exports every name in this module. Thus, the stored rq
@@ -1912,7 +1912,6 @@ def finalize_localization(
                 # Clear the metadata of the existing File record.
 
                 file.date_updated = datetime.now(timezone.utc)
-                file.date_transcoded = None
                 FileAudioTrack.query.filter_by(file_id=file.id).delete()
                 FileSubtitleTrack.query.filter_by(file_id=file.id).delete()
 
@@ -2099,7 +2098,6 @@ def finalize_localization(
             current_app.logger.info(f"{file} worse files: {worse_files}")
 
             worse_aws_keys = [replaced_key] if replaced_key else []
-            worse_derived_paths = []
 
             for worse in worse_files:
                 worse.delete_local_file()
@@ -2131,13 +2129,6 @@ def finalize_localization(
                         # cost the backup of a record that rolled back.
                         worse_aws_keys.append(worse.aws_untouched_key)
 
-                    # The transcoded copies of the replaced file go with it.
-                    # Record the paths now. Remove them after the commit, the
-                    # same as the AWS keys. The delete cascades to the rows.
-
-                    from app.transcodes import derived_paths_for
-
-                    worse_derived_paths += derived_paths_for(worse)
                     db.session.delete(worse)
 
                 # The disc of a converted original stays on the shelf
@@ -2307,11 +2298,6 @@ def finalize_localization(
                     description=f"Deleting '{worse_key}' from AWS",
                 )
 
-            if worse_derived_paths:
-                from app.transcodes import purge_derived_paths
-
-                purge_derived_paths(worse_derived_paths)
-
             # Remove the imported file, unless the localized file replaced it.
             # Fitzflix must not remove the file that it just made.
 
@@ -2466,93 +2452,6 @@ def finalize_localization(
                 current_app.logger.info(f"Removed lock {lock}")
 
 
-def finalize_transcoding(file_id, lock, transient_retries=0):
-    """Update a file with the details of its transcode and move it into position."""
-
-    from app.videos import MAX_TRANSIENT_RETRIES, TRANSIENT_COPY_ERRNOS
-
-    with app.app_context():
-        # Set this if the task reschedules itself. The retry inherits the lock.
-
-        handed_off = False
-
-        try:
-
-            file = File.query.filter_by(id=file_id).first()
-            ext = current_app.config["HANDBRAKE_EXTENSION"]
-
-            # Find the output directories and the file to make.
-
-            output_directory = os.path.join(
-                current_app.config["TRANSCODES_DIR"], file.dirname
-            )
-            hidden_output_file = os.path.join(
-                output_directory, f".{file.plex_title}.{ext}"
-            )
-            output_file = os.path.join(output_directory, f"{file.plex_title}.{ext}")
-
-            # Move the transcoded file into place.
-
-            os.rename(hidden_output_file, output_file)
-
-            # Update the file record with the transcode date.
-            file.date_transcoded = datetime.now(timezone.utc)
-
-            # Record the output as a derived file. It is linked to its source.
-            # It is structurally outside ranking and shopping. Fitzflix purges
-            # it with its original.
-
-            from app.transcodes import record_transcode
-
-            record_transcode(file, output_file)
-
-            db.session.commit()
-
-        except OSError as e:
-            db.session.rollback()
-            if (
-                e.errno in TRANSIENT_COPY_ERRNOS
-                and transient_retries < MAX_TRANSIENT_RETRIES
-            ):
-                # An unstable mount interrupted the rename. The transcoded file
-                # is still at its hidden name. Thus, retry only this step and
-                # keep the title lock. Do not lose the transcode.
-
-                handed_off = True
-                current_app.logger.warning(
-                    f"'{file.plex_title}' Transcode rename failed with a "
-                    f"transient I/O error ({e}), retrying in 5 minutes "
-                    f"(attempt {transient_retries + 1} of {MAX_TRANSIENT_RETRIES})"
-                )
-                current_app.sql_queue.enqueue_in(
-                    timedelta(minutes=5),
-                    "app.videos.finalize_transcoding",
-                    file_id,
-                    lock,
-                    transient_retries=transient_retries + 1,
-                    job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                    job_id=retry_job_id(
-                        "finalize_transcoding", file_id, transient_retries + 1
-                    ),
-                    result_ttl=86400,
-                    description=f"'{file.plex_title}'",
-                )
-                return False
-            current_app.logger.error(traceback.format_exc())
-
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            db.session.rollback()
-
-        else:
-            current_app.logger.info(f"{file.plex_title}' Transcode complete")
-
-        finally:
-            if not handed_off:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
-
-
 def manual_import_task():
     """Scan the Import directory and import the files that are not in the queue."""
 
@@ -2603,152 +2502,6 @@ def manual_import_task():
 
         else:
             return True
-
-
-def transcode_task(file_id):
-    """Transcode a file with Handbrake."""
-
-    from app.videos import acquire_lock_or_defer, wait_for_subprocess
-
-    with app.app_context():
-        # Define this first. Then the exception handler can tell if the task
-        # acquired the lock before the failure.
-
-        lock = None
-
-        try:
-            job = get_current_job()
-
-            # Find the file to transcode.
-
-            file = File.query.filter_by(id=file_id).first()
-
-            # Make the file identifier for the lock on the processing of this
-            # file.
-
-            file_identifier = file.file_identifier()
-            current_app.logger.debug(
-                f"'{file.plex_title}' Lock identifier: {file_identifier}"
-            )
-            lock = acquire_lock_or_defer(
-                file.file_identifier(),
-                current_app.config["TRANSCODE_TASK_TIMEOUT"] * 1000,
-                current_app.transcode_queue,
-                "app.videos.transcode_task",
-                minutes=(45, 75),
-                timeout=current_app.config["TRANSCODE_TASK_TIMEOUT"],
-                description=f"'{file.plex_title}'",
-                kwargs={"file_id": file_id},
-            )
-            if not lock:
-                return False
-
-            # Start the transcode process.
-
-            current_app.logger.info(f"'{file.plex_title}' Starting transcoding process")
-
-            # Find the output directories and the files to make.
-
-            input_file = os.path.join(current_app.config["LIBRARY_DIR"], file.file_path)
-            output_directory = os.path.join(
-                current_app.config["TRANSCODES_DIR"], file.dirname
-            )
-            hidden_output_file = os.path.join(
-                output_directory,
-                f".{file.plex_title}.{current_app.config['HANDBRAKE_EXTENSION']}",
-            )
-            os.makedirs(output_directory, exist_ok=True)
-
-            if current_app.config["HANDBRAKE_PRESET_FILE"]:
-                preset_file = [
-                    "--preset-import-file",
-                    current_app.config["HANDBRAKE_PRESET_FILE"],
-                ]
-            else:
-                preset_file = []
-
-            # Transcode the file with Handbrake.
-
-            current_app.logger.info(
-                [
-                    current_app.config["HANDBRAKE_BIN"],
-                ]
-                + preset_file
-                + [
-                    "--preset",
-                    get_setting("HANDBRAKE_PRESET"),
-                    "-i",
-                    input_file,
-                    "-o",
-                    hidden_output_file,
-                ]
-            )
-
-            transcode_process = subprocess.Popen(
-                [
-                    current_app.config["HANDBRAKE_BIN"],
-                ]
-                + preset_file
-                + [
-                    "--preset",
-                    get_setting("HANDBRAKE_PRESET"),
-                    "-i",
-                    input_file,
-                    "-o",
-                    hidden_output_file,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1,
-            )
-            previous_percent = None
-            for line in transcode_process.stdout:
-                progress_match = re.search(
-                    r"Encoding\: task \d+ of \d+, \d+\.\d+ \%", line
-                )
-                if progress_match:
-                    progress_match = re.match(
-                        r"^Encoding\: task (?P<this_task>\d+) of (?P<total_tasks>\d+), (?P<percent>\d+)",
-                        line,
-                    )
-                    percent = int(progress_match.group("percent"))
-                    if previous_percent != percent:
-                        current_app.logger.info(
-                            f"'{file.plex_title}' Transcoding: {percent}%"
-                        )
-                        previous_percent = percent
-                    if job:
-                        job.meta["description"] = (
-                            f"'{file.plex_title}' — Transcoding file"
-                        )
-                        if progress_match.group("this_task") == progress_match.group(
-                            "total_tasks"
-                        ):
-                            job.meta["progress"] = percent
-
-                        else:
-                            job.meta["progress"] = -1
-
-                        job.save_meta()
-
-            wait_for_subprocess(transcode_process)
-
-        except Exception:
-            current_app.logger.error(traceback.format_exc())
-            if lock:
-                current_app.lock_manager.unlock(lock)
-                current_app.logger.info(f"Removed lock {lock}")
-
-        else:
-            current_app.sql_queue.enqueue(
-                "app.videos.finalize_transcoding",
-                args=(file_id, lock),
-                job_timeout=current_app.config["SQL_TASK_TIMEOUT"],
-                description=f"'{file.plex_title}'",
-            )
-
-        return True
 
 
 # Plex external-id tags (#155). A movie name or a show-folder name can
